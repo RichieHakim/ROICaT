@@ -26,8 +26,6 @@ cd path/to/ROICaT/directory
 conda create -n ROICaT python=3.9
 conda activate ROICaT
 
-
-
 pip3 install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu113
 pip install -r requirements.txt
 ```
