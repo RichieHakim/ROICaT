@@ -2,7 +2,6 @@ gdown==4.5.1
 ipywidgets==7.7.1
 kymatio==0.2.1
 matplotlib==3.5.2
-model==0.6.0
 numpy==1.22.3
 opencv_contrib_python==4.6.0.66
 pandas==1.4.3
