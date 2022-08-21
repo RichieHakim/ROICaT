@@ -20,8 +20,11 @@ Installation
 ------------
 
 ```
+git clone url.to.repo
+cd path/to/ROICaT/directory
+
 conda create -n ROICaT python=3.9
 conda activate ROICaT
-cd path/to/ROICaT
+
 pip install -r requirements.txt
 ```
