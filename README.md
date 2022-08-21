@@ -28,4 +28,5 @@ conda activate ROICaT
 
 pip3 install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu113
 pip install -r requirements.txt
+conda install pytorch-sparse -c pyg
 ```
