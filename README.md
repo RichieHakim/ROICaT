@@ -14,3 +14,14 @@ TODO:
 - port demo notebooks to CoLab
 - make reference API
 - make nice README.md
+
+
+Installation
+------------
+
+```
+conda create -n ROICaT python=3.9
+conda activate ROICaT
+cd path/to/ROICaT
+pip install -r requirements.txt
+```
