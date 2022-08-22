@@ -46,8 +46,8 @@ For installation on a computer with only CPU, use the following command:<br>
 >
 >OR see [https://pytorch.org/get-started/locally/] for other versions<br>
 
-### 5. Install torch-sparse<br>
-**`pip install torch-scatter PyTorch Sparse -f https://data.pyg.org/whl/torch-1.12.1+${CUDA}.html`**
+### 5. Install PyTorch Sparse<br>
+**`pip install torch-scatter torch-sparse -f https://data.pyg.org/whl/torch-1.12.1+${CUDA}.html`**
 >See here for help and details: [https://github.com/rusty1s/pytorch_sparse]<br>
 >If you get errors about GCC version, make sure you have version >=5.4.0. Check with `gcc --version`. On some Linux servers (like Harvard's O2 server), you may need to run `module load gcc/9.2.0` or similar.<br>
 
