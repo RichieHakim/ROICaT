@@ -21,8 +21,8 @@ TODO:
 Installation
 ------------
 
-`git clone https://github.com/RichieHakim/ROICaT` \
-`cd path/to/ROICaT/directory`
+> `git clone https://github.com/RichieHakim/ROICaT` \
+> `cd path/to/ROICaT/directory`
 
 `conda update -n base -c defaults conda` \
 `conda create -n ROICaT python=3.9` \
