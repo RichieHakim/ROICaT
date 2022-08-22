@@ -2,7 +2,7 @@
 **R**egion **O**f **I**nterest **C**lassification **a**nd **T**racking
 
 A [hopefully] simple-to-use pipeline for classifying images of cells and tracking them across imaging planes/sessions.
-Currently designed to use with Suite2p output data (stat.npy and ops.npy files).
+Currently designed to be used with Suite2p output data (stat.npy and ops.npy files).
 
 TODO:
 - add tracking to repo
