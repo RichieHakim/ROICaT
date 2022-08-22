@@ -32,7 +32,7 @@ Installation
 
 ### 3. Upgrade pip
 `pip install --upgrade pip`
->*If using Windows, then use: `python -m pip install --upgrade pip`*<br>
+>If using Windows, then use: `python -m pip install --upgrade pip`<br>
 
 ### 4. Install PyTorch<br>
 For installation on a computer with a GPU + CUDA(11.x, ideally 11.3) + CuDNN, use the following command:<br>
@@ -40,16 +40,16 @@ For installation on a computer with a GPU + CUDA(11.x, ideally 11.3) + CuDNN, us
 
 For installation on a computer with only CPU, use the following command:<br>
 `pip install torch==1.12.1+cpu torchvision==0.13.1+cpu torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cpu`<br>
->*Ideally, try to install on a computer with a CUDA compatible GPU. How to install CUDA + CuDNN:*<br>
+>Ideally, try to install on a computer with a CUDA compatible GPU. How to install CUDA + CuDNN:<br>
 >- Install CUDA 11 (ideally 11.3) [https://developer.nvidia.com/cuda-downloads or https://developer.nvidia.com/cuda-11-3-1-download-archive]<br>
 >- Install CUDNN [https://docs.nvidia.com/deeplearning/cudnn/install-guide/index.html]<br>
 >
->*OR see [https://pytorch.org/get-started/locally/] for other versions*<br>
+>OR see [https://pytorch.org/get-started/locally/] for other versions<br>
 
 ### 5. Install torch-sparse<br>
 **`pip install torch-scatter PyTorch Sparse -f https://data.pyg.org/whl/torch-1.12.1+${CUDA}.html`**
->*See here for help and details: [https://github.com/rusty1s/pytorch_sparse]<br>
->*If you get errors about GCC version, make sure you have version >=5.4.0. Check with `gcc --version`. On some Linux servers (like Harvard's O2 server), you may need to run `module load gcc/9.2.0` or similar.*<br>
+>See here for help and details: [https://github.com/rusty1s/pytorch_sparse]<br>
+>If you get errors about GCC version, make sure you have version >=5.4.0. Check with `gcc --version`. On some Linux servers (like Harvard's O2 server), you may need to run `module load gcc/9.2.0` or similar.<br>
 
 ### 6. Install various dependencies<br>
 **`pip install -r requirements.txt`**
