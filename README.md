@@ -21,14 +21,16 @@ TODO:
 Installation
 ------------
 
-`git clone https://github.com/RichieHakim/ROICaT` \
-`cd path/to/ROICaT/directory`
+### 1. Clone the repo
+**`git clone https://github.com/RichieHakim/ROICaT`**<br>
+**`cd path/to/ROICaT/directory`**<br>
 
-`conda update -n base -c defaults conda` \
-`conda create -n ROICaT python=3.9` \
-`conda activate ROICaT` 
+### 2. Create a conda environment
+**`conda update -n base -c defaults conda`**<br>
+**`conda create -n ROICaT python=3.9`**<br>
+**`conda activate ROICaT`**<br>
 
-Upgrade pip. \
+Upgrade pip
 If using Windows, then use: `python -m pip install --upgrade pip` \
 `pip install --upgrade pip`
 
