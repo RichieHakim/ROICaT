@@ -1,5 +1,5 @@
 # ROICaT
-Region Of Interest Classification and Tracking
+**R**egion **O**f **I**nterest **C**lassification **a**nd **T**racking
 
 A simple to use pipeline designed for classifying images of cells and tracking them across imaging planes/sessions.
 Currently designed to use with Suite2p output data (stat.npy and ops.npy files).
