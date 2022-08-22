@@ -21,7 +21,7 @@ TODO:
 Installation
 ------------
 
-`git clone url.to.repo` \
+`git clone https://github.com/RichieHakim/ROICaT` \
 `cd path/to/ROICaT/directory`
 
 `conda update -n base -c defaults conda` \
