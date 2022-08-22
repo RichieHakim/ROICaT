@@ -32,7 +32,7 @@ Upgrade pip. \
 If using Windows, then use: `python -m pip install --upgrade pip` \
 `pip install --upgrade pip`
 
-**Install PyTorch.**<br>
+**Install PyTorch.**
 If possible, install on a computer with a CUDA compatible GPU: 
     - Install CUDA 11 (ideally 11.3) [https://developer.nvidia.com/cuda-downloads or https://developer.nvidia.com/cuda-11-3-1-download-archive] 
     - Install CUDNN [https://docs.nvidia.com/deeplearning/cudnn/install-guide/index.html]. \n
