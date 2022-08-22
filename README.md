@@ -30,22 +30,21 @@ Installation
 **`conda create -n ROICaT python=3.9`**<br>
 **`conda activate ROICaT`**<br>
 
-Upgrade pip
-If using Windows, then use: `python -m pip install --upgrade pip` \
+### 3. Upgrade pip
 `pip install --upgrade pip`
+>*If using Windows, then use: `python -m pip install --upgrade pip`*<br>
 
-**Install PyTorch.**<br>
-**`pip install torch==1.12.1+cu113 torchvision==0.13.1+cu113 torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cu113`**
+### 4. Install PyTorch<br>
+**`pip install torch==1.12.1+cu113 torchvision==0.13.1+cu113 torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cu113`**<br>
 >*If possible, install on a computer with a CUDA compatible GPU:*<br>
->- Install CUDA 11 (ideally 11.3) [https://developer.nvidia.com/cuda-downloads or https://developer.nvidia.com/cuda-11-3-1-download-archive]
->- Install CUDNN [https://docs.nvidia.com/deeplearning/cudnn/install-guide/index.html].
->
+>- Install CUDA 11 (ideally 11.3) [https://developer.nvidia.com/cuda-downloads or https://developer.nvidia.com/cuda-11-3-1-download-archive]<br>
+>- Install CUDNN [https://docs.nvidia.com/deeplearning/cudnn/install-guide/index.html]<br>
 >*If you don't have a GPU+CUDA, use `pip install torch==1.12.1+cpu torchvision==0.13.1+cpu torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cpu`*<br>
 >*OR see [https://pytorch.org/get-started/locally/] for other versions*<br>
 
-`pip install -r requirements.txt`
+### 5. Install torch_sparse<br>
+**`pip install torch-scatter torch-sparse -f https://data.pyg.org/whl/torch-1.12.1+${CUDA}.html`**
+>*If you get errors about GCC version, make sure you have version >=5.4.0. Check with `gcc --version`. On some Linux servers [like Harvard's O2 server], you may need to run `module load gcc/9.2.0` or similar.*<br>
 
-Install torch_sparse. \
-If you get errors about GCC version, make sure you have version >=5.4.0. Check with `gcc --version`. On some Linux servers [like Harvard's O2 server], you may need to run `module load gcc/9.2.0` or similar.) \
-`pip install torch-scatter torch-sparse -f https://data.pyg.org/whl/torch-1.12.1+${CUDA}.html`
-```
+### 6. Install various dependencies<br>
+**`pip install -r requirements.txt`**
