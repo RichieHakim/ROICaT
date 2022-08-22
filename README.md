@@ -21,12 +21,12 @@ TODO:
 Installation
 ------------
 
-`git clone url.to.repo`
-`cd path/to/ROICaT/directory`
+`git clone url.to.repo` \
+`cd path/to/ROICaT/directory` \
 
-`conda update -n base -c defaults conda`
-`conda create -n ROICaT python=3.9`
-`conda activate ROICaT`
+`conda update -n base -c defaults conda` \
+`conda create -n ROICaT python=3.9` \
+`conda activate ROICaT` \
 
 Upgrade pip. 
 If using Windows, then use: `python -m pip install --upgrade pip`
