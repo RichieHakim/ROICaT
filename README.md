@@ -39,7 +39,7 @@ If using Windows, then use: `python -m pip install --upgrade pip` \
 
 *If you don't have a GPU+CUDA, use `pip install torch==1.12.1+cpu torchvision==0.13.1+cpu torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cpu`*<br>
 *OR see [https://pytorch.org/get-started/locally/] for other versions*<br>
-`pip install torch==1.12.1+cu113 torchvision==0.13.1+cu113 torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cu113`
+**`pip install torch==1.12.1+cu113 torchvision==0.13.1+cu113 torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cu113`**
 
 `pip install -r requirements.txt`
 
