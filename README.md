@@ -57,8 +57,8 @@ For installation on a computer with only CPU, use the following command:<br>
 >If you get errors about GCC version, make sure you have version >=5.4.0. Check with `gcc --version`. On some Linux servers (like Harvard's O2 server), you may need to run `module load gcc/9.2.0` or similar.<br>
 
 ### 6. Install various dependencies<br>
-Make sure current directory is the ROICaT repo directory (`cd path/to/ROICaT/directory`)<br>
 **`pip install -r requirements.txt`**<br>
+>Make sure current directory is the ROICaT repo directory (`cd path/to/ROICaT/directory`)<br>
 
 ### 7. Use ROICaT<br>
 - Run a Jupyter Notebook: [Notebooks](https://github.com/RichieHakim/ROICaT/tree/main/notebooks)<br>
