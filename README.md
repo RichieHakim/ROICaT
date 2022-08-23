@@ -9,7 +9,7 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 - **Classification:** The feature vectors can then be used to classify ROIs:
     - A simple classifier can be trained using user supplied labeled data (e.g. an array of images of ROIs and a corresponding array of labels for each ROI).
     - Alternatively, classification can be done by projecting the feature vectors into a lower-dimensional space using UMAP and then simply circling the region of space to classify the ROIs.
-- Tracking: The feature vectors can be combined with information about the position of the ROIs to track the ROIs across imaging sessions/planes.
+- **Tracking**: The feature vectors can be combined with information about the position of the ROIs to track the ROIs across imaging sessions/planes.
 
 
 Installation
