@@ -7,7 +7,7 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 ***Ways to use ROICaT:***
 - **Easy:** Try out ROICaT on Google Colab: [TODO: Link]
 - **Intermediate:** Run it on your own computer. See [Installation](#Installation) for how to install.
-    - Using provided Jupyter Notebook(s) [Notebooks](https://github.com/RichieHakim/ROICaT/tree/main/notebooks).
+    - Using provided Jupyter Notebook(s): [Notebooks](https://github.com/RichieHakim/ROICaT/tree/main/notebooks).
     - Using command line calls. See [TODO: link] for details.
 
 - **Advanced:** Train a new ROInet model using the provided Jupyter Notebook [TODO: link]. Or contribute to the code base! This is a big collaborative effort, so please feel free to send a pull request or open an issue.
