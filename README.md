@@ -1,12 +1,12 @@
 # ROICaT
 **R**egion **O**f **I**nterest **C**lassification **a**nd **T**racking
 
-A [hopefully] simple-to-use package for classifying images of cells and tracking them across imaging sessions/planes.
+A [hopefully] simple-to-use Python package for classifying images of cells and tracking them across imaging sessions/planes.
 Currently designed to be used with Suite2p output data (stat.npy and ops.npy files).
 
-How it works:
-- Pass ROIs through ROInet: There is a neural network that takes in images of the extracted ROIs (from the output of Suite2p or CaImAn) and outputs a feature vector for each image describing what the ROI looks like.
-- Classification: The feature vectors can then be used to classify ROIs:
+***How it works:***
+- **Pass ROIs through ROInet:** There is a neural network that takes in images of the extracted ROIs (from the output of Suite2p or CaImAn) and outputs a feature vector for each image describing what the ROI looks like.
+- **Classification:** The feature vectors can then be used to classify ROIs:
     - A simple classifier can be trained using user supplied labeled data (e.g. an array of images of ROIs and a corresponding array of labels for each ROI).
     - Alternatively, classification can be done by projecting the feature vectors into a lower-dimensional space using UMAP and then simply circling the region of space to classify the ROIs.
 - Tracking: The feature vectors can be combined with information about the position of the ROIs to track the ROIs across imaging sessions/planes.
@@ -30,7 +30,7 @@ Installation
 **`conda activate ROICaT`**<br>
 
 ### 3. Upgrade pip
-`pip install --upgrade pip`
+**`pip install --upgrade pip`**<br>
 >If using Windows, then use: `python -m pip install --upgrade pip`<br>
 
 ### 4. Install PyTorch<br>
