@@ -17,8 +17,8 @@ Installation
 
 ### Requirements
 - Anaconda: https://www.anaconda.com/distribution/ or Miniconda: https://docs.conda.io/en/latest/miniconda.html<br>
-- GCC >= 5.4.0, ideally == 9.2.0. Check with `gcc --version`. On some Linux servers (like Harvard's O2 server), you may need to run `module load gcc/9.2.0` or similar.<br>
-- For GPU support, you need to install the relevant CUDA toolkit. Currently, ROICaT supports CUDA 11.x (ideally 11.3): https://developer.nvidia.com/cuda-toolkit. On some Linux servers (like Harvard's O2 server), you may need to run `module load cuda/11.x`. CUDA has some intercompatibility between 11.x versions, so loading/installing v11.2 or similar is likely to work fine.<br>
+- GCC >= 5.4.0, ideally == 9.2.0. Google how to do this on your operating system. For unix/linux: check with `gcc --version`. On some Linux servers (like Harvard's O2 server), you may need to run `module load gcc/9.2.0` or similar.<br>
+- For GPU support, you need to install the relevant CUDA toolkit. Using a GPU is not necessary, but can improve speeds on large datasets by 10x. Currently, ROICaT supports CUDA 11.x (ideally 11.3): https://developer.nvidia.com/cuda-toolkit. On some Linux servers (like Harvard's O2 server), you may need to run `module load cuda/11.x` where `x` is an available subversion on your server. CUDA is currently built to be intercompatible between 11.x subversions, so loading/installing something like 11.2 or similar is likely to work fine.<br>
 
 ### 1. Clone the repo
 **`git clone https://github.com/RichieHakim/ROICaT`**<br>
