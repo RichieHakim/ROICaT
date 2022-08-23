@@ -49,7 +49,7 @@ For installation on a computer with a GPU + CUDA(11.x, ideally 11.3) + CuDNN, us
 **`pip install torch-scatter torch-sparse -f https://data.pyg.org/whl/torch-1.12.1+113.html`**
 
 For installation on a computer with only CPU, use the following command:<br>
-**`pip install torch-scatter torch-sparse -f https://data.pyg.org/whl/torch-1.11.0+cpu.html`**
+`pip install torch-scatter torch-sparse -f https://data.pyg.org/whl/torch-1.11.0+cpu.html`
 Note: This is very slow. It needs to compile a large amount of C code. May take around 20 minutes.
 >See here for help and details: [https://github.com/rusty1s/pytorch_sparse]<br>
 >If you get errors about GCC version, make sure you have version >=5.4.0. Check with `gcc --version`. On some Linux servers (like Harvard's O2 server), you may need to run `module load gcc/9.2.0` or similar.<br>
