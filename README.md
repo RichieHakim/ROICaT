@@ -59,6 +59,10 @@ For installation on a computer with only CPU, use the following command:<br>
 ### 6. Install various dependencies<br>
 **`pip install -r requirements.txt`**<br>
 
+### 7. Use ROICaT<br>
+- Run a Jupyter Notebook: [TODO: link]<br>
+- Make a parameter file and run in command line: [TODO: link]<br>
+
 -------------
 
 ***General workflow:***
