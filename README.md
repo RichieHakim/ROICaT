@@ -74,6 +74,7 @@ For installation on a computer with only CPU, use the following command:<br>
 - add tracking to repo
 - add classification to repo
 - unify and refactor backend
+- make better installation process (setup.py or PyPi package)
 - add CaImAn support
 - integration tests
 - make demo notebooks
