@@ -34,29 +34,18 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 **`pip install --upgrade pip`**<br>
 >If using Windows, then use: `python -m pip install --upgrade pip`<br>
 
-### 4. Install PyTorch<br>
-Recommended: Installation on a computer with a GPU. Use the following command:<br>
-**`pip install torch==1.12.1+cu113 torchvision==0.13.1+cu113 torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cu113`**<br>
+### 4. Install ROICaT (choose either 4A or 4B)
+#### 4A. Install ROICaT with GPU support (recommended)<br>
+**`pip install -r requirements_GPU.txt`**<br>
 
-For installation on a computer with only CPU, use the following command:<br>
-`pip install torch==1.12.1+cpu torchvision==0.13.1+cpu torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cpu`<br>
+#### 4B. Install ROICaT with only CPU support<br>
+**`pip install -r requirements_CPU_only.txt`**<br>
 
-### 5. Install PyTorch Sparse<br>
-Recommended: Installation on a computer with a GPU. Use the following command:<br>
-**`pip install torch-scatter torch-sparse -f https://data.pyg.org/whl/torch-1.12.1+113.html`**
-
-For installation on a computer with only CPU, use the following command:<br>
-`pip install torch-scatter torch-sparse -f https://data.pyg.org/whl/torch-1.11.0+cpu.html`<br>
-
->Note: This is slow. It needs to compile a large amount of C code. May take around 20 minutes.<br>
->See here for help and details: [https://github.com/rusty1s/pytorch_sparse]<br>
+>Make sure current directory is the ROICaT repo directory (`cd path/to/ROICaT/directory`)<br>
+>Note: This step is slow. It needs to compile a large amount of C code. May take around 20 minutes.<br>
 >If you get errors about GCC version, make sure you have version >=5.4.0. Check with `gcc --version`. On some Linux servers (like Harvard's O2 server), you may need to run `module load gcc/9.2.0` or similar.<br>
 
-### 6. Install various dependencies<br>
-**`pip install -r requirements.txt`**<br>
->Make sure current directory is the ROICaT repo directory (`cd path/to/ROICaT/directory`)<br>
-
-### 7. Use ROICaT<br>
+### 5. Use ROICaT<br>
 - Run a Jupyter Notebook: [Notebooks](https://github.com/RichieHakim/ROICaT/tree/main/notebooks)<br>
 - Make a parameter file and run in command line: `python -m ROICaT`. See [TODO: link to how-to] for details.<br>
 
