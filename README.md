@@ -18,8 +18,8 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 ### Requirements
 - [Anaconda](https://www.anaconda.com/distribution/) or [Miniconda](https://docs.conda.io/en/latest/miniconda.html)<br>
 - GCC >= 5.4.0, ideally == 9.2.0. Google how to do this on your operating system. For unix/linux: check with `gcc --version`.<br>
-- For GPU support, you need to install the relevant CUDA toolkit. Using a GPU is not necessary, but it can improve speeds on large datasets by 10x. Currently, ROICaT supports CUDA 11.x (ideally 11.3): https://developer.nvidia.com/cuda-toolkit. CUDA is currently built to be intercompatible between 11.x subversions, so loading/installing something like 11.2 or similar is likely to work fine. 
-- On some Linux servers (like Harvard's O2 server), you may need to load modules instead of installing. To load conda, gcc, and cuda, try: `module load conda3/latest gcc/9.2.0 cuda/11.2` or similar.<br>
+- For GPU support, you just need a CUDA compatible NVIDIA GPU and the relevant drivers. 
+- On some Linux servers (like Harvard's O2 server), you may need to load modules instead of installing. To load conda, gcc, try: `module load conda3/latest gcc/9.2.0` or similar.<br>
 
 ### 1. Clone the repo
 **`git clone https://github.com/RichieHakim/ROICaT`**<br>
@@ -35,25 +35,20 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 >If using Windows, then use: `python -m pip install --upgrade pip`<br>
 
 ### 4. Install PyTorch<br>
-For installation on a computer with a GPU + CUDA(11.x, ideally 11.3) + CUDNN, use the following command:<br>
+Recommended: Installation on a computer with a GPU. Use the following command:<br>
 **`pip install torch==1.12.1+cu113 torchvision==0.13.1+cu113 torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cu113`**<br>
 
 For installation on a computer with only CPU, use the following command:<br>
 `pip install torch==1.12.1+cpu torchvision==0.13.1+cpu torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cpu`<br>
->Ideally, try to install on a computer with a CUDA compatible GPU. How to install CUDA + CUDNN:<br>
->- Install CUDA 11 (ideally 11.3) [https://developer.nvidia.com/cuda-downloads or https://developer.nvidia.com/cuda-11-3-1-download-archive]<br>
->- Install CUDNN [https://docs.nvidia.com/deeplearning/cudnn/install-guide/index.html]<br>
->
->OR see [https://pytorch.org/get-started/locally/] for other versions<br>
 
 ### 5. Install PyTorch Sparse<br>
-For installation on a computer with a GPU + CUDA(11.x, ideally 11.3) + CUDNN, use the following command:<br>
+Recommended: Installation on a computer with a GPU. Use the following command:<br>
 **`pip install torch-scatter torch-sparse -f https://data.pyg.org/whl/torch-1.12.1+113.html`**
 
 For installation on a computer with only CPU, use the following command:<br>
 `pip install torch-scatter torch-sparse -f https://data.pyg.org/whl/torch-1.11.0+cpu.html`<br>
 
->Note: This is very slow. It needs to compile a large amount of C code. May take around 20 minutes.<br>
+>Note: This is slow. It needs to compile a large amount of C code. May take around 20 minutes.<br>
 >See here for help and details: [https://github.com/rusty1s/pytorch_sparse]<br>
 >If you get errors about GCC version, make sure you have version >=5.4.0. Check with `gcc --version`. On some Linux servers (like Harvard's O2 server), you may need to run `module load gcc/9.2.0` or similar.<br>
 
