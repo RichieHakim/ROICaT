@@ -9,13 +9,6 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 - **Intermediate:** Run ROICaT on your own computer using the provided Jupyter Notebook(s) [TODO: link]. See [TODO: Installation intrapage link] to install and [TODO: Demos intrapage link] for a demo on how to use it.
 - **Advanced:** Train a new ROInet model using the provided Jupyter Notebook [TODO: link]. Or contribute to the code base! This is a big collaborative effort, so please feel free to send a pull request or open an issue.
 
-***General workflow:***
-- **Pass ROIs through ROInet:** Images of the ROIs are passed through a neural network and outputs a feature vector for each image describing what the ROI looks like.
-- **Classification:** The feature vectors can then be used to classify ROIs:
-    - A simple classifier can be trained using user supplied labeled data (e.g. an array of images of ROIs and a corresponding array of labels for each ROI).
-    - Alternatively, classification can be done by projecting the feature vectors into a lower-dimensional space using UMAP and then simply circling the region of space to classify the ROIs.
-- **Tracking**: The feature vectors can be combined with information about the position of the ROIs to track the ROIs across imaging sessions/planes.
-
 
 Installation
 ------------
@@ -64,6 +57,14 @@ For installation on a computer with only CPU, use the following command:<br>
 ### 6. Install various dependencies<br>
 **`pip install -r requirements.txt`**<br>
 
+-------------
+
+***General workflow:***
+- **Pass ROIs through ROInet:** Images of the ROIs are passed through a neural network and outputs a feature vector for each image describing what the ROI looks like.
+- **Classification:** The feature vectors can then be used to classify ROIs:
+    - A simple classifier can be trained using user supplied labeled data (e.g. an array of images of ROIs and a corresponding array of labels for each ROI).
+    - Alternatively, classification can be done by projecting the feature vectors into a lower-dimensional space using UMAP and then simply circling the region of space to classify the ROIs.
+- **Tracking**: The feature vectors can be combined with information about the position of the ROIs to track the ROIs across imaging sessions/planes.
 
 
 -------------
