@@ -22,7 +22,8 @@ Installation
 ------------
 
 ### Requirements
-GCC >= 5.4.0, ideally == 9.2.0. Check with `gcc --version`. On some Linux servers (like Harvard's O2 server), you may need to run `module load gcc/9.2.0` or similar.
+- GCC >= 5.4.0, ideally == 9.2.0. Check with `gcc --version`. On some Linux servers (like Harvard's O2 server), you may need to run `module load gcc/9.2.0` or similar.
+- For GPU support, you need to install the relevant CUDA toolkit. Currently, ROICaT supports CUDA 11.x (ideally 11.3): https://developer.nvidia.com/cuda-toolkit. On some Linux servers (like Harvard's O2 server), you may need to run `module load cuda/11.x`. CUDA has some intercompatibility between 11.x versions, so loading/installing v11.2 or similar is likely to work fine.
 
 ### 1. Clone the repo
 **`git clone https://github.com/RichieHakim/ROICaT`**<br>
