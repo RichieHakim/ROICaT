@@ -2,15 +2,15 @@
 **R**egion **O**f **I**nterest **C**lassification **a**nd **T**racking
 
 A [hopefully] simple-to-use Python package for classifying images of cells and tracking them across imaging sessions/planes.
-Currently designed to be used with Suite2p output data (stat.npy and ops.npy files).
+Currently designed to be used with Suite2p output data (stat.npy and ops.npy files), but any image data can be used (see [TODO: link] for details on using non-standard data).
 
 ***Ways to use ROICaT:***
 - **Easy:** Try out ROICaT on Google Colab: [TODO: Link]
 - **Intermediate:** Run ROICaT on your own computer using the provided Jupyter Notebook(s) [TODO: link]. See [TODO: Installation intrapage link] to install and [TODO: Demos intrapage link] for a demo on how to use it.
-- **Advanced:** Train a model using the provided Jupyter Notebook [TODO: link].
+- **Advanced:** Train a new ROInet model using the provided Jupyter Notebook [TODO: link]. Or contribute to the code base! This is a big collaborative effort, so please feel free to send a pull request or open an issue.
 
-***Workflow:***
-- **Pass ROIs through ROInet:** There is a neural network that takes in images of the extracted ROIs (from the output of Suite2p or CaImAn) and outputs a feature vector for each image describing what the ROI looks like.
+***General workflow:***
+- **Pass ROIs through ROInet:** Images of the ROIs are passed through a neural network and outputs a feature vector for each image describing what the ROI looks like.
 - **Classification:** The feature vectors can then be used to classify ROIs:
     - A simple classifier can be trained using user supplied labeled data (e.g. an array of images of ROIs and a corresponding array of labels for each ROI).
     - Alternatively, classification can be done by projecting the feature vectors into a lower-dimensional space using UMAP and then simply circling the region of space to classify the ROIs.
