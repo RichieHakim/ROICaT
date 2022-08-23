@@ -22,7 +22,7 @@ Installation
 ------------
 
 ### Requirements
-GCC >= 5.4.0, ideally == 9.2.0. Check with `gcc --version`. 
+GCC >= 5.4.0, ideally == 9.2.0. Check with `gcc --version`. On some Linux servers (like Harvard's O2 server), you may need to run `module load gcc/9.2.0` or similar.
 
 ### 1. Clone the repo
 **`git clone https://github.com/RichieHakim/ROICaT`**<br>
