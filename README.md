@@ -22,7 +22,7 @@ Installation
 ------------
 
 ### Requirements
-GCC >= 5.4.0, ideally == 9.2.0
+GCC >= 5.4.0, ideally == 9.2.0. Check with `gcc --version`. 
 
 ### 1. Clone the repo
 **`git clone https://github.com/RichieHakim/ROICaT`**<br>
