@@ -36,19 +36,15 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 
 ### 4. Install dependencies (choose either 4A or 4B)
 >Make sure current directory is the ROICaT repo directory (`cd path/to/ROICaT/directory`)<br>
+>Note: It is critical that if you are installing the GPU/CUDA version, you do it in the environment with CUDA after installing PyTorch with CUDA. If you are on a server, it might be necessary to load CUDA modules first using something like `module load gcc/9.2.0 cuda/11.2`.<br>
+>Note: This step is slow. It needs to compile a large amount of C code. May take around 20 minutes.<br>
+>If you get errors about GCC version, make sure you have version >=5.4.0. Check with `gcc --version`. On some Linux servers (like Harvard's O2 server), you may need to run `module load gcc/9.2.0` or similar.<br>
 
 #### 4A. Install dependencies with GPU support (recommended)<br>
 **`pip install -r requirements_GPU.txt`**<br>
 
 #### 4B. Install dependencies with only CPU support<br>
 **`pip install -r requirements_CPU_only.txt`**<br>
-
-### 5. Install PyTorch Sparse<br>
->Note: It is critical that if you are installing the GPU/CUDA version, you do it in the environment with CUDA after installing PyTorch with CUDA. If you are on a server, it might be necessary to load CUDA modules first using something like `module load gcc/9.2.0 cuda/11.2`.<br>
->Note: This step is slow. It needs to compile a large amount of C code. May take around 20 minutes.<br>
->If you get errors about GCC version, make sure you have version >=5.4.0. Check with `gcc --version`. On some Linux servers (like Harvard's O2 server), you may need to run `module load gcc/9.2.0` or similar.<br>
-**`pip install torch-scatter torch-sparse -f https://data.pyg.org/whl/torch-1.12.1+113.html`**<br>
-
 
 ### 5. Use ROICaT<br>
 - Run a Jupyter Notebook: [Notebooks](https://github.com/RichieHakim/ROICaT/tree/main/notebooks)<br>

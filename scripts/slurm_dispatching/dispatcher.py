@@ -222,7 +222,7 @@ date
 echo "loading modules"
 module load gcc/9.2.0 cuda/11.2
 echo "activating environment"
-source activate roicat3
+source activate ROICaT
 echo "starting job"
 python "$@"
 """ for path in paths_log]

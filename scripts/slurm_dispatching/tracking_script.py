@@ -198,8 +198,8 @@ dir_allS2pFolders = [dir_allOuterFolders / folder for folder in folders_allSessi
 pathSuffixToStat = params['paths']['pathSuffixToStat']
 pathSuffixToOps = params['paths']['pathSuffixToOps']
 
-paths_allStat = np.array([path / pathSuffixToStat for path in dir_allS2pFolders])[:2]
-paths_allOps  = np.array([path / pathSuffixToOps for path in dir_allS2pFolders])[:2]
+paths_allStat = np.array([path / pathSuffixToStat for path in dir_allS2pFolders])[:]
+paths_allOps  = np.array([path / pathSuffixToOps for path in dir_allS2pFolders])[:]
 
 print(f'folder names of all sessions: \n{folders_allSessions}')
 print(f'paths to all stat files: \n{paths_allStat}')
