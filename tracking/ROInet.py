@@ -137,8 +137,6 @@ class ROInet_embedder:
         ROI_images,
         # goal_frac=0.1929,
         um_per_pixel=1.0,
-        ptile_norm=90,
-        scale_norm=0.6,
         pref_plot=False,
         batchSize_dataloader=8,
         pinMemory_dataloader=True,
@@ -156,21 +154,9 @@ class ROInet_embedder:
                 List of arrays where each array is from a session,
                  and each array is of shape (n_rois, height, width)
                 This can be derived using the data_importing module.
-            # goal_frac (int):
-            #     The goal frac of non-zero pixels in an ROI image.
-            #     This value should be similar to the value used when 
-            #      training the network.
             um_per_pixel (float):
                 The number of microns per pixel. Used to rescale the
                  ROI images to the same size as the network input.
-            ptile_norm (float):
-                The percentile to use for the normalization.
-                This value should be similar to the value used when 
-                 training the network.
-            scale_norm (float):
-                The scale to use for the normalization.
-                This value fixes any scaling issues due to weird 
-                 ROI images.
             pref_plot (bool):
                 Whether to plot the sizes of the ROI images before
                  and after normalization.
@@ -193,7 +179,7 @@ class ROInet_embedder:
             numWorkers_dataloader = mp.cpu_count()
 
         print('Starting: resizing ROIs') if self._verbose else None
-        sf_ptile = np.array([np.percentile(np.mean(sf>0, axis=(1,2)), ptile_norm) for sf in tqdm(ROI_images)]).mean()
+        # sf_ptile = np.array([np.percentile(np.mean(sf>0, axis=(1,2)), ptile_norm) for sf in tqdm(ROI_images)]).mean()
         # scale_forRS = (goal_frac/sf_ptile)**scale_norm
         scale_forRS = 2.7 / um_per_pixel
         sf_rs = [np.stack([resize_affine(img, scale=scale_forRS, clamp_range=True) for img in sf], axis=0) for ii, sf in enumerate(tqdm(ROI_images))]
