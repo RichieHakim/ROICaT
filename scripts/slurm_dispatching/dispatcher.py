@@ -29,6 +29,7 @@ name_job = args[3]
 name_slurm = args[4]
 dir_data = args[5]
 plane_name = args[6]
+dir_ROInet_networkFiles = args[7]
 
 print(path_selfScript, dir_save, path_script, name_job, dir_data)
 
@@ -78,7 +79,7 @@ params_template = {
     },
     'ROInet': {
         'device': 'cuda:0',  ## default: 'cuda:0'. Device to use for ROInet. Recommend using a GPU.
-        'dir_networkFiles': dir_save,  ## local directory where network files are stored
+        'dir_networkFiles': dir_ROInet_networkFiles,  ## local directory where network files are stored
         'download_from_gDrive': 'check_local_first',  ## default: 'check_local_first'. Whether to download the network files from Google Drive or to use the local files.
         'gDriveID': '1FCcPZUuOR7xG-hdO6Ei6mx8YnKysVsa8',  ## default: '1FCcPZUuOR7xG-hdO6Ei6mx8YnKysVsa8'. Google Drive ID of the network files.
         'verbose': True,  ## default: True. Whether to print out ROInet information.
