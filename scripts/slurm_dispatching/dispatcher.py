@@ -28,6 +28,7 @@ path_script = args[2]
 name_job = args[3]
 name_slurm = args[4]
 dir_data = args[5]
+plane_name = args[6]
 
 print(path_selfScript, dir_save, path_script, name_job, dir_data)
 
@@ -50,8 +51,9 @@ params_template = {
     'paths': {
         'dir_github': dir_github,  ## directory where ROICat is
         'dir_allOuterFolders': dir_data,  ## directory where directories containing below 'pathSuffixTo...' are
-        'pathSuffixToStat': 'plane0/stat.npy',  ## path suffix to where the stat.npy file is
-        'pathSuffixToOps': 'plane0/ops.npy',  ## path suffix to where the ops.npy file is
+        'folderName_inner': plane_name,
+        'pathSuffixToStat': 'stat.npy',  ## path suffix to where the stat.npy file is
+        'pathSuffixToOps':  'ops.npy',  ## path suffix to where the ops.npy file is
     },
     'importing': {
         'data_verbose': True,  ## default: True. Whether to print out data importing information
@@ -215,7 +217,7 @@ sbatch_config_list = \
 #SBATCH -c 8
 #SBATCH -n 1
 #SBATCH --mem=64GB
-#SBATCH --time=0-00:20:00
+#SBATCH --time=0-01:00:00
 unset XDG_RUNTIME_DIR
 cd /n/data1/hms/neurobio/sabatini/rich/
 date
