@@ -1,6 +1,9 @@
 # ROICaT
 **R**egion **O**f **I**nterest **C**lassification **a**nd **T**racking
 
+### !!! REPO UNDER CONSTRUCTION !!!
+### to help with development or beta test releases, please contact:  r* haki$ m @*g.$ harvard .edu  without the spaces, *, and $
+
 A [hopefully] simple-to-use Python package for classifying images of cells and tracking them across imaging sessions/planes.
 Currently designed to be used with Suite2p output data (stat.npy and ops.npy files), but any image data can be used (see [TODO: link] for details on using non-standard data).
 
@@ -36,8 +39,8 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 
 ### 4. Install dependencies (choose either 4A or 4B)
 >Make sure current directory is the ROICaT repo directory (`cd path/to/ROICaT/directory`)<br>
->Note: It is critical that if you are installing the GPU/CUDA version, you do it in the environment with CUDA after installing PyTorch with CUDA. If you are on a server, it might be necessary to load CUDA modules first using something like `module load gcc/9.2.0 cuda/11.2`.<br>
->Note: This step is slow. It needs to compile a large amount of C code. May take around 20 minutes.<br>
+>Note: If you are on a server, it might be necessary to load CUDA modules first using something like `module load gcc/9.2.0 cuda/11.2`.<br>
+>Note: This step is slow. It needs to compile a large amount of C code the first time you run it. May take around 20 minutes.<br>
 >If you get errors about GCC version, make sure you have version >=5.4.0. Check with `gcc --version`. On some Linux servers (like Harvard's O2 server), you may need to run `module load gcc/9.2.0` or similar.<br>
 
 #### 4A. Install dependencies with GPU support (recommended)<br>
