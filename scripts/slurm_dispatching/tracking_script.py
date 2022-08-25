@@ -21,14 +21,14 @@ shutil.copy2(path_script, str(Path(dir_save) / Path(path_script).name));
 
 # params = {
 #     'paths': {
-#         'dir_github': r'/media/rich/Home_Linux_partition/github_repos/',  ## directory where ROICat is
+#         'dir_github': dir_github,  ## directory where ROICat is
 #         'dir_allOuterFolders': r"/media/rich/bigSSD/other lab data/Harnett_lab/ROI_Tracking/Vincent_Valerio/4th_email/AllStatFiles/rbp16",  ## directory where directories containing below 'pathSuffixTo...' are
 #         'pathSuffixToStat': 'plane0/stat.npy',  ## path suffix to where the stat.npy file is
 #         'pathSuffixToOps': 'plane0/ops.npy',  ## path suffix to where the ops.npy file is
 #     },
 #     'importing': {
 #         'data_verbose': True,  ## default: True. Whether to print out data importing information
-#         'out_height_width': [36, 36],  ## default: [36,36]. Height and width of output images (note that this must agree with the input of the ROInet input)
+#         'out_height_width': [72, 72],  ## default: [72, 72]. Height and width of output images (note that this must agree with the input of the ROInet input)
 #         'max_footprint_width': 1025,  ## default: 1025. Maximum length of a spatial footprint. If you get an error during importing, try increasing this value.
 #         'type_meanImg': 'meanImgE',  ## default: 'meanImgE'. Type of mean image to use for normalization. This is just a field in the ops.npy file.
 #         'images': None,  ## default: None. Set to None if you want to use the images extracted from Suite2p
@@ -42,7 +42,7 @@ shutil.copy2(path_script, str(Path(dir_save) / Path(path_script).name));
 #         'normalize': True,  ## default: True. Whether to normalize the optical flow.
 #     },
 #     'blurring': {
-#         'kernel_halfWidth': 2.0,  ## default: 2.0. Half-width of the Gaussian kernel used for blurring. Use smaller values for smaller ROIs (dendrites) and larger values for larger ROIs (somata).
+#         'kernel_halfWidth': 1.4,  ## default: 2.0. Half-width of the Gaussian kernel used for blurring. Use smaller values for smaller ROIs (dendrites) and larger values for larger ROIs (somata).
 #         'device': 'cpu',  ## default: 'cpu'. Device to use for blurring. Recommend using 'cpu' even if you have a GPU.
 #         'plot_kernel': False,  ## default: False. Whether to plot the kernel used for blurring.
 #         'batch_size': 2000,  ## default: 2000. Number of images to use for each batch.
@@ -90,7 +90,7 @@ shutil.copy2(path_script, str(Path(dir_save) / Path(path_script).name));
 #         'cluster_silhouette_reduction_intra': 'mean',  ## default: 'mean'. Reduction method to use for intra-cluster silhouette.
 #         'cluster_silhouette_reduction_inter': 'max',  ## default: 'max'. Reduction method to use for inter-cluster silhouette.
 #         'n_workers': 8,  ## default: 8. Number of workers to use for similarity. WARNING, using many workers requires large memory requirement. Set to -1 to use all available workers.
-#         'power_clusterSize': 2,  ## default: 2. Used in calculating custom cluster score. This is the exponent applied to the number of ROIs in a cluster.
+#         'power_clusterSize': 1.3,  ## default: 2. Used in calculating custom cluster score. This is the exponent applied to the number of ROIs in a cluster.
 #         'power_clusterSilhouette': 1.5,  ## default: 1.5. Used in calculating custom cluster score. This is the exponent applied to the silhouette score of a cluster.
 #     },
 #     'clusterAssigner': {
@@ -111,8 +111,8 @@ shutil.copy2(path_script, str(Path(dir_save) / Path(path_script).name));
 #         'fracWeighted_goalFrac': 1.0,  ## default: 1.0. Goal fraction ROIs assigned to a cluster.
 #         'fracWeighted_sigSlope': 2,  ## default: 2. Slope to use for the sigmoid activation for the fracWeighted loss.
 #         'fracWeighted_sigCenter': 0.5,  ## default: 0.5. Center to use for the fracWeighted loss sigmoid.
-#         'fracWeight_penalty': 1e2,  ## default: 1e2. Penalty to use for the fracWeighted loss.
-#         'maskL1_penalty': 2e-4,  ## default: 2e-4. Penalty to use for the L1 loss applied to the number of non-zero clusters.
+#         'fracWeight_penalty': 1e3,  ## default: 1e2. Penalty to use for the fracWeighted loss.
+#         'maskL1_penalty': 4e-4,  ## default: 2e-4. Penalty to use for the L1 loss applied to the number of non-zero clusters.
 #         'tol_convergence': 1e-9,  ## default: 1e-9. Tolerance to use for convergence.
 #         'window_convergence': 50,  ## default: 50. Number of past iterations to use in calculating a smooth value for the loss derivative for convergence.
 #         'freqCheck_convergence': 50,  ## default: 50. Period between checking for convergence.
