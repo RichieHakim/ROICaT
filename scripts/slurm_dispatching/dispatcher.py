@@ -49,7 +49,7 @@ Path(dir_save).mkdir(parents=True, exist_ok=True)
 params_template = {
     'paths': {
         'dir_github': dir_github,  ## directory where ROICat is
-        'dir_allOuterFolders': r"/media/rich/bigSSD/other lab data/Harnett_lab/ROI_Tracking/Vincent_Valerio/4th_email/AllStatFiles/rbp16",  ## directory where directories containing below 'pathSuffixTo...' are
+        'dir_allOuterFolders': dir_data,  ## directory where directories containing below 'pathSuffixTo...' are
         'pathSuffixToStat': 'plane0/stat.npy',  ## path suffix to where the stat.npy file is
         'pathSuffixToOps': 'plane0/ops.npy',  ## path suffix to where the ops.npy file is
     },
@@ -217,8 +217,8 @@ sbatch_config_list = \
 #SBATCH --partition=gpu_requeue
 #SBATCH -c 8
 #SBATCH -n 1
-#SBATCH --mem=16GB
-#SBATCH --time=0-01:00:00
+#SBATCH --mem=64GB
+#SBATCH --time=0-00:20:00
 unset XDG_RUNTIME_DIR
 cd /n/data1/hms/neurobio/sabatini/rich/
 date

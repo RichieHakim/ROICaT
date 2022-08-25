@@ -160,7 +160,8 @@ print(f'Conda Environment: ' + os.environ['CONDA_DEFAULT_ENV'])
 
 import sys
 sys.path.append(params['paths']['dir_github'])
-from ROICaT.tracking import data_importing, visualization, alignment, blurring, helpers, ROInet, scatteringWaveletTransformer, similarity_graph, cluster_assignment
+# from ROICaT.tracking import data_importing, visualization, alignment, blurring, helpers, ROInet, scatteringWaveletTransformer, similarity_graph, cluster_assignment
+from ROICaT.tracking import data_importing, visualization, alignment, helpers, ROInet, scatteringWaveletTransformer, similarity_graph, cluster_assignment  ## sans blurring
 
 
 
@@ -255,22 +256,22 @@ aligner.register_ROIs(
 print(f'## Completed: Aligning FOVs')
 
 
-print(f'## Starting: Blurring FOVs')
-# Blur ROIs (optional)
-blurrer = blurring.ROI_Blurrer(
-    frame_shape=(data.FOV_height, data.FOV_width),
-    kernel_halfWidth=params['blurring']['kernel_halfWidth'],
-    device=params['blurring']['device'],
-    plot_kernel=params['blurring']['plot_kernel'],
-)
+# print(f'## Starting: Blurring FOVs')
+# # Blur ROIs (optional)
+# blurrer = blurring.ROI_Blurrer(
+#     frame_shape=(data.FOV_height, data.FOV_width),
+#     kernel_halfWidth=params['blurring']['kernel_halfWidth'],
+#     device=params['blurring']['device'],
+#     plot_kernel=params['blurring']['plot_kernel'],
+# )
 
-blurrer.blur_ROIs(
-    spatialFootprints=aligner.ROIs_aligned,
-    batch_size=params['blurring']['batch_size'],
-);
+# blurrer.blur_ROIs(
+#     spatialFootprints=aligner.ROIs_aligned,
+#     batch_size=params['blurring']['batch_size'],
+# );
 
-# visualization.display_toggle_image_stack(blurrer.get_ROIsBlurred_maxIntensityProjection())
-print(f'## Completed: Blurring FOVs')
+# # visualization.display_toggle_image_stack(blurrer.get_ROIsBlurred_maxIntensityProjection())
+# print(f'## Completed: Blurring FOVs')
 
 
 print(f'## Starting: Passing ROIs through ROInet')
@@ -343,7 +344,8 @@ sim = similarity_graph.ROI_graph(
 sim.visualize_blocks()
 
 sim.compute_similarity_blockwise(
-    spatialFootprints=blurrer.ROIs_blurred,
+    # spatialFootprints=blurrer.ROIs_blurred,
+    spatialFootprints=aligner.ROIs_aligned,
     features_NN=roinet.latents,
     features_SWT=swt.latents,
     ROI_session_bool=data.sessionID_concat,
