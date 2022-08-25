@@ -22,3 +22,4 @@ sparse==0.13.0
 spconv==2.1.22
 spconv_cu113==2.1.21
 tqdm==4.64.0
+jupyter
