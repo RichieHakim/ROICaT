@@ -154,15 +154,15 @@ import time
 import functools
 import multiprocessing as mp
 
+# check environment
+import os
+print(f'Conda Environment: ' + os.environ['CONDA_DEFAULT_ENV'])
 
 import sys
 sys.path.append(params['paths']['dir_github'])
 from ROICaT.tracking import data_importing, visualization, alignment, blurring, helpers, ROInet, scatteringWaveletTransformer, similarity_graph, cluster_assignment
 
 
-# check environment
-import os
-print(f'Conda Environment: ' + os.environ['CONDA_DEFAULT_ENV'])
 
 ## check Python version
 from platform import python_version
