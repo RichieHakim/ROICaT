@@ -220,7 +220,7 @@ unset XDG_RUNTIME_DIR
 cd /n/data1/hms/neurobio/sabatini/rich/
 date
 echo "loading modules"
-module load gcc/9.2.0
+module load gcc/9.2.0 cuda/11.2
 echo "activating environment"
 source activate ROICaT
 echo "starting job"
