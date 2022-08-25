@@ -1,8 +1,3 @@
-torch==1.12.1+cu113 
-torchvision==0.13.1+cu113 
-torchaudio==0.12.1 
---extra-index-url https://download.pytorch.org/whl/cu113
-
 gdown==4.5.1
 ipywidgets==7.7.1
 kymatio==0.2.1
@@ -19,3 +14,4 @@ spconv-cu113==2.1.21
 tqdm==4.64.0
 natsort
 jupyter
+paramiko
