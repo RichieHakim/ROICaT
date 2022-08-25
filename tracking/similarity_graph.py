@@ -184,7 +184,7 @@ class ROI_graph:
         cluster_idx_all = []
 
         print('Computing pairwise similarity between ROIs...') if self._verbose else None
-        for ii, block in tqdm(enumerate(self.blocks), total=len(self.blocks)):
+        for ii, block in tqdm(enumerate(self.blocks), total=len(self.blocks), mininterval=60):
             # if ii < 58:
             #     continue
             idxROI_block = np.where(self.sf_cat[:, self.idxPixels_block[ii]].sum(1) > 0)[0]
@@ -319,7 +319,7 @@ class ROI_graph:
             idx, 
             method_in=self._cluster_silhouette_reduction_intra_method,
             method_out=self._cluster_silhouette_reduction_inter_method,
-        ) for idx in tqdm(range(self.n_clusters))])
+        ) for idx in tqdm(range(self.n_clusters), mininterval=60)])
 
         print('Completed: Computing modified cluster silhouettes') if self._verbose else None
 

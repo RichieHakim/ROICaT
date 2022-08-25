@@ -182,7 +182,7 @@ class ROInet_embedder:
         # sf_ptile = np.array([np.percentile(np.mean(sf>0, axis=(1,2)), ptile_norm) for sf in tqdm(ROI_images)]).mean()
         # scale_forRS = (goal_frac/sf_ptile)**scale_norm
         scale_forRS = 2.7 / um_per_pixel
-        sf_rs = [np.stack([resize_affine(img, scale=scale_forRS, clamp_range=True) for img in sf], axis=0) for ii, sf in enumerate(tqdm(ROI_images))]
+        sf_rs = [np.stack([resize_affine(img, scale=scale_forRS, clamp_range=True) for img in sf], axis=0) for ii, sf in enumerate(tqdm(ROI_images, mininterval=60))]
 
         ROI_images_cat = np.concatenate(ROI_images, axis=0)
         ROI_images_rs = np.concatenate(sf_rs, axis=0)
@@ -253,7 +253,7 @@ class ROInet_embedder:
             raise Exception('dataloader not defined. Call generate_dataloader() first.')
 
         print(f'starting: running data through network')
-        self.latents = torch.cat([self.net(data[0][0].to(self._device)).detach() for data in tqdm(self.dataloader)], dim=0).cpu()
+        self.latents = torch.cat([self.net(data[0][0].to(self._device)).detach() for data in tqdm(self.dataloader, mininterval=60)], dim=0).cpu()
         print(f'completed: running data through network')
         return self.latents
 
