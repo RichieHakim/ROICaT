@@ -215,9 +215,9 @@ sbatch_config_list = \
 #SBATCH --output={path}
 #SBATCH --gres=gpu:rtx6000:1
 #SBATCH --partition=gpu_requeue
-#SBATCH -c 20
+#SBATCH -c 8
 #SBATCH -n 1
-#SBATCH --mem=64GB
+#SBATCH --mem=16GB
 #SBATCH --time=0-01:00:00
 unset XDG_RUNTIME_DIR
 cd /n/data1/hms/neurobio/sabatini/rich/
@@ -225,7 +225,7 @@ date
 echo "loading modules"
 module load gcc/9.2.0
 echo "activating environment"
-source activate NBAP
+source activate ROICaT
 echo "starting job"
 python "$@"
 """ for path in paths_log]
