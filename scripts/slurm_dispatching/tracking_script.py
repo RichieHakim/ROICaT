@@ -278,7 +278,7 @@ print(f'## Starting: Passing ROIs through ROInet')
 # Neural network embedding distances
 hash_dict_true = {
     'params': ('params.json', '877e17df8fa511a03bc99cd507a54403'),
-    'model': ('model.py', '741b79903507b11769e3f7aa4cdd4dbe'),
+    'model': ('model.py', '6ef5c29793ae16a64e43e8cab33d9ff4'),
     'state_dict': ('ConvNext_tiny__1_0_unfrozen__simCLR.pth', 'a5fae4c9ea95f2c78b4690222b2928a5'),
 }
 
