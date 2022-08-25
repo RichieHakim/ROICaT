@@ -272,7 +272,7 @@ class Data_suite2p:
         sf_big_mid = sf_big_width // 2
 
         sf_all_list = []
-        for stat in tqdm(statFiles):
+        for stat in tqdm(statFiles, mininterval=60):
             if type(stat) is str or type(stat) is Path:
                 stat = np.load(stat, allow_pickle=True)
             n_roi = stat.shape[0]

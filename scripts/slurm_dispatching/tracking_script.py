@@ -464,13 +464,14 @@ ROIs = {
 }
 
 name_save = os.path.split(dir_allOuterFolders)[-1]
+subName_save = params['paths']['folderName_inner']
 helpers.simple_save(
     {
         "UCIDs": list(ca.preds.numpy().astype(np.int64)),
         "UCIDs_bySession": preds_by_session,
         "ROIs": ROIs,
     },
-    filename=Path(dir_save) / (name_save + '.plane0.rClust' '.pkl'),
+    filename=Path(dir_save) / ('roicat_results.' + name_save + '.' + subName_save + '.pkl'),
 #     filename='/media/rich/bigSSD/analysis_data/mouse 2_6/multiday_alignment/UCIDs.pkl'
 )
 print(f'## Completed: Saving results')
