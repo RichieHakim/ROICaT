@@ -92,6 +92,7 @@ params_template = {
         'kwargs_Scattering2D': {'J': 2, 'L': 8},  ## default: {'J': 2, 'L': 8}. Keyword arguments to pass to the Scattering2D function.
         'image_shape': (72, 72),  ## default: (36,36). Shape of the images.
         'device': 'cuda:0',  ## default: 'cuda:0'. Device to use for SWT. Recommend using a GPU.
+        'batch_size': 100,  ## default: 100. Number of images to use for each batch.
     }, 
     'similarity': {
         'device': 'cpu',  ## default: 'cpu'. Device to use for similarity. Recommend using 'cpu' even if you have a GPU.

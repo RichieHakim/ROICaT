@@ -1,6 +1,9 @@
 import torch
 import numpy as np
 from kymatio.torch import Scattering2D
+from tqdm import tqdm
+
+from . import helpers
 
 class SWT:
     """
@@ -32,7 +35,7 @@ class SWT:
         self.swt = Scattering2D(shape=image_shape, **kwargs_Scattering2D).to(device)
         print('SWT initialized') if self._verbose else None
 
-    def transform(self, ROI_images):
+    def transform(self, ROI_images, batch_size=100):
         """
         Transform the ROI images.
 
@@ -49,8 +52,12 @@ class SWT:
                 shape: (n_ROIs, latent_size)
         """
         print('Starting: SWT transform on ROIs') if self._verbose else None
-        sfs = torch.as_tensor(np.ascontiguousarray(ROI_images[None,...]), device=self._device, dtype=torch.float32)
-        self.latents = self.swt(sfs[None,...]).squeeze().cpu()
+        # sfs = torch.as_tensor(np.ascontiguousarray(ROI_images[None,...]), device=self._device, dtype=torch.float32)
+        # self.latents = self.swt(sfs[None,...]).squeeze().cpu()
+        def helper_swt(ims_batch):
+            sfs = torch.as_tensor(np.ascontiguousarray(ims_batch[None,...]), device=self._device, dtype=torch.float32)
+            return self.swt(sfs[None,...]).squeeze().cpu()
+        self.latents = torch.cat([helper_swt(ims_batch) for ims_batch in tqdm(helpers.make_batches(ROI_images, batch_size=batch_size), total=ROI_images.shape[0] / batch_size)], dim=0)
         self.latents = self.latents.reshape(self.latents.shape[0], -1)
         print('Completed: SWT transform on ROIs') if self._verbose else None
         return self.latents

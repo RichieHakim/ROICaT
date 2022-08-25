@@ -318,7 +318,10 @@ swt = scatteringWaveletTransformer.SWT(
     device=params['SWT']['device'],
 )
 
-swt.transform(ROI_images=np.concatenate(data.ROI_images, axis=0));
+swt.transform(
+    ROI_images=np.concatenate(data.ROI_images, axis=0),
+    batch_size=params['SWT']['batch_size'],
+);
 print(f'## Completed: Passing ROIs through scattering wavelet transform')
 
 print(f'## Starting: Computing similarities')
