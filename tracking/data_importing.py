@@ -17,6 +17,7 @@ class Data_suite2p:
         self,
         paths_statFiles,
         paths_opsFiles=None,
+        um_per_pixel=1.0,
         verbose=True
     ):
         """
@@ -31,6 +32,9 @@ class Data_suite2p:
                 List of paths to the ops.npy files.
                 Elements should be one of: str, pathlib.Path,
                  list of str or list of pathlib.Path
+            um_per_pixel (float):
+                'micrometers per pixel' of the imaging field
+                  of view.
             verbose (bool):
                 If True, prints results from each function.
         """
@@ -41,6 +45,8 @@ class Data_suite2p:
         self.n_sessions = len(self.paths_stat)
 
         self.statFiles = None
+
+        self.um_per_pixel = um_per_pixel
 
         self._verbose = verbose
 

@@ -60,7 +60,8 @@ params_template = {
         'type_meanImg': 'meanImgE',  ## default: 'meanImgE'. Type of mean image to use for normalization. This is just a field in the ops.npy file.
         'images': None,  ## default: None. Set to None if you want to use the images extracted from Suite2p
         'import_workers': -1, ## default: -1. Number of workers to use for importing. Set to -1 to use all available workers.
-    },
+        'um_per_pixel': 1.0  ## default: 1.0. Microns per pixel of imaging field of view. A rough estimate (to within ~40% of true value) is okay.
+},
     'alignment': {
         'method': 'createOptFlow_DeepFlow',  ## default: 'createOptFlow_DeepFlow'. Method to use for creating optical flow.
         'kwargs_method': None,  ## default: None. Keyword arguments to pass to the method.

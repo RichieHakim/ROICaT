@@ -276,7 +276,7 @@ class Cluster_Assigner:
         while self._i_iter <= max_iter:
             self._optimizer.zero_grad()
 
-            L_cs = self._dmCEL(c=self.c, m=self.m) * self._dmCEL_penalty  ## 'cluster similarity loss'
+            L_cs = self._dmCEL(c=self.c, m=self.m, w=self.w) * self._dmCEL_penalty  ## 'cluster similarity loss'
             L_sampleWeight = self._loss_sampleWeight(self.h, self.activate_m()) * self._sampleWeight_penalty ## 'sample weight loss'
             L_fracWeighted = self._loss_fracWeighted(self.activate_m()) * self._fracWeight_penalty ## 'fraction weighted loss'
             L_maskL1 = torch.sum(torch.abs(self.activate_m())) * self._maskL1_penalty ## 'L1 on mask loss'
@@ -437,7 +437,7 @@ class Cluster_Assigner:
         ):
             return lambda x : 1 / (1 + torch.exp(-sig_slope*(x-sig_center)))
             
-        def __call__(self, c, m):
+        def __call__(self, c, m, w):
             ma = self.activation(m)  ## 'activated mask'. Constrained to be 0-1
 
             ## Below gives us our loss for each column, which will later be scaled by 'ma' 
@@ -449,7 +449,7 @@ class Cluster_Assigner:
             lv = self.CEL(
                 helpers.ts_setDiag_lowMem(
                     c * ma[None,:],
-                     c.get_diag()
+                    c.get_diag()
                 )
             ) ## 'loss vector'
 

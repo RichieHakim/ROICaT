@@ -4,6 +4,7 @@ import json
 import os
 import hashlib
 import PIL
+import multiprocessing as mp
 
 import numpy as np
 import gdown
@@ -134,7 +135,8 @@ class ROInet_embedder:
     def generate_dataloader(
         self,
         ROI_images,
-        goal_size=250,
+        # goal_frac=0.1929,
+        um_per_pixel=1.0,
         ptile_norm=90,
         scale_norm=0.6,
         pref_plot=False,
@@ -154,10 +156,13 @@ class ROInet_embedder:
                 List of arrays where each array is from a session,
                  and each array is of shape (n_rois, height, width)
                 This can be derived using the data_importing module.
-            goal_size (int):
-                The size of the ROI images to use for the dataloader.
-                This value should be similar to the value used when 
-                 training the network.
+            # goal_frac (int):
+            #     The goal frac of non-zero pixels in an ROI image.
+            #     This value should be similar to the value used when 
+            #      training the network.
+            um_per_pixel (float):
+                The number of microns per pixel. Used to rescale the
+                 ROI images to the same size as the network input.
             ptile_norm (float):
                 The percentile to use for the normalization.
                 This value should be similar to the value used when 
@@ -184,10 +189,14 @@ class ROInet_embedder:
                 The prefetch factor to use for the dataloader.
                 See pytorch documentation on dataloaders.
         """
+        if numWorkers_dataloader == -1:
+            numWorkers_dataloader = mp.cpu_count()
+
         print('Starting: resizing ROIs') if self._verbose else None
-        sf_ptiles = np.array([np.percentile(np.sum(sf>0, axis=(1,2)), ptile_norm) for sf in tqdm(ROI_images)])
-        scales_forRS = (goal_size/sf_ptiles)**scale_norm
-        sf_rs = [np.stack([resize_affine(img, scale=scales_forRS[ii], clamp_range=True) for img in sf], axis=0) for ii, sf in enumerate(tqdm(ROI_images))]
+        sf_ptile = np.array([np.percentile(np.mean(sf>0, axis=(1,2)), ptile_norm) for sf in tqdm(ROI_images)]).mean()
+        # scale_forRS = (goal_frac/sf_ptile)**scale_norm
+        scale_forRS = 2.7 / um_per_pixel
+        sf_rs = [np.stack([resize_affine(img, scale=scale_forRS, clamp_range=True) for img in sf], axis=0) for ii, sf in enumerate(tqdm(ROI_images))]
 
         ROI_images_cat = np.concatenate(ROI_images, axis=0)
         ROI_images_rs = np.concatenate(sf_rs, axis=0)
@@ -195,14 +204,14 @@ class ROInet_embedder:
 
         if pref_plot:
             fig, axs = plt.subplots(2,1, figsize=(7,10))
-            axs[0].plot(np.sum(ROI_images_cat > 0, axis=(1,2)))
-            axs[0].plot(scipy.signal.savgol_filter(np.sum(ROI_images_cat > 0, axis=(1,2)), 501, 3))
+            axs[0].plot(np.mean(ROI_images_cat > 0, axis=(1,2)))
+            axs[0].plot(scipy.signal.savgol_filter(np.mean(ROI_images_cat > 0, axis=(1,2)), 501, 3))
             axs[0].set_xlabel('ROI number');
             axs[0].set_ylabel('mean npix');
             axs[0].set_title('ROI sizes raw')
 
-            axs[1].plot(np.sum(ROI_images_rs > 0, axis=(1,2)))
-            axs[1].plot(scipy.signal.savgol_filter(np.sum(ROI_images_rs > 0, axis=(1,2)), 501, 3))
+            axs[1].plot(np.mean(ROI_images_rs > 0, axis=(1,2)))
+            axs[1].plot(scipy.signal.savgol_filter(np.mean(ROI_images_rs > 0, axis=(1,2)), 501, 3))
             axs[1].set_xlabel('ROI number');
             axs[1].set_ylabel('mean npix');
             axs[1].set_title('ROI sizes resized')
@@ -241,6 +250,9 @@ class ROInet_embedder:
                 prefetch_factor=prefetchFactor_dataloader,
         )
         print(f'Defined dataloader') if self._verbose else None
+
+        self.ROI_images_rs = ROI_images_rs
+        return ROI_images_rs
 
     def generate_latents(self):
         """

@@ -416,7 +416,7 @@ class ROI_graph:
         session_bool = torch.as_tensor(ROI_session_bool, device='cpu', dtype=torch.float32)
         s_sesh = torch.logical_not((session_bool @ session_bool.T).type(torch.bool))
 
-        s_conj = s_sf * s_NN * s_SWT * s_sesh
+        s_conj = s_sf * (torch.sqrt(s_NN * s_SWT)) * s_sesh
 
         s_conj = torch.maximum(s_conj, s_conj.T)  # force symmetry
 
