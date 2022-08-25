@@ -313,7 +313,7 @@ print(f'## Starting: Passing ROIs through scattering wavelet transform')
 # Scattering wavelet embedding distances
 swt = scatteringWaveletTransformer.SWT(
     kwargs_Scattering2D=params['SWT']['kwargs_Scattering2D'], 
-    image_shape=params['SWT']['image_shape'], 
+    image_shape=data.ROI_images[0].shape[1:3], 
     device=params['SWT']['device'],
 )
 
