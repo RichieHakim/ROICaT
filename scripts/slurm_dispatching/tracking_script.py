@@ -296,7 +296,7 @@ roinet.generate_dataloader(
     pref_plot=params['ROInet']['pref_plot'],
     batchSize_dataloader=params['ROInet']['batchSize_dataloader'],
     pinMemory_dataloader=params['ROInet']['pinMemory_dataloader'],
-    numWorkers_dataloader=mp.cpu_count(),
+    numWorkers_dataloader=params['ROInet']['numWorkers_dataloader'],
     persistentWorkers_dataloader=params['ROInet']['persistentWorkers_dataloader'],
     prefetchFactor_dataloader=params['ROInet']['prefetchFactor_dataloader'],    
 )
