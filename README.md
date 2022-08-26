@@ -82,4 +82,4 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 # Frequently asked questions:
 - Getting the error `OSError: [Errno 12] Cannot allocate memory`
     - There's something weird about the data you're using. I haven't figured out why this happens sometimes (albeit rarely).
-    - Solution: set `data.import_ROI_spatialFootprints(workers=1)` and `roinet.generate_dataloader(..., numWorkers_dataloader=0)`
+    - Solution: set `data.import_ROI_spatialFootprints(workers=1)` and `roinet.generate_dataloader(..., numWorkers_dataloader=0, persistentWorkers_dataloader=False)`

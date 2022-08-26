@@ -86,7 +86,7 @@ params_template = {
         'pref_plot': False,  ## default: False. Whether to plot the ROI and the normalized ROI.
         'batchSize_dataloader': 8,  ## default: 8. Number of images to use for each batch.
         'pinMemory_dataloader': True,  ## default: True. Whether to pin the memory of the dataloader.
-        'persistentWorkers_dataloader': True,  ## default: True. Whether to use persistent workers for the dataloader.
+        'persistentWorkers_dataloader': False,  ## default: True. Whether to use persistent workers for the dataloader.
         'numWorkers_dataloader': 0,  ## default: -1. num_workers as a positive integer will turn on multi-process data loading. 0 will not use multiprocessing
         'prefetchFactor_dataloader': 2,  ## default: 2. Number of prefetch factors to use for the dataloader.
     },
