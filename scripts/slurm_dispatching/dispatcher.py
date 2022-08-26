@@ -60,10 +60,11 @@ params_template = {
         'data_verbose': True,  ## default: True. Whether to print out data importing information
         'out_height_width': [72, 72],  ## default: [72, 72]. Height and width of output images (note that this must agree with the input of the ROInet input)
         'max_footprint_width': 1025,  ## default: 1025. Maximum length of a spatial footprint. If you get an error during importing, try increasing this value.
-        'type_meanImg': 'meanImgE',  ## default: 'meanImgE'. Type of mean image to use for normalization. This is just a field in the ops.npy file.
+        'type_meanImg': 'mimg',  ## default: 'meanImgE'. Type of mean image to use for normalization. Use 'mimg' for old matlab suite2p files. This is just a field in the ops.npy file.
         'images': None,  ## default: None. Set to None if you want to use the images extracted from Suite2p
         'import_workers': -1, ## default: -1. Number of workers to use for importing. Set to -1 to use all available workers. Values other than 1 result in using multiprocessing.
         'um_per_pixel': 1.0,  ## default: 1.0. Microns per pixel of imaging field of view. A rough estimate (to within ~40% of true value) is okay.
+        'new_or_old_suite2p': 'old',  ## default: 'new'. Set to 'old' if you are using old MATLAB style suite2p files.
     },
     'alignment': {
         'method': 'createOptFlow_DeepFlow',  ## default: 'createOptFlow_DeepFlow'. Method to use for creating optical flow.

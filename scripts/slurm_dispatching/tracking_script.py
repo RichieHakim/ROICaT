@@ -214,6 +214,7 @@ data = data_importing.Data_suite2p(
     paths_statFiles=paths_allStat,
     paths_opsFiles=paths_allOps,
     um_per_pixel=params['importing']['um_per_pixel'],
+    new_or_old_suite2p=params['importing']['new_or_old_suite2p'],
     verbose=params['importing']['data_verbose'],
 );
 
