@@ -62,7 +62,7 @@ params_template = {
         'max_footprint_width': 1025,  ## default: 1025. Maximum length of a spatial footprint. If you get an error during importing, try increasing this value.
         'type_meanImg': 'meanImgE',  ## default: 'meanImgE'. Type of mean image to use for normalization. This is just a field in the ops.npy file.
         'images': None,  ## default: None. Set to None if you want to use the images extracted from Suite2p
-        'import_workers': 1, ## default: -1. Number of workers to use for importing. Set to -1 to use all available workers. Values other than 1 result in using multiprocessing.
+        'import_workers': -1, ## default: -1. Number of workers to use for importing. Set to -1 to use all available workers. Values other than 1 result in using multiprocessing.
         'um_per_pixel': 1.0,  ## default: 1.0. Microns per pixel of imaging field of view. A rough estimate (to within ~40% of true value) is okay.
     },
     'alignment': {
@@ -86,8 +86,8 @@ params_template = {
         'pref_plot': False,  ## default: False. Whether to plot the ROI and the normalized ROI.
         'batchSize_dataloader': 8,  ## default: 8. Number of images to use for each batch.
         'pinMemory_dataloader': True,  ## default: True. Whether to pin the memory of the dataloader.
-        'persistentWorkers_dataloader': False,  ## default: True. Whether to use persistent workers for the dataloader.
-        'numWorkers_dataloader': 0,  ## default: -1. num_workers as a positive integer will turn on multi-process data loading. 0 will not use multiprocessing
+        'persistentWorkers_dataloader': True,  ## default: True. Whether to use persistent workers for the dataloader.
+        'numWorkers_dataloader': -1,  ## default: -1. num_workers as a positive integer will turn on multi-process data loading. 0 will not use multiprocessing
         'prefetchFactor_dataloader': 2,  ## default: 2. Number of prefetch factors to use for the dataloader.
     },
     'SWT': {
