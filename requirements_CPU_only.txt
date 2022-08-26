@@ -1,11 +1,11 @@
-torch==1.12.1+cpu 
-torchvision==0.13.1+cpu 
-torchaudio==0.12.1 
+torch==1.12.0+cpu 
+torchvision==0.13.0+cpu 
+torchaudio==0.12.0 
 --extra-index-url https://download.pytorch.org/whl/cpu
 
 torch-scatter 
 torch-sparse 
--f https://data.pyg.org/whl/torch-1.11.0+cpu.html
+-f https://data.pyg.org/whl/torch-1.12.0+cpu.html
 
 gdown==4.5.1
 ipywidgets==7.7.1
@@ -20,6 +20,7 @@ scipy==1.8.1
 seaborn==0.11.2
 sparse==0.13.0
 spconv==2.1.22
-spconv_cu113==2.1.21
 tqdm==4.64.0
+natsort
 jupyter
+paramiko
