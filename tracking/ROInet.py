@@ -429,8 +429,6 @@ def compare_file_hashes(
     else:
         files_test = {Path(path).name: path for path in paths_files_test}
 
-    print(files_test)
-    
     paths_matching = {}
     results_matching = {}
     for key, (filename, hash_true) in hash_dict_true.items():
