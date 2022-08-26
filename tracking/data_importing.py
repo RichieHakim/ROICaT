@@ -241,6 +241,14 @@ class Data_suite2p:
             (self.n_roi, [frame_height_width]*n, statFiles, [dtype]*n, [isInt]*n),
             workers=mp.cpu_count()
         )
+        # self.spatialFootprints = [
+        #     _helper_populate_sf(
+        #         n_roi=self.n_roi[ii], 
+        #         frame_height_width=frame_height_width,
+        #         stat=statFiles[ii],
+        #         dtype=dtype,
+        #         isInt=isInt,
+        #     ) for ii in tqdm(range(n), mininterval=1)]
 
         self.sessionID_concat = np.vstack([np.array([helpers.idx2bool(i_sesh, length=len(self.spatialFootprints))]*sesh.shape[0]) for i_sesh, sesh in enumerate(self.spatialFootprints)])
 
