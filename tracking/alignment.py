@@ -61,7 +61,7 @@ class Alinger:
 
         
         self.ROIs_aligned, self.FOVs_aligned, self.flows = [], [], []
-        for ii in tqdm(range(len(FOVs))):
+        for ii in tqdm(range(len(FOVs)), mininterval=60):
 
             if self._method == 'calcOpticalFlowFarneback':
                 if self._kwargs_method is None:
