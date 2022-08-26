@@ -358,7 +358,7 @@ def hash_file(path, type_hash='MD5', buffer_size=65536):
             65536 corresponds to 64KB.
 
     Returns:
-        hash (str):
+        hash_val (str):
             Hash of file.
     """
 
@@ -380,9 +380,9 @@ def hash_file(path, type_hash='MD5', buffer_size=65536):
                 break
             hasher.update(data)
 
-    hash = hasher.hexdigest()
+    hash_val = hasher.hexdigest()
         
-    return hash
+    return hash_val
 
 
 def compare_file_hashes(
@@ -426,15 +426,19 @@ def compare_file_hashes(
         
         ## make a dict of {filename: path} for each file in dir_files_test
         files_test = {filename: (Path(dir_files_test).resolve() / filename).as_posix() for filename in get_dir_contents(dir_files_test)[1]} 
+    else:
+        files_test = {Path(path).name: path for path in paths_files_test}
+
+    print(files_test)
     
     paths_matching = {}
     results_matching = {}
-    for key, (filename, hash) in hash_dict_true.items():
+    for key, (filename, hash_true) in hash_dict_true.items():
         match = True
         if filename not in files_test:
             print(f'{filename} not found in test directory: {dir_files_test}.') if verbose else None
             match = False
-        elif hash != hash_file(files_test[filename]):
+        elif hash_true != hash_file(files_test[filename]):
             print(f'{filename} hash mismatch with {key, filename}.') if verbose else None
             match = False
         if match:

@@ -56,7 +56,7 @@ class Data_suite2p:
         ## shifts are applied to convert the 'old' matlab version of suite2p indexing (where there is an offset and its 1-indexed)
         self._shifts = [
             np.array([op['yrange'].min()-1, op['xrange'].min()-1], dtype=np.uint64) for op in [np.load(path, allow_pickle=True)[()] for path in self.paths_ops]
-        ] if self._new_or_old_suite2p == 'old' else [np.array([0,0], dtype=np.uint64)]*len(self.statFiles)
+        ] if self._new_or_old_suite2p == 'old' else [np.array([0,0], dtype=np.uint64)]*len(paths_statFiles)
 
 
     def import_statFiles(self):
