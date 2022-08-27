@@ -424,7 +424,7 @@ class Cluster_Assigner:
                 ts.tensor.SparseTensor(
                     row=torch.arange(self._n_clusters, device=device, dtype=torch.int64),
                     col=torch.arange(self._n_clusters, device=device, dtype=torch.int64),
-                    value=c.get_diag().type(torch.float32),
+                    value=c.get_diag().type(torch.float32)**0,
                     sparse_sizes=(self._n_clusters, self._n_clusters),
                 )
             ) ## the best case is just a diagonal matrix with the same values as the input matrix.
@@ -449,7 +449,7 @@ class Cluster_Assigner:
             lv = self.CEL(
                 helpers.ts_setDiag_lowMem(
                     c * ma[None,:],
-                    c.get_diag()
+                    c.get_diag()**0
                 )
             ) ## 'loss vector'
 

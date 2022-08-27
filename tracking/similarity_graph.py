@@ -305,6 +305,7 @@ class ROI_graph:
             [np.arange(len(self.blocks))],
             workers=n_workers
         )
+        # [self._helper_compute_cluster_similarity_batch(i_block) for i_block in np.arange(len(self.blocks))]
         print('Completed: Computing cluster similarities') if self._verbose else None
 
 
@@ -416,7 +417,7 @@ class ROI_graph:
         session_bool = torch.as_tensor(ROI_session_bool, device='cpu', dtype=torch.float32)
         s_sesh = torch.logical_not((session_bool @ session_bool.T).type(torch.bool))
 
-        s_conj = s_sf * (torch.sqrt(s_NN * s_SWT)) * s_sesh
+        s_conj = s_sf * s_NN * s_SWT**0.5 * s_sesh
 
         s_conj = torch.maximum(s_conj, s_conj.T)  # force symmetry
 
@@ -586,7 +587,7 @@ class ROI_graph:
         if method_in == 'mean':
             cs_in = s_single[:, idx_in].mean()
         elif method_in == 'min':
-            cs_in = s_single[:, idx_in].min()
+            cs_in = sparse.triu(s_single[:, idx_in], k=1).data.min()
         cs_out = (s_single * self._cluster_bool_inv[idx]).max()
         # return cs_in / cs_out
         return (cs_in - cs_out) / np.maximum(cs_in, cs_out)
