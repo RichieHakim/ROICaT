@@ -54,7 +54,7 @@ class Data_suite2p:
         self._verbose = verbose
 
         ## shifts are applied to convert the 'old' matlab version of suite2p indexing (where there is an offset and its 1-indexed)
-        self._shifts = [
+        self.shifts = [
             np.array([op['yrange'].min()-1, op['xrange'].min()-1], dtype=np.uint64) for op in [np.load(path, allow_pickle=True)[()] for path in self.paths_ops]
         ] if self._new_or_old_suite2p == 'old' else [np.array([0,0], dtype=np.uint64)]*len(paths_statFiles)
 
@@ -250,7 +250,7 @@ class Data_suite2p:
         if workers != 1:
             self.spatialFootprints = helpers.simple_multiprocessing(
                 _helper_populate_sf, 
-                (self.n_roi, [frame_height_width]*n, statFiles, [dtype]*n, [isInt]*n, self._shifts),
+                (self.n_roi, [frame_height_width]*n, statFiles, [dtype]*n, [isInt]*n, self.shifts),
                 workers=mp.cpu_count()
             )
         else:
@@ -261,7 +261,7 @@ class Data_suite2p:
                     stat=statFiles[ii],
                     dtype=dtype,
                     isInt=isInt,
-                    shifts=self._shifts[ii]
+                    shifts=self.shifts[ii]
                 ) for ii in tqdm(range(n), mininterval=60)]
 
         self.sessionID_concat = np.vstack([np.array([helpers.idx2bool(i_sesh, length=len(self.spatialFootprints))]*sesh.shape[0]) for i_sesh, sesh in enumerate(self.spatialFootprints)])
