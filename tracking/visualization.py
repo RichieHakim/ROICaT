@@ -115,3 +115,31 @@ def compute_colored_FOV(
     FOV_all_noClip[FOV_all_noClip>1] = 1
 
     return FOV_all_noClip
+
+
+def crop_cluster_ims(ims):
+    """
+    Crops the images to the smallest rectangle containing all non-zero pixels.
+    RH 2022
+
+    Args:
+        ims (np.ndarray):
+            Images to crop.
+
+    Returns:
+        np.ndarray:
+            Cropped images.
+    """
+    ims_max = np.max(ims, axis=0)
+    z_im = ims_max > 0
+    z_where = np.where(z_im)
+    z_top = z_where[0].max()
+    z_bottom = z_where[0].min()
+    z_left = z_where[1].min()
+    z_right = z_where[1].max()
+    
+    ims_copy = copy.deepcopy(ims)
+    im_out = ims_copy[:, max(z_bottom-1, 0):min(z_top+1, ims.shape[1]), max(z_left-1, 0):min(z_right+1, ims.shape[2])]
+    im_out[:,(0,-1),:] = 1
+    im_out[:,:,(0,-1)] = 1
+    return im_out
