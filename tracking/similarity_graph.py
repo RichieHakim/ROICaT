@@ -190,7 +190,7 @@ class ROI_graph:
             idxROI_block = np.where(self.sf_cat[:, self.idxPixels_block[ii]].sum(1) > 0)[0]
             
             ## Compute pairwise similarity matrix
-            s_block = self._helper_compute_ROI_similarity_graph(
+            s_block, s_sf, s_NN, s_SWT = self._helper_compute_ROI_similarity_graph(
                 spatialFootprints=self.sf_cat[idxROI_block][:, self.idxPixels_block[ii]].power(self._sf_maskPower),
                 features_NN=features_NN[idxROI_block],
                 features_SWT=features_SWT[idxROI_block],
@@ -226,7 +226,7 @@ class ROI_graph:
         ## Dump the results to object attributes
         self.cluster_idx = np.array(cluster_idx_all, dtype=object)[idx]
         self.cluster_bool = scipy.sparse.vstack([scipy.sparse.csr_matrix(helpers.idx2bool(np.array(cid, dtype=np.int64), length=self.s.shape[0])) for cid in self.cluster_idx])
-
+        return s_sf, s_NN, s_SWT
 
     def compute_cluster_similarity_graph(
         self, 
@@ -387,6 +387,7 @@ class ROI_graph:
 
         d_sf = sklearn.neighbors.NearestNeighbors(
             algorithm=self._algo_sf,
+            n_neighbors=sf.shape[0],
             metric='manhattan',
             p=1,
             # n_jobs=self._n_workers,
@@ -404,24 +405,33 @@ class ROI_graph:
         s_sf[range(s_sf.shape[0]), range(s_sf.shape[0])] = 0
         s_sf = torch.as_tensor(s_sf, dtype=torch.float32)
 
-        d_NN  = torch.cdist(features_NN.to(self._device),  features_NN.to(self._device),  p=2).cpu()
-        s_NN = 1 / (d_NN / d_NN.max())
+        # d_NN  = torch.cdist(features_NN.to(self._device),  features_NN.to(self._device),  p=2).cpu()
+        # s_NN = 1 / (d_NN / d_NN.max())
+
+        # features_NN = (features_NN / torch.abs(features_NN.sum(1, keepdim=True))) * 0.5
+        # d_NN  = torch.cdist(features_NN.to(self._device),  features_NN.to(self._device),  p=1).cpu()
+
+        features_NN_normd = torch.nn.functional.normalize(features_NN, dim=1)
+        s_NN = torch.matmul(features_NN_normd, features_NN_normd.T) ## cosine similarity. ranges [0,1]
+        # s_NN = 1 - (d_NN / d_NN.max())
         s_NN[s_NN < 0] = 0
         s_NN[range(s_NN.shape[0]), range(s_NN.shape[0])] = 0
 
-        d_SWT = torch.cdist(features_SWT.to(self._device), features_SWT.to(self._device), p=2).cpu()
-        s_SWT = 1 / (d_SWT / d_SWT.max())
+        # d_SWT = torch.cdist(features_SWT.to(self._device), features_SWT.to(self._device), p=2).cpu()
+        # s_SWT = 1 / (d_SWT / d_SWT.max())
+        features_SWT_normd = torch.nn.functional.normalize(features_SWT, dim=1)
+        s_SWT = torch.matmul(features_SWT_normd, features_SWT_normd.T) ## cosine similarity. Normalized to [0,1]
         s_SWT[s_SWT < 0] = 0
         s_SWT[range(s_SWT.shape[0]), range(s_SWT.shape[0])] = 0
 
         session_bool = torch.as_tensor(ROI_session_bool, device='cpu', dtype=torch.float32)
         s_sesh = torch.logical_not((session_bool @ session_bool.T).type(torch.bool))
 
-        s_conj = s_sf * s_NN * s_SWT**0.5 * s_sesh
+        s_conj = s_sf**1 * s_NN**0.5 * s_sesh
 
         s_conj = torch.maximum(s_conj, s_conj.T)  # force symmetry
 
-        return s_conj
+        return s_conj, s_sf, s_NN, s_SWT
 
 
     def _helper_compute_linkage_clusters(

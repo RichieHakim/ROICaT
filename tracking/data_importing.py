@@ -41,7 +41,10 @@ class Data_suite2p:
         """
 
         self.paths_stat = fix_paths(paths_statFiles)
-        self.paths_ops = fix_paths(paths_opsFiles)
+        if paths_opsFiles is not None:
+            self.paths_ops = fix_paths(paths_opsFiles)
+        else:
+            self.paths_ops = None
 
         self.n_sessions = len(self.paths_stat)
 
@@ -54,9 +57,12 @@ class Data_suite2p:
         self._verbose = verbose
 
         ## shifts are applied to convert the 'old' matlab version of suite2p indexing (where there is an offset and its 1-indexed)
-        self.shifts = [
-            np.array([op['yrange'].min()-1, op['xrange'].min()-1], dtype=np.uint64) for op in [np.load(path, allow_pickle=True)[()] for path in self.paths_ops]
-        ] if self._new_or_old_suite2p == 'old' else [np.array([0,0], dtype=np.uint64)]*len(paths_statFiles)
+        if self.paths_ops is not None:
+            self.shifts = [
+                np.array([op['yrange'].min()-1, op['xrange'].min()-1], dtype=np.uint64) for op in [np.load(path, allow_pickle=True)[()] for path in self.paths_ops]
+            ] if self._new_or_old_suite2p == 'old' else [np.array([0,0], dtype=np.uint64)]*len(paths_statFiles)
+        else:
+            self.shifts = [np.array([0,0], dtype=np.uint64)]*len(paths_statFiles)
 
 
     def import_statFiles(self):

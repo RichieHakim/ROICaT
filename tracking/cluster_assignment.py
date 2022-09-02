@@ -178,28 +178,52 @@ class Cluster_Assigner:
         self.m = m_init.to(self._DEVICE) if m_init is not None else (torch.ones(self._n_clusters)*0.1 + torch.rand(self._n_clusters)*0.05).type(torch.float32).to(self._DEVICE)
         self.m.requires_grad=True
 
-        self._optimizer = optimizer_partial(params=[self.m]) if optimizer_partial is not None else torch.optim.Adam(params=[self.m], lr=1e-2, betas=(0.9, 0.900))
-        self._scheduler = scheduler_partial(optimizer=self._optimizer) if scheduler_partial is not None else torch.optim.lr_scheduler.LambdaLR(optimizer=self._optimizer, lr_lambda=lambda x : x, last_epoch=-1, verbose=True)
-        
         self._dmCEL_penalty = dmCEL_penalty
         self._sampleWeight_penalty = sampleWeight_penalty
         self._fracWeight_penalty = fracWeight_penalty
         self._maskL1_penalty = maskL1_penalty
 
+        self._dmCEL_temp = torch.as_tensor([dmCEL_temp], dtype=torch.float32).to(self._DEVICE)
+        self._dmCEL_sigSlope = torch.as_tensor([dmCEL_sigSlope], dtype=torch.float32).to(self._DEVICE)
+        self._dmCEL_sigCenter = torch.as_tensor([dmCEL_sigCenter], dtype=torch.float32).to(self._DEVICE)
+        self._fracWeighted_sigSlope = torch.as_tensor([fracWeighted_sigSlope], dtype=torch.float32).to(self._DEVICE)
+        self._fracWeighted_sigCenter = torch.as_tensor([fracWeighted_sigCenter], dtype=torch.float32).to(self._DEVICE)
+
+
+        # self._dmCEL_penalty  = torch.as_tensor([self._dmCEL_penalty]).to(self._DEVICE)
+        # self._sampleWeight_penalty = torch.as_tensor([self._sampleWeight_penalty]).to(self._DEVICE)
+        # self._fracWeight_penalty = torch.as_tensor([self._fracWeight_penalty]).to(self._DEVICE)
+        # self._maskL1_penalty = torch.as_tensor([self._maskL1_penalty]).to(self._DEVICE)
+
+        # self._dmCEL_penalty.requires_grad = True
+        # self._sampleWeight_penalty.requires_grad = True
+        # self._fracWeight_penalty.requires_grad = True
+        # self._maskL1_penalty.requires_grad = True
+
+        # self._dmCEL_temp.requires_grad = True
+        # self._dmCEL_sigSlope.requires_grad = True
+        # self._dmCEL_sigCenter.requires_grad = True
+        # self._fracWeighted_sigSlope.requires_grad = True
+        # self._fracWeighted_sigCenter.requires_grad = True
+
+        self._optimizer = optimizer_partial(params=[self.m]) if optimizer_partial is not None else torch.optim.Adam(params=[self.m], lr=1e-2, betas=(0.9, 0.900))
+        # self._optimizer = optimizer_partial(params=[self.m, self._dmCEL_temp, self._dmCEL_sigSlope, self._dmCEL_sigCenter, self._fracWeighted_sigSlope, self._fracWeighted_sigCenter]) if optimizer_partial is not None else torch.optim.Adam(params=[self.m], lr=1e-2, betas=(0.9, 0.900))
+        self._scheduler = scheduler_partial(optimizer=self._optimizer) if scheduler_partial is not None else torch.optim.lr_scheduler.LambdaLR(optimizer=self._optimizer, lr_lambda=lambda x : x, last_epoch=-1, verbose=True)
+        
         self._dmCEL = self._DoubleMasked_CEL(
             c=self.c,
             device=self._DEVICE,
-            temp=dmCEL_temp,
-            sig_slope=dmCEL_sigSlope,
-            sig_center=dmCEL_sigCenter,
+            temp=self._dmCEL_temp,
+            sig_slope=self._dmCEL_sigSlope,
+            sig_center=self._dmCEL_sigCenter,
         )
 
         self._loss_fracWeighted = self._Loss_fracWeighted(
             h=self.h,
             w=self.w,
             goal_frac=fracWeighted_goalFrac,
-            sig_slope=fracWeighted_sigSlope,
-            sig_center=fracWeighted_sigCenter,
+            sig_slope=self._fracWeighted_sigSlope,
+            sig_center=self._fracWeighted_sigCenter,
         )
 
         self._loss_sampleWeight = self._Loss_sampleWeight(

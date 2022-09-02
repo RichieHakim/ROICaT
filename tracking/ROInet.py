@@ -75,15 +75,23 @@ class ROInet_embedder:
 
         ## Find or download network files
         if download_from_gDrive == 'force':
-            self._download_network_files()
+            paths_downloaded = self._download_network_files()
+            print(paths_downloaded) if self._verbose else None
             if hash_dict_networkFiles is None:
                 print('Skipping hash check because hash_dict_networkFiles is None')
+                paths_matching = {
+                    'params': np.array(paths_downloaded)[[('params.json' in t) for t in paths_downloaded]][0],
+                    'model': np.array(paths_downloaded)[[('model.py' in t) for t in paths_downloaded]][0],
+                    'state_dict': np.array(paths_downloaded)[[('.pth' in t) for t in paths_downloaded]][0],
+                }
+                print(paths_matching) if self._verbose else None
             else:
                 results_all, results, paths_matching = compare_file_hashes(  
                     hash_dict_true=hash_dict_networkFiles,
                     dir_files_test=dir_networkFiles,
                     verbose=True,
                 )
+                print(paths_matching) if self._verbose else None
                 if results_all == False:
                     print(f'WARNING: Hash comparison failed. Could not match downloaded files to hash_dict_networkFiles.')
 
@@ -181,7 +189,7 @@ class ROInet_embedder:
         print('Starting: resizing ROIs') if self._verbose else None
         # sf_ptile = np.array([np.percentile(np.mean(sf>0, axis=(1,2)), ptile_norm) for sf in tqdm(ROI_images)]).mean()
         # scale_forRS = (goal_frac/sf_ptile)**scale_norm
-        scale_forRS = 2.7 / um_per_pixel
+        scale_forRS = 0.7 / um_per_pixel  ## hardcoded for now sorry
         sf_rs = [np.stack([resize_affine(img, scale=scale_forRS, clamp_range=True) for img in sf], axis=0) for ii, sf in enumerate(tqdm(ROI_images, mininterval=60))]
 
         ROI_images_cat = np.concatenate(ROI_images, axis=0)
@@ -263,8 +271,9 @@ class ROInet_embedder:
             raise ValueError('gDriveID and dir_networkFiles must be specified if download_from_gDrive is True')
 
         print(f'Downloading network files from Google Drive to {self._dir_networkFiles}') if self._verbose else None
-        gdown.download_folder(id=self._gDriveID, output=self._dir_networkFiles, quiet=False, use_cookies=False)
+        paths_files = gdown.download_folder(id=self._gDriveID, output=self._dir_networkFiles, quiet=False, use_cookies=False)
         print('Downloaded network files') if self._verbose else None
+        return paths_files
     
 
 def resize_affine(img, scale, clamp_range=False):
