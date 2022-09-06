@@ -226,6 +226,10 @@ class ROI_graph:
         ## Dump the results to object attributes
         self.cluster_idx = np.array(cluster_idx_all, dtype=object)[idx]
         self.cluster_bool = scipy.sparse.vstack([scipy.sparse.csr_matrix(helpers.idx2bool(np.array(cid, dtype=np.int64), length=self.s.shape[0])) for cid in self.cluster_idx])
+
+        self.d = self.s.copy()
+        self.d.data = 1-self.d.data
+
         return s_sf, s_NN, s_SWT
 
     def compute_cluster_similarity_graph(
@@ -417,6 +421,8 @@ class ROI_graph:
         s_NN[s_NN < 0] = 0
         s_NN[range(s_NN.shape[0]), range(s_NN.shape[0])] = 0
 
+        # s_NN = torch.nn.functional.softmax(s_NN/1, dim=1, )
+
         # d_SWT = torch.cdist(features_SWT.to(self._device), features_SWT.to(self._device), p=2).cpu()
         # s_SWT = 1 / (d_SWT / d_SWT.max())
         features_SWT_normd = torch.nn.functional.normalize(features_SWT, dim=1)
@@ -427,7 +433,7 @@ class ROI_graph:
         session_bool = torch.as_tensor(ROI_session_bool, device='cpu', dtype=torch.float32)
         s_sesh = torch.logical_not((session_bool @ session_bool.T).type(torch.bool))
 
-        s_conj = s_sf**1 * s_NN**0.5 * s_sesh
+        s_conj = s_sf**1 * s_NN**1 * s_SWT**1 * s_sesh
 
         s_conj = torch.maximum(s_conj, s_conj.T)  # force symmetry
 

@@ -55,8 +55,12 @@ class ROInet_embedder:
                 'check_local_first':
                     Check if the network files are already in 
                      dir_networkFiles. If so, use them.
-                'force':
+                'force_download':
                     Download the network files from Google Drive.
+                'force_local':
+                    Use the network files in dir_networkFiles.
+                    If they don't exist, raise an error.
+                    Hash checking is not done.
             hash_dict_networkFiles (dict):
                 A dictionary of the hash values of the network files.
                 Each item is {key: (filename, hash_value)}
@@ -74,7 +78,7 @@ class ROInet_embedder:
         self._gDriveID = gDriveID
 
         ## Find or download network files
-        if download_from_gDrive == 'force':
+        if download_from_gDrive == 'force_download':
             paths_downloaded = self._download_network_files()
             print(paths_downloaded) if self._verbose else None
             if hash_dict_networkFiles is None:
@@ -115,6 +119,16 @@ class ROInet_embedder:
                     print(f'Successful hash comparison. Found matching files: {paths_matching}')  if self._verbose else None
                 else:
                     raise Exception(f'Downloaded network files do not match expected hashes. Results: {results}')
+        
+        if download_from_gDrive == 'force_local':
+            assert hash_dict_networkFiles is not None, "if using download_from_gDrive='force_local' hash_dict_networkFiles cannot be None"
+            results_all, results, paths_matching = compare_file_hashes(  
+                hash_dict_true=hash_dict_networkFiles,
+                dir_files_test=dir_networkFiles,
+                verbose=True,
+            )
+            if results_all == False:
+                print(f'WARNING: Hash comparison failed. Could not match local files to hash_dict_networkFiles.')
 
         ## Import network files
         sys.path.append(dir_networkFiles)
