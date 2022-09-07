@@ -3,6 +3,34 @@ import scipy
 import scipy.optimize
 
 
+class Clusterer:
+    """
+    Base class for clustering algorithms.
+
+    RH 2022
+    """
+    def __init__(self):
+        pass
+
+    def fit(self, X):
+        """
+        Fit the clustering algorithm to the data.
+        """
+        raise NotImplementedError
+
+    def predict(self, X):
+        """
+        Predict the cluster labels for the data.
+        """
+        raise NotImplementedError
+
+    def score(self, X, y):
+        """
+        Compute the score of the clustering.
+        """
+        raise NotImplementedError
+
+
 def score_labels(labels_test, labels_true, thresh_perfect=0.9999999999):
     """
     Compute the score of the clustering.

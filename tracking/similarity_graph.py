@@ -178,59 +178,74 @@ class ROI_graph:
         n_roi = self.sf_cat.shape[0]
 
         # s_all = [scipy.sparse.lil_matrix((n_roi, n_roi))] * len(self.blocks)
-        self.s = scipy.sparse.csr_matrix((n_roi, n_roi))
+        # self.s = scipy.sparse.csr_matrix((n_roi, n_roi))
+        self.s_sf = scipy.sparse.csr_matrix((n_roi, n_roi))
+        self.s_NN = scipy.sparse.csr_matrix((n_roi, n_roi))
+        self.s_SWT = scipy.sparse.csr_matrix((n_roi, n_roi))
         s_empty = scipy.sparse.lil_matrix((n_roi, n_roi))
         self.d = scipy.sparse.csr_matrix((n_roi, n_roi))
         cluster_idx_all = []
 
         print('Computing pairwise similarity between ROIs...') if self._verbose else None
-        for ii, block in tqdm(enumerate(self.blocks), total=len(self.blocks), mininterval=60):
+        for ii, block in tqdm(enumerate(self.blocks), total=len(self.blocks), mininterval=10):
             # if ii < 58:
             #     continue
             idxROI_block = np.where(self.sf_cat[:, self.idxPixels_block[ii]].sum(1) > 0)[0]
             
             ## Compute pairwise similarity matrix
-            s_block, s_sf, s_NN, s_SWT = self._helper_compute_ROI_similarity_graph(
+            s_sf, s_NN, s_SWT = self._helper_compute_ROI_similarity_graph(
                 spatialFootprints=self.sf_cat[idxROI_block][:, self.idxPixels_block[ii]].power(self._sf_maskPower),
                 features_NN=features_NN[idxROI_block],
                 features_SWT=features_SWT[idxROI_block],
                 ROI_session_bool=ROI_session_bool[idxROI_block],
             )
-            if s_block is None: # If there are no ROIs in this block, s_block will be None, so we should skip the rest of the loop
+            if s_sf is None: # If there are no ROIs in this block, s_block will be None, so we should skip the rest of the loop
                 continue
             idx = np.meshgrid(idxROI_block, idxROI_block) # get ij indices for rois in this block for s_block
-            s_tmp = copy.copy(s_empty) # preallocate a sparse matrix of the full size s matrix
-            s_tmp[idx[0], idx[1]] = s_block # fil in the full size s matrix with the block s matrix
-            self.s = self.s.maximum(s_tmp) # accumulate the final s matrix with the values from this block
+            
+            # s_tmp = copy.deepcopy(s_empty) # preallocate a sparse matrix of the full size s matrix
+            s_tmp = s_empty.copy() # preallocate a sparse matrix of the full size s matrix
+            s_tmp[idx[0], idx[1]] = s_sf # fil in the full size s matrix with the block s matrix
+            self.s_sf = self.s_sf.maximum(s_tmp) # accumulate the final s matrix with the values from this block
 
-            ### make a distance matrix for the clustering step
-            d_block = 1 / s_block 
-            d_block[range(d_block.shape[0]), range(d_block.shape[0])] = 0 # set diagonal to 0
-            d_block[torch.isinf(d_block).type(torch.bool)] = 1e10  ## convert inf to a large number
+            # s_tmp = copy.deepcopy(s_empty) # preallocate a sparse matrix of the full size s matrix
+            s_tmp = s_empty.copy() # preallocate a sparse matrix of the full size s matrix
+            s_tmp[idx[0], idx[1]] = s_NN # fil in the full size s matrix with the block s matrix
+            self.s_NN = self.s_NN.maximum(s_tmp) # accumulate the final s matrix with the values from this block
 
-            if d_block.shape[0] > 1: # if d_block.shape[0] is 1 or 0, then there aren't enough samples in the block to find clusters
-                cluster_idx_block__idxBlock, cluster_freq_block =  self._helper_compute_linkage_clusters(d_block.numpy()) # compute clusters for this block
-                if cluster_idx_block__idxBlock is not None: ## if no clusters were found, cluster_idx_block__idxBlock will be None
-                    cluster_idx_block = [idxROI_block[idx] for idx in cluster_idx_block__idxBlock] # convert from block indices to full indices
+            # s_tmp = copy.deepcopy(s_empty) # preallocate a sparse matrix of the full size s matrix
+            s_tmp = s_empty.copy() # preallocate a sparse matrix of the full size s matrix
+            s_tmp[idx[0], idx[1]] = s_SWT # fil in the full size s matrix with the block s matrix
+            self.s_SWT = self.s_sf.maximum(s_tmp) # accumulate the final s matrix with the values from this block
 
-                    cluster_idx_all += cluster_idx_block # accumulate the cluster indices (idx of rois in each cluster) for all blocks
+            # ### make a distance matrix for the clustering step
+            # d_block = 1 / s_block 
+            # d_block[range(d_block.shape[0]), range(d_block.shape[0])] = 0 # set diagonal to 0
+            # d_block[torch.isinf(d_block).type(torch.bool)] = 1e10  ## convert inf to a large number
 
-        ## remove duplicate clusters by hashing each cluster's indices and calling np.unique on the hashes
-        print(f'Removing duplicate clusters...') if self._verbose else None
-        u, idx, c = np.unique(
-            ar=np.array([hash(tuple(vec)) for vec in cluster_idx_all]),
-            return_index=True,
-            return_counts=True,
-        )
+            # if d_block.shape[0] > 1: # if d_block.shape[0] is 1 or 0, then there aren't enough samples in the block to find clusters
+            #     cluster_idx_block__idxBlock, cluster_freq_block =  self._helper_compute_linkage_clusters(d_block.numpy()) # compute clusters for this block
+            #     if cluster_idx_block__idxBlock is not None: ## if no clusters were found, cluster_idx_block__idxBlock will be None
+            #         cluster_idx_block = [idxROI_block[idx] for idx in cluster_idx_block__idxBlock] # convert from block indices to full indices
 
-        ## Dump the results to object attributes
-        self.cluster_idx = np.array(cluster_idx_all, dtype=object)[idx]
-        self.cluster_bool = scipy.sparse.vstack([scipy.sparse.csr_matrix(helpers.idx2bool(np.array(cid, dtype=np.int64), length=self.s.shape[0])) for cid in self.cluster_idx])
+            #         cluster_idx_all += cluster_idx_block # accumulate the cluster indices (idx of rois in each cluster) for all blocks
 
-        self.d = self.s.copy()
-        self.d.data = 1-self.d.data
+        # ## remove duplicate clusters by hashing each cluster's indices and calling np.unique on the hashes
+        # print(f'Removing duplicate clusters...') if self._verbose else None
+        # u, idx, c = np.unique(
+        #     ar=np.array([hash(tuple(vec)) for vec in cluster_idx_all]),
+        #     return_index=True,
+        #     return_counts=True,
+        # )
 
-        return s_sf, s_NN, s_SWT
+        # ## Dump the results to object attributes
+        # self.cluster_idx = np.array(cluster_idx_all, dtype=object)[idx]
+        # self.cluster_bool = scipy.sparse.vstack([scipy.sparse.csr_matrix(helpers.idx2bool(np.array(cid, dtype=np.int64), length=self.s.shape[0])) for cid in self.cluster_idx])
+
+        # self.d = self.s.copy()
+        # self.d.data = 1-self.d.data
+
+        return self.s_sf, self.s_NN, self.s_SWT
 
     def compute_cluster_similarity_graph(
         self, 
@@ -382,7 +397,7 @@ class ROI_graph:
         """
         ## if there are no ROIs in the block
         if spatialFootprints.shape[0] == 0:
-            return None
+            return None, None, None
 
         sf = scipy.sparse.vstack(spatialFootprints)
         sf = sf.power(self._sf_maskPower)
@@ -430,14 +445,18 @@ class ROI_graph:
         s_SWT[s_SWT < 0] = 0
         s_SWT[range(s_SWT.shape[0]), range(s_SWT.shape[0])] = 0
 
-        session_bool = torch.as_tensor(ROI_session_bool, device='cpu', dtype=torch.float32)
-        s_sesh = torch.logical_not((session_bool @ session_bool.T).type(torch.bool))
+        # session_bool = torch.as_tensor(ROI_session_bool, device='cpu', dtype=torch.float32)
+        # s_sesh = torch.logical_not((session_bool @ session_bool.T).type(torch.bool))
 
-        s_conj = s_sf**1 * s_NN**1 * s_SWT**1 * s_sesh
+        # s_conj = s_sf**1 * s_NN**1 * s_SWT**1 * s_sesh
 
-        s_conj = torch.maximum(s_conj, s_conj.T)  # force symmetry
+        # s_conj = torch.maximum(s_conj, s_conj.T)  # force symmetry
 
-        return s_conj, s_sf, s_NN, s_SWT
+        s_sf = torch.maximum(s_sf, s_sf.T)  # force symmetry
+        s_NN = torch.maximum(s_NN, s_NN.T)  # force symmetry
+        s_SWT = torch.maximum(s_SWT, s_SWT.T)  # force symmetry
+
+        return s_sf, s_NN, s_SWT
 
 
     def _helper_compute_linkage_clusters(
@@ -710,10 +729,10 @@ class ROI_graph:
         Displays the blocks over a field of view.
         """
         im = np.zeros((self._frame_height, self._frame_width, 3))
-        for block in self.blocks:
-            im[block[0][0]:block[0][1], block[1][0]:block[1][1], :] += 0.2
+        for ii, block in enumerate(self.blocks):
+            im[block[0][0]:block[0][1], block[1][0]:block[1][1], :] = ((np.random.rand(1)+0.5)/2)
         plt.figure()
-        plt.imshow(im)
+        plt.imshow(im, vmin=0, vmax=1)
 
 
 
