@@ -179,8 +179,8 @@ class ROI_graph:
 
         # s_all = [scipy.sparse.lil_matrix((n_roi, n_roi))] * len(self.blocks)
         # self.s = scipy.sparse.csr_matrix((n_roi, n_roi))
-        self.s_sf = scipy.sparse.csr_matrix((n_roi, n_roi))
-        self.s_NN = scipy.sparse.csr_matrix((n_roi, n_roi))
+        self.s_sf = scipy.sparse.lil_matrix((n_roi, n_roi))
+        self.s_NN = scipy.sparse.lil_matrix((n_roi, n_roi))
         self.s_SWT = scipy.sparse.csr_matrix((n_roi, n_roi))
         s_empty = scipy.sparse.lil_matrix((n_roi, n_roi))
         self.d = scipy.sparse.csr_matrix((n_roi, n_roi))
@@ -206,17 +206,19 @@ class ROI_graph:
             # s_tmp = copy.deepcopy(s_empty) # preallocate a sparse matrix of the full size s matrix
             s_tmp = s_empty.copy() # preallocate a sparse matrix of the full size s matrix
             s_tmp[idx[0], idx[1]] = s_sf # fil in the full size s matrix with the block s matrix
-            self.s_sf = self.s_sf.maximum(s_tmp) # accumulate the final s matrix with the values from this block
+            # self.s_sf = self.s_sf.maximum(s_tmp) # accumulate the final s matrix with the values from this block
+            self.s_sf[s_tmp!=0] = s_tmp.tocsr().data
 
             # s_tmp = copy.deepcopy(s_empty) # preallocate a sparse matrix of the full size s matrix
             s_tmp = s_empty.copy() # preallocate a sparse matrix of the full size s matrix
             s_tmp[idx[0], idx[1]] = s_NN # fil in the full size s matrix with the block s matrix
-            self.s_NN = self.s_NN.maximum(s_tmp) # accumulate the final s matrix with the values from this block
+            # self.s_NN = self.s_NN.maximum(s_tmp) # accumulate the final s matrix with the values from this block
+            self.s_NN[s_tmp!=0] = s_tmp.tocsr().data
 
-            # s_tmp = copy.deepcopy(s_empty) # preallocate a sparse matrix of the full size s matrix
-            s_tmp = s_empty.copy() # preallocate a sparse matrix of the full size s matrix
-            s_tmp[idx[0], idx[1]] = s_SWT # fil in the full size s matrix with the block s matrix
-            self.s_SWT = self.s_sf.maximum(s_tmp) # accumulate the final s matrix with the values from this block
+            # # s_tmp = copy.deepcopy(s_empty) # preallocate a sparse matrix of the full size s matrix
+            # s_tmp = s_empty.copy() # preallocate a sparse matrix of the full size s matrix
+            # s_tmp[idx[0], idx[1]] = s_SWT # fil in the full size s matrix with the block s matrix
+            # self.s_SWT = self.s_sf.maximum(s_tmp) # accumulate the final s matrix with the values from this block
 
             # ### make a distance matrix for the clustering step
             # d_block = 1 / s_block 
@@ -244,6 +246,10 @@ class ROI_graph:
 
         # self.d = self.s.copy()
         # self.d.data = 1-self.d.data
+
+        # self.s_sf.eliminate_zeros()
+        # self.s_NN.eliminate_zeros()
+        # self.s_SWT.eliminate_zeros()
 
         return self.s_sf, self.s_NN, self.s_SWT
 
@@ -418,11 +424,13 @@ class ROI_graph:
             mode='distance'
         )
 
-
-        s_sf = 1 - d_sf.toarray()
-        s_sf[s_sf < 1e-5] = 0  ## Likely due to numerical errors, some values are < 0 and very small. Rectify to fix.
-        s_sf[range(s_sf.shape[0]), range(s_sf.shape[0])] = 0
-        s_sf = torch.as_tensor(s_sf, dtype=torch.float32)
+        s_sf = d_sf.copy()
+        s_sf.data = 1 - s_sf.data
+        s_sf.data[s_sf.data < 1e-5] = 0  ## Likely due to numerical errors, some values are < 0 and very small. Rectify to fix.
+        s_sf.eliminate_zeros()
+        
+        # s_sf[range(s_sf.shape[0]), range(s_sf.shape[0])] = 0
+        # s_sf = torch.as_tensor(s_sf, dtype=torch.float32)
 
         # d_NN  = torch.cdist(features_NN.to(self._device),  features_NN.to(self._device),  p=2).cpu()
         # s_NN = 1 / (d_NN / d_NN.max())
@@ -433,8 +441,8 @@ class ROI_graph:
         features_NN_normd = torch.nn.functional.normalize(features_NN, dim=1)
         s_NN = torch.matmul(features_NN_normd, features_NN_normd.T) ## cosine similarity. ranges [0,1]
         # s_NN = 1 - (d_NN / d_NN.max())
-        s_NN[s_NN < 0] = 0
-        s_NN[range(s_NN.shape[0]), range(s_NN.shape[0])] = 0
+        # s_NN[s_NN < 0] = 0
+        # s_NN[range(s_NN.shape[0]), range(s_NN.shape[0])] = 0
 
         # s_NN = torch.nn.functional.softmax(s_NN/1, dim=1, )
 
@@ -452,7 +460,8 @@ class ROI_graph:
 
         # s_conj = torch.maximum(s_conj, s_conj.T)  # force symmetry
 
-        s_sf = torch.maximum(s_sf, s_sf.T)  # force symmetry
+        # s_sf = torch.maximum(s_sf, s_sf.T)  # force symmetry
+        s_sf = s_sf.maximum(s_sf.T)
         s_NN = torch.maximum(s_NN, s_NN.T)  # force symmetry
         s_SWT = torch.maximum(s_SWT, s_SWT.T)  # force symmetry
 

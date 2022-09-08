@@ -411,6 +411,29 @@ def deep_update_dict(dictionary, key, val, in_place=False):
         return d
         
 
+def sparse_mask(x_sparse, mask_sparse, do_safety_steps=True):
+    """
+    Masks a sparse matrix with the non-zero elements of another
+     sparse matrix.
+    RH 2022
+
+    Args:
+        x_sparse (scipy.sparse.csr_matrix):
+            sparse matrix to mask
+        mask_sparse (scipy.sparse.csr_matrix):
+            sparse matrix to mask with
+        do_safety_steps (bool):
+            whether to do safety steps to ensure that things
+             are working as expected.
+    """
+    if do_safety_steps:
+        m = mask_sparse.copy()
+        m.eliminate_zeros()
+    else:
+        m = mask_sparse
+    return (m!=0).multiply(x_sparse)
+
+
 ######################
 # torch_sparse stuff #
 ######################
