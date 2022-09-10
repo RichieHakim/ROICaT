@@ -411,27 +411,31 @@ def deep_update_dict(dictionary, key, val, in_place=False):
         return d
         
 
-def sparse_mask(x_sparse, mask_sparse, do_safety_steps=True):
+def sparse_mask(x, mask_sparse, do_safety_steps=True):
     """
     Masks a sparse matrix with the non-zero elements of another
      sparse matrix.
     RH 2022
 
     Args:
-        x_sparse (scipy.sparse.csr_matrix):
+        x (scipy.sparse.csr_matrix):
             sparse matrix to mask
         mask_sparse (scipy.sparse.csr_matrix):
             sparse matrix to mask with
         do_safety_steps (bool):
             whether to do safety steps to ensure that things
              are working as expected.
+
+    Returns:
+        output (scipy.sparse.csr_matrix):
+            masked sparse matrix
     """
     if do_safety_steps:
         m = mask_sparse.copy()
         m.eliminate_zeros()
     else:
         m = mask_sparse
-    return (m!=0).multiply(x_sparse)
+    return (m!=0).multiply(x)
 
 
 ######################
@@ -588,3 +592,66 @@ def rand_cmap(
     return random_colormap
 
 
+def simple_cmap(
+    colors=[
+        [1,0,0],
+        [1,0.6,0],
+        [0.9,0.9,0],
+        [0.6,1,0],
+        [0,1,0],
+        [0,1,0.6],
+        [0,0.8,0.8],
+        [0,0.6,1],
+        [0,0,1],
+        [0.6,0,1],
+        [0.8,0,0.8],
+        [1,0,0.6],
+    ],
+    under=[0,0,0],
+    over=[0.5,0.5,0.5],
+    bad=[0.9,0.9,0.9],
+    name='none'):
+    """Create a colormap from a sequence of rgb values.
+    Stolen with love from Alex (https://gist.github.com/ahwillia/3e022cdd1fe82627cbf1f2e9e2ad80a7ex)
+    
+    Args:
+        colors (list):
+            List of RGB values
+        name (str):
+            Name of the colormap
+
+    Returns:
+        cmap:
+            Colormap
+
+    Demo:
+    cmap = simple_cmap([(1,1,1), (1,0,0)]) # white to red colormap
+    cmap = simple_cmap(['w', 'r'])         # white to red colormap
+    cmap = simple_cmap(['r', 'b', 'r'])    # red to blue to red
+    """
+    from matplotlib.colors import LinearSegmentedColormap, colorConverter
+
+    # check inputs
+    n_colors = len(colors)
+    if n_colors <= 1:
+        raise ValueError('Must specify at least two colors')
+
+    # convert colors to rgb
+    colors = [colorConverter.to_rgb(c) for c in colors]
+
+    # set up colormap
+    r, g, b = colors[0]
+    cdict = {'red': [(0.0, r, r)], 'green': [(0.0, g, g)], 'blue': [(0.0, b, b)]}
+    for i, (r, g, b) in enumerate(colors[1:]):
+        idx = (i+1) / (n_colors-1)
+        cdict['red'].append((idx, r, r))
+        cdict['green'].append((idx, g, g))
+        cdict['blue'].append((idx, b, b))
+
+    cmap = LinearSegmentedColormap(name, {k: tuple(v) for k, v in cdict.items()})
+                                   
+    cmap.set_bad(bad)
+    cmap.set_over(over)
+    cmap.set_under(under)
+
+    return cmap

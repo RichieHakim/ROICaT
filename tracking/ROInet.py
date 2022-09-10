@@ -138,7 +138,7 @@ class ROInet_embedder:
         with open(paths_matching['params']) as f:
             self.params_model = json.load(f)
             print(f"Loaded params_model from {paths_matching['params']}") if self._verbose else None
-            self.net = model.make_model(self.params_model)
+            self.net = model.make_model(fwd_version='latent', **self.params_model)
             print(f"Generated network using params_model") if self._verbose else None
             
         ## Prep network and load state_dict

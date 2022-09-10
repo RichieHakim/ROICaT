@@ -250,6 +250,7 @@ class ROI_graph:
         # self.s_sf.eliminate_zeros()
         # self.s_NN.eliminate_zeros()
         # self.s_SWT.eliminate_zeros()
+        self.s_sf, self.s_NN, self.s_SWT = self.s_sf.tocsr(), self.s_NN.tocsr(), self.s_SWT.tocsr()
 
         return self.s_sf, self.s_NN, self.s_SWT
 
@@ -440,6 +441,7 @@ class ROI_graph:
 
         features_NN_normd = torch.nn.functional.normalize(features_NN, dim=1)
         s_NN = torch.matmul(features_NN_normd, features_NN_normd.T) ## cosine similarity. ranges [0,1]
+        s_NN[s_NN>(1-1e-5)] = 1.0
         # s_NN = 1 - (d_NN / d_NN.max())
         # s_NN[s_NN < 0] = 0
         # s_NN[range(s_NN.shape[0]), range(s_NN.shape[0])] = 0
@@ -464,6 +466,9 @@ class ROI_graph:
         s_sf = s_sf.maximum(s_sf.T)
         s_NN = torch.maximum(s_NN, s_NN.T)  # force symmetry
         s_SWT = torch.maximum(s_SWT, s_SWT.T)  # force symmetry
+
+        s_NN  = helpers.sparse_mask(s_NN,  s_sf, do_safety_steps=True)
+        s_SWT = helpers.sparse_mask(s_SWT, s_sf, do_safety_steps=True)
 
         return s_sf, s_NN, s_SWT
 
