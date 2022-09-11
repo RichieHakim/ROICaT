@@ -6,12 +6,12 @@ import sklearn
 import sklearn.neighbors
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-import sparse
+# import sparse
 
-import gc
+# import gc
 import multiprocessing as mp
-import time
-import copy
+# import time
+# import copy
 
 from . import helpers
 
@@ -177,10 +177,9 @@ class ROI_graph:
         self.sf_cat = scipy.sparse.vstack(spatialFootprints)
         n_roi = self.sf_cat.shape[0]
 
-        # s_all = [scipy.sparse.lil_matrix((n_roi, n_roi))] * len(self.blocks)
-        # self.s = scipy.sparse.csr_matrix((n_roi, n_roi))
-        self.s_sf = scipy.sparse.lil_matrix((n_roi, n_roi))
-        self.s_NN = scipy.sparse.lil_matrix((n_roi, n_roi))
+
+        s_sf_all, s_NN_all, s_SWT_all, s_sesh_all, idxROI_block_all = [], [], [], [], []
+
         self.s_SWT = scipy.sparse.csr_matrix((n_roi, n_roi))
         s_empty = scipy.sparse.lil_matrix((n_roi, n_roi))
         self.d = scipy.sparse.csr_matrix((n_roi, n_roi))
@@ -188,167 +187,41 @@ class ROI_graph:
 
         print('Computing pairwise similarity between ROIs...') if self._verbose else None
         for ii, block in tqdm(enumerate(self.blocks), total=len(self.blocks), mininterval=10):
-            # if ii < 58:
-            #     continue
             idxROI_block = np.where(self.sf_cat[:, self.idxPixels_block[ii]].sum(1) > 0)[0]
             
             ## Compute pairwise similarity matrix
-            s_sf, s_NN, s_SWT = self._helper_compute_ROI_similarity_graph(
-                spatialFootprints=self.sf_cat[idxROI_block][:, self.idxPixels_block[ii]].power(self._sf_maskPower),
+            s_sf, s_NN, s_SWT, s_sesh = self._helper_compute_ROI_similarity_graph(
+                spatialFootprints=self.sf_cat[idxROI_block].power(self._sf_maskPower),
                 features_NN=features_NN[idxROI_block],
                 features_SWT=features_SWT[idxROI_block],
                 ROI_session_bool=ROI_session_bool[idxROI_block],
             )
             if s_sf is None: # If there are no ROIs in this block, s_block will be None, so we should skip the rest of the loop
                 continue
-            idx = np.meshgrid(idxROI_block, idxROI_block) # get ij indices for rois in this block for s_block
-            
-            # s_tmp = copy.deepcopy(s_empty) # preallocate a sparse matrix of the full size s matrix
-            s_tmp = s_empty.copy() # preallocate a sparse matrix of the full size s matrix
-            s_tmp[idx[0], idx[1]] = s_sf # fil in the full size s matrix with the block s matrix
-            # self.s_sf = self.s_sf.maximum(s_tmp) # accumulate the final s matrix with the values from this block
-            self.s_sf[s_tmp!=0] = s_tmp.tocsr().data
 
-            # s_tmp = copy.deepcopy(s_empty) # preallocate a sparse matrix of the full size s matrix
-            s_tmp = s_empty.copy() # preallocate a sparse matrix of the full size s matrix
-            s_tmp[idx[0], idx[1]] = s_NN # fil in the full size s matrix with the block s matrix
-            # self.s_NN = self.s_NN.maximum(s_tmp) # accumulate the final s matrix with the values from this block
-            self.s_NN[s_tmp!=0] = s_tmp.tocsr().data
-
-            # # s_tmp = copy.deepcopy(s_empty) # preallocate a sparse matrix of the full size s matrix
-            # s_tmp = s_empty.copy() # preallocate a sparse matrix of the full size s matrix
-            # s_tmp[idx[0], idx[1]] = s_SWT # fil in the full size s matrix with the block s matrix
-            # self.s_SWT = self.s_sf.maximum(s_tmp) # accumulate the final s matrix with the values from this block
-
-            # ### make a distance matrix for the clustering step
-            # d_block = 1 / s_block 
-            # d_block[range(d_block.shape[0]), range(d_block.shape[0])] = 0 # set diagonal to 0
-            # d_block[torch.isinf(d_block).type(torch.bool)] = 1e10  ## convert inf to a large number
-
-            # if d_block.shape[0] > 1: # if d_block.shape[0] is 1 or 0, then there aren't enough samples in the block to find clusters
-            #     cluster_idx_block__idxBlock, cluster_freq_block =  self._helper_compute_linkage_clusters(d_block.numpy()) # compute clusters for this block
-            #     if cluster_idx_block__idxBlock is not None: ## if no clusters were found, cluster_idx_block__idxBlock will be None
-            #         cluster_idx_block = [idxROI_block[idx] for idx in cluster_idx_block__idxBlock] # convert from block indices to full indices
-
-            #         cluster_idx_all += cluster_idx_block # accumulate the cluster indices (idx of rois in each cluster) for all blocks
-
-        # ## remove duplicate clusters by hashing each cluster's indices and calling np.unique on the hashes
-        # print(f'Removing duplicate clusters...') if self._verbose else None
-        # u, idx, c = np.unique(
-        #     ar=np.array([hash(tuple(vec)) for vec in cluster_idx_all]),
-        #     return_index=True,
-        #     return_counts=True,
-        # )
-
-        # ## Dump the results to object attributes
-        # self.cluster_idx = np.array(cluster_idx_all, dtype=object)[idx]
-        # self.cluster_bool = scipy.sparse.vstack([scipy.sparse.csr_matrix(helpers.idx2bool(np.array(cid, dtype=np.int64), length=self.s.shape[0])) for cid in self.cluster_idx])
-
-        # self.d = self.s.copy()
-        # self.d.data = 1-self.d.data
-
-        # self.s_sf.eliminate_zeros()
-        # self.s_NN.eliminate_zeros()
-        # self.s_SWT.eliminate_zeros()
-        self.s_sf, self.s_NN, self.s_SWT = self.s_sf.tocsr(), self.s_NN.tocsr(), self.s_SWT.tocsr()
-
-        return self.s_sf, self.s_NN, self.s_SWT
-
-    def compute_cluster_similarity_graph(
-        self, 
-        cluster_similarity_reduction_intra='mean',
-        cluster_similarity_reduction_inter='max',
-        cluster_silhouette_reduction_intra='mean',
-        cluster_silhouette_reduction_inter='max',
-        n_workers=None,
-    ):
-        """
-        Computers the similarity graph between clusters.
-        Similarly to 'compute_similarity_blockwise', this function 
-         operates over blocks, but computes the similarity between
-         clusters as opposed to ROIs.
-        
-        Args:
-            cluster_similarity_reduction_intra (str):
-                The method to use for reducing the intra-cluster similarity.
-            cluster_similarity_reduction_inter (str):
-                The method to use for reducing the inter-cluster similarity.
-            cluster_silhouette_reduction_intra (str):
-                The method to use for reducing the intra-cluster silhouette.
-            cluster_silhouette_reduction_inter (str):
-                The method to use for reducing the inter-cluster silhouette.
-
-        Attributes set:
-            self.n_clusters (int):
-                The number of clusters.
-            self.sf_clusters (scipy.sparse.csr_matrix):
-                The spatial fooprints of the sum of the rois in each cluster
-                 (summed over ROIs).
-            self.c_sim (scipy.sparse.csr_matrix):
-                The similarity matrix between clusters.
-            self.c_sil (np.ndarray):
-                The silhouette score for each cluster
-            self.s_local (scipy.sparse.csr_matrix):
-                The 'local' version of self.s, where s_local = s**locality.
-        """
-
-        self._cluster_similarity_reduction_intra_method = cluster_similarity_reduction_intra
-        self._cluster_similarity_reduction_inter_method = cluster_similarity_reduction_inter
-
-        self._cluster_silhouette_reduction_intra_method = cluster_silhouette_reduction_intra
-        self._cluster_silhouette_reduction_inter_method = cluster_silhouette_reduction_inter
-
-        if n_workers is None:
-            n_workers = mp.cpu_count()
-
-        self.n_clusters = len(self.cluster_idx)
-
-        ## make a sparse matrix of the spatial footprints of the sum of each cluster
-        print('Starting: Making cluster spatial footprints') if self._verbose else None
-        self.spatialFootprints_coo = sparse.COO(self.sf_cat)
-        self.clusterBool_coo = sparse.COO(self.cluster_bool)
-        batch_size = int(max(1e8 // self.spatialFootprints_coo.shape[0], 1000))
-
-        ## make images of each cluster (so that we can determine which ones are in which block)
-        self.sf_clusters = sparse.concatenate(
-            helpers.simple_multithreading(
-                self._helper_make_sfClusters,
-                [helpers.make_batches(self.clusterBool_coo[:,:,None], batch_size=batch_size)],
-                workers=n_workers
-            )
-        ).tocsr()
-        print('Completed: Making cluster spatial footprints') if self._verbose else None
+            s_sf_all.append(s_sf)
+            s_NN_all.append(s_NN)
+            s_SWT_all.append(s_SWT)
+            s_sesh_all.append(s_sesh)
+            idxROI_block_all.append(idxROI_block)
 
 
-        print('Starting: Computing cluster similarities') if self._verbose else None
-        self.c_sim = scipy.sparse.lil_matrix((self.n_clusters, self.n_clusters)) # preallocate a sparse matrix for the cluster similarity matrix
-        self.s_local = sparse.COO(self.s.power(self._locality))
-        self._idxClusters_block = [np.where(self.sf_clusters[:, idx_pixels].sum(1) > 0)[0] for idx_pixels in self.idxPixels_block]  ## find indices of the clusters that have at least one non-zero pixel in the block
+        self.s_sf = scipy.sparse.lil_matrix((n_roi, n_roi))
+        self.s_NN = scipy.sparse.lil_matrix((n_roi, n_roi))
+        self.s_SWT = scipy.sparse.lil_matrix((n_roi, n_roi))
+        self.s_sesh = scipy.sparse.lil_matrix((n_roi, n_roi))
+        for ssf, snn, sswt, ss, idxROI_block in zip(s_sf_all, s_NN_all, s_SWT_all, s_sesh_all, idxROI_block_all):
+            idx = np.meshgrid(idxROI_block, idxROI_block)
+            self.s_sf[idx[0], idx[1]] = ssf
+            self.s_NN[idx[0], idx[1]] = snn
+            self.s_SWT[idx[0], idx[1]] = sswt
+            self.s_sesh[idx[0], idx[1]] = ss
+        self.s_sf = self.s_sf.tocsr()
+        self.s_NN = self.s_NN.tocsr()
+        self.s_SWT = self.s_SWT.tocsr()
+        self.s_sesh = self.s_sesh.tocsr()
 
-        ## compute the similarity between clusters. self.c_sim is updated from within the helper function
-        helpers.simple_multithreading(
-            self._helper_compute_cluster_similarity_batch,
-            [np.arange(len(self.blocks))],
-            workers=n_workers
-        )
-        # [self._helper_compute_cluster_similarity_batch(i_block) for i_block in np.arange(len(self.blocks))]
-        print('Completed: Computing cluster similarities') if self._verbose else None
-
-
-        print('Starting: Computing modified cluster silhouettes') if self._verbose else None
-        ## below are used in the helper function for the silhouette score
-        self._cluster_bool_coo = sparse.COO(self.cluster_bool) # sparse.COO objects can be used for indexing
-        self._cluster_bool_inv = sparse.COO(self.cluster_bool) 
-        self._cluster_bool_inv.data = self._cluster_bool_inv.data < True
-        self._cluster_bool_inv.fill_value = True
-        ## compute the silhouette score for each cluster. self.c_sil is updated from within the helper function
-        self.c_sil = np.array([self._helper_cluster_silhouette(
-            idx, 
-            method_in=self._cluster_silhouette_reduction_intra_method,
-            method_out=self._cluster_silhouette_reduction_inter_method,
-        ) for idx in tqdm(range(self.n_clusters), mininterval=60)])
-
-        print('Completed: Computing modified cluster silhouettes') if self._verbose else None
+        return self.s_sf, self.s_NN, self.s_SWT, self.s_sesh
 
     
     def compute_cluster_scores(
@@ -404,7 +277,7 @@ class ROI_graph:
         """
         ## if there are no ROIs in the block
         if spatialFootprints.shape[0] == 0:
-            return None, None, None
+            return None, None, None, None
 
         sf = scipy.sparse.vstack(spatialFootprints)
         sf = sf.power(self._sf_maskPower)
@@ -430,216 +303,123 @@ class ROI_graph:
         s_sf.data[s_sf.data < 1e-5] = 0  ## Likely due to numerical errors, some values are < 0 and very small. Rectify to fix.
         s_sf.eliminate_zeros()
         
-        # s_sf[range(s_sf.shape[0]), range(s_sf.shape[0])] = 0
-        # s_sf = torch.as_tensor(s_sf, dtype=torch.float32)
-
-        # d_NN  = torch.cdist(features_NN.to(self._device),  features_NN.to(self._device),  p=2).cpu()
-        # s_NN = 1 / (d_NN / d_NN.max())
-
-        # features_NN = (features_NN / torch.abs(features_NN.sum(1, keepdim=True))) * 0.5
-        # d_NN  = torch.cdist(features_NN.to(self._device),  features_NN.to(self._device),  p=1).cpu()
-
         features_NN_normd = torch.nn.functional.normalize(features_NN, dim=1)
         s_NN = torch.matmul(features_NN_normd, features_NN_normd.T) ## cosine similarity. ranges [0,1]
         s_NN[s_NN>(1-1e-5)] = 1.0
-        # s_NN = 1 - (d_NN / d_NN.max())
-        # s_NN[s_NN < 0] = 0
-        # s_NN[range(s_NN.shape[0]), range(s_NN.shape[0])] = 0
-
-        # s_NN = torch.nn.functional.softmax(s_NN/1, dim=1, )
-
-        # d_SWT = torch.cdist(features_SWT.to(self._device), features_SWT.to(self._device), p=2).cpu()
-        # s_SWT = 1 / (d_SWT / d_SWT.max())
+        
         features_SWT_normd = torch.nn.functional.normalize(features_SWT, dim=1)
         s_SWT = torch.matmul(features_SWT_normd, features_SWT_normd.T) ## cosine similarity. Normalized to [0,1]
         s_SWT[s_SWT < 0] = 0
         s_SWT[range(s_SWT.shape[0]), range(s_SWT.shape[0])] = 0
 
-        # session_bool = torch.as_tensor(ROI_session_bool, device='cpu', dtype=torch.float32)
-        # s_sesh = torch.logical_not((session_bool @ session_bool.T).type(torch.bool))
+        session_bool = torch.as_tensor(ROI_session_bool, device='cpu', dtype=torch.float32)
+        s_sesh = torch.logical_not((session_bool @ session_bool.T).type(torch.bool))
 
-        # s_conj = s_sf**1 * s_NN**1 * s_SWT**1 * s_sesh
+        s_sf = s_sf.multiply(s_sesh.numpy())
+        s_sf.eliminate_zeros()
+        # s_NN = s_NN * s_sesh
+        # s_SWT = s_SWT * s_sesh
 
-        # s_conj = torch.maximum(s_conj, s_conj.T)  # force symmetry
-
-        # s_sf = torch.maximum(s_sf, s_sf.T)  # force symmetry
         s_sf = s_sf.maximum(s_sf.T)
         s_NN = torch.maximum(s_NN, s_NN.T)  # force symmetry
         s_SWT = torch.maximum(s_SWT, s_SWT.T)  # force symmetry
-
+        
         s_NN  = helpers.sparse_mask(s_NN,  s_sf, do_safety_steps=True)
         s_SWT = helpers.sparse_mask(s_SWT, s_sf, do_safety_steps=True)
+        s_sesh = helpers.sparse_mask(s_sesh, s_sf, do_safety_steps=True)
 
-        return s_sf, s_NN, s_SWT
+        return s_sf, s_NN, s_SWT, s_sesh
 
-
-    def _helper_compute_linkage_clusters(
-        self, 
-        d,
-    ):
-        """
-        Linkage clustering of the similarity graph.
-
-        Args:
-            d (torch.Tensor):
-                The distance matrix
-
-        Returns:
-            cluster_idx (np.ndarray):
-                The indices of each sample for each cluster
-            cluster_bool (np.ndarray):
-                The boolean matrix indicating which samples belong to which cluster
-        """
-
-        d_sq = scipy.spatial.distance.squareform(d)
-        self.links = helpers.merge_dicts([helper_compute_linkage(method, d_sq) for method in self._linkage_methods])
-
-        cluster_bool_all = []
-        for ii, t in enumerate(self._linkage_distances):
-            [cluster_bool_all.append(self._helper_get_boolean_clusters_from_linkages(self.links[method], t=t, criterion='distance')) for method in self._linkage_methods]
-        
-        cluster_bool_all = scipy.sparse.vstack(cluster_bool_all)
-
-        max_cluster_size = self._n_sessions if self._max_cluster_size is None else self._max_cluster_size
-        nROIperCluster = np.array(cluster_bool_all.sum(1)).squeeze()
-        idx_clusters_inRange = np.where( (nROIperCluster >= self._min_cluster_size) & (nROIperCluster <= max_cluster_size) )[0]
-        
-        cluster_idx, cluster_freq = self._helper_get_unique_clusters(cluster_bool_all[idx_clusters_inRange])
-
-        return cluster_idx, cluster_freq
-
-   
-    def _helper_get_unique_clusters(
+    def make_normalized_similarities(
         self,
-        cluster_bool,
+        centers_of_mass,
+        features_NN=None,
+        features_SWT=None,
+        k_max=3000,
+        k_min=200,
+        algo_NN='kd_tree',
     ):
         """
-        Get the unique clusters from the boolean matrix of clusters.
+        Normalizes the similarity matrices (s_NN, s_SWT, but not s_sf)
+         by z-scoring using the mean and std from the distributions of
+         pairwise similarities between ROIs assumed to be 'different'.
+         'Different' here is defined as ROIs that are spatiall distant
+         from each other.
 
         Args:
-            cluster_bool (np.ndarray):
-                The boolean matrix indicating which samples belong to which cluster
+            centers_of_mass (np.ndarray):
+                The centers of mass of the ROIs.
+                shape (n_ROIs total, 2)
+            k_max (int):
+                The maximum number of nearest neighbors to consider
+                 for each ROI. This value will result in an intermediate
+                 similarity matrix of shape (n_ROIs total, k_max) 
+                 between each ROI and its k_max nearest neighbors.
+                Based on centroid distance.
+            k_min (int):
+                The minimum number of nearest neighbors to consider
+                 for each ROI. This value should be less than k_max, and
+                 be chosen such that it is likely that any potential
+                 'same' ROIs are within k_min nearest neighbors.
+                Based on centroid distance.
+            algo_NN (str):
+                The algorithm to use for the nearest neighbor search.
+                See sklearn.neighbors.NearestNeighbors for options.
+                Can be 'kd_tree' or 'ball_tree' or 'brute'.
+                'kd_tree' seems to be the fastest.
+            features_NN (torch.Tensor):
+                The output latent embeddings of the NN model.
+                shape (n_ROIs total, n_features)
+            features_SWT (torch.Tensor):
+                The output latent embeddings of the SWT model.
+                shape (n_ROIs total, n_features)
 
-        Returns:
-            cluster_idx (np.ndarray):
-                The indices of each sample for each cluster
-            cluster_freq (np.ndarray):
-                The frequency of each cluster
+        Set Attributes:
+            s_NN_z (scipy.sparse.csr_matrix):
+                The z-scored similarity matrix between ROIs based on the
+                 statistics of the NN embedding.
+                shape (n_ROIs total, n_ROIs total)
+                Note: This matrix is NOT symmetric; and therefore should
+                 be treated as a directed graph.
+            s_SWT_z (scipy.sparse.csr_matrix):
+                The z-scored similarity matrix between ROIs based on the
+                 statistics of the SWT embedding.
+                shape (n_ROIs total, n_ROIs total)
+                Note: This matrix is NOT symmetric; and therefore should
+                 be treated as a directed graph.
         """
-        if cluster_bool.shape[0] == 0:
-            return None, None
+        k_max = min(k_max, self.s_NN.shape[0])
 
-        clusterHashes = np.concatenate([
-            hash_matrix(batch) for batch in helpers.make_batches(cluster_bool, batch_size=self._batch_size_hashing, length=cluster_bool.shape[0])
-        ], axis=0)
-        
-        u, idx, c = np.unique(
-            ar=clusterHashes,
-            return_index=True,
-            return_counts=True,
+        ## first get the indices of 'different' ROIs for each ROI.
+        ##  'different here means they are more than the k-th nearest
+        ##  neighbor based on centroid distance.
+        idx_diff, _ = get_idx_in_kRange(
+            X=centers_of_mass,
+            k_max=k_max,
+            k_min=k_min,
+            algo_kNN=algo_NN,
         )
 
-        cluster_idx = [torch.LongTensor(vec.indices) for vec in cluster_bool[idx]]
-        cluster_freq = c
+        ## calculate similarity scores for each ROI against the 
+        ##  'different' ROIs
+        if features_NN is not None:
+            s_NN_diff = cosine_similarity_customIdx(features_NN, idx_diff)
+            mus_NN_diff = s_NN_diff.mean(1).numpy()
+            stds_NN_diff = s_NN_diff.std(1).numpy()
+            
+            self.s_NN_z = self.s_NN.copy().tocoo()
+            self.s_NN_z.data = ((self.s_NN_z.data - mus_NN_diff[self.s_NN_z.row]) / stds_NN_diff[self.s_NN_z.row])
+            self.s_NN_z = self.s_NN_z.tocsr()
 
-        return cluster_idx, cluster_freq
+        if features_SWT is not None:
+            s_SWT_diff = cosine_similarity_customIdx(features_SWT, idx_diff)
+            mus_SWT_diff = s_SWT_diff.mean(1).numpy()
+            stds_SWT_diff = s_SWT_diff.std(1).numpy()
 
- 
-    def _helper_get_boolean_clusters_from_linkages(self, links, t, criterion='distance'):
-        """
-        Get the boolean matrix of clusters from the linkage matrix.
-        """
-        return scipy.sparse.csr_matrix(labels_to_bool(scipy.cluster.hierarchy.fcluster(links, t=t, criterion=criterion)))
-
-
-    def _helper_make_sfClusters(
-        self,
-        cb_s_batch
-    ):
-        """
-        Helper function to make a cluster spatial footprint
-         using all the roi spatial footprints. and a boolean array
-         of which rois belong to which cluster.
-        """
-        return (self.spatialFootprints_coo[None,:,:] * cb_s_batch).sum(axis=1)
-
-
-    def _helper_compute_cluster_similarity_batch(
-        self,
-        i_block, 
-    ):
-        """
-        Helper function to compute the similarity between clusters within
-         a single block.
-        
-        Updates attribute: self.c_sim
-        """
-        cBool = sparse.COO(self.cluster_bool[self._idxClusters_block[i_block]])
-        sizes_clusters = cBool.sum(1)
-
-        cs_inter = (self.s_local[None,None,:,:] * cBool[:, None, :, None]) * cBool[None, :, None, :]  ## arranges similarities between every roi ACROSS every pair of clusters. shape (n_clusters, n_clusters, n_ROI, n_ROI)
-        c_block = reduction_inter(
-            x=cs_inter, 
-            sizes_clusters=sizes_clusters, 
-            method=self._cluster_similarity_reduction_inter_method,
-        ).todense()  ## compute the reduction of the cs_inter array along the ROI dimensions
-
-        cs_intra = (self.s_local[None,:,:] * cBool[:, :, None]) * cBool[:, None, :]  ## arranges similarities between every roi WITHIN each cluster. shape (n_clusters, n_ROI, n_ROI)
-        c_block[range(c_block.shape[0]), range(c_block.shape[0])] = reduction_intra(
-            cs_intra, 
-            sizes_clusters=sizes_clusters,
-            method=self._cluster_similarity_reduction_intra_method,
-        ).todense()  ## compute the reduction of the cs_intra array along the ROI dimensions
-
-        c_block = np.maximum(c_block, c_block.T)  # force symmetry
-
-        idx = np.meshgrid(self._idxClusters_block[i_block], self._idxClusters_block[i_block])
-        self.c_sim[idx[0], idx[1]] = c_block
-        return c_block
-
-    def _helper_cluster_silhouette(
-        self,
-        idx,
-        method_in='mean',
-        method_out='max',
-    ):
-        """
-        Helper function to compute the '_cluster_ silhouette score' of a cluster.
-        Note that a true silhouette scores is slightly different, as it is
-         defined for each sample, not for each cluster. This score describes the 
-         the margin between samples within a cluster and all other samples. It is
-         defined as ratio betwee between: 
-         A) the average pairwise similarity between all the samples within a
-         cluster to 
-         B) the highest similarity between any samples in the cluster and all other
-         samples.
-        
-        Args:
-            idx (np.ndarray):
-                The indices of the clusters to compute the silhouette score for
-            method_in (str):
-                The method to use to compute the average pairwise similarity between
-                 all the samples within a cluster.
-            method_out (str):
-                The method to use to compute the highest similarity between all
-                samples within a cluster and all other samples.
-
-        Returns:
-            silhouette_scores (np.ndarray):
-                The silhouette score of each cluster
-        """
-        assert method_in in ['mean', 'min'], 'method_in must be mean or min'
-        assert method_out in ['max'], 'method_out must be max'
-
-        idx_in = self._cluster_bool_coo[idx].nonzero()[0]
-        s_single = self.s_local[idx_in]
-        if method_in == 'mean':
-            cs_in = s_single[:, idx_in].mean()
-        elif method_in == 'min':
-            cs_in = sparse.triu(s_single[:, idx_in], k=1).data.min()
-        cs_out = (s_single * self._cluster_bool_inv[idx]).max()
-        # return cs_in / cs_out
-        return (cs_in - cs_out) / np.maximum(cs_in, cs_out)
+            self.s_SWT_z = self.s_SWT.copy().tocoo()
+            self.s_SWT_z.data = ((self.s_SWT_z.data - mus_SWT_diff[self.s_SWT_z.row]) / stds_SWT_diff[self.s_SWT_z.row])
+            self.s_SWT_z = self.s_SWT_z.tocsr()
+            
 
 
 ###########################
@@ -749,31 +529,43 @@ class ROI_graph:
         plt.imshow(im, vmin=0, vmax=1)
 
 
+def get_idx_in_kRange(
+    X,
+    k_max=3000,
+    k_min=100,
+    algo_kNN='brute'
+):
+    import sklearn
+    import scipy.sparse
+    import numpy as np
 
-def labels_to_bool(labels):
-#     return {label: np.where(labels==label)[0] for label in np.unique(labels)}
-    return np.array([labels==label for label in np.unique(labels)])
+    if (k_max - k_min) < 1000:
+        f"RH Warning: Difference betwee 'k_max' and 'k_min' is small. This different is the total number of comparisons. Fitting distributions may struggle. Consider increasing difference to 1000-9000 if posisble."
+    assert k_max > k_min, f"'k_max' must be greater than 'k_min'"
+    
+    ## note that this is approximate (using kd_tree for algo bc it is the fastest of the available methods for large datasets)
+    d = sklearn.neighbors.NearestNeighbors(
+        algorithm=algo_kNN,
+        n_neighbors=k_max,
+        metric='euclidean',
+        p=2,
+        # n_jobs=self._n_workers,
+        n_jobs=-1,
+    #     **self._kwargs_sf
+    ).fit(X).kneighbors_graph(
+        X,
+        n_neighbors=k_max,
+        mode='distance'
+    ).tocoo()
 
-def helper_compute_linkage(method, d_sq):
-    # print(f'computing method: {method}')
-    if len(d_sq) > 0:
-        return {method : scipy.cluster.hierarchy.linkage(d_sq, method=method)}
-    else:
-        return {method : np.array([])}
+    idx_nz = np.stack((d.row, d.col), axis=0).reshape(2, d.shape[0], k_max)  ## get indices of the non-zero values in the distance graph
+    idx_topk = np.argpartition(np.array(d.data).reshape(d.shape[0], k_max), kth=k_min, axis=1)  ## partition the non-zero values of the distance graph at the k_min-th value
+#     idx_topk = np.argpartition(d.A, kth=k_min, axis=1)  ## partition the distance graph at the k_min-th value
+    mesh_i, mesh_j = np.meshgrid(np.arange(k_max), np.arange(d.shape[0]))  ## prep a meshgrid of the correct output size. Will only use the row idx since the column idx will be replaced with idx_topk
+    idx_diff = np.array(idx_nz.data).reshape(2, d.shape[0], k_max)[:, mesh_j[:, k_min:], idx_topk[:, k_min:]][1]  ## put it all together. Get kRange  between k_min and k_max
+    return idx_diff, d
 
-def hash_matrix(x):
-    y = np.array(np.packbits(x.todense(), axis=1))
-    return np.array([hash(tuple(vec)) for vec in y])
-
-def reduction_inter(x, sizes_clusters, method='max'):
-    if method == 'max':
-        return x.max(axis=(2,3))
-    elif method == 'mean':
-        return x.sum(axis=(2,3)) / (sizes_clusters[:,None] * sizes_clusters[None,:])
-
-def reduction_intra(x, sizes_clusters, method='min'):
-    if method == 'min':
-        x.fill_value = np.inf
-        return x.min(axis=(1,2))
-    elif method == 'mean':
-        return x.sum(axis=(1,2)) / (sizes_clusters * (sizes_clusters-1))
+def cosine_similarity_customIdx(features, idx):
+    f = torch.nn.functional.normalize(features, dim=1)
+    out = torch.stack([f[ii] @ f[idx[ii]].T for ii in tqdm(range(f.shape[0]))], dim=0)
+    return out

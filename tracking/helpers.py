@@ -438,6 +438,37 @@ def sparse_mask(x, mask_sparse, do_safety_steps=True):
     return (m!=0).multiply(x)
 
 
+def generalised_logistic_function(
+    x, 
+    a=0, 
+    k=1, 
+    b=1, 
+    v=1, 
+    q=1, 
+    c=1,
+    mu=0,
+    ):
+    '''
+    Generalized logistic function
+    See: https://en.wikipedia.org/wiki/Generalised_logistic_function
+     for parameters and details
+    RH 2021
+
+    Args:
+        a: the lower asymptote
+        k: the upper asymptote when C=1
+        b: the growth rate
+        v: > 0, affects near which asymptote maximum growth occurs
+        q: is related to the value Y (0). Center positions
+        c: typically takes a value of 1
+        mu: the center position of the function
+
+    Returns:
+        output:
+            Logistic function
+     '''
+    return a + (k-a) / (c + q*np.exp(-b*(x-mu)))**(1/v)
+    
 ######################
 # torch_sparse stuff #
 ######################
