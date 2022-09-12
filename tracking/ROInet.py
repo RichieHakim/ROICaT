@@ -36,6 +36,7 @@ class ROInet_embedder:
             'model': ('model.py', '741b79903507b11769e3f7aa4cdd4dbe'),
             'state_dict': ('ConvNext_tiny__1_0_unfrozen__simCLR.pth', 'a5fae4c9ea95f2c78b4690222b2928a5'),
         },
+        forward_pass_version='latent',
         verbose=True,
     ):
         """
@@ -67,6 +68,14 @@ class ROInet_embedder:
                 The (filename, hash_value) pairs can be made using:
                  paths_networkFiles = [(Path(dir_networkFiles).resolve() / name).as_posix() for name in get_dir_contents(dir_networkFiles)[1]]
                  {Path(path).name: hash_file(path) for path in paths_networkFiles}
+            forward_pass_version (str):
+                The version of the forward pass to use.
+                'latent':
+                    Return the post-head output latents.
+                'head':
+                    Return the output of the head layers.
+                'base':
+                    Return the output of the base model.
             verbose (bool):
                 Whether to print out extra information.
         """
@@ -138,7 +147,7 @@ class ROInet_embedder:
         with open(paths_matching['params']) as f:
             self.params_model = json.load(f)
             print(f"Loaded params_model from {paths_matching['params']}") if self._verbose else None
-            self.net = model.make_model(fwd_version='latent', **self.params_model)
+            self.net = model.make_model(fwd_version=forward_pass_version, **self.params_model)
             print(f"Generated network using params_model") if self._verbose else None
             
         ## Prep network and load state_dict

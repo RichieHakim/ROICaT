@@ -92,7 +92,7 @@ class ROI_Blurrer:
             sf_sparseCOO,
             device=self._device
         )
-
+        
         images_conv = self._conv(images_spconv)
         return sparse_convert_spconv_to_scipy(images_conv)
 
@@ -117,12 +117,12 @@ class ROI_Blurrer:
                 The number of batches to use for blurring.
         """
         sf_coo = [sparse.as_coo(sf).reshape((sf.shape[0], self._frame_shape[0], self._frame_shape[1])) for sf in spatialFootprints]
-        
-        self.ROIs_blurred = [scipy.sparse.vstack([self._sparse_conv2D(
-            sf_sparseCOO=batch, 
-        ) for batch in helpers.make_batches(sf, batch_size=batch_size, num_batches=num_batches)]) for sf in sf_coo]
+        return sf_coo
+        # self.ROIs_blurred = [scipy.sparse.vstack([self._sparse_conv2D(
+        #     sf_sparseCOO=batch, 
+        # ) for batch in helpers.make_batches(sf, batch_size=batch_size, num_batches=num_batches)]) for sf in sf_coo]
 
-        return self.ROIs_blurred
+        # return self.ROIs_blurred
 
 
     def get_ROIsBlurred_maxIntensityProjection(self):
