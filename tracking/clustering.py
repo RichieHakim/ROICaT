@@ -58,21 +58,24 @@ class Clusterer:
         self.d_conj = self.d_conj.tocsr()
         self.d_conj.eliminate_zeros()
 
-    def plot_similarity_relationships(self,):
+    def plot_similarity_relationships(self, plots_to_show=[1,2,3]):
         fig, axs = plt.subplots(nrows=1, ncols=3, figsize=(20,4))
         ## set figure title
         fig.suptitle('Similarity relationships', fontsize=16)
         
         ## plot similarity relationships
-        axs[0].scatter(self.ssf, self.snn, s=5, alpha=0.05, c=self.d_conj.data)
-        axs[0].set_xlabel('sim Spatial Footprint')
-        axs[0].set_ylabel('sim Neural Network')
-        axs[1].scatter(self.ssf, self.sswt, s=5, alpha=0.05, c=self.d_conj.data)
-        axs[1].set_xlabel('sim Spatial Footprint')
-        axs[1].set_ylabel('sim Scattering Wavelet Transform')
-        axs[2].scatter(self.snn, self.sswt, s=5, alpha=0.05, c=self.d_conj.data)
-        axs[2].set_xlabel('sim Neural Network')
-        axs[2].set_ylabel('sim Scattering Wavelet Transform')
+        if 1 in plots_to_show:
+            axs[0].scatter(self.ssf, self.snn, s=5, alpha=0.05, c=self.d_conj.data)
+            axs[0].set_xlabel('sim Spatial Footprint')
+            axs[0].set_ylabel('sim Neural Network')
+        if 2 in plots_to_show:
+            axs[1].scatter(self.ssf, self.sswt, s=5, alpha=0.05, c=self.d_conj.data)
+            axs[1].set_xlabel('sim Spatial Footprint')
+            axs[1].set_ylabel('sim Scattering Wavelet Transform')
+        if 3 in plots_to_show:
+            axs[2].scatter(self.snn, self.sswt, s=5, alpha=0.05, c=self.d_conj.data)
+            axs[2].set_xlabel('sim Neural Network')
+            axs[2].set_ylabel('sim Scattering Wavelet Transform')
         
         return fig, axs
 
@@ -109,6 +112,7 @@ class Clusterer:
     def fit(self,
         session_bool,
         min_cluster_size=2,
+        discard_failed_pruning=True,
         d_conj=None,
         d_localMin=None,
     ):
@@ -185,12 +189,18 @@ class Clusterer:
             idx_toUpdate = np.isin(labels, violations_labels)
             labels[idx_toUpdate] = labels_new[idx_toUpdate] + labels.max() + 3
             labels = helpers.squeeze_integers(labels)
-            d_cut -= d_cut*dChange
+            d_cut -= dChange
             
             if d_cut < 0.01:
-                # print('failed')
-                # break
-                raise ValueError('RH ERROR: the search did not complete')
+                print(f"RH WARNING: Redundant session cluster splitting did not complete fully. Distance walk failed at 'd_cut':{d_cut}.")
+                if discard_failed_pruning:
+                    print(f"Setting all clusters with redundant ROIs to label: -1.")
+                    labels[idx_toUpdate] = -1
+                break
+        
+        violations_labels = np.unique(labels)[np.array([(session_bool[labels==u].sum(0)>1).sum().item() for u in np.unique(labels)]) > 0]
+        violations_labels = violations_labels[violations_labels > -1]
+        self.violations_labels = violations_labels
 
         ## Set clusters with too few ROIs to -1
         u, c = np.unique(labels, return_counts=True)

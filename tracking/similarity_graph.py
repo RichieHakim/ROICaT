@@ -347,9 +347,10 @@ class ROI_graph:
          from each other.
 
         Args:
-            centers_of_mass (np.ndarray):
+            centers_of_mass (np.ndarray or list of np.ndarray):
                 The centers of mass of the ROIs.
                 shape (n_ROIs total, 2)
+                or list of shape (n_ROIs for each session, 2)
             k_max (int):
                 The maximum number of nearest neighbors to consider
                  for each ROI. This value will result in an intermediate
@@ -390,11 +391,13 @@ class ROI_graph:
         """
         k_max = min(k_max, self.s_NN.shape[0])
 
+        coms = np.vstack(centers_of_mass) if isinstance(centers_of_mass, list) else centers_of_mass
+        
         ## first get the indices of 'different' ROIs for each ROI.
         ##  'different here means they are more than the k-th nearest
         ##  neighbor based on centroid distance.
         idx_diff, _ = get_idx_in_kRange(
-            X=centers_of_mass,
+            X=coms,
             k_max=k_max,
             k_min=k_min,
             algo_kNN=algo_NN,

@@ -1,6 +1,6 @@
-import sparse
-import torch
-import spconv.pytorch as spconv
+# import sparse
+# import torch
+# import spconv.pytorch as spconv
 import scipy.sparse
 import numpy as np
 from tqdm import tqdm
@@ -59,15 +59,31 @@ class ROI_Blurrer:
     def blur_ROIs(
         self,
         spatialFootprints,
-        batch_size=10000,
     ):
-        sf_cat = helpers.scipy_sparse_csr_with_length(scipy.sparse.vstack(spatialFootprints))
-        self.ROIs_blurred = scipy.sparse.vstack([
-            self._conv(
-                x=batch,
-                batching=True,
-                mode='same',
-            ) for batch in tqdm(helpers.make_batches(sf_cat, batch_size=batch_size), total=int(np.ceil(sf_cat.shape[0]/batch_size)))])
+        # sf_cat = helpers.scipy_sparse_csr_with_length(scipy.sparse.vstack(spatialFootprints))
+        # self.ROIs_blurred = scipy.sparse.vstack([
+        #     self._conv(
+        #         x=batch,
+        #         batching=True,
+        #         mode='same',
+        #     ) for batch in tqdm(helpers.make_batches(sf_cat, batch_size=batch_size), total=int(np.ceil(sf_cat.shape[0]/batch_size)))])
+
+
+        self.ROIs_blurred = [
+                self._conv(
+                    x=sf,
+                    batching=True,
+                    mode='same',
+                ) for sf in spatialFootprints
+        ]
+    
+
+    def get_ROIsBlurred_maxIntensityProjection(self):
+        """
+        Returns the max intensity projection of the ROIs.
+        """
+        return [rois.max(0).toarray().reshape(self._frame_shape[0], self._frame_shape[1]) for rois in self.ROIs_blurred]
+
 
 
 # class ROI_Blurrer:
@@ -189,11 +205,11 @@ class ROI_Blurrer:
 #         return self.ROIs_blurred
 
 
-#     def get_ROIsBlurred_maxIntensityProjection(self):
-#         """
-#         Returns the max intensity projection of the ROIs.
-#         """
-#         return [rois.max(0).toarray().reshape(self._frame_shape[0], self._frame_shape[1]) for rois in self.ROIs_blurred]
+    # def get_ROIsBlurred_maxIntensityProjection(self):
+    #     """
+    #     Returns the max intensity projection of the ROIs.
+    #     """
+    #     return [rois.max(0).toarray().reshape(self._frame_shape[0], self._frame_shape[1]) for rois in self.ROIs_blurred]
 
 
 # def pydata_sparse_to_spconv(sp_array, device='cpu'):
