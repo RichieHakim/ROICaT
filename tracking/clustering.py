@@ -33,6 +33,40 @@ class Clusterer:
         sig_SWT_kwargs={'mu':0.5, 'b':0.5},
         plot_sigmoid=True,
     ):
+        """
+        Make a distance matrix from the three similarity matrices.
+
+        Args:
+            s_sf (scipy.sparse.csr_matrix):
+                Similarity matrix for spatial footprints.
+            s_NN_z (scipy.sparse.csr_matrix):
+                Z-scored similarity matrix for neural network features.
+            s_SWT_z (scipy.sparse.csr_matrix):
+                Z-scored similarity matrix for scattering wavelet 
+                 transform features.
+            power_sf (float):
+                Power to which to raise the spatial footprint similarity.
+            power_NN (float):
+                Power to which to raise the neural network similarity.
+            power_SWT (float):
+                Power to which to raise the scattering wavelet transform 
+                 similarity.
+            p_norm (float):
+                p-norm to use for the conjunction of the similarity
+                 matrices.
+            sig_NN_kwargs (dict):
+                Keyword arguments for the sigmoid function applied to the
+                 neural network similarity matrix.
+                See helpers.generalised_logistic_function for details.
+            sig_SWT_kwargs (dict):
+                Keyword arguments for the sigmoid function applied to the
+                 scattering wavelet transform similarity matrix.
+                See helpers.generalised_logistic_function for details.
+            plot_sigmoid (bool):
+                Whether to plot the sigmoid functions applied to the
+                 neural network and scattering wavelet transform
+                 similarity matrices.
+        """
         p_norm = 1e-9 if p_norm == 0 else p_norm
         self.ssf = s_sf.data**power_sf
 

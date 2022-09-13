@@ -34,17 +34,13 @@ class ROI_graph:
     """
     def __init__(
         self,
-        device='cpu',
-        n_workers=1,
-        spatialFootprint_maskPower=0.8,
+        n_workers=-1,
         frame_height=512,
         frame_width=1024,
         block_height=100,
         block_width=100,
-        overlapping_width_Multiplier=0.2,
+        overlapping_width_Multiplier=0.0,
         algorithm_nearestNeigbors_spatialFootprints='brute',
-        n_neighbors_nearestNeighbors_spatialFootprints='full',
-        locality=1,
         verbose=True,
         **kwargs_nearestNeigbors_spatialFootprints
     ):
@@ -54,40 +50,22 @@ class ROI_graph:
          computations can be done blockwise.
 
         Args:
-            device (str):
-                The device to use for the computations.
-                Recommended to use 'cpu' for since the matmul operations
-                 are relatively small.
             n_workers (int):
                 The number of workers to use for the computations.
                 Set to -1 to use all available cpu cores.
                 Used for spatial footprint manahattan distance computation,
                  computing hashes of cluster idx, and computing linkages.
-            spatialFootprint_maskPower (float):
-                The power to use for the spatial footprint mask. Lower
-                 values will make masks more binary looking for distance
-                 computation.
             algorithm_nearestNeigbors_spatialFootprints (str):
                 The algorithm to use for the nearest neighbors computation.
                 See sklearn.neighbors.NearestNeighbors for more information.
-            n_neighbors_nearestNeighbors_spatialFootprints (int or str):
-                The number of neighbors to use for the nearest neighbors.
-                Set to 'full' to use all available neighbors.
-            locality (float):
-                Value to use as an exponent for the cluster similarity calculations
-                self.s remains unchanged, but self.c is computed using self.s**locality
             **kwargs_nearestNeigbors_spatialFootprints (dict):
                 The keyword arguments to use for the nearest neighbors.
                 Optional.
                 See sklearn.neighbors.NearestNeighbors for more information.
         """
-        self._device = device
-        self._sf_maskPower = spatialFootprint_maskPower
         self._algo_sf = algorithm_nearestNeigbors_spatialFootprints
-        self._nn_sf = n_neighbors_nearestNeighbors_spatialFootprints
         self._kwargs_sf = kwargs_nearestNeigbors_spatialFootprints
 
-        self._locality = locality
 
         self._verbose = verbose
 
@@ -120,11 +98,7 @@ class ROI_graph:
         features_NN,
         features_SWT,
         ROI_session_bool,
-        linkage_methods=['single', 'complete', 'ward', 'average'],
-        linkage_distances=[0.1, 0.2, 0.4, 0.8],
-        min_cluster_size=2,
-        max_cluster_size=None,
-        batch_size_hashing=100,
+        spatialFootprint_maskPower=1.0,
     ):
         """
         Computes:
@@ -140,6 +114,10 @@ class ROI_graph:
                 The spatial footprints of the ROIs.
                 Can be obtained from blurring.ROI_blurrer.ROIs_blurred
                  or data_importing.Data_suite2p.spatialFootprints.
+            spatialFootprint_maskPower (float):
+                The power to use for the spatial footprint mask. Lower
+                 values will make masks more binary looking for distance
+                 computation.
             features_NN (torch.Tensor):
                 The output latents from the roinet neural network.
                 Can be obtained from ROInet.ROInet_embedder.latents
@@ -149,30 +127,16 @@ class ROI_graph:
             ROI_session_bool (torch.Tensor):
                 The boolean array indicating which ROIs (across all sessions)
                  belong to each session. shape (n_ROIs total, n_sessions)
-            linkage_methods (list of str):
-                The linkage methods to use for the linkage clustering.
-                See scipy.cluster.hierarchy.linkage for more information.
-            linkage_distances (list of float):
-                The distances to use for the linkage clustering.
-                Using more will result in higher resolution results, but slower
-                 computation.
-                See scipy.cluster.hierarchy.linkage for more information.
-            min_cluster_size (int):
-                The minimum size of a cluster to consider.
-            max_cluster_size (int):
-                The maximum size of a cluster to consider.
-                If None, all clusters with size <= n_sessions are considered.
-            batch_size_hashing (int):
-                The number of ROIs to hash at a time.
+            spatialFootprint_maskPower (float):
+                The power to raise the spatial footprint mask to. Use 1.0 for
+                 no change to the masks, low values (e.g. 0.5) to make the masks
+                 more binary looking, and high values (e.g. 2.0) to make the
+                 pairwise similarities highly dependent on the relative intensities
+                 of the pixels in each mask.            
         """
 
         self._n_sessions = ROI_session_bool.shape[1]
-
-        self._linkage_methods = linkage_methods
-        self._linkage_distances = linkage_distances
-        self._min_cluster_size = min_cluster_size
-        self._max_cluster_size = max_cluster_size
-        self._batch_size_hashing = batch_size_hashing
+        self._sf_maskPower = spatialFootprint_maskPower
 
         self.sf_cat = scipy.sparse.vstack(spatialFootprints)
         n_roi = self.sf_cat.shape[0]
@@ -181,9 +145,7 @@ class ROI_graph:
         s_sf_all, s_NN_all, s_SWT_all, s_sesh_all, idxROI_block_all = [], [], [], [], []
 
         self.s_SWT = scipy.sparse.csr_matrix((n_roi, n_roi))
-        s_empty = scipy.sparse.lil_matrix((n_roi, n_roi))
         self.d = scipy.sparse.csr_matrix((n_roi, n_roi))
-        cluster_idx_all = []
 
         print('Computing pairwise similarity between ROIs...') if self._verbose else None
         for ii, block in tqdm(enumerate(self.blocks), total=len(self.blocks), mininterval=10):
@@ -289,8 +251,7 @@ class ROI_graph:
             n_neighbors=sf.shape[0],
             metric='manhattan',
             p=1,
-            # n_jobs=self._n_workers,
-            n_jobs=-1,
+            n_jobs=self._n_workers,
             **self._kwargs_sf
         ).fit(sf).kneighbors_graph(
             sf,
@@ -392,7 +353,7 @@ class ROI_graph:
         k_max = min(k_max, self.s_NN.shape[0])
 
         coms = np.vstack(centers_of_mass) if isinstance(centers_of_mass, list) else centers_of_mass
-        
+
         ## first get the indices of 'different' ROIs for each ROI.
         ##  'different here means they are more than the k-th nearest
         ##  neighbor based on centroid distance.
@@ -401,6 +362,7 @@ class ROI_graph:
             k_max=k_max,
             k_min=k_min,
             algo_kNN=algo_NN,
+            n_workers=self._n_workers,
         )
 
         ## calculate similarity scores for each ROI against the 
@@ -536,7 +498,8 @@ def get_idx_in_kRange(
     X,
     k_max=3000,
     k_min=100,
-    algo_kNN='brute'
+    algo_kNN='brute',
+    n_workers=-1,
 ):
     import sklearn
     import scipy.sparse
@@ -552,8 +515,7 @@ def get_idx_in_kRange(
         n_neighbors=k_max,
         metric='euclidean',
         p=2,
-        # n_jobs=self._n_workers,
-        n_jobs=-1,
+        n_jobs=n_workers,
     #     **self._kwargs_sf
     ).fit(X).kneighbors_graph(
         X,
