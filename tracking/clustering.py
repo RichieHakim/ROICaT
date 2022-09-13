@@ -33,6 +33,7 @@ class Clusterer:
         sig_SWT_kwargs={'mu':0.5, 'b':0.5},
         plot_sigmoid=True,
     ):
+        p_norm = 1e-9 if p_norm == 0 else p_norm
         self.ssf = s_sf.data**power_sf
 
         sig_NN = partial(helpers.generalised_logistic_function, **sig_NN_kwargs)
@@ -47,7 +48,7 @@ class Clusterer:
         self.snn = np.maximum(sig_NN(s_NN_z.data), 0)**power_NN
         self.sswt = np.maximum(sig_SWT(s_SWT_z.data), 0)**power_SWT
 
-        s_data_norm = (np.mean(np.stack((self.snn, self.ssf), axis=0)**p_norm, axis=0))**(1/p_norm)
+        s_data_norm = (np.mean(np.stack((self.snn, self.ssf, self.sswt), axis=0)**p_norm, axis=0))**(1/p_norm)
 
         self.d_conj = s_sf.copy()
         self.d_conj.data = 1 - s_data_norm
@@ -66,12 +67,12 @@ class Clusterer:
         axs[0].scatter(self.ssf, self.snn, s=5, alpha=0.05, c=self.d_conj.data)
         axs[0].set_xlabel('sim Spatial Footprint')
         axs[0].set_ylabel('sim Neural Network')
-        # axs[1].scatter(self.ssf, self.sswt, s=5, alpha=0.05, c=self.d_conj.data)
-        # axs[1].set_xlabel('sim Spatial Footprint')
-        # axs[1].set_ylabel('sim Scattering Wavelet Transform')
-        # axs[2].scatter(self.snn, self.sswt, s=5, alpha=0.05, c=self.d_conj.data)
-        # axs[2].set_xlabel('sim Neural Network')
-        # axs[2].set_ylabel('sim Scattering Wavelet Transform')
+        axs[1].scatter(self.ssf, self.sswt, s=5, alpha=0.05, c=self.d_conj.data)
+        axs[1].set_xlabel('sim Spatial Footprint')
+        axs[1].set_ylabel('sim Scattering Wavelet Transform')
+        axs[2].scatter(self.snn, self.sswt, s=5, alpha=0.05, c=self.d_conj.data)
+        axs[2].set_xlabel('sim Neural Network')
+        axs[2].set_ylabel('sim Scattering Wavelet Transform')
         
         return fig, axs
 
@@ -90,6 +91,7 @@ class Clusterer:
         self.d_localMin = centers[idx_localMin+1]
         
         self.d_conj_cutoff = self.d_conj.copy()
+        # self.d_conj_cutoff.data = self.d_conj_cutoff.data + 1e-9
         self.d_conj_cutoff.data[self.d_conj_cutoff.data > self.d_localMin] = 0
         self.d_conj_cutoff.eliminate_zeros()
 
@@ -101,6 +103,7 @@ class Clusterer:
             plt.scatter(self.d_localMin, counts_smooth[idx_localMin], s=100, c='r')
             plt.xlabel('distance')
             plt.ylabel('count')
+            plt.ylim([0, counts_smooth[:len(counts_smooth)//2].max()*2])
             plt.title('conjunctive distance histogram')
         
     def fit(self,

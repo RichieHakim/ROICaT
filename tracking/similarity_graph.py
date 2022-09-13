@@ -166,7 +166,7 @@ class ROI_graph:
                 The number of ROIs to hash at a time.
         """
 
-        self._n_sessions = len(spatialFootprints)
+        self._n_sessions = ROI_session_bool.shape[1]
 
         self._linkage_methods = linkage_methods
         self._linkage_distances = linkage_distances
