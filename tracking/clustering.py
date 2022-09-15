@@ -109,6 +109,9 @@ class Clusterer:
 
         if d_conj is None:
             d_conj = self.make_conjunctive_distance_matrix(**kwargs_makeConjunctiveDistanceMatrix)
+            d_cut = self.d_cut if d_cut is None else d_cut
+            d_conj[d_conj > d_cut] = 0
+            d_conj.eliminate_zeros()
         
         max_dist=(d_conj.max() - d_conj.min()) * 1000
 
