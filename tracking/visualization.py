@@ -46,9 +46,9 @@ def compute_colored_FOV(
     spatialFootprints,
     FOV_height,
     FOV_width,
-    preds,
+    boolSessionID,
+    labels,
     confidence=None,
-    threshold_confidence = 0.5
 ):
     """
     Computes a set of images of FOVs of spatial footprints, colored
@@ -62,8 +62,8 @@ def compute_colored_FOV(
             Height of the field of view
         FOV_width (int):
             Width of the field of view
-        preds (np.ndarray):
-            Predicted class for each spatial footprint
+        labels (np.ndarray):
+            Label (will be a unique color) for each spatial footprint
         confidence (np.ndarray):
             Confidence for each spatial footprint
             If None, all confidence values are set to 1.
@@ -73,48 +73,33 @@ def compute_colored_FOV(
             Threshold for the confidence values.
     """
     if confidence is None:
-        confidence = np.ones(len(preds))
+        confidence = np.ones(len(labels))
     
-    idx_roi_session = np.concatenate([np.ones(sfs.shape[0])*ii for ii,sfs in enumerate(spatialFootprints)])
+    h, w = FOV_height, FOV_width
 
-    n_sessions = len(spatialFootprints)
+    rois = scipy.sparse.vstack(spatialFootprints)
+    rois = rois.multiply(1.2/rois.max(1).A).power(1)
 
-    n_planes = n_sessions
-    labels = helpers.squeeze_integers(np.array(preds).astype(np.int64))
+    u = np.unique(labels)
 
-    labels[(confidence < threshold_confidence)] = -1
-    # labels = labels
+    n_c = len(u)
 
-    ucid_toUse = labels
-    idx_roi_session_toUse = idx_roi_session
+    colors = helpers.rand_cmap(nlabels=n_c, verbose=False)(np.linspace(0.,1.,n_c, endpoint=False))
 
-    colors = sparse.COO(helpers.rand_cmap(len(np.unique(ucid_toUse)), verbose=False)(np.int64(ucid_toUse))[:,:3])
-    # colors *= (1-((scores_samples / scores_samples.max()).numpy())**7)[:,None]
-    # colors *= (((1/scores_samples) / (1/scores_samples).max()).numpy()**1)[:,None]
+    if np.isin(-1, labels):
+        colors[0] = [0,0,0,0]
 
-    plane_oneHot = helpers.idx_to_oneHot(idx_roi_session_toUse.astype(np.int32))
+    labels_squeezed = helpers.squeeze_integers(labels)
+    labels_squeezed -= labels_squeezed.min()
 
-    ROIs_csr = scipy.sparse.csr_matrix(scipy.sparse.vstack(spatialFootprints))
-    ROIs_csr_scaled = ROIs_csr.multiply(ROIs_csr.max(1).power(-1))
-    ROIs_sCOO = sparse.COO(ROIs_csr_scaled)
+    rois_c = scipy.sparse.hstack([rois.multiply(colors[labels_squeezed, ii][:,None]) for ii in range(4)]).tocsr()
+    rois_c.data = np.minimum(rois_c.data, 1)
 
-    def tile_sparse(arr, n_tiles):
-        """
-        tiles along new (last) dimension
-        """
-        out = sparse.stack([arr for _ in range(n_tiles)], axis=-1)
-        return out
+    rois_c_bySessions = [rois_c[idx] for idx in boolSessionID.T]
 
-    ROIs_tiled = tile_sparse(tile_sparse(ROIs_sCOO, n_planes), 3)
+    rois_c_bySessions_FOV = [r.max(0).toarray().reshape(4, h, w).transpose(1,2,0)[:,:,:3] for r in rois_c_bySessions]
 
-    ROIs_colored = ROIs_tiled * colors[:,None,None,:] * plane_oneHot[:,None,:,None]
-
-    FOV_ROIs_colored = ROIs_colored.sum(0).reshape((FOV_height, FOV_width, n_planes, 3)).transpose((2,0,1,3))
-
-    FOV_all_noClip = copy.copy(FOV_ROIs_colored.todense())
-    FOV_all_noClip[FOV_all_noClip>1] = 1
-
-    return FOV_all_noClip
+    return rois_c_bySessions_FOV
 
 
 def crop_cluster_ims(ims):

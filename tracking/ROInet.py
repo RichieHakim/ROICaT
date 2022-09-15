@@ -212,7 +212,7 @@ class ROInet_embedder:
         print('Starting: resizing ROIs') if self._verbose else None
         # sf_ptile = np.array([np.percentile(np.mean(sf>0, axis=(1,2)), ptile_norm) for sf in tqdm(ROI_images)]).mean()
         # scale_forRS = (goal_frac/sf_ptile)**scale_norm
-        scale_forRS = 0.7 / um_per_pixel  ## hardcoded for now sorry
+        scale_forRS = 0.7 * um_per_pixel  ## hardcoded for now sorry
         sf_rs = [np.stack([resize_affine(img, scale=scale_forRS, clamp_range=True) for img in sf], axis=0) for ii, sf in enumerate(tqdm(ROI_images, mininterval=60))]
 
         ROI_images_cat = np.concatenate(ROI_images, axis=0)

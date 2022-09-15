@@ -17,21 +17,193 @@ class Clusterer:
 
     RH 2022
     """
-    def __init__(self):
-        pass
+    def __init__(
+        self,
+        s_sf=None,
+        s_NN_z=None,
+        s_SWT_z=None,
+        verbose=True,
+    ):
+        self.s_sf = s_sf
+        self.s_NN_z = s_NN_z
+        self.s_SWT_z = s_SWT_z
+        self._verbose = verbose
+
+    def prune_similarity_graphs(
+        self,
+        fallback_d_cutoff=0.5,
+        plot_pref=True,
+        kwargs_makeConjunctiveDistanceMatrix={
+            'power_sf': 0.5,
+            'power_NN': 1.0,
+            'power_SWT': 0.1,
+            'p_norm': -4.0,
+            'sig_NN_kwargs': {'mu': -1.5, 'b': 1.0},
+            'sig_SWT_kwargs': {'mu': -2.0, 'b': 1.0}
+        },
+    ):
+        n_bins = self.s_sf.nnz // 10000
+        smoothing_window = n_bins // 100
+        print(f'Pruning similarity graphs with {n_bins} bins and smoothing window {smoothing_window}...') if self._verbose else None
+
+        d_conj = self.make_conjunctive_distance_matrix(**kwargs_makeConjunctiveDistanceMatrix)
+    
+        print('Finding intermode cutoff...') if self._verbose else None
+        edges = np.linspace(d_conj.min(), d_conj.max(), n_bins+1)
+        centers = (edges[1:] + edges[:-1])/2
+        counts, bins = np.histogram(d_conj.data, bins=edges)
+        
+        counts_smooth = scipy.signal.savgol_filter(counts[1:], smoothing_window, 1)
+        fp = scipy.signal.find_peaks(-counts_smooth[:-1])
+        if len(fp[0]) == 0:
+            print('No peaks found. Using user defined cutoff.') if self._verbose else None
+            self.d_cut = fallback_d_cutoff
+        else:
+            idx_localMin = fp[0][0]
+            self.d_cut = centers[idx_localMin+1]
+        # self.d_cut = 0.5
+        print(f'Using intermode cutoff of {self.d_cut:.3f}') if self._verbose else None
+        
+        self.idx_d_toKeep = d_conj.copy()
+        # self.idx_d_toKeep.data = self.idx_d_toKeep.data + 1e-9
+        # print(np.where(self.idx_d_toKeep.data < self.d_cut)[0])
+        # return self.idx_d_toKeep, self.d_cut
+        self.idx_d_toKeep.data[np.where(self.idx_d_toKeep.data < self.d_cut)[0].astype(int)] = 99999999999  ## set to large unique number
+        self.idx_d_toKeep = self.idx_d_toKeep == 99999999999
+        self.idx_d_toKeep.eliminate_zeros()
+
+        if plot_pref:
+            plt.figure()
+            plt.stairs(counts, edges, fill=True)
+            plt.plot(centers[1:], counts_smooth, c='orange')
+            plt.axvline(self.d_cut, c='r')
+            plt.scatter(self.d_cut, counts_smooth[idx_localMin], s=100, c='r')
+            plt.xlabel('distance')
+            plt.ylabel('count')
+            plt.ylim([0, counts_smooth[:len(counts_smooth)//2].max()*2])
+            plt.ylim([0,500000])
+            plt.title('conjunctive distance histogram')
+
+    def fit(self,
+        session_bool,
+        min_cluster_size=2,
+        split_intraSession_clusters=True,
+        discard_failed_pruning=True,
+        d_conj=None,
+        d_cut=None,
+        d_step=0.05,
+        kwargs_makeConjunctiveDistanceMatrix={
+            'power_sf': 0.5,
+            'power_NN': 1.0,
+            'power_SWT': 0.1,
+            'p_norm': -4.0,
+            'sig_NN_kwargs': {'mu': -1.5, 'b': 1.0},
+            'sig_SWT_kwargs': {'mu': -2.0, 'b': 1.0}
+        },
+    ):
+        """
+        Fit the clustering algorithm to the data.
+        """
+        print('Clustering...') if self._verbose else None
+        n_sessions = session_bool.shape[1]
+
+        if d_conj is None:
+            d_conj = self.make_conjunctive_distance_matrix(**kwargs_makeConjunctiveDistanceMatrix)
+        
+        max_dist=(d_conj.max() - d_conj.min()) * 1000
+
+        self.hdbs = hdbscan.HDBSCAN(
+            min_cluster_size=min_cluster_size,
+        #     min_samples=None,
+        #     cluster_selection_epsilon=0.0,
+            max_cluster_size=n_sessions,
+            metric='precomputed',
+            alpha=0.999,
+        #     p=None,
+            algorithm='generic',
+        #     leaf_size=100,
+        # #     memory=Memory(location=None),
+        #     approx_min_span_tree=False,
+        #     gen_min_span_tree=False,
+        #     core_dist_n_jobs=mp.cpu_count(),
+        #     cluster_selection_method='eom',
+        #     allow_single_cluster=False,
+        #     prediction_data=False,
+        #     match_reference_implementation=False,
+            max_dist=max_dist
+        )
+
+        print('Fitting HDBSCAN...') if self._verbose else None
+        self.hdbs.fit(attach_fully_connected_node(
+            d_conj, 
+            dist_fullyConnectedNode=max_dist
+        ))
+        labels = self.hdbs.labels_[:-1]
+        self.labels = labels
+
+        ## Split up labels with multiple ROIs per session
+        ## The below code is a bit of a mess, but it works.
+        ##  It works by iteratively reducing the cutoff distance
+        ##  and splitting up violating clusters until there are 
+        ##  no more violations.
+        if split_intraSession_clusters:
+            print('Splitting up clusters with multiple ROIs per session...') if self._verbose else None
+            labels = labels.copy()
+            d_cut = self.d_cut if d_cut is None else d_cut
+
+            success = False
+            while success == False:
+                violations_labels = np.unique(labels)[np.array([(session_bool[labels==u].sum(0)>1).sum().item() for u in np.unique(labels)]) > 0]
+                violations_labels = violations_labels[violations_labels > -1]
+                # print(violations_labels)
+                if len(violations_labels) == 0:
+                    success = True
+                    break
+                
+                for l in violations_labels:
+                    idx = np.where(labels==l)[0]
+                    if d_conj[idx][:,idx].nnz == 0:
+                        labels[idx] = -1
+                        # print('no neighbors')
+
+                labels_new = self.hdbs.single_linkage_tree_.get_clusters(
+                    cut_distance=d_cut,
+                    min_cluster_size=2,
+                )[:-1]
+                
+                idx_toUpdate = np.isin(labels, violations_labels)
+                labels[idx_toUpdate] = labels_new[idx_toUpdate] + labels.max() + 3
+                labels = helpers.squeeze_integers(labels)
+                d_cut -= d_step
+                
+                if d_cut < 0.01:
+                    print(f"RH WARNING: Redundant session cluster splitting did not complete fully. Distance walk failed at 'd_cut':{d_cut}.")
+                    if discard_failed_pruning:
+                        print(f"Setting all clusters with redundant ROIs to label: -1.")
+                        labels[idx_toUpdate] = -1
+                    break
+        
+        violations_labels = np.unique(labels)[np.array([(session_bool[labels==u].sum(0)>1).sum().item() for u in np.unique(labels)]) > 0]
+        violations_labels = violations_labels[violations_labels > -1]
+        self.violations_labels = violations_labels
+
+        ## Set clusters with too few ROIs to -1
+        u, c = np.unique(labels, return_counts=True)
+        labels[np.isin(labels, u[c<2])] = -1
+        labels = helpers.squeeze_integers(labels)
+
+        self.labels = labels
+        return self.labels
 
     def make_conjunctive_distance_matrix(
         self,
-        s_sf,
-        s_NN_z,
-        s_SWT_z,
         power_sf=1,
         power_NN=1,
         power_SWT=1,
         p_norm=1,
+        sig_sf_kwargs={'mu':0.5, 'b':0.5},
         sig_NN_kwargs={'mu':0.5, 'b':0.5},
         sig_SWT_kwargs={'mu':0.5, 'b':0.5},
-        plot_sigmoid=True,
     ):
         """
         Make a distance matrix from the three similarity matrices.
@@ -54,6 +226,10 @@ class Clusterer:
             p_norm (float):
                 p-norm to use for the conjunction of the similarity
                  matrices.
+            sig_sf_kwargs (dict):
+                Keyword arguments for the sigmoid function applied to the
+                 spatial footprint overlap similarity matrix.
+                See helpers.generalised_logistic_function for details.
             sig_NN_kwargs (dict):
                 Keyword arguments for the sigmoid function applied to the
                  neural network similarity matrix.
@@ -67,182 +243,77 @@ class Clusterer:
                  neural network and scattering wavelet transform
                  similarity matrices.
         """
+        print('Making conjunctive distance matrix...') if self._verbose else None
+
         p_norm = 1e-9 if p_norm == 0 else p_norm
-        self.ssf = s_sf.data**power_sf
 
-        sig_NN = partial(helpers.generalised_logistic_function, **sig_NN_kwargs)
-        sig_SWT = partial(helpers.generalised_logistic_function, **sig_SWT_kwargs)
-        if plot_sigmoid:
-            fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(12,4))
-            axs[0].plot(np.linspace(-5,5,1001), sig_NN(np.linspace(-5,5,1001)))
-            axs[0].set_title('sigmoid NN')
-            axs[1].plot(np.linspace(-5,5,1001), sig_SWT(np.linspace(-5,5,1001)))
-            axs[1].set_title('sigmoid SWT')
+        sSF_data = self._activation_function(self.s_sf, sig_sf_kwargs, power_sf)
+        sNN_data = self._activation_function(self.s_NN_z, sig_NN_kwargs, power_NN)
+        sSWT_data = self._activation_function(self.s_SWT_z, sig_SWT_kwargs, power_SWT)
 
-        self.snn = np.maximum(sig_NN(s_NN_z.data), 0)**power_NN
-        self.sswt = np.maximum(sig_SWT(s_SWT_z.data), 0)**power_SWT
+        sConj_data = self._pNorm(
+            s_list=[sSF_data, sNN_data, sSWT_data],
+            p=p_norm,
+        )
 
-        s_data_norm = (np.mean(np.stack((self.snn, self.ssf, self.sswt), axis=0)**p_norm, axis=0))**(1/p_norm)
+        dConj = self.s_sf.copy()
+        dConj.data = 1 - sConj_data
 
-        self.d_conj = s_sf.copy()
-        self.d_conj.data = 1 - s_data_norm
+        return dConj
 
-        self.d_conj = self.d_conj.tolil()
-        # self.d_conj[range(self.d_conj.shape[0]), range(self.d_conj.shape[1])] = 1e-9
-        self.d_conj = self.d_conj.tocsr()
-        self.d_conj.eliminate_zeros()
+    def _activation_function(self, s, sig_kwargs={'mu':0.0, 'b':1.0}, power=1):
+        sig = partial(helpers.generalised_logistic_function, **sig_kwargs) if sig_kwargs is not None else lambda x: x
+        if s is not None:
+            return sig(s.data)**power
+        else:
+            return None
 
-    def plot_similarity_relationships(self, plots_to_show=[1,2,3]):
+    def _pNorm(self, s_list, p):
+        """
+        Calculate the p-norm of a list of similarity matrices.
+        """
+        s_list_noNones = [s for s in s_list if s is not None]
+        return (np.mean(np.stack(s_list_noNones, axis=0)**p, axis=0))**(1/p)
+
+    def plot_sigmoids(self):
+        fig, axs = plt.subplots(nrows=1, ncols=3, figsize=(16,4))
+        axs[0].plot(np.linspace(-0,2,1001), self.sig_sf(np.linspace(-5,5,1001)))
+        axs[0].set_title('sigmoid SF')
+        axs[1].plot(np.linspace(-1,1,1001), self.sig_NN(np.linspace(-5,5,1001)))
+        axs[1].set_title('sigmoid NN')
+        axs[2].plot(np.linspace(-1,1,1001), self.sig_SWT(np.linspace(-5,5,1001)))
+        axs[2].set_title('sigmoid SWT')
+
+
+    def plot_similarity_relationships(self, plots_to_show=[1,2,3], max_samples=1000000, kwargs_scatter={'s':1, 'alpha':0.1}):
+        ## subsample similarities for plotting
+        idx_rand = np.floor(np.random.rand(min(max_samples, len(self.ssf))) * len(self.ssf)).astype(int)
+        ssf_sub = self.ssf[idx_rand]
+        snn_sub = self.snn[idx_rand]
+        sswt_sub = self.sswt[idx_rand] if self.sswt is not None else None
+        d_conj_sub = self.d_conj.data[idx_rand]
+
         fig, axs = plt.subplots(nrows=1, ncols=3, figsize=(20,4))
         ## set figure title
         fig.suptitle('Similarity relationships', fontsize=16)
         
         ## plot similarity relationships
         if 1 in plots_to_show:
-            axs[0].scatter(self.ssf, self.snn, s=5, alpha=0.05, c=self.d_conj.data)
+            axs[0].scatter(ssf_sub, snn_sub, c=d_conj_sub, **kwargs_scatter)
             axs[0].set_xlabel('sim Spatial Footprint')
             axs[0].set_ylabel('sim Neural Network')
-        if 2 in plots_to_show:
-            axs[1].scatter(self.ssf, self.sswt, s=5, alpha=0.05, c=self.d_conj.data)
-            axs[1].set_xlabel('sim Spatial Footprint')
-            axs[1].set_ylabel('sim Scattering Wavelet Transform')
-        if 3 in plots_to_show:
-            axs[2].scatter(self.snn, self.sswt, s=5, alpha=0.05, c=self.d_conj.data)
-            axs[2].set_xlabel('sim Neural Network')
-            axs[2].set_ylabel('sim Scattering Wavelet Transform')
+        if self.sswt is not None:
+            if 2 in plots_to_show:
+                axs[1].scatter(ssf_sub, sswt_sub, c=d_conj_sub, **kwargs_scatter)
+                axs[1].set_xlabel('sim Spatial Footprint')
+                axs[1].set_ylabel('sim Scattering Wavelet Transform')
+            if 3 in plots_to_show:
+                axs[2].scatter(snn_sub, sswt_sub, c=d_conj_sub, **kwargs_scatter)
+                axs[2].set_xlabel('sim Neural Network')
+                axs[2].set_ylabel('sim Scattering Wavelet Transform')
         
         return fig, axs
 
-    def find_intermode_cutoff(self,
-        n_bins=100, 
-        smoothing_window=15,
-        plot_pref=True
-    ):
-
-        edges = np.linspace(self.d_conj.min(), self.d_conj.max(), n_bins+1)
-        centers = (edges[1:] + edges[:-1])/2
-        counts, bins = np.histogram(self.d_conj.data, bins=edges)
-
-        counts_smooth = scipy.signal.savgol_filter(counts[1:], smoothing_window, 1)
-        idx_localMin = scipy.signal.find_peaks(-counts_smooth[:-1])[0][0]
-        self.d_localMin = centers[idx_localMin+1]
-        
-        self.d_conj_cutoff = self.d_conj.copy()
-        # self.d_conj_cutoff.data = self.d_conj_cutoff.data + 1e-9
-        self.d_conj_cutoff.data[self.d_conj_cutoff.data > self.d_localMin] = 0
-        self.d_conj_cutoff.eliminate_zeros()
-
-        if plot_pref:
-            plt.figure()
-            plt.stairs(counts, edges, fill=True)
-            plt.plot(centers[1:], counts_smooth, c='orange')
-            plt.axvline(self.d_localMin, c='r')
-            plt.scatter(self.d_localMin, counts_smooth[idx_localMin], s=100, c='r')
-            plt.xlabel('distance')
-            plt.ylabel('count')
-            plt.ylim([0, counts_smooth[:len(counts_smooth)//2].max()*2])
-            plt.title('conjunctive distance histogram')
-        
-    def fit(self,
-        session_bool,
-        min_cluster_size=2,
-        discard_failed_pruning=True,
-        d_conj=None,
-        d_localMin=None,
-    ):
-        """
-        Fit the clustering algorithm to the data.
-        """
-
-        n_sessions = session_bool.shape[1]
-
-        if d_conj is None:
-            d_conj = self.d_conj_cutoff.tocsr()
-        if d_localMin is None:
-            d_localMin = self.d_localMin
-        
-        max_dist=(d_conj.max() - d_conj.min()) * 1000
-
-        hdbs = hdbscan.HDBSCAN(
-            min_cluster_size=min_cluster_size,
-        #     min_samples=None,
-        #     cluster_selection_epsilon=0.0,
-            max_cluster_size=n_sessions,
-            metric='precomputed',
-            alpha=0.999,
-        #     p=None,
-            algorithm='generic',
-        #     leaf_size=100,
-        # #     memory=Memory(location=None),
-        #     approx_min_span_tree=False,
-        #     gen_min_span_tree=False,
-        #     core_dist_n_jobs=mp.cpu_count(),
-        #     cluster_selection_method='eom',
-        #     allow_single_cluster=False,
-        #     prediction_data=False,
-        #     match_reference_implementation=False,
-            max_dist=max_dist
-        )
-
-        hdbs.fit(attach_fully_connected_node(
-            d_conj, 
-            dist_fullyConnectedNode=max_dist
-        ))
-        labels_pre = hdbs.labels_[:-1]
-        self.labels = labels_pre
-
-        ## Split up labels with multiple ROIs per session
-        ## The below code is a bit of a mess, but it works.
-        ##  It works by iteratively reducing the cutoff distance
-        ##  and splitting up violating clusters until there are 
-        ##  no more violations.
-        labels = labels_pre.copy()
-        dChange = 0.01
-        d_cut = self.d_localMin
-
-        success = False
-        while success == False:
-            violations_labels = np.unique(labels)[np.array([(session_bool[labels==u].sum(0)>1).sum().item() for u in np.unique(labels)]) > 0]
-            violations_labels = violations_labels[violations_labels > -1]
-            # print(violations_labels)
-            if len(violations_labels) == 0:
-                success = True
-                break
-            
-            for l in violations_labels:
-                idx = np.where(labels==l)[0]
-                if d_conj[idx][:,idx].nnz == 0:
-                    labels[idx] = -1
-                    # print('no neighbors')
-
-            labels_new = hdbs.single_linkage_tree_.get_clusters(
-                cut_distance=d_cut,
-                min_cluster_size=2,
-            )[:-1]
-            
-            idx_toUpdate = np.isin(labels, violations_labels)
-            labels[idx_toUpdate] = labels_new[idx_toUpdate] + labels.max() + 3
-            labels = helpers.squeeze_integers(labels)
-            d_cut -= dChange
-            
-            if d_cut < 0.01:
-                print(f"RH WARNING: Redundant session cluster splitting did not complete fully. Distance walk failed at 'd_cut':{d_cut}.")
-                if discard_failed_pruning:
-                    print(f"Setting all clusters with redundant ROIs to label: -1.")
-                    labels[idx_toUpdate] = -1
-                break
-        
-        violations_labels = np.unique(labels)[np.array([(session_bool[labels==u].sum(0)>1).sum().item() for u in np.unique(labels)]) > 0]
-        violations_labels = violations_labels[violations_labels > -1]
-        self.violations_labels = violations_labels
-
-        ## Set clusters with too few ROIs to -1
-        u, c = np.unique(labels, return_counts=True)
-        labels[np.isin(labels, u[c<2])] = -1
-        labels = helpers.squeeze_integers(labels)
-
-        self.labels = labels
-        return self.labels
 
 
 def attach_fully_connected_node(d, dist_fullyConnectedNode=None):

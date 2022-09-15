@@ -167,7 +167,7 @@ class ROI_graph:
             s_sesh_all.append(s_sesh)
             idxROI_block_all.append(idxROI_block)
 
-
+        print('Joining blocks into full similarity matrices...') if self._verbose else None
         self.s_sf = scipy.sparse.lil_matrix((n_roi, n_roi))
         self.s_NN = scipy.sparse.lil_matrix((n_roi, n_roi))
         self.s_SWT = scipy.sparse.lil_matrix((n_roi, n_roi))
@@ -186,27 +186,27 @@ class ROI_graph:
         return self.s_sf, self.s_NN, self.s_SWT, self.s_sesh
 
     
-    def compute_cluster_scores(
-        self, 
-        power_clusterSize=2, 
-        power_clusterSilhouette=1.5
-    ):
-        """
-        Compute scores for each cluster. Score is intended to be
-         related to the quality of a cluster.
-        This is a somewhat arbitrary scoring system, but is useful when
-         performing assignment/selection of clusters.
+    # def compute_cluster_scores(
+    #     self, 
+    #     power_clusterSize=2, 
+    #     power_clusterSilhouette=1.5
+    # ):
+    #     """
+    #     Compute scores for each cluster. Score is intended to be
+    #      related to the quality of a cluster.
+    #     This is a somewhat arbitrary scoring system, but is useful when
+    #      performing assignment/selection of clusters.
 
-        Args:
-            power_clusterSize (float): 
-                power to raise the cluster size to
-            power_clusterSilhouette (float):
-                gain factor for exponentiating the cluster silhouette
-                 score
-        """
+    #     Args:
+    #         power_clusterSize (float): 
+    #             power to raise the cluster size to
+    #         power_clusterSilhouette (float):
+    #             gain factor for exponentiating the cluster silhouette
+    #              score
+    #     """
 
-        self.scores = torch.as_tensor((np.array(self.cluster_bool.sum(1)).squeeze()**power_clusterSize) * (10**(self.c_sil*power_clusterSilhouette)))
-        return self.scores
+    #     self.scores = torch.as_tensor((np.array(self.cluster_bool.sum(1)).squeeze()**power_clusterSize) * (10**(self.c_sil*power_clusterSilhouette)))
+    #     return self.scores
 
 
 
@@ -262,11 +262,13 @@ class ROI_graph:
         s_sf = d_sf.copy()
         s_sf.data = 1 - s_sf.data
         s_sf.data[s_sf.data < 1e-5] = 0  ## Likely due to numerical errors, some values are < 0 and very small. Rectify to fix.
+        s_sf[range(s_sf.shape[0]), range(s_sf.shape[0])] = 0
         s_sf.eliminate_zeros()
         
         features_NN_normd = torch.nn.functional.normalize(features_NN, dim=1)
         s_NN = torch.matmul(features_NN_normd, features_NN_normd.T) ## cosine similarity. ranges [0,1]
         s_NN[s_NN>(1-1e-5)] = 1.0
+        s_NN[range(s_NN.shape[0]), range(s_NN.shape[0])] = 0
         
         features_SWT_normd = torch.nn.functional.normalize(features_SWT, dim=1)
         s_SWT = torch.matmul(features_SWT_normd, features_SWT_normd.T) ## cosine similarity. Normalized to [0,1]
@@ -276,10 +278,10 @@ class ROI_graph:
         session_bool = torch.as_tensor(ROI_session_bool, device='cpu', dtype=torch.float32)
         s_sesh = torch.logical_not((session_bool @ session_bool.T).type(torch.bool))
 
-        s_sf = s_sf.multiply(s_sesh.numpy())
-        s_sf.eliminate_zeros()
-        # s_NN = s_NN * s_sesh
-        # s_SWT = s_SWT * s_sesh
+        # s_sf = s_sf.multiply(s_sesh.numpy())
+        # s_sf.eliminate_zeros()
+        # # s_NN = s_NN * s_sesh
+        # # s_SWT = s_SWT * s_sesh
 
         s_sf = s_sf.maximum(s_sf.T)
         s_NN = torch.maximum(s_NN, s_NN.T)  # force symmetry
@@ -299,6 +301,7 @@ class ROI_graph:
         k_max=3000,
         k_min=200,
         algo_NN='kd_tree',
+        verbose=True,
     ):
         """
         Normalizes the similarity matrices (s_NN, s_SWT, but not s_sf)
@@ -367,6 +370,7 @@ class ROI_graph:
 
         ## calculate similarity scores for each ROI against the 
         ##  'different' ROIs
+        print('Normalizing Neural Network similarity scores...') if verbose else None
         if features_NN is not None:
             s_NN_diff = cosine_similarity_customIdx(features_NN, idx_diff)
             mus_NN_diff = s_NN_diff.mean(1).numpy()
@@ -375,7 +379,8 @@ class ROI_graph:
             self.s_NN_z = self.s_NN.copy().tocoo()
             self.s_NN_z.data = ((self.s_NN_z.data - mus_NN_diff[self.s_NN_z.row]) / stds_NN_diff[self.s_NN_z.row])
             self.s_NN_z = self.s_NN_z.tocsr()
-
+        
+        print('Normalizing SWT similarity scores...') if verbose else None
         if features_SWT is not None:
             s_SWT_diff = cosine_similarity_customIdx(features_SWT, idx_diff)
             mus_SWT_diff = s_SWT_diff.mean(1).numpy()

@@ -243,6 +243,8 @@ class Data_suite2p:
                     (n_roi, frame_height_width[0], frame_height_width[1])
         """
 
+        print("Importing spatial footprints from stat files.") if self._verbose else None
+        
         if frame_height_width is None:
             frame_height_width = [self.FOV_height, self.FOV_width]
 

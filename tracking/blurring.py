@@ -17,6 +17,7 @@ class ROI_Blurrer:
         frame_shape=(512, 512),
         kernel_halfWidth=2,
         plot_kernel=False,
+        verbose=True,
     ):
         """
         Initialize the class.
@@ -34,6 +35,7 @@ class ROI_Blurrer:
                 Whether to plot an image of the kernel.
         """
         self._frame_shape = frame_shape
+        self._verbose = verbose
 
         self._width = kernel_halfWidth * 2
         self._kernel_size = int((self._width//2)*2) - 1
@@ -44,6 +46,7 @@ class ROI_Blurrer:
         )
         self.kernel = kernel_tmp / kernel_tmp.sum()
 
+        print('Preparing the Toeplitz convolution matrix') if self._verbose else None
         self._conv = Toeplitz_convolution2d(
             x_shape=self._frame_shape,
             k=self.kernel,
@@ -68,7 +71,7 @@ class ROI_Blurrer:
         #         mode='same',
         #     ) for batch in tqdm(helpers.make_batches(sf_cat, batch_size=batch_size), total=int(np.ceil(sf_cat.shape[0]/batch_size)))])
 
-
+        print('Performing convolution for blurring') if self._verbose else None
         self.ROIs_blurred = [
                 self._conv(
                     x=sf,
