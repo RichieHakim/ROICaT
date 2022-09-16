@@ -4,10 +4,13 @@ import scipy.optimize
 import scipy.sparse
 import sklearn
 import matplotlib.pyplot as plt
+import torch
 
+import optuna
 import hdbscan
 
 from functools import partial
+import time
 
 from . import helpers
 
@@ -22,67 +25,149 @@ class Clusterer:
         s_sf=None,
         s_NN_z=None,
         s_SWT_z=None,
+        s_sesh=None,
         verbose=True,
     ):
         self.s_sf = s_sf
         self.s_NN_z = s_NN_z
         self.s_SWT_z = s_SWT_z
+        self.s_sesh = s_sesh
+
+        self.s_sesh_inv = (self.s_sf != 0).astype(np.bool8)
+        self.s_sesh_inv[self.s_sesh.astype(np.bool8)] = False
+        self.s_sesh_inv.eliminate_zeros()
+
+        self.s_sesh[range(self.s_sesh.shape[0]), range(self.s_sesh.shape[1])] = 0
+
         self._verbose = verbose
 
-    def prune_similarity_graphs(
+    def find_optimal_parameters_for_pruning(
         self,
-        fallback_d_cutoff=0.5,
-        plot_pref=True,
+        n_bins=100,
+        find_parameters_automatically=True,
+        kwargs_findParameters={
+            'n_patience': 100,
+            'tol_frac': 0.05,
+            'max_trials': 350,
+            'max_duration': 60*10,
+            'verbose': False,
+        },
+        n_jobs_findParameters=-1,
+        # fallback_d_cutoff=0.5,
+        # plot_pref=True,
+        # kwargs_makeConjunctiveDistanceMatrix={
+        #     'power_sf': 0.5,
+        #     'power_NN': 1.0,
+        #     'power_SWT': 0.1,
+        #     'p_norm': -4.0,
+        #     'sig_NN_kwargs': {'mu': -1.5, 'b': 1.0},
+        #     'sig_SWT_kwargs': {'mu': -2.0, 'b': 1.0}
+        # },
+    ):
+        self.n_bins = self.s_sf.nnz // 10000 if n_bins is None else n_bins
+        # smoothing_window = self.n_bins // 100
+        # print(f'Pruning similarity graphs with {self.n_bins} bins and smoothing window {smoothing_window}...') if self._verbose else None
+
+        if find_parameters_automatically:
+            print('Finding parameters using automated hyperparameter tuning...') if self._verbose else None
+            optuna.logging.set_verbosity(optuna.logging.WARNING)
+            self.checker = Convergence_checker(**kwargs_findParameters)
+            self.study = optuna.create_study(direction='maximize', sampler=optuna.samplers.TPESampler(n_startup_trials=10))
+            self.study.optimize(self._objectiveFn_distSameMagnitude, n_jobs=n_jobs_findParameters, callbacks=[self.checker.check])
+
+            self.best_params = self.study.best_params.copy()
+            [self.best_params.pop(p) for p in [
+                'sig_SF_kwargs_mu',
+                'sig_SF_kwargs_b',
+                'sig_NN_kwargs_mu',
+                'sig_NN_kwargs_b',
+                'sig_SWT_kwargs_mu',
+                'sig_SWT_kwargs_b']]
+            self.best_params['sig_SF_kwargs'] = {'mu': self.study.best_params['sig_SF_kwargs_mu'],
+                                            'b': self.study.best_params['sig_SF_kwargs_b'],}
+            self.best_params['sig_NN_kwargs'] = {'mu': self.study.best_params['sig_NN_kwargs_mu'],
+                                            'b': self.study.best_params['sig_NN_kwargs_b'],}
+            self.best_params['sig_SWT_kwargs'] = {'mu': self.study.best_params['sig_SWT_kwargs_mu'],
+                                             'b': self.study.best_params['sig_SWT_kwargs_b'],}
+            self.kwargs_makeConjunctiveDistanceMatrix_best = self.best_params
+            print(f'Best value found: {self.study.best_value} with parameters {self.best_params}') if self._verbose else None
+        return self.kwargs_makeConjunctiveDistanceMatrix_best
+
+        # print('Making conjunctive distance matrix...') if self._verbose else None
+        # d_conj = self.make_conjunctive_distance_matrix(**kwargs_makeConjunctiveDistanceMatrix)
+
+        # print('Finding intermode cutoff...') if self._verbose else None
+        # edges = np.linspace(d_conj.min(), d_conj.max(), self.n_bins+1)
+        # centers = (edges[1:] + edges[:-1])/2
+        # counts, bins = np.histogram(d_conj.data, bins=edges)
+        
+        # counts_smooth = scipy.signal.savgol_filter(counts[1:], smoothing_window, 1)
+        # fp = scipy.signal.find_peaks(-counts_smooth[:-1])
+        # if len(fp[0]) == 0:
+        #     print('No peaks found. Using user defined cutoff.') if self._verbose else None
+        #     self.d_cut = fallback_d_cutoff
+        # else:
+        #     idx_localMin = fp[0][0]
+        #     self.d_cut = centers[idx_localMin+1]
+        # # self.d_cut = 0.5
+        # print(f'Using intermode cutoff of {self.d_cut:.3f}') if self._verbose else None
+        
+        # self.idx_d_toKeep = d_conj.copy()
+        # # self.idx_d_toKeep.data = self.idx_d_toKeep.data + 1e-9
+        # # print(np.where(self.idx_d_toKeep.data < self.d_cut)[0])
+        # # return self.idx_d_toKeep, self.d_cut
+        # self.idx_d_toKeep.data[np.where(self.idx_d_toKeep.data < self.d_cut)[0].astype(int)] = 99999999999  ## set to large unique number
+        # self.idx_d_toKeep = self.idx_d_toKeep == 99999999999
+        # self.idx_d_toKeep.eliminate_zeros()
+
+        # if plot_pref:
+        #     plt.figure()
+        #     plt.stairs(counts, edges, fill=True)
+        #     plt.plot(centers[1:], counts_smooth, c='orange')
+        #     plt.axvline(self.d_cut, c='r')
+        #     plt.scatter(self.d_cut, counts_smooth[idx_localMin], s=100, c='r')
+        #     plt.xlabel('distance')
+        #     plt.ylabel('count')
+        #     plt.ylim([0, counts_smooth[:len(counts_smooth)//2].max()*2])
+        #     plt.ylim([0,500000])
+        #     plt.title('conjunctive distance histogram')
+
+        # return d_conj
+
+    def make_pruned_similarity_graphs(
+        self,
+        d_cutoff=None,
         kwargs_makeConjunctiveDistanceMatrix={
-            'power_sf': 0.5,
+            'power_SF': 0.5,
             'power_NN': 1.0,
             'power_SWT': 0.1,
             'p_norm': -4.0,
-            'sig_NN_kwargs': {'mu': -1.5, 'b': 1.0},
-            'sig_SWT_kwargs': {'mu': -2.0, 'b': 1.0}
+            'sig_SF_kwargs': {'mu':0.5, 'b':0.5},
+            'sig_NN_kwargs': {'mu':0.5, 'b':0.5},
+            'sig_SWT_kwargs': {'mu':0.5, 'b':0.5},
         },
     ):
-        n_bins = self.s_sf.nnz // 10000
-        smoothing_window = n_bins // 100
-        print(f'Pruning similarity graphs with {n_bins} bins and smoothing window {smoothing_window}...') if self._verbose else None
+        dConj, sSF_data, sNN_data, sSWT_data, sConj_data = self.make_conjunctive_distance_matrix(
+            s_sf=self.s_sf,
+            s_NN=self.s_NN_z,
+            s_SWT=self.s_SWT_z,
+            **kwargs_makeConjunctiveDistanceMatrix
+        )
+        dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(dConj)
 
-        d_conj = self.make_conjunctive_distance_matrix(**kwargs_makeConjunctiveDistanceMatrix)
-    
-        print('Finding intermode cutoff...') if self._verbose else None
-        edges = np.linspace(d_conj.min(), d_conj.max(), n_bins+1)
-        centers = (edges[1:] + edges[:-1])/2
-        counts, bins = np.histogram(d_conj.data, bins=edges)
+        self.d_cutoff = d_crossover if d_cutoff is None else d_cutoff
+        self.graph_pruned = dConj > self.d_cutoff
+        self.graph_pruned.eliminate_zeros()
         
-        counts_smooth = scipy.signal.savgol_filter(counts[1:], smoothing_window, 1)
-        fp = scipy.signal.find_peaks(-counts_smooth[:-1])
-        if len(fp[0]) == 0:
-            print('No peaks found. Using user defined cutoff.') if self._verbose else None
-            self.d_cut = fallback_d_cutoff
-        else:
-            idx_localMin = fp[0][0]
-            self.d_cut = centers[idx_localMin+1]
-        # self.d_cut = 0.5
-        print(f'Using intermode cutoff of {self.d_cut:.3f}') if self._verbose else None
-        
-        self.idx_d_toKeep = d_conj.copy()
-        # self.idx_d_toKeep.data = self.idx_d_toKeep.data + 1e-9
-        # print(np.where(self.idx_d_toKeep.data < self.d_cut)[0])
-        # return self.idx_d_toKeep, self.d_cut
-        self.idx_d_toKeep.data[np.where(self.idx_d_toKeep.data < self.d_cut)[0].astype(int)] = 99999999999  ## set to large unique number
-        self.idx_d_toKeep = self.idx_d_toKeep == 99999999999
-        self.idx_d_toKeep.eliminate_zeros()
+        def prune(s, graph_pruned):
+            if s is None:
+                return None
+            s_pruned = s.copy()
+            s_pruned[graph_pruned] = 0
+            s_pruned.eliminate_zeros()
+            return s_pruned
 
-        if plot_pref:
-            plt.figure()
-            plt.stairs(counts, edges, fill=True)
-            plt.plot(centers[1:], counts_smooth, c='orange')
-            plt.axvline(self.d_cut, c='r')
-            plt.scatter(self.d_cut, counts_smooth[idx_localMin], s=100, c='r')
-            plt.xlabel('distance')
-            plt.ylabel('count')
-            plt.ylim([0, counts_smooth[:len(counts_smooth)//2].max()*2])
-            plt.ylim([0,500000])
-            plt.title('conjunctive distance histogram')
+        self.s_sf_pruned, self.s_NN_pruned, self.s_SWT_pruned = tuple([prune(s, self.graph_pruned) for s in [self.s_sf, self.s_NN_z, self.s_SWT_z]])
 
     def fit(self,
         session_bool,
@@ -92,26 +177,12 @@ class Clusterer:
         d_conj=None,
         d_cut=None,
         d_step=0.05,
-        kwargs_makeConjunctiveDistanceMatrix={
-            'power_sf': 0.5,
-            'power_NN': 1.0,
-            'power_SWT': 0.1,
-            'p_norm': -4.0,
-            'sig_NN_kwargs': {'mu': -1.5, 'b': 1.0},
-            'sig_SWT_kwargs': {'mu': -2.0, 'b': 1.0}
-        },
     ):
         """
         Fit the clustering algorithm to the data.
         """
         print('Clustering...') if self._verbose else None
         n_sessions = session_bool.shape[1]
-
-        if d_conj is None:
-            d_conj = self.make_conjunctive_distance_matrix(**kwargs_makeConjunctiveDistanceMatrix)
-            d_cut = self.d_cut if d_cut is None else d_cut
-            d_conj[d_conj > d_cut] = 0
-            d_conj.eliminate_zeros()
         
         max_dist=(d_conj.max() - d_conj.min()) * 1000
 
@@ -196,15 +267,18 @@ class Clusterer:
         labels = helpers.squeeze_integers(labels)
 
         self.labels = labels
-        return self.labels
+        return self.labels, self.hdbs
 
     def make_conjunctive_distance_matrix(
         self,
-        power_sf=1,
+        s_sf=None,
+        s_NN=None,
+        s_SWT=None,
+        power_SF=1,
         power_NN=1,
         power_SWT=1,
         p_norm=1,
-        sig_sf_kwargs={'mu':0.5, 'b':0.5},
+        sig_SF_kwargs={'mu':0.5, 'b':0.5},
         sig_NN_kwargs={'mu':0.5, 'b':0.5},
         sig_SWT_kwargs={'mu':0.5, 'b':0.5},
     ):
@@ -219,7 +293,7 @@ class Clusterer:
             s_SWT_z (scipy.sparse.csr_matrix):
                 Z-scored similarity matrix for scattering wavelet 
                  transform features.
-            power_sf (float):
+            power_SF (float):
                 Power to which to raise the spatial footprint similarity.
             power_NN (float):
                 Power to which to raise the neural network similarity.
@@ -229,7 +303,7 @@ class Clusterer:
             p_norm (float):
                 p-norm to use for the conjunction of the similarity
                  matrices.
-            sig_sf_kwargs (dict):
+            sig_SF_kwargs (dict):
                 Keyword arguments for the sigmoid function applied to the
                  spatial footprint overlap similarity matrix.
                 See helpers.generalised_logistic_function for details.
@@ -246,55 +320,81 @@ class Clusterer:
                  neural network and scattering wavelet transform
                  similarity matrices.
         """
-        print('Making conjunctive distance matrix...') if self._verbose else None
+        if len([s for s in [s_sf, s_NN, s_SWT] if s is not None]) == 0:
+            raise Exception("RH ERROR: All similarity matrices are None.")
 
         p_norm = 1e-9 if p_norm == 0 else p_norm
 
-        sSF_data = self._activation_function(self.s_sf, sig_sf_kwargs, power_sf)
-        sNN_data = self._activation_function(self.s_NN_z, sig_NN_kwargs, power_NN)
-        sSWT_data = self._activation_function(self.s_SWT_z, sig_SWT_kwargs, power_SWT)
-
+        sSF_data = self._activation_function(s_sf, sig_SF_kwargs, power_SF)
+        sNN_data = self._activation_function(s_NN, sig_NN_kwargs, power_NN)
+        sSWT_data = self._activation_function(s_SWT, sig_SWT_kwargs, power_SWT)
+        
         sConj_data = self._pNorm(
             s_list=[sSF_data, sNN_data, sSWT_data],
             p=p_norm,
         )
 
-        dConj = self.s_sf.copy()
-        dConj.data = 1 - sConj_data
+        dConj = s_sf.copy()
+        dConj.data = 1 - sConj_data.numpy()
 
-        return dConj
+        return dConj, sSF_data, sNN_data, sSWT_data, sConj_data
 
     def _activation_function(self, s, sig_kwargs={'mu':0.0, 'b':1.0}, power=1):
-        sig = partial(helpers.generalised_logistic_function, **sig_kwargs) if sig_kwargs is not None else lambda x: x
-        if s is not None:
-            return sig(s.data)**power
-        else:
+        if s is None:
             return None
+        if (sig_kwargs is not None) and (power is not None):
+            return helpers.generalised_logistic_function(torch.as_tensor(s.data, dtype=torch.float32), **sig_kwargs)**power
+        elif (sig_kwargs is None) and (power is not None):
+            return torch.as_tensor(s.data, dtype=torch.float32)**power
+        elif (sig_kwargs is not None) and (power is None):
+            return helpers.generalised_logistic_function(torch.as_tensor(s.data, dtype=torch.float32), **sig_kwargs)
 
     def _pNorm(self, s_list, p):
         """
         Calculate the p-norm of a list of similarity matrices.
         """
         s_list_noNones = [s for s in s_list if s is not None]
-        return (np.mean(np.stack(s_list_noNones, axis=0)**p, axis=0))**(1/p)
+        return (torch.mean(torch.stack(s_list_noNones, axis=0)**p, dim=0))**(1/p)
+        # return np.linalg.norm(np.stack(s_list_noNones, axis=0), ord=p, axis=0)
 
-    def plot_sigmoids(self):
-        fig, axs = plt.subplots(nrows=1, ncols=3, figsize=(16,4))
-        axs[0].plot(np.linspace(-0,2,1001), self.sig_sf(np.linspace(-5,5,1001)))
-        axs[0].set_title('sigmoid SF')
-        axs[1].plot(np.linspace(-1,1,1001), self.sig_NN(np.linspace(-5,5,1001)))
-        axs[1].set_title('sigmoid NN')
-        axs[2].plot(np.linspace(-1,1,1001), self.sig_SWT(np.linspace(-5,5,1001)))
-        axs[2].set_title('sigmoid SWT')
+    # def plot_sigmoids(self):
+    #     fig, axs = plt.subplots(nrows=1, ncols=3, figsize=(16,4))
+    #     axs[0].plot(np.linspace(-0,2,1001), self.sig_sf(np.linspace(-5,5,1001)))
+    #     axs[0].set_title('sigmoid SF')
+    #     axs[1].plot(np.linspace(-1,1,1001), self.sig_NN(np.linspace(-5,5,1001)))
+    #     axs[1].set_title('sigmoid NN')
+    #     axs[2].plot(np.linspace(-1,1,1001), self.sig_SWT(np.linspace(-5,5,1001)))
+    #     axs[2].set_title('sigmoid SWT')
 
 
-    def plot_similarity_relationships(self, plots_to_show=[1,2,3], max_samples=1000000, kwargs_scatter={'s':1, 'alpha':0.1}):
+    def plot_similarity_relationships(
+        self, 
+        plots_to_show=[1,2,3], 
+        max_samples=1000000, 
+        kwargs_scatter={'s':1, 'alpha':0.1},
+        kwargs_makeConjunctiveDistanceMatrix={
+            'power_SF': 0.5,
+            'power_NN': 1.0,
+            'power_SWT': 0.1,
+            'p_norm': -4.0,
+            'sig_SF_kwargs': {'mu':0.5, 'b':0.5},
+            'sig_NN_kwargs': {'mu':0.5, 'b':0.5},
+            'sig_SWT_kwargs': {'mu':0.5, 'b':0.5},
+        },
+    ):
+        dConj, sSF_data, sNN_data, sSWT_data, sConj_data = self.make_conjunctive_distance_matrix(
+            s_sf=self.s_sf,
+            s_NN=self.s_NN_z,
+            s_SWT=self.s_SWT_z,
+            **kwargs_makeConjunctiveDistanceMatrix
+        )
+
         ## subsample similarities for plotting
-        idx_rand = np.floor(np.random.rand(min(max_samples, len(self.ssf))) * len(self.ssf)).astype(int)
-        ssf_sub = self.ssf[idx_rand]
-        snn_sub = self.snn[idx_rand]
-        sswt_sub = self.sswt[idx_rand] if self.sswt is not None else None
-        d_conj_sub = self.d_conj.data[idx_rand]
+        idx_rand = np.floor(np.random.rand(min(max_samples, len(sSF_data))) * len(sSF_data)).astype(int)
+        ssf_sub = sSF_data[idx_rand]
+        snn_sub = sNN_data[idx_rand]
+        sswt_sub = sSWT_data[idx_rand] if sSWT_data is not None else None
+        d_conj_sub = dConj.data[idx_rand]
 
         fig, axs = plt.subplots(nrows=1, ncols=3, figsize=(20,4))
         ## set figure title
@@ -305,7 +405,7 @@ class Clusterer:
             axs[0].scatter(ssf_sub, snn_sub, c=d_conj_sub, **kwargs_scatter)
             axs[0].set_xlabel('sim Spatial Footprint')
             axs[0].set_ylabel('sim Neural Network')
-        if self.sswt is not None:
+        if sSWT_data is not None:
             if 2 in plots_to_show:
                 axs[1].scatter(ssf_sub, sswt_sub, c=d_conj_sub, **kwargs_scatter)
                 axs[1].set_xlabel('sim Spatial Footprint')
@@ -317,7 +417,95 @@ class Clusterer:
         
         return fig, axs
 
+    def plot_distSame(self, kwargs_makeConjunctiveDistanceMatrix=None):
+        kwargs = kwargs_makeConjunctiveDistanceMatrix if kwargs_makeConjunctiveDistanceMatrix is not None else self.best_params
+        dConj, sSF_data, sNN_data, sSWT_data, sConj_data = self.make_conjunctive_distance_matrix(
+            s_sf=self.s_sf,
+            s_NN=self.s_NN_z,
+            s_SWT=self.s_SWT_z,
+            **kwargs
+        )
+        dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(dConj)
+        centers = (edges[1:] + edges[:-1]) / 2
 
+        # d_crossover = centers[np.where(dens_same_crop>0)[0][-1]]
+        
+        plt.figure()
+        plt.stairs(dens_same, edges)
+        plt.stairs(dens_same_crop, edges)
+        plt.stairs(dens_diff, edges)
+        plt.stairs(dens_all, edges)
+        plt.stairs(dens_diff - dens_same, edges)
+        plt.stairs((dens_diff * dens_same)*1000, edges)
+        plt.axvline(d_crossover, color='k', linestyle='--')
+        plt.ylim([dens_same.max()*-0.5, dens_same.max()*1.5])
+        plt.xlabel('distance')
+        plt.ylabel('density')
+        plt.legend(['same', 'same (cropped)', 'diff', 'all', 'diff - same', '(diff * same) * 1000', 'crossover'])
+
+    def _separate_diffSame_distributions(self, d_conj):
+        edges = torch.linspace(0,1, self.n_bins+1, dtype=torch.float32)
+
+        d_all = d_conj.copy()
+        counts, _ = torch.histogram(torch.as_tensor(d_all.data, dtype=torch.float32), edges)
+        dens_all = counts / counts.sum()  ## distances of all pairs of ROIs
+
+        d_intra = d_conj.multiply(self.s_sesh_inv)
+        d_intra.eliminate_zeros()
+        counts, _ = torch.histogram(torch.as_tensor(d_intra.data, dtype=torch.float32), edges)
+        dens_diff = counts / counts.sum()  ## distances of known differents
+
+        dens_same = dens_all - dens_diff
+        dens_same = torch.maximum(dens_same, torch.as_tensor([0], dtype=torch.float32))
+
+        dens_deriv = dens_diff - dens_same
+        dens_deriv[dens_diff.argmax():] = 0
+        idx_crossover = torch.where(dens_deriv < 0)[0][-1]
+        d_crossover = edges[idx_crossover].item()
+
+        dens_same_crop = dens_same.clone()
+        dens_same_crop[idx_crossover:] = 0
+        return dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover
+
+    def _objectiveFn_distSameMagnitude(self, trial):
+        power_SF=trial.suggest_float('power_SF', 0.1, 3, log=False)
+        power_NN=trial.suggest_float('power_NN', 0.1, 3, log=False)
+        power_SWT=trial.suggest_float('power_SWT', 0.1, 3, log=False)
+        p_norm=trial.suggest_float('p_norm', -10, 10, log=False)
+        
+        sig_SF_kwargs={
+            'mu':trial.suggest_float('sig_SF_kwargs_mu', 0.1, 0.5, log=False),
+            'b':trial.suggest_float('sig_SF_kwargs_b', 0.1, 2, log=False),
+        }
+        sig_NN_kwargs={
+            'mu':trial.suggest_float('sig_NN_kwargs_mu', 0, 0.5, log=False),
+            'b':trial.suggest_float('sig_NN_kwargs_b', 0.01, 2, log=False),
+        }
+        sig_SWT_kwargs={
+            'mu':trial.suggest_float('sig_SWT_kwargs_mu', -0.5, 0.5, log=False),
+            'b':trial.suggest_float('sig_SWT_kwargs_b', 0.01, 2, log=False),
+        }
+
+        dConj, sSF_data, sNN_data, sSWT_data, sConj_data = self.make_conjunctive_distance_matrix(
+            s_sf=self.s_sf,
+            s_NN=self.s_NN_z,
+            s_SWT=self.s_SWT_z,
+            power_SF=power_SF,
+            power_NN=power_NN,
+            power_SWT=power_SWT,
+            p_norm=p_norm,
+        #     sig_sf_kwargs={'mu':1.0, 'b':0.5},
+            sig_SF_kwargs=sig_SF_kwargs,
+            sig_NN_kwargs=sig_NN_kwargs,
+            sig_SWT_kwargs=sig_SWT_kwargs,
+        )
+        
+        dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(dConj)
+
+        loss = dens_same_crop.sum().item()
+        
+        return loss  # An objective value linked with the Trial object.
+        
 
 def attach_fully_connected_node(d, dist_fullyConnectedNode=None):
     """
@@ -346,6 +534,50 @@ def attach_fully_connected_node(d, dist_fullyConnectedNode=None):
     d2 = scipy.sparse.hstack((d2, np.ones((d2.shape[0],1))*dist_fullyConnectedNode))
 
     return d2.tocsr()
+
+class Convergence_checker:
+    def __init__(
+        self, 
+        n_patience=10, 
+        tol_frac=0.05, 
+        max_trials=350, 
+        max_duration=60*10, 
+        verbose=True
+    ):
+        self.bests = []
+        self.best = -np.inf
+        self.n_patience = n_patience
+        self.tol_frac = tol_frac
+        self.max_trials = max_trials
+        self.max_duration = max_duration
+        self.num_trial = 0
+        self.verbose = verbose
+        
+    def check(self, study, trial):
+        dur_first, dur_last = study.trials[0].datetime_complete, trial.datetime_complete
+        if (dur_first is not None) and (dur_last is not None):
+            duration = (dur_last - dur_first).total_seconds()
+        else:
+            duration = 0
+        
+        if trial.value > self.best:
+            self.best = trial.value
+        self.bests.append(self.best)
+            
+        bests_recent = np.unique(self.bests[-self.n_patience:])
+        if self.num_trial > self.n_patience and (((bests_recent.max() - bests_recent.min())/bests_recent.max()) < self.tol_frac):
+            print(f'Stopping. Convergence reached. Best value ({self.best}) over last ({self.n_patience}) trials fractionally changed less than ({self.tol_frac})') if self.verbose else None
+            study.stop()
+        if self.num_trial >= self.max_trials:
+            print(f'Stopping. Trial number limit reached. num_trial={self.num_trial}, max_trials={self.max_trials}.') if self.verbose else None
+            study.stop()
+        if duration > self.max_duration:
+            print(f'Stopping. Duration limit reached. study.duration={duration}, max_duration={self.max_duration}.') if self.verbose else None
+            study.stop()
+            
+        if self.verbose:
+            print(f'Trial num: {self.num_trial}. Duration: {duration:.3f}s. Best value: {self.best:3f}. Current value:{trial.value:3f}') if self.verbose else None
+        self.num_trial += 1
 
 
 def score_labels(labels_test, labels_true, ignore_negOne=False, thresh_perfect=0.9999999999):

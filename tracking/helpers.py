@@ -467,7 +467,11 @@ def generalised_logistic_function(
         output:
             Logistic function
      '''
-    return a + (k-a) / (c + q*np.exp(-b*(x-mu)))**(1/v)
+    if type(x) is np.ndarray:
+        exp = np.exp
+    elif type(x) is torch.Tensor:
+        exp = torch.exp
+    return a + (k-a) / (c + q*exp(-b*(x-mu)))**(1/v)
 
 
 class scipy_sparse_csr_with_length(scipy.sparse.csr_matrix):
