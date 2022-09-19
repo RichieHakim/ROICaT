@@ -9,9 +9,6 @@ import torch
 import optuna
 import hdbscan
 
-from functools import partial
-import time
-
 from . import helpers
 
 class Clusterer:
@@ -28,6 +25,37 @@ class Clusterer:
         s_sesh=None,
         verbose=True,
     ):
+        """
+        Initialise the clusterer object.
+
+        Args:
+            s_sf (scipy.sparse.csr_matrix):
+                Similarity matrix for spatial footprints.
+                Shape: (n_rois, n_rois). Symmetric.
+                Expecting input to be manhattan distance of
+                 spatial footprints normalized between 0 and 1.
+            s_NN_z (scipy.sparse.csr_matrix):
+                Z-scored similarity matrix for neural network
+                 output similaries.
+                Shape: (n_rois, n_rois). Non-symmetric.
+                Expecting input to be the cosine similarity 
+                 matrix, z-scored row-wise.
+            s_SWT_z (scipy.sparse.csr_matrix):
+                Z-scored similarity matrix for scattering 
+                 transform output similarities.
+                Shape: (n_rois, n_rois). Non-symmetric.
+                Expecting input to be the cosine similarity
+                 matrix, z-scored row-wise.
+            s_sesh (scipy.sparse.csr_matrix, boolean):
+                Similarity matrix for session similarity.
+                Shape: (n_rois, n_rois). Symmetric.
+                Expecting input to be boolean, with 1s where
+                 the two ROIs are from DIFFERENT sessions.
+            verbose (bool):
+                Whether to print out information about the
+                 clustering process.
+        """
+
         self.s_sf = s_sf
         self.s_NN_z = s_NN_z
         self.s_SWT_z = s_SWT_z
@@ -45,7 +73,7 @@ class Clusterer:
 
     def find_optimal_parameters_for_pruning(
         self,
-        n_bins=100,
+        n_bins=50,
         find_parameters_automatically=True,
         kwargs_findParameters={
             'n_patience': 100,
@@ -55,17 +83,49 @@ class Clusterer:
             'verbose': False,
         },
         n_jobs_findParameters=-1,
-        # fallback_d_cutoff=0.5,
-        # plot_pref=True,
-        # kwargs_makeConjunctiveDistanceMatrix={
-        #     'power_sf': 0.5,
-        #     'power_NN': 1.0,
-        #     'power_SWT': 0.1,
-        #     'p_norm': -4.0,
-        #     'sig_NN_kwargs': {'mu': -1.5, 'b': 1.0},
-        #     'sig_SWT_kwargs': {'mu': -2.0, 'b': 1.0}
-        # },
+        kwargs_makeConjunctiveDistanceMatrix=None,
     ):
+        """
+        Find the optimal parameters for pruning the similarity graph.
+        How this function works:
+            1. Make a conjunctive distance matrix using a set of parameters
+             for the self.make_conjunctive_distance_matrix function.
+            2. Estimates the distribution of pairwise distances
+             between ROIs assumed to be the same and those assumed to be
+             different ROIs. This is done by comparing the difference in the 
+             distribution of pairwise distances between ROIs from the same
+             session and those from different sessions. Ideally, the
+             main difference will be the presence of 'same' ROIs in the
+             inter-session distribution. 
+            3. The optimal parameters are then updated using optuna in order
+             to maximize the separation between the 'same' and 'different'
+             distributions.
+
+        Args:
+            n_bins (int):
+                Number of bins to use when estimating the distributions. Using
+                 a large number of bins makes finding the separation point more
+                 noisy, and only slightly more accurate.
+            find_parameters_automatically (bool):
+                Whether to find the optimal parameters automatically using
+                 optuna. If False, the parameters are set to the 
+                 kwargs_makeConjunctiveDistanceMatrix input.
+            kwargs_findParameters (dict):
+                Keyword arguments for the Convergence_checker class __init__.
+            n_jobs_findParameters (int):
+                Number of jobs to use when finding the optimal parameters.
+                If -1, use all available cores.
+            kwargs_makeConjunctiveDistanceMatrix (dict):
+                Optional. Used only if find_parameters_automatically is False.
+                Keyword arguments for the self.make_conjunctive_distance_matrix
+                 function.
+
+        Returns:
+            kwargs_makeConjunctiveDistanceMatrix_best (dict):
+                The optimal (for pruning) keyword arguments using the
+                 self.make_conjunctive_distance_matrix function.
+        """
+
         self.n_bins = self.s_sf.nnz // 10000 if n_bins is None else n_bins
         # smoothing_window = self.n_bins // 100
         # print(f'Pruning similarity graphs with {self.n_bins} bins and smoothing window {smoothing_window}...') if self._verbose else None
@@ -94,48 +154,9 @@ class Clusterer:
                                              'b': self.study.best_params['sig_SWT_kwargs_b'],}
             self.kwargs_makeConjunctiveDistanceMatrix_best = self.best_params
             print(f'Best value found: {self.study.best_value} with parameters {self.best_params}') if self._verbose else None
+        else:
+            self.kwargs_makeConjunctiveDistanceMatrix_best = self.best_params
         return self.kwargs_makeConjunctiveDistanceMatrix_best
-
-        # print('Making conjunctive distance matrix...') if self._verbose else None
-        # d_conj = self.make_conjunctive_distance_matrix(**kwargs_makeConjunctiveDistanceMatrix)
-
-        # print('Finding intermode cutoff...') if self._verbose else None
-        # edges = np.linspace(d_conj.min(), d_conj.max(), self.n_bins+1)
-        # centers = (edges[1:] + edges[:-1])/2
-        # counts, bins = np.histogram(d_conj.data, bins=edges)
-        
-        # counts_smooth = scipy.signal.savgol_filter(counts[1:], smoothing_window, 1)
-        # fp = scipy.signal.find_peaks(-counts_smooth[:-1])
-        # if len(fp[0]) == 0:
-        #     print('No peaks found. Using user defined cutoff.') if self._verbose else None
-        #     self.d_cut = fallback_d_cutoff
-        # else:
-        #     idx_localMin = fp[0][0]
-        #     self.d_cut = centers[idx_localMin+1]
-        # # self.d_cut = 0.5
-        # print(f'Using intermode cutoff of {self.d_cut:.3f}') if self._verbose else None
-        
-        # self.idx_d_toKeep = d_conj.copy()
-        # # self.idx_d_toKeep.data = self.idx_d_toKeep.data + 1e-9
-        # # print(np.where(self.idx_d_toKeep.data < self.d_cut)[0])
-        # # return self.idx_d_toKeep, self.d_cut
-        # self.idx_d_toKeep.data[np.where(self.idx_d_toKeep.data < self.d_cut)[0].astype(int)] = 99999999999  ## set to large unique number
-        # self.idx_d_toKeep = self.idx_d_toKeep == 99999999999
-        # self.idx_d_toKeep.eliminate_zeros()
-
-        # if plot_pref:
-        #     plt.figure()
-        #     plt.stairs(counts, edges, fill=True)
-        #     plt.plot(centers[1:], counts_smooth, c='orange')
-        #     plt.axvline(self.d_cut, c='r')
-        #     plt.scatter(self.d_cut, counts_smooth[idx_localMin], s=100, c='r')
-        #     plt.xlabel('distance')
-        #     plt.ylabel('count')
-        #     plt.ylim([0, counts_smooth[:len(counts_smooth)//2].max()*2])
-        #     plt.ylim([0,500000])
-        #     plt.title('conjunctive distance histogram')
-
-        # return d_conj
 
     def make_pruned_similarity_graphs(
         self,
@@ -291,6 +312,116 @@ class Clusterer:
 
         self.labels = labels
         return self.labels
+
+    def fit_caiman(
+        self,
+        session_bool,
+        d_conj=None,
+        kwargs_makeConjunctiveDistanceMatrix={
+            'power_SF': 1.0,
+            'power_NN': 1.0,
+            'power_SWT': 0.1,
+            'p_norm': -2,
+            'sig_SF_kwargs': None,
+            'sig_NN_kwargs':  {'mu':0, 'b':0.2},
+            'sig_SWT_kwargs': {'mu':0, 'b':0.2},
+        },
+        thresh_cost=0.95,
+    ):
+        """
+        Use CaImAn's method for clustering.
+        """
+        def find_matches(D_s, print_assignment: bool = False) -> tuple[list, list]:
+            # todo todocument
+
+            matches = []
+            costs = []
+            for ii, D in enumerate(D_s):
+                # we make a copy not to set changes in the original
+                DD = D.copy()
+                if np.sum(np.where(np.isnan(DD))) > 0:
+                    raise Exception('Distance Matrix contains invalid value NaN')
+
+                # we do the hungarian
+                indexes = scipy.optimize.linear_sum_assignment(DD)
+                indexes2 = [(ind1, ind2) for ind1, ind2 in zip(indexes[0], indexes[1])]
+                matches.append(indexes)
+                DD = D.copy()
+                total = []
+                # we want to extract those informations from the hungarian algo
+                for row, column in indexes2:
+                    value = DD[row, column]
+                    total.append(value)
+                costs.append(total)
+                # send back the results in the format we want
+            return matches, costs
+
+        if d_conj is None:
+            d_conj, _, _, _, _ = self.make_conjunctive_distance_matrix(
+                s_sf=self.s_sf_pruned,
+                s_NN=self.s_NN_pruned,
+                s_SWT=self.s_SWT_pruned,
+                **kwargs_makeConjunctiveDistanceMatrix
+            )
+
+        n_roi = session_bool.sum(0)
+
+        matchings = []
+        matchings.append(list(range(n_roi[0])))
+
+        idx_union = np.arange(n_roi[0])
+
+        for i_sesh in tqdm(range(1,len(n_roi))):
+            
+            idx_sess = np.arange(n_roi_cum[i_sesh], n_roi_cum[i_sesh+1])
+            
+            D = (d_conj[idx_sess][:, idx_union])
+            D[D>1] = 1
+            D = [D]
+            
+            matches, costs = find_matches(D)
+            matches = matches[0]
+            costs = costs[0]
+
+            # store indices
+            idx_tp = np.where(np.array(costs) < thresh_cost)[0]
+            if len(idx_tp) > 0:
+                matched_ROIs1 = matches[0][idx_tp]     # ground truth
+                matched_ROIs2 = matches[1][idx_tp]     # algorithm - comp
+                non_matched1 = np.setdiff1d(list(range(D[0].shape[0])), matches[0][idx_tp])
+                non_matched2 = np.setdiff1d(list(range(D[0].shape[1])), matches[1][idx_tp])
+                TP = np.sum(np.array(costs) < thresh_cost) * 1.
+            else:
+                TP = 0.
+                matched_ROIs1 = []
+                matched_ROIs2 = []
+                non_matched1 = list(range(D[0].shape[0]))
+                non_matched2 = list(range(D[0].shape[1]))
+
+            # compute precision and recall
+            FN = D[0].shape[0] - TP
+            FP = D[0].shape[1] - TP
+            TN = 0
+
+            performance = dict()
+            performance['recall'] = TP / (TP + FN)
+            performance['precision'] = TP / (TP + FP)
+            performance['accuracy'] = (TP + TN) / (TP + FP + FN + TN)
+            performance['f1_score'] = 2 * TP / (2 * TP + FP + FN)
+
+            mat_sess, mat_un, nm_sess, nm_un, performance, A2_len = matched_ROIs1, matched_ROIs2, non_matched1, non_matched2, performance, len(idx_union)
+            
+            idx_union[mat_un] = idx_sess[mat_sess]
+            idx_union = np.concatenate((idx_union, idx_sess[nm_sess]))
+            
+            new_match = np.zeros(n_roi[i_sesh], dtype=int)
+            new_match[mat_sess] = mat_un
+            new_match[nm_sess] = range(A2_len, len(idx_union))
+            matchings.append(new_match.tolist())
+
+        self.labels = np.concatenate(matchings)
+        return self.labels
+            
 
     def make_conjunctive_distance_matrix(
         self,
