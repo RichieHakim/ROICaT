@@ -9,13 +9,14 @@ import copy
 
 from . import helpers
 
-def display_toggle_image_stack(images, clim=None):
+def display_toggle_image_stack(images, clim=None, **kwargs):
 
     fig = plt.figure()
     ax = fig.add_subplot(1, 1, 1)
     imshow_FOV = ax.imshow(
         images[0],
 #         vmax=clim[1]
+        **kwargs
     )
 
     def update(i_frame = 0):
@@ -85,6 +86,7 @@ def compute_colored_FOV(
     n_c = len(u)
 
     colors = helpers.rand_cmap(nlabels=n_c, verbose=False)(np.linspace(0.,1.,n_c, endpoint=False))
+    colors = colors / colors.max(1, keepdims=True)
 
     if np.isin(-1, labels):
         colors[0] = [0,0,0,0]

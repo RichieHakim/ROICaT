@@ -37,7 +37,9 @@ class Clusterer:
         self.s_sesh_inv[self.s_sesh.astype(np.bool8)] = False
         self.s_sesh_inv.eliminate_zeros()
 
+        self.s_sesh = self.s_sesh.tolil()
         self.s_sesh[range(self.s_sesh.shape[0]), range(self.s_sesh.shape[1])] = 0
+        self.s_sesh = self.s_sesh.tocsr()
 
         self._verbose = verbose
 
@@ -77,14 +79,15 @@ class Clusterer:
 
             self.best_params = self.study.best_params.copy()
             [self.best_params.pop(p) for p in [
-                'sig_SF_kwargs_mu',
-                'sig_SF_kwargs_b',
+                # 'sig_SF_kwargs_mu',
+                # 'sig_SF_kwargs_b',
                 'sig_NN_kwargs_mu',
                 'sig_NN_kwargs_b',
                 'sig_SWT_kwargs_mu',
                 'sig_SWT_kwargs_b']]
-            self.best_params['sig_SF_kwargs'] = {'mu': self.study.best_params['sig_SF_kwargs_mu'],
-                                            'b': self.study.best_params['sig_SF_kwargs_b'],}
+            # self.best_params['sig_SF_kwargs'] = {'mu': self.study.best_params['sig_SF_kwargs_mu'],
+            #                                 'b': self.study.best_params['sig_SF_kwargs_b'],}
+            self.best_params['sig_SF_kwargs'] = None
             self.best_params['sig_NN_kwargs'] = {'mu': self.study.best_params['sig_NN_kwargs_mu'],
                                             'b': self.study.best_params['sig_NN_kwargs_b'],}
             self.best_params['sig_SWT_kwargs'] = {'mu': self.study.best_params['sig_SWT_kwargs_mu'],
@@ -172,15 +175,35 @@ class Clusterer:
     def fit(self,
         session_bool,
         min_cluster_size=2,
+        d_conj=None,
+        kwargs_makeConjunctiveDistanceMatrix={
+            'power_SF': 1.0,
+            'power_NN': 1.0,
+            'power_SWT': 0.1,
+            'p_norm': -2,
+            'sig_SF_kwargs': None,
+            'sig_NN_kwargs':  {'mu':0, 'b':0.2},
+            'sig_SWT_kwargs': {'mu':0, 'b':0.2},
+        },
+        d_clusterMerge=None,
         split_intraSession_clusters=True,
         discard_failed_pruning=True,
-        d_conj=None,
-        d_cut=None,
         d_step=0.05,
     ):
         """
         Fit the clustering algorithm to the data.
         """
+        if d_conj is None:
+            d_conj, _, _, _, _ = self.make_conjunctive_distance_matrix(
+                s_sf=self.s_sf_pruned,
+                s_NN=self.s_NN_pruned,
+                s_SWT=self.s_SWT_pruned,
+                **kwargs_makeConjunctiveDistanceMatrix
+            )
+
+        d_clusterMerge = float(np.mean(d_conj.data) + 1*np.std(d_conj.data)) if d_clusterMerge is None else float(d_clusterMerge)
+        d_step = float(d_step)
+
         print('Clustering...') if self._verbose else None
         n_sessions = session_bool.shape[1]
         
@@ -189,7 +212,7 @@ class Clusterer:
         self.hdbs = hdbscan.HDBSCAN(
             min_cluster_size=min_cluster_size,
         #     min_samples=None,
-        #     cluster_selection_epsilon=0.0,
+            cluster_selection_epsilon=d_clusterMerge,
             max_cluster_size=n_sessions,
             metric='precomputed',
             alpha=0.999,
@@ -223,7 +246,7 @@ class Clusterer:
         if split_intraSession_clusters:
             print('Splitting up clusters with multiple ROIs per session...') if self._verbose else None
             labels = labels.copy()
-            d_cut = self.d_cut if d_cut is None else d_cut
+            d_cut = float(d_conj.data.max())
 
             success = False
             while success == False:
@@ -250,7 +273,7 @@ class Clusterer:
                 labels = helpers.squeeze_integers(labels)
                 d_cut -= d_step
                 
-                if d_cut < 0.01:
+                if d_cut < 0.0:
                     print(f"RH WARNING: Redundant session cluster splitting did not complete fully. Distance walk failed at 'd_cut':{d_cut}.")
                     if discard_failed_pruning:
                         print(f"Setting all clusters with redundant ROIs to label: -1.")
@@ -267,7 +290,7 @@ class Clusterer:
         labels = helpers.squeeze_integers(labels)
 
         self.labels = labels
-        return self.labels, self.hdbs
+        return self.labels
 
     def make_conjunctive_distance_matrix(
         self,
@@ -325,9 +348,9 @@ class Clusterer:
 
         p_norm = 1e-9 if p_norm == 0 else p_norm
 
-        sSF_data = self._activation_function(s_sf, sig_SF_kwargs, power_SF)
-        sNN_data = self._activation_function(s_NN, sig_NN_kwargs, power_NN)
-        sSWT_data = self._activation_function(s_SWT, sig_SWT_kwargs, power_SWT)
+        sSF_data = self._activation_function(s_sf.data, sig_SF_kwargs, power_SF)
+        sNN_data = self._activation_function(s_NN.data, sig_NN_kwargs, power_NN)
+        sSWT_data = self._activation_function(s_SWT.data, sig_SWT_kwargs, power_SWT)
         
         sConj_data = self._pNorm(
             s_list=[sSF_data, sNN_data, sSWT_data],
@@ -335,7 +358,9 @@ class Clusterer:
         )
 
         dConj = s_sf.copy()
-        dConj.data = 1 - sConj_data.numpy()
+        dConj.data = sConj_data.numpy()
+        # dConj.eliminate_zeros()
+        dConj.data = 1 - dConj.data
 
         return dConj, sSF_data, sNN_data, sSWT_data, sConj_data
 
@@ -343,11 +368,12 @@ class Clusterer:
         if s is None:
             return None
         if (sig_kwargs is not None) and (power is not None):
-            return helpers.generalised_logistic_function(torch.as_tensor(s.data, dtype=torch.float32), **sig_kwargs)**power
+            return helpers.generalised_logistic_function(torch.as_tensor(s, dtype=torch.float32), **sig_kwargs)**power
         elif (sig_kwargs is None) and (power is not None):
-            return torch.as_tensor(s.data, dtype=torch.float32)**power
+            return torch.maximum(torch.as_tensor(s, dtype=torch.float32), torch.as_tensor([0], dtype=torch.float32))**power
+            # return torch.as_tensor(s, dtype=torch.float32)**power
         elif (sig_kwargs is not None) and (power is None):
-            return helpers.generalised_logistic_function(torch.as_tensor(s.data, dtype=torch.float32), **sig_kwargs)
+            return helpers.generalised_logistic_function(torch.as_tensor(s, dtype=torch.float32), **sig_kwargs)
 
     def _pNorm(self, s_list, p):
         """
@@ -473,15 +499,16 @@ class Clusterer:
         power_SWT=trial.suggest_float('power_SWT', 0.1, 3, log=False)
         p_norm=trial.suggest_float('p_norm', -10, 10, log=False)
         
-        sig_SF_kwargs={
-            'mu':trial.suggest_float('sig_SF_kwargs_mu', 0.1, 0.5, log=False),
-            'b':trial.suggest_float('sig_SF_kwargs_b', 0.1, 2, log=False),
-        }
-        sig_NN_kwargs={
+        # sig_SF_kwargs = {
+        #     'mu':trial.suggest_float('sig_SF_kwargs_mu', 0.1, 0.5, log=False),
+        #     'b':trial.suggest_float('sig_SF_kwargs_b', 0.1, 2, log=False),
+        # }
+        sig_SF_kwargs = None
+        sig_NN_kwargs = {
             'mu':trial.suggest_float('sig_NN_kwargs_mu', 0, 0.5, log=False),
             'b':trial.suggest_float('sig_NN_kwargs_b', 0.01, 2, log=False),
         }
-        sig_SWT_kwargs={
+        sig_SWT_kwargs = {
             'mu':trial.suggest_float('sig_SWT_kwargs_mu', -0.5, 0.5, log=False),
             'b':trial.suggest_float('sig_SWT_kwargs_b', 0.01, 2, log=False),
         }
