@@ -994,7 +994,7 @@ def score_labels(labels_test, labels_true, ignore_negOne=False, thresh_perfect=0
     score_weighted_partial = np.sum(cc_matched * bool_true.sum(axis=1)[hi[0]]) / bool_true[hi[0]].sum()
     score_unweighted_partial = np.mean(cc_matched)
     ## compute perfect score
-    score_weighted_perfect = np.sum(bool_true.sum(axis=1)[hi[0]] * (cc_matched > thresh_perfect)) / bool_true.sum()
+    score_weighted_perfect = np.sum(bool_true.sum(axis=1)[hi[0]] * (cc_matched > thresh_perfect)) / bool_true[hi[0]].sum()
     score_unweighted_perfect = np.mean(cc_matched > thresh_perfect)
     
     ## compute adjusted rand score
