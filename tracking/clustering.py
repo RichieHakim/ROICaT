@@ -977,10 +977,14 @@ def score_labels(labels_test, labels_true, ignore_negOne=False, thresh_perfect=0
     bool_test = np.stack([labels_test==l for l in np.unique(labels_test)], axis=0)
     bool_true = np.stack([labels_true==l for l in np.unique(labels_true)], axis=0)
 
+    if bool_test.shape[0] < bool_true.shape[0]:
+        bool_test = np.concatenate((bool_test, np.zeros((bool_true.shape[0] - bool_test.shape[0], bool_true.shape[1]))))
+
     ## compute cross-correlation matrix, and crop to 
     na = bool_true.shape[0]
     cc = np.corrcoef(x=bool_true, y=bool_test)[:na][:,na:]  ## corrcoef returns the concatenated cross-corr matrix (self corr mat along diagonal). The indexing at the end is to extract just the cross-corr mat
-    
+    cc[np.isnan(cc)] = 0
+
     ## find hungarian assignment matching indices
     hi = scipy.optimize.linear_sum_assignment(
         cost_matrix=cc,
