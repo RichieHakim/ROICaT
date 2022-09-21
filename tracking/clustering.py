@@ -5,6 +5,7 @@ import scipy.sparse
 import sklearn
 import matplotlib.pyplot as plt
 import torch
+from tqdm import tqdm
 
 import optuna
 import hdbscan
@@ -83,7 +84,6 @@ class Clusterer:
             'verbose': False,
         },
         n_jobs_findParameters=-1,
-        kwargs_makeConjunctiveDistanceMatrix=None,
     ):
         """
         Find the optimal parameters for pruning the similarity graph.
@@ -115,10 +115,6 @@ class Clusterer:
             n_jobs_findParameters (int):
                 Number of jobs to use when finding the optimal parameters.
                 If -1, use all available cores.
-            kwargs_makeConjunctiveDistanceMatrix (dict):
-                Optional. Used only if find_parameters_automatically is False.
-                Keyword arguments for the self.make_conjunctive_distance_matrix
-                 function.
 
         Returns:
             kwargs_makeConjunctiveDistanceMatrix_best (dict):
@@ -179,6 +175,11 @@ class Clusterer:
         )
         dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(dConj)
 
+        ssf, snn, sswt = self.s_sf.copy(), self.s_NN_z.copy(), self.s_SWT_z.copy()
+        ssf.data[ssf.data == 0] = 1e-10
+        snn.data[snn.data == 0] = 1e-10
+        sswt.data[sswt.data == 0] = 1e-10
+
         self.d_cutoff = d_crossover if d_cutoff is None else d_cutoff
         self.graph_pruned = dConj > self.d_cutoff
         self.graph_pruned.eliminate_zeros()
@@ -191,11 +192,15 @@ class Clusterer:
             s_pruned.eliminate_zeros()
             return s_pruned
 
-        self.s_sf_pruned, self.s_NN_pruned, self.s_SWT_pruned = tuple([prune(s, self.graph_pruned) for s in [self.s_sf, self.s_NN_z, self.s_SWT_z]])
+        self.s_sf_pruned, self.s_NN_pruned, self.s_SWT_pruned = tuple([prune(s, self.graph_pruned) for s in [ssf, snn, sswt]])
 
     def fit(self,
         session_bool,
         min_cluster_size=2,
+        cluster_selection_method='leaf',
+        d_clusterMerge=None,
+        alpha=0.999,
+        n_iter_violationCorrection=5,
         d_conj=None,
         kwargs_makeConjunctiveDistanceMatrix={
             'power_SF': 1.0,
@@ -206,14 +211,65 @@ class Clusterer:
             'sig_NN_kwargs':  {'mu':0, 'b':0.2},
             'sig_SWT_kwargs': {'mu':0, 'b':0.2},
         },
-        d_clusterMerge=None,
         split_intraSession_clusters=True,
         discard_failed_pruning=True,
         d_step=0.05,
     ):
         """
-        Fit the clustering algorithm to the data.
+        Fit clustering using the ROICaT clustering algorithm.
+
+        Args:
+            session_bool (np.ndarray of bool):
+                Boolean array indicating which ROIs belong to which session.
+                shape: (n_rois, n_sessions)
+            min_cluster_size (int):
+                Minimum cluster size to be considered a cluster.
+            d_clusterMerge (float):
+                Distance threshold for merging clusters.
+                All clusters with ROIs closer than this distance will be merged.
+                If None, the distance is calculated as the mean + 1*std of the 
+                 conjunctive distances.
+            cluster_selection_method (str):
+                Cluster selection method. Either 'leaf' or 'eom'.
+                'leaf' tends towards smaller clusters, 'eom' towards larger clusters.
+                See HDBSCAN documentation: 
+                 https://hdbscan.readthedocs.io/en/latest/parameter_selection.html
+            alpha (float):
+                Alpha value. Avoid messing with this if possible.
+                Smaller values will result in more clusters.
+                See HDBSCAN documentation: 
+                 https://hdbscan.readthedocs.io/en/latest/parameter_selection.html
+            n_iter_violationCorrection (int):
+                Number of iterations to correct for clusters with multiple ROIs per session.
+                After cluster splitting, this will go through each cluster and disconnect
+                 the ROIs in that cluster from all other ROIs that share a session with any
+                 ROI in that cluster. Then it will re-run the HDBSCAN clustering algorithm.
+                This is done to overcome the issues with single-linkage clustering finding
+                 clusters with multiple ROIs per session.
+                Usually this converges after about 5 iterations, and n_sessions at most.
+            d_conj (float):
+                Conjunctive distance matrix.
+                If None, the distance matrix is calculated using the
+                 kwargs_makeConjunctiveDistanceMatrix.
+            kwargs_makeConjunctiveDistanceMatrix (dict):
+                Keyword arguments for the make_conjunctive_distance_matrix function.
+                Only used if d_conj is None.
+            split_intraSession_clusters (bool):
+                If True, clusters that contain ROIs from multiple sessions will be split.
+                Only set to False if you want clusters containing multiple
+                 ROIs from the same session.
+            discard_failed_pruning (bool):
+                If True, clusters that fail to prune will be set to -1.
+            d_step (float):
+                Distance step size for splitting clusters with multiple ROIs from
+                 the same session. Higher values are faster but less accurate.
+
+        Returns:
+            labels (np.ndarray of int):
+                Cluster labels for each ROI.
+                shape: (n_rois_total)
         """
+        ## Make conjunctive distance matrix
         if d_conj is None:
             d_conj, _, _, _, _ = self.make_conjunctive_distance_matrix(
                 s_sf=self.s_sf_pruned,
@@ -222,84 +278,102 @@ class Clusterer:
                 **kwargs_makeConjunctiveDistanceMatrix
             )
 
-        d_clusterMerge = float(np.mean(d_conj.data) + 1*np.std(d_conj.data)) if d_clusterMerge is None else float(d_clusterMerge)
-        d_step = float(d_step)
+        d = d_conj.copy()
 
-        print('Clustering...') if self._verbose else None
-        n_sessions = session_bool.shape[1]
-        
-        max_dist=(d_conj.max() - d_conj.min()) * 1000
+        print('Fitting with HDBSCAN and splitting clusters with multiple ROIs per session') if self._verbose else None
+        for ii in tqdm(range(n_iter_violationCorrection)):
+            ## Prep parameters for splitting clusters
+            d_clusterMerge = float(np.mean(d.data) + 1*np.std(d.data)) if d_clusterMerge is None else float(d_clusterMerge)
+            d_step = float(d_step)
 
-        self.hdbs = hdbscan.HDBSCAN(
-            min_cluster_size=min_cluster_size,
-        #     min_samples=None,
-            cluster_selection_epsilon=d_clusterMerge,
-            max_cluster_size=n_sessions,
-            metric='precomputed',
-            alpha=0.999,
-        #     p=None,
-            algorithm='generic',
-        #     leaf_size=100,
-        # #     memory=Memory(location=None),
-        #     approx_min_span_tree=False,
-        #     gen_min_span_tree=False,
-        #     core_dist_n_jobs=mp.cpu_count(),
-        #     cluster_selection_method='eom',
-        #     allow_single_cluster=False,
-        #     prediction_data=False,
-        #     match_reference_implementation=False,
-            max_dist=max_dist
-        )
+            n_sessions = session_bool.shape[1]
+            max_dist=(d.max() - d.min()) * 1000
 
-        print('Fitting HDBSCAN...') if self._verbose else None
-        self.hdbs.fit(attach_fully_connected_node(
-            d_conj, 
-            dist_fullyConnectedNode=max_dist
-        ))
-        labels = self.hdbs.labels_[:-1]
-        self.labels = labels
+            self.hdbs = hdbscan.HDBSCAN(
+                min_cluster_size=min_cluster_size,
+            #     min_samples=None,
+                cluster_selection_epsilon=d_clusterMerge,
+                max_cluster_size=n_sessions,
+                metric='precomputed',
+                alpha=alpha,
+            #     p=None,
+                algorithm='generic',
+            #     leaf_size=100,
+            # #     memory=Memory(location=None),
+            #     approx_min_span_tree=False,
+            #     gen_min_span_tree=False,
+            #     core_dist_n_jobs=mp.cpu_count(),
+                cluster_selection_method=cluster_selection_method,
+            #     allow_single_cluster=False,
+            #     prediction_data=False,
+            #     match_reference_implementation=False,
+                max_dist=max_dist
+            )
 
-        ## Split up labels with multiple ROIs per session
-        ## The below code is a bit of a mess, but it works.
-        ##  It works by iteratively reducing the cutoff distance
-        ##  and splitting up violating clusters until there are 
-        ##  no more violations.
-        if split_intraSession_clusters:
-            print('Splitting up clusters with multiple ROIs per session...') if self._verbose else None
-            labels = labels.copy()
-            d_cut = float(d_conj.data.max())
+            self.hdbs.fit(attach_fully_connected_node(
+                d, 
+                dist_fullyConnectedNode=max_dist
+            ))
+            labels = self.hdbs.labels_[:-1]
+            self.labels = labels
 
-            success = False
-            while success == False:
-                violations_labels = np.unique(labels)[np.array([(session_bool[labels==u].sum(0)>1).sum().item() for u in np.unique(labels)]) > 0]
-                violations_labels = violations_labels[violations_labels > -1]
-                # print(violations_labels)
-                if len(violations_labels) == 0:
-                    success = True
-                    break
+            ## Split up labels with multiple ROIs per session
+            ## The below code is a bit of a mess, but it works.
+            ##  It works by iteratively reducing the cutoff distance
+            ##  and splitting up violating clusters until there are 
+            ##  no more violations.
+            if split_intraSession_clusters:
+                labels = labels.copy()
+                d_cut = float(d.data.max())
+
+                # print(f'num violating clusters: {np.unique(labels)[np.array([(session_bool[labels==u].sum(0)>1).sum().item() for u in np.unique(labels)]) > 0]}')
+                success = False
+                while success == False:
+                    violations_labels = np.unique(labels)[np.array([(session_bool[labels==u].sum(0)>1).sum().item() for u in np.unique(labels)]) > 0]
+                    violations_labels = violations_labels[violations_labels > -1]
+
+                    if len(violations_labels) == 0:
+                        success = True
+                        break
+                    
+                    for l in violations_labels:
+                        idx = np.where(labels==l)[0]
+                        if d[idx][:,idx].nnz == 0:
+                            labels[idx] = -1
+
+                    labels_new = self.hdbs.single_linkage_tree_.get_clusters(
+                        cut_distance=d_cut,
+                        min_cluster_size=2,
+                    )[:-1]
+                    
+                    idx_toUpdate = np.isin(labels, violations_labels)
+                    labels[idx_toUpdate] = labels_new[idx_toUpdate] + labels.max() + 5
+                    labels[(labels_new == -1) * idx_toUpdate] = -1
+                    labels = helpers.squeeze_integers(labels)
+                    d_cut -= d_step
+                    
+                    if d_cut < 0.0:
+                        print(f"RH WARNING: Redundant session cluster splitting did not complete fully. Distance walk failed at 'd_cut':{d_cut}.")
+                        if discard_failed_pruning:
+                            print(f"Setting all clusters with redundant ROIs to label: -1.")
+                            labels[idx_toUpdate] = -1
+                        break
                 
-                for l in violations_labels:
-                    idx = np.where(labels==l)[0]
-                    if d_conj[idx][:,idx].nnz == 0:
-                        labels[idx] = -1
-                        # print('no neighbors')
-
-                labels_new = self.hdbs.single_linkage_tree_.get_clusters(
-                    cut_distance=d_cut,
-                    min_cluster_size=2,
-                )[:-1]
+            ## find sessions for each cluster
+            for ii, l in enumerate(np.unique(labels)):
+                if l == -1:
+                    continue
+                idx = np.where(labels==l)[0]
+                # idx_sesh = np.where(session_bool[idx].sum(0) > 0)[0]
                 
-                idx_toUpdate = np.isin(labels, violations_labels)
-                labels[idx_toUpdate] = labels_new[idx_toUpdate] + labels.max() + 3
-                labels = helpers.squeeze_integers(labels)
-                d_cut -= d_step
-                
-                if d_cut < 0.0:
-                    print(f"RH WARNING: Redundant session cluster splitting did not complete fully. Distance walk failed at 'd_cut':{d_cut}.")
-                    if discard_failed_pruning:
-                        print(f"Setting all clusters with redundant ROIs to label: -1.")
-                        labels[idx_toUpdate] = -1
-                    break
+                d_sub = d[idx][:,idx]
+                idx_grid = np.meshgrid(idx, idx)
+                ## set distances of ROIs from same session to 0
+                sesh_to_exclude = 1 - (session_bool @ (session_bool[idx].max(0)))
+                d[idx] = d[idx].multiply(sesh_to_exclude[None,:])
+                d[:,idx] = d[:,idx].multiply(sesh_to_exclude[:,None])
+                d[idx_grid[0], idx_grid[1]] = d_sub
+                d.eliminate_zeros()
         
         violations_labels = np.unique(labels)[np.array([(session_bool[labels==u].sum(0)>1).sum().item() for u in np.unique(labels)]) > 0]
         violations_labels = violations_labels[violations_labels > -1]
@@ -313,9 +387,10 @@ class Clusterer:
         self.labels = labels
         return self.labels
 
-    def fit_caiman(
+    def fit_sequentialHungarian(
         self,
         session_bool,
+        thresh_cost=0.95,
         d_conj=None,
         kwargs_makeConjunctiveDistanceMatrix={
             'power_SF': 1.0,
@@ -326,12 +401,16 @@ class Clusterer:
             'sig_NN_kwargs':  {'mu':0, 'b':0.2},
             'sig_SWT_kwargs': {'mu':0, 'b':0.2},
         },
-        thresh_cost=0.95,
     ):
         """
         Use CaImAn's method for clustering.
+        See their paper and repo for details:
+            https://elifesciences.org/articles/38173#s4
+            https://github.com/flatironinstitute/CaImAn
+            https://github.com/flatironinstitute/CaImAn/blob/master/caiman/base/rois.py
         """
-        def find_matches(D_s, print_assignment: bool = False) -> tuple[list, list]:
+        print(f"Clustering with CaImAn's iterative Hungarian algorithm method...") if self._verbose else None
+        def find_matches(D_s):
             # todo todocument
 
             matches = []
@@ -346,7 +425,6 @@ class Clusterer:
                 indexes = scipy.optimize.linear_sum_assignment(DD)
                 indexes2 = [(ind1, ind2) for ind1, ind2 in zip(indexes[0], indexes[1])]
                 matches.append(indexes)
-                DD = D.copy()
                 total = []
                 # we want to extract those informations from the hungarian algo
                 for row, column in indexes2:
@@ -365,7 +443,8 @@ class Clusterer:
             )
 
         n_roi = session_bool.sum(0)
-
+        n_roi_cum = np.concatenate(([0], np.cumsum(n_roi)))
+        
         matchings = []
         matchings.append(list(range(n_roi[0])))
 
@@ -375,8 +454,8 @@ class Clusterer:
             
             idx_sess = np.arange(n_roi_cum[i_sesh], n_roi_cum[i_sesh+1])
             
-            D = (d_conj[idx_sess][:, idx_union])
-            D[D>1] = 1
+            d_sub = d_conj[idx_sess][:, idx_union]
+            D = np.ones((len(idx_sess), len(idx_union)))*np.logical_not((d_sub != 0).toarray())*1 + d_sub.toarray()
             D = [D]
             
             matches, costs = find_matches(D)
@@ -419,7 +498,12 @@ class Clusterer:
             new_match[nm_sess] = range(A2_len, len(idx_union))
             matchings.append(new_match.tolist())
 
-        self.labels = np.concatenate(matchings)
+        self.performance = performance
+
+        labels = np.concatenate(matchings)
+        u, c = np.unique(labels, return_counts=True)
+        labels[np.isin(labels, u[c == 1])] = -1
+        self.labels = labels
         return self.labels
             
 
@@ -539,6 +623,32 @@ class Clusterer:
             'sig_SWT_kwargs': {'mu':0.5, 'b':0.5},
         },
     ):
+        """
+        Plot the similarity relationships between the three similarity
+         matrices.
+
+        Args:
+            plots_to_show (list):
+                Which plots to show.
+                1: Spatial footprints vs. neural network features.
+                2: Spatial footprints vs. scattering wavelet transform
+                 features.
+                3: Neural network features vs. scattering wavelet.
+            max_samples (int):
+                Maximum number of samples to plot.
+                Use smaller numbers for faster plotting.
+            kwargs_scatter (dict):
+                Keyword arguments for the matplotlib.pyplot.scatter plot.
+            kwargs_makeConjunctiveDistanceMatrix (dict):
+                Keyword arguments for the makeConjunctiveDistanceMatrix
+                 method.
+
+        Returns:
+            fig (matplotlib.pyplot.figure):
+                Figure object.
+            axs (matplotlib.pyplot.axes):
+                Axes object.
+        """
         dConj, sSF_data, sNN_data, sSWT_data, sConj_data = self.make_conjunctive_distance_matrix(
             s_sf=self.s_sf,
             s_NN=self.s_NN_z,
@@ -575,6 +685,10 @@ class Clusterer:
         return fig, axs
 
     def plot_distSame(self, kwargs_makeConjunctiveDistanceMatrix=None):
+        """
+        Plot the estimated distribution of the pairwise similarities
+         between matched ROI pairs of ROIs.
+        """
         kwargs = kwargs_makeConjunctiveDistanceMatrix if kwargs_makeConjunctiveDistanceMatrix is not None else self.best_params
         dConj, sSF_data, sNN_data, sSWT_data, sConj_data = self.make_conjunctive_distance_matrix(
             s_sf=self.s_sf,
@@ -584,8 +698,6 @@ class Clusterer:
         )
         dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(dConj)
         centers = (edges[1:] + edges[:-1]) / 2
-
-        # d_crossover = centers[np.where(dens_same_crop>0)[0][-1]]
         
         plt.figure()
         plt.stairs(dens_same, edges)
@@ -601,6 +713,38 @@ class Clusterer:
         plt.legend(['same', 'same (cropped)', 'diff', 'all', 'diff - same', '(diff * same) * 1000', 'crossover'])
 
     def _separate_diffSame_distributions(self, d_conj):
+        """
+        Estimates the distribution of pairwise similarities for
+         'same' and 'different' pairs of ROIs. 
+        estimate the 'same' distribution as the different between
+         all pairwise distances (includes different and same) and
+         intra-session distances (known different). same = all - intra
+        See _objectiveFn_distSameMagnitude docstring for more details.
+
+        Args:
+            d_conj (scipy.sparse.csr_matrix):
+                conjunctive distance matrix.
+
+        Returns:
+            dens_same_crop (np.ndarray):
+                Distribution density of pairwise similarities 
+                 that are assumed to be from the same ROI. It is
+                 'cropped' because values below crossover point
+                 between same and different distributions are set
+                 to zero.
+            dens_same (np.ndarray):
+                Un-cropped version of dens_same_crop.
+            dens_diff (np.ndarray):
+                Distribution density of pairwise similarities
+                that are assumed to be from different ROIs.
+            dens_all (np.ndarray):
+                Distribution density of all pairwise similarities.
+            edges (np.ndarray):
+                Edges of bins used to compute densities.
+            d_crossover (float):
+                Distance at which the same and different distributions
+                 crossover.
+        """
         edges = torch.linspace(0,1, self.n_bins+1, dtype=torch.float32)
 
         d_all = d_conj.copy()
@@ -612,19 +756,36 @@ class Clusterer:
         counts, _ = torch.histogram(torch.as_tensor(d_intra.data, dtype=torch.float32), edges)
         dens_diff = counts / counts.sum()  ## distances of known differents
 
-        dens_same = dens_all - dens_diff
+        dens_same = dens_all - dens_diff  ## estimate the 'same' distribution as the different between all distances (includes different and same) and intra-session distances (known different)
         dens_same = torch.maximum(dens_same, torch.as_tensor([0], dtype=torch.float32))
 
-        dens_deriv = dens_diff - dens_same
+        dens_deriv = dens_diff - dens_same  ## difference in 'diff' and 'same' distributions
         dens_deriv[dens_diff.argmax():] = 0
-        idx_crossover = torch.where(dens_deriv < 0)[0][-1]
+        idx_crossover = torch.where(dens_deriv < 0)[0][-1] + 1
         d_crossover = edges[idx_crossover].item()
 
         dens_same_crop = dens_same.clone()
         dens_same_crop[idx_crossover:] = 0
         return dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover
-
     def _objectiveFn_distSameMagnitude(self, trial):
+        """
+        Objective function for Optuna hyperparameter optimization.
+        Measures and outputs the magnitude of the 'same' distribution.
+        The 'same' distribution is the distribution of distances 
+         between pairs of ROIs that are estimated to be the same.
+        As the parameters for building the conjuctive distance matrix
+         are optimized, the 'same' and 'different' distributions should
+         separate from each other. The less the two overlap, the larger
+         the effective magnitude of the 'same' distribution.
+        
+        Args:
+            trial (optuna.trial.Trial): 
+                Optuna trial object.
+
+        Returns:
+            loss (float):
+                Magnitude of the 'same' distribution.
+        """
         power_SF=trial.suggest_float('power_SF', 0.1, 3, log=False)
         power_NN=trial.suggest_float('power_NN', 0.1, 3, log=False)
         power_SWT=trial.suggest_float('power_SWT', 0.1, 3, log=False)
@@ -662,14 +823,14 @@ class Clusterer:
 
         loss = dens_same_crop.sum().item()
         
-        return loss  # An objective value linked with the Trial object.
+        return loss  # Output must be a scalar. Used to update the hyperparameters
         
 
 def attach_fully_connected_node(d, dist_fullyConnectedNode=None):
     """
-    This function takes in a sparse graph (csr_matrix) that has more than
-     one component (multiple unconnected subgraphs) and appends another 
-     node to the graph that is weakly connected to all other nodes.
+    This function takes in a sparse distance graph (csr_matrix) that has
+     more than one component (multiple unconnected subgraphs) and appends
+     a single node to the graph that is weakly connected to all nodes.
      
     Args:
         d (scipy.sparse.csr_matrix):
@@ -694,6 +855,9 @@ def attach_fully_connected_node(d, dist_fullyConnectedNode=None):
     return d2.tocsr()
 
 class Convergence_checker:
+    """
+    A class that is used to check if the optuna optimization has converged.
+    """
     def __init__(
         self, 
         n_patience=10, 
@@ -702,6 +866,23 @@ class Convergence_checker:
         max_duration=60*10, 
         verbose=True
     ):
+        """
+        Args:
+            n_patience (int):
+                Number of trials to look back to check for convergence.
+                Also the minimum number of trials that must be completed
+                 before starting to check for convergence.
+            tol_frac (float):
+                Fractional tolerance for convergence.
+                The best output value must change by less than this 
+                 fractional amount to be considered converged.
+            max_trials (int):
+                Maximum number of trials to run before stopping.
+            max_duration (float):
+                Maximum number of seconds to run before stopping.
+            verbose (bool):
+                If True, print messages.
+        """
         self.bests = []
         self.best = -np.inf
         self.n_patience = n_patience
@@ -712,6 +893,17 @@ class Convergence_checker:
         self.verbose = verbose
         
     def check(self, study, trial):
+        """
+        Check if the optuna optimization has converged.
+        This function should be used as the callback function for the
+         optuna study.
+
+        Args:
+            study (optuna.study.Study):
+                Optuna study object.
+            trial (optuna.trial.FrozenTrial):
+                Optuna trial object.
+        """
         dur_first, dur_last = study.trials[0].datetime_complete, trial.datetime_complete
         if (dur_first is not None) and (dur_last is not None):
             duration = (dur_last - dur_first).total_seconds()
@@ -799,7 +991,7 @@ def score_labels(labels_test, labels_true, ignore_negOne=False, thresh_perfect=0
     cc_matched = cc[hi[0], hi[1]]
 
     ## compute score
-    score_weighted_partial = np.sum(cc_matched * bool_true.sum(axis=1)[hi[0]]) / bool_true.sum()
+    score_weighted_partial = np.sum(cc_matched * bool_true.sum(axis=1)[hi[0]]) / bool_true[hi[0]].sum()
     score_unweighted_partial = np.mean(cc_matched)
     ## compute perfect score
     score_weighted_perfect = np.sum(bool_true.sum(axis=1)[hi[0]] * (cc_matched > thresh_perfect)) / bool_true.sum()

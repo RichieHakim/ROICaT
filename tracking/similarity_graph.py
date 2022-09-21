@@ -156,28 +156,62 @@ class ROI_graph:
             )
             if s_sf is None: # If there are no ROIs in this block, s_block will be None, so we should skip the rest of the loop
                 continue
-
             s_sf_all.append(s_sf)
             s_NN_all.append(s_NN)
             s_SWT_all.append(s_SWT)
             s_sesh_all.append(s_sesh)
             idxROI_block_all.append(idxROI_block)
+        # return s_sf_all, s_NN_all, s_SWT_all, s_sesh_all, idxROI_block_all
 
         print('Joining blocks into full similarity matrices...') if self._verbose else None
-        self.s_sf = scipy.sparse.lil_matrix((n_roi, n_roi))
-        self.s_NN = scipy.sparse.lil_matrix((n_roi, n_roi))
-        self.s_SWT = scipy.sparse.lil_matrix((n_roi, n_roi))
-        self.s_sesh = scipy.sparse.lil_matrix((n_roi, n_roi))
-        for ssf, snn, sswt, ss, idxROI_block in zip(s_sf_all, s_NN_all, s_SWT_all, s_sesh_all, idxROI_block_all):
-            idx = np.meshgrid(idxROI_block, idxROI_block)
-            self.s_sf[idx[0], idx[1]] = ssf
-            self.s_NN[idx[0], idx[1]] = snn
-            self.s_SWT[idx[0], idx[1]] = sswt
-            self.s_sesh[idx[0], idx[1]] = ss
-        self.s_sf = self.s_sf.tocsr()
-        self.s_NN = self.s_NN.tocsr()
-        self.s_SWT = self.s_SWT.tocsr()
-        self.s_sesh = self.s_sesh.tocsr()
+        # self.s_sf = helpers.merge_sparse_arrays(s_sf_all, idxROI_block_all, (n_roi, n_roi), remove_redundant=True).tocsr()
+        # self.s_NN = helpers.merge_sparse_arrays(s_NN_all, idxROI_block_all, (n_roi, n_roi), remove_redundant=True).tocsr()
+        # self.s_SWT = helpers.merge_sparse_arrays(s_SWT_all, idxROI_block_all, (n_roi, n_roi), remove_redundant=True).tocsr()
+        # self.s_sesh = helpers.merge_sparse_arrays(s_sesh_all, idxROI_block_all, (n_roi, n_roi), remove_redundant=True).tocsr()
+
+        def merge_sparse_arrays(s_list, idx_list, shape, shift_val=None, n_batches=1):
+            def csr_to_coo_idxd(s_csr, idx, shift_val, shape):
+                s_coo = s_csr.tocoo()
+                return scipy.sparse.coo_matrix(
+                    (s_coo.data + shift_val, (idx[s_coo.row], idx[s_coo.col])),
+                    shape=shape
+                )
+            if shift_val == None:
+                shift_val = min([s.min() for s in s_list]) + 1
+            
+            s_flat = scipy.sparse.vstack([
+                csr_to_coo_idxd(s, idx, shift_val, shape).reshape(1,-1).tocsr() for s, idx in tqdm(zip(s_list, idx_list))
+            ]).tocsr()
+            s_flat = scipy.sparse.vstack([s.max(1) for s in helpers.make_batches(helpers.scipy_sparse_csr_with_length(s_flat.T), num_batches=n_batches)]).T
+            
+            s_merged = s_flat.reshape(shape)
+            s_merged.data = s_merged.data - shift_val
+            return s_merged  ## the max operation is why it's so slow
+
+        print('Joining s_sf...') if self._verbose else None
+        self.s_sf = merge_sparse_arrays(s_sf_all, idxROI_block_all, (n_roi, n_roi), n_batches=10).tocsr()
+        print('Joining s_NN...') if self._verbose else None
+        self.s_NN = merge_sparse_arrays(s_NN_all, idxROI_block_all, (n_roi, n_roi), n_batches=10).tocsr()
+        print('Joining s_SWT...') if self._verbose else None
+        self.s_SWT = merge_sparse_arrays(s_SWT_all, idxROI_block_all, (n_roi, n_roi), n_batches=10).tocsr()
+        print('Joining s_sesh...') if self._verbose else None
+        self.s_sesh = merge_sparse_arrays(s_sesh_all, idxROI_block_all, (n_roi, n_roi), n_batches=10).tocsr()
+
+
+        # self.s_sf = scipy.sparse.lil_matrix((n_roi, n_roi))
+        # self.s_NN = scipy.sparse.lil_matrix((n_roi, n_roi))
+        # self.s_SWT = scipy.sparse.lil_matrix((n_roi, n_roi))
+        # self.s_sesh = scipy.sparse.lil_matrix((n_roi, n_roi))
+        # for ssf, snn, sswt, ss, idxROI_block in zip(s_sf_all, s_NN_all, s_SWT_all, s_sesh_all, idxROI_block_all):
+        #     idx = np.meshgrid(idxROI_block, idxROI_block)
+        #     self.s_sf[idx[0], idx[1]] = ssf
+        #     self.s_NN[idx[0], idx[1]] = snn
+        #     self.s_SWT[idx[0], idx[1]] = sswt
+        #     self.s_sesh[idx[0], idx[1]] = ss
+        # self.s_sf = self.s_sf.tocsr()
+        # self.s_NN = self.s_NN.tocsr()
+        # self.s_SWT = self.s_SWT.tocsr()
+        # self.s_sesh = self.s_sesh.tocsr()
 
         return self.s_sf, self.s_NN, self.s_SWT, self.s_sesh
 
