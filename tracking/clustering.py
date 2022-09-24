@@ -761,7 +761,9 @@ class Clusterer:
 
         dens_deriv = dens_diff - dens_same  ## difference in 'diff' and 'same' distributions
         dens_deriv[dens_diff.argmax():] = 0
-        idx_crossover = torch.where(dens_deriv < 0)[0][-1] + 1
+        if torch.where(dens_deriv < 0)[0].shape[0] == 0:
+            return None, None, None, None, None, None
+        idx_crossover = torch.where(dens_deriv < 0)[0][-1] + 1 
         d_crossover = edges[idx_crossover].item()
 
         dens_same_crop = dens_same.clone()
@@ -820,6 +822,8 @@ class Clusterer:
         )
         
         dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(dConj)
+        if dens_same_crop is None:
+            return 0
 
         loss = dens_same_crop.sum().item()
         
@@ -930,7 +934,7 @@ class Convergence_checker:
         self.num_trial += 1
 
 
-def score_labels(labels_test, labels_true, ignore_negOne=False, thresh_perfect=0.9999999999):
+def score_labels(labels_test, labels_true, ignore_negOne=False, thresh_perfect=0.9999999999, compute_mutual_info=False):
     """
     Compute the score of the clustering.
     The best match is found by solving the linear sum assignment problem.
@@ -969,6 +973,7 @@ def score_labels(labels_test, labels_true, ignore_negOne=False, thresh_perfect=0
         hi (np.array):
             'Hungarian Indices'. Indices of the best matched sets.
     """
+    assert len(labels_test) == len(labels_true), 'RH ERROR: labels_test and labels_true must be the same length.'
     if ignore_negOne:
         labels_test = labels_test[labels_true > -1].copy()
         labels_true = labels_true[labels_true > -1].copy()
@@ -1003,9 +1008,9 @@ def score_labels(labels_test, labels_true, ignore_negOne=False, thresh_perfect=0
     
     ## compute adjusted rand score
     score_rand = sklearn.metrics.adjusted_rand_score(labels_true, labels_test)
-
+    
     ## compute adjusted mutual info score
-    score_mutual_info = sklearn.metrics.adjusted_mutual_info_score(labels_true, labels_test)
+    score_mutual_info = sklearn.metrics.adjusted_mutual_info_score(labels_true, labels_test) if compute_mutual_info else None
 
     out = {
         'score_weighted_partial': score_weighted_partial,
