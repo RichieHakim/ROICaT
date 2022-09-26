@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 import scipy
 import scipy.optimize
@@ -326,10 +328,32 @@ class Clusterer:
                 labels = labels.copy()
                 d_cut = float(d.data.max())
 
+                sb_t = torch.as_tensor(session_bool, dtype=torch.float32) # (n_rois, n_sessions)
                 # print(f'num violating clusters: {np.unique(labels)[np.array([(session_bool[labels==u].sum(0)>1).sum().item() for u in np.unique(labels)]) > 0]}')
                 success = False
                 while success == False:
-                    violations_labels = np.unique(labels)[np.array([(session_bool[labels==u].sum(0)>1).sum().item() for u in np.unique(labels)]) > 0]
+                    # print(d_cut)
+                    # violations_labels = np.unique(labels)[np.array([(session_bool[labels==u].sum(0)>1).sum().item() for u in np.unique(labels)]) > 0]
+                    # sb_t = torch.as_tensor(session_bool, dtype=torch.bool)
+                    # lab_t = torch.as_tensor(labels, dtype=torch.int64)
+
+                    labels_t = torch.as_tensor(labels, dtype=torch.int64)
+                    # lab_t = torch.as_tensor(labels, dtype=torch.int32) # (n_rois,)
+                    # print(f'{time.time() - tic}')
+                    # tic = time.time()
+                    # lab_t = torch.stack([lab_t==u for u in torch.unique(lab_t)], dim=0).T.type(torch.float32) # (n_rois, n_clusters)
+
+                    lab_u_t, lab_u_idx_t = torch.unique(labels_t, return_inverse=True) # (n_clusters,), (n_rois,)
+                    lab_t = helpers.idx_to_oneHot(lab_u_idx_t, dtype=torch.float32)
+                    # lab_t = helpers.idx_to_oneHot( - labels_t.min(labels_squeezed)).T # (n_clusters, n_rois)
+                    # lab_u_t = torch.unique(labels_t) # (n_clusters,)
+                    # print(lab_u_t.shape, lab_t.shape, sb_t.shape)
+                    # print((sb_t.T @ lab_t).sum(0))
+
+                    # lab_u_t = torch.unique(lab_t)
+                    # violations_labels = lab_u_t[torch.stack([(sb_t[labels_t==u].sum(0)>1).sum() for u in lab_u_t], dim=0) > 0]
+                    # violations_labels = lab_u_t[torch.stack([(sb_t[lab_t[ii]].sum(0)>1).sum() for ii,u in enumerate(np.arange(lab_t.shape[0]))], dim=0) > 0]
+                    violations_labels = lab_u_t[((sb_t.T @ lab_t) > 1.5).sum(0) > 0]
                     violations_labels = violations_labels[violations_labels > -1]
 
                     if len(violations_labels) == 0:
@@ -349,7 +373,7 @@ class Clusterer:
                     idx_toUpdate = np.isin(labels, violations_labels)
                     labels[idx_toUpdate] = labels_new[idx_toUpdate] + labels.max() + 5
                     labels[(labels_new == -1) * idx_toUpdate] = -1
-                    labels = helpers.squeeze_integers(labels)
+                    # labels = helpers.squeeze_integers(labels)
                     d_cut -= d_step
                     
                     if d_cut < 0.0:
@@ -359,21 +383,30 @@ class Clusterer:
                             labels[idx_toUpdate] = -1
                         break
                 
-            ## find sessions for each cluster
-            for ii, l in enumerate(np.unique(labels)):
-                if l == -1:
-                    continue
-                idx = np.where(labels==l)[0]
-                # idx_sesh = np.where(session_bool[idx].sum(0) > 0)[0]
-                
-                d_sub = d[idx][:,idx]
-                idx_grid = np.meshgrid(idx, idx)
-                ## set distances of ROIs from same session to 0
-                sesh_to_exclude = 1 - (session_bool @ (session_bool[idx].max(0)))
-                d[idx] = d[idx].multiply(sesh_to_exclude[None,:])
-                d[:,idx] = d[:,idx].multiply(sesh_to_exclude[:,None])
-                d[idx_grid[0], idx_grid[1]] = d_sub
-                d.eliminate_zeros()
+            if ii < n_iter_violationCorrection - 1:
+                ## find sessions represented in each cluster and set distances to ROIs in those sessions to 1.
+                d = d.tocsr()
+                for ii, l in enumerate(np.unique(labels)):
+                    if l == -1:
+                        continue
+                    idx = np.where(labels==l)[0]
+                    # idx_sesh = np.where(session_bool[idx].sum(0) > 0)[0]
+                    
+                    d_sub = d[idx][:,idx]
+                    idx_grid = np.meshgrid(idx, idx)
+                    ## set distances of ROIs from same session to 0
+                    sesh_to_exclude = 1 - (session_bool @ (session_bool[idx].max(0)))  ## make a mask of sessions that are not represented in the cluster
+                    # print(sesh_to_exclude.shape, session_bool.shape)
+                    # tic = time.time()
+                    d[idx,:] = d[idx,:].multiply(sesh_to_exclude[None,:])  ## set distances to ROIs from sessions represented in the cluster to 1
+                    # print(f'{time.time() - tic}')
+                    d[:,idx] = d[:,idx].multiply(sesh_to_exclude[:,None])  ## set distances to ROIs from sessions represented in the cluster to 1
+                    d[idx_grid[0], idx_grid[1]] = d_sub  ## undo the above for ROIs in the cluster
+                d = d.tocsr()
+                d.eliminate_zeros()  ## remove zeros
+
+
+        labels = helpers.squeeze_integers(labels)
         
         violations_labels = np.unique(labels)[np.array([(session_bool[labels==u].sum(0)>1).sum().item() for u in np.unique(labels)]) > 0]
         violations_labels = violations_labels[violations_labels > -1]

@@ -575,6 +575,42 @@ def merge_sparse_arrays(s_list, idx_list, shape_full, remove_redundant=True, eli
     return s_full
 
     
+def idx_to_oneHot(arr, n_classes=None, dtype=None):
+    """
+    Convert an array of class indices to matrix of
+     one-hot vectors.
+    RH 2021
+
+    Args:
+        arr (np.ndarray):
+            1-D array of class indices.
+            Values should be integers >= 0.
+            Values will be used as indices in the
+             output array.
+        n_classes (int):
+            Number of classes.
+    
+    Returns:
+        oneHot (np.ndarray):
+            2-D array of one-hot vectors.
+    """
+    if type(arr) is np.ndarray:
+        max = np.max
+        zeros = np.zeros
+        arange = np.arange
+        dtype = np.bool8 if dtype is None else dtype
+    elif type(arr) is torch.Tensor:
+        max = torch.max
+        zeros = torch.zeros
+        arange = torch.arange
+        dtype = torch.bool if dtype is None else dtype
+    assert arr.ndim == 1
+
+    if n_classes is None:
+        n_classes = max(arr)+1
+    oneHot = zeros((len(arr), n_classes), dtype=dtype)
+    oneHot[arange(len(arr)), arr] = True
+    return oneHot
 
 
 # ######################
