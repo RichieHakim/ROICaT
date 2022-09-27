@@ -85,6 +85,16 @@ class Clusterer:
             'max_duration': 60*10,
             'verbose': False,
         },
+        bounds_findParameters={
+            'power_SF': (0.3, 2),
+            'power_NN': (0.2, 2),
+            'power_SWT': (0.1, 1),
+            'p_norm': (-5, 5),
+            'sig_NN_kwargs_mu': (0, 0.5),
+            'sig_NN_kwargs_b': (0.05, 2),
+            'sig_SWT_kwargs_mu': (0, 0.5),
+            'sig_SWT_kwargs_b': (0.05, 2),
+        },
         n_jobs_findParameters=-1,
     ):
         """
@@ -114,6 +124,8 @@ class Clusterer:
                  kwargs_makeConjunctiveDistanceMatrix input.
             kwargs_findParameters (dict):
                 Keyword arguments for the Convergence_checker class __init__.
+            bounds_findParameters (dict):
+                Bounds for the parameters to be optimized.
             n_jobs_findParameters (int):
                 Number of jobs to use when finding the optimal parameters.
                 If -1, use all available cores.
@@ -124,12 +136,14 @@ class Clusterer:
                  self.make_conjunctive_distance_matrix function.
         """
 
+        self.bounds_findParameters = bounds_findParameters
+
         self.n_bins = self.s_sf.nnz // 10000 if n_bins is None else n_bins
         # smoothing_window = self.n_bins // 100
         # print(f'Pruning similarity graphs with {self.n_bins} bins and smoothing window {smoothing_window}...') if self._verbose else None
 
         if find_parameters_automatically:
-            print('Finding parameters using automated hyperparameter tuning...') if self._verbose else None
+            print('Finding mixing parameters using automated hyperparameter tuning...') if self._verbose else None
             optuna.logging.set_verbosity(optuna.logging.WARNING)
             self.checker = Convergence_checker(**kwargs_findParameters)
             self.study = optuna.create_study(direction='maximize', sampler=optuna.samplers.TPESampler(n_startup_trials=10))
@@ -332,28 +346,10 @@ class Clusterer:
                 # print(f'num violating clusters: {np.unique(labels)[np.array([(session_bool[labels==u].sum(0)>1).sum().item() for u in np.unique(labels)]) > 0]}')
                 success = False
                 while success == False:
-                    # print(d_cut)
-                    # violations_labels = np.unique(labels)[np.array([(session_bool[labels==u].sum(0)>1).sum().item() for u in np.unique(labels)]) > 0]
-                    # sb_t = torch.as_tensor(session_bool, dtype=torch.bool)
-                    # lab_t = torch.as_tensor(labels, dtype=torch.int64)
-
                     labels_t = torch.as_tensor(labels, dtype=torch.int64)
-                    # lab_t = torch.as_tensor(labels, dtype=torch.int32) # (n_rois,)
-                    # print(f'{time.time() - tic}')
-                    # tic = time.time()
-                    # lab_t = torch.stack([lab_t==u for u in torch.unique(lab_t)], dim=0).T.type(torch.float32) # (n_rois, n_clusters)
-
                     lab_u_t, lab_u_idx_t = torch.unique(labels_t, return_inverse=True) # (n_clusters,), (n_rois,)
-                    lab_t = helpers.idx_to_oneHot(lab_u_idx_t, dtype=torch.float32)
-                    # lab_t = helpers.idx_to_oneHot( - labels_t.min(labels_squeezed)).T # (n_clusters, n_rois)
-                    # lab_u_t = torch.unique(labels_t) # (n_clusters,)
-                    # print(lab_u_t.shape, lab_t.shape, sb_t.shape)
-                    # print((sb_t.T @ lab_t).sum(0))
-
-                    # lab_u_t = torch.unique(lab_t)
-                    # violations_labels = lab_u_t[torch.stack([(sb_t[labels_t==u].sum(0)>1).sum() for u in lab_u_t], dim=0) > 0]
-                    # violations_labels = lab_u_t[torch.stack([(sb_t[lab_t[ii]].sum(0)>1).sum() for ii,u in enumerate(np.arange(lab_t.shape[0]))], dim=0) > 0]
-                    violations_labels = lab_u_t[((sb_t.T @ lab_t) > 1.5).sum(0) > 0]
+                    lab_oneHot_t = helpers.idx_to_oneHot(lab_u_idx_t, dtype=torch.float32)
+                    violations_labels = lab_u_t[((sb_t.T @ lab_oneHot_t) > 1.5).sum(0) > 0]
                     violations_labels = violations_labels[violations_labels > -1]
 
                     if len(violations_labels) == 0:
@@ -390,16 +386,12 @@ class Clusterer:
                     if l == -1:
                         continue
                     idx = np.where(labels==l)[0]
-                    # idx_sesh = np.where(session_bool[idx].sum(0) > 0)[0]
                     
                     d_sub = d[idx][:,idx]
                     idx_grid = np.meshgrid(idx, idx)
                     ## set distances of ROIs from same session to 0
                     sesh_to_exclude = 1 - (session_bool @ (session_bool[idx].max(0)))  ## make a mask of sessions that are not represented in the cluster
-                    # print(sesh_to_exclude.shape, session_bool.shape)
-                    # tic = time.time()
                     d[idx,:] = d[idx,:].multiply(sesh_to_exclude[None,:])  ## set distances to ROIs from sessions represented in the cluster to 1
-                    # print(f'{time.time() - tic}')
                     d[:,idx] = d[:,idx].multiply(sesh_to_exclude[:,None])  ## set distances to ROIs from sessions represented in the cluster to 1
                     d[idx_grid[0], idx_grid[1]] = d_sub  ## undo the above for ROIs in the cluster
                 d = d.tocsr()
@@ -821,10 +813,10 @@ class Clusterer:
             loss (float):
                 Magnitude of the 'same' distribution.
         """
-        power_SF=trial.suggest_float('power_SF', 0.1, 3, log=False)
-        power_NN=trial.suggest_float('power_NN', 0.1, 3, log=False)
-        power_SWT=trial.suggest_float('power_SWT', 0.1, 3, log=False)
-        p_norm=trial.suggest_float('p_norm', -10, 10, log=False)
+        power_SF=trial.suggest_float('power_SF', *self.bounds_findParameters['power_SF'], log=False)
+        power_NN=trial.suggest_float('power_NN', *self.bounds_findParameters['power_NN'], log=False)
+        power_SWT=trial.suggest_float('power_SWT', *self.bounds_findParameters['power_SWT'], log=False)
+        p_norm=trial.suggest_float('p_norm', *self.bounds_findParameters['p_norm'], log=False)
         
         # sig_SF_kwargs = {
         #     'mu':trial.suggest_float('sig_SF_kwargs_mu', 0.1, 0.5, log=False),
@@ -832,12 +824,12 @@ class Clusterer:
         # }
         sig_SF_kwargs = None
         sig_NN_kwargs = {
-            'mu':trial.suggest_float('sig_NN_kwargs_mu', 0, 0.5, log=False),
-            'b':trial.suggest_float('sig_NN_kwargs_b', 0.01, 2, log=False),
+            'mu':trial.suggest_float('sig_NN_kwargs_mu', *self.bounds_findParameters['sig_NN_kwargs_mu'], log=False),
+            'b':trial.suggest_float('sig_NN_kwargs_b', *self.bounds_findParameters['sig_NN_kwargs_b'], log=False),
         }
         sig_SWT_kwargs = {
-            'mu':trial.suggest_float('sig_SWT_kwargs_mu', -0.5, 0.5, log=False),
-            'b':trial.suggest_float('sig_SWT_kwargs_b', 0.01, 2, log=False),
+            'mu':trial.suggest_float('sig_SWT_kwargs_mu', *self.bounds_findParameters['sig_SWT_kwargs_mu'], log=False),
+            'b':trial.suggest_float('sig_SWT_kwargs_b', *self.bounds_findParameters['sig_SWT_kwargs_b'], log=False),
         }
 
         dConj, sSF_data, sNN_data, sSWT_data, sConj_data = self.make_conjunctive_distance_matrix(
