@@ -436,7 +436,7 @@ class ROI_graph:
         frame_width=1024,
         block_height=100, 
         block_width=100,
-        overlapping_width_Multiplier=0.2,
+        overlapping_width_Multiplier=0.0,
         clamp_blocks_to_frame=True,
     ):     
         """

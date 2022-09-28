@@ -331,7 +331,7 @@ def squeeze_integers(intVec):
     return unique_positions[np.array([np.where(intVec[ii]==uniques)[0] for ii in range(len(intVec))]).squeeze()]
 
 
-def idx_to_oneHot(arr, n_classes=None):
+def idx_to_oneHot(arr, n_classes=None, dtype=None):
     """
     Convert an array of class indices to matrix of
      one-hot vectors.
@@ -340,6 +340,9 @@ def idx_to_oneHot(arr, n_classes=None):
     Args:
         arr (np.ndarray):
             1-D array of class indices.
+            Values should be integers >= 0.
+            Values will be used as indices in the
+             output array.
         n_classes (int):
             Number of classes.
     
@@ -347,10 +350,22 @@ def idx_to_oneHot(arr, n_classes=None):
         oneHot (np.ndarray):
             2-D array of one-hot vectors.
     """
+    if type(arr) is np.ndarray:
+        max = np.max
+        zeros = np.zeros
+        arange = np.arange
+        dtype = np.bool8 if dtype is None else dtype
+    elif type(arr) is torch.Tensor:
+        max = torch.max
+        zeros = torch.zeros
+        arange = torch.arange
+        dtype = torch.bool if dtype is None else dtype
+    assert arr.ndim == 1
+
     if n_classes is None:
-        n_classes = np.max(arr)+1
-    oneHot = np.zeros((arr.size, n_classes))
-    oneHot[np.arange(arr.size), arr] = 1
+        n_classes = max(arr)+1
+    oneHot = zeros((len(arr), n_classes), dtype=dtype)
+    oneHot[arange(len(arr)), arr] = True
     return oneHot
 
 
