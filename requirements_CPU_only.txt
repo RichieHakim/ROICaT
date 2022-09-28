@@ -15,7 +15,6 @@ scikit_learn==1.1.2
 scipy==1.8.1
 seaborn==0.11.2
 sparse==0.13.0
-spconv==2.1.22
 tqdm==4.64.0
 natsort
 jupyter
