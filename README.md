@@ -1,7 +1,7 @@
 # ROICaT
 **R**egion **O**f **I**nterest **C**lassification **a**nd **T**racking
 
-### TRACKING NOW IN BETA! Try it out in the demo notebook [here](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/tracking_interactive_notebook.ipynb) or the demo script [here](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/tracking_scriptingDemo_notebook.ipynb).
+### TRACKING NOW IN BETA! Try it out in the demo notebook [here](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/tracking_interactive_notebook.ipynb) or the demo script [here](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/tracking_scripted_notebook.ipynb).
 ### Classification still in Alpha. Contact me if you want to help test it.
 ### to help with development or beta test releases, please contact:  rhakim@g.harvard.edu
 
