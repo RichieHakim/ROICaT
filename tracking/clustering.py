@@ -1002,7 +1002,6 @@ def score_labels(labels_test, labels_true, ignore_negOne=False, thresh_perfect=0
     if ignore_negOne:
         labels_test = labels_test[labels_true > -1].copy()
         labels_true = labels_true[labels_true > -1].copy()
-    print(labels_test.shape, labels_true.shape)
 
     ## convert labels to boolean
     bool_test = np.stack([labels_test==l for l in np.unique(labels_test)], axis=0).astype(np.float32)

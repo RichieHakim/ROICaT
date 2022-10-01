@@ -55,7 +55,7 @@ class Data_suite2p:
         self._new_or_old_suite2p = new_or_old_suite2p
 
         self._verbose = verbose
-
+        
         ## shifts are applied to convert the 'old' matlab version of suite2p indexing (where there is an offset and its 1-indexed)
         if self.paths_ops is not None:
             self.shifts = [
@@ -244,7 +244,7 @@ class Data_suite2p:
         """
 
         print("Importing spatial footprints from stat files.") if self._verbose else None
-        
+
         if frame_height_width is None:
             frame_height_width = [self.FOV_height, self.FOV_width]
 
