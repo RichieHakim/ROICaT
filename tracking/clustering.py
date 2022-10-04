@@ -1000,6 +1000,9 @@ def score_labels(labels_test, labels_true, ignore_negOne=False, thresh_perfect=0
     """
     assert len(labels_test) == len(labels_true), 'RH ERROR: labels_test and labels_true must be the same length.'
     if ignore_negOne:
+        labels_test = np.array(labels_test.copy(), dtype=int)
+        labels_true = np.array(labels_true.copy(), dtype=int)
+        
         labels_test = labels_test[labels_true > -1].copy()
         labels_true = labels_true[labels_true > -1].copy()
 
