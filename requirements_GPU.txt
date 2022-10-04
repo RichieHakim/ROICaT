@@ -20,3 +20,5 @@ natsort
 jupyter
 paramiko
 jupyter
+PyYAML
+umap-learn

@@ -21,3 +21,4 @@ jupyter
 paramiko
 jupyter
 PyYAML
+umap-learn

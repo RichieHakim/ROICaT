@@ -1,3 +1,22 @@
+"""
+hashes = {'baseline': ('1FCcPZUuOR7xG-hdO6Ei6mx8YnKysVsa8',
+                       {'params': ('params.json', '877e17df8fa511a03bc99cd507a54403'),
+                        'model': ('model.py', '55e1dd233989753fe0719c8238d0345e'),
+                        'state_dict': ('ConvNext_tiny__1_0_unfrozen__simCLR.pth',
+                                       'a5fae4c9ea95f2c78b4690222b2928a5')}),
+          'occlusion': ('1D2Qa-YUNX176Q-wgboGflW0K6un7KYeN',
+                        {'params': ('params.json', '68cf1bd47130f9b6d4f9913f86f0ccaa'),
+                         'model': ('model.py', '61c85529b7aa33e0dfadb31ee253a7e1'),
+                         'state_dict': ('ConvNext_tiny__1_0_best__simCLR.pth',
+                                        '3287e001ff28d07ada2ae70aa7d0a4da')}),
+          'minaffine': ('1Xh02nfw_Fgb9uih1WCrsFNI-WIYXDVDn',
+                        {'params': ('params.json', '9399a311d47e6966c1201defde4c6c34'),
+                        'model': ('model.py', '8789a7b27e41b39ee94c9f732f38eafc'),
+                        'state_dict': ('ConvNext_tiny__1_0_unfrozen__simCLR.pth',
+                                       '172a992fed5e4bbabc5503e19630b621')})}
+"""
+
+
 import sys
 from pathlib import Path
 import json
@@ -30,11 +49,11 @@ class ROInet_embedder:
         device='cpu',
         dir_networkFiles=None,
         download_from_gDrive='check_local_first',
-        gDriveID='1FCcPZUuOR7xG-hdO6Ei6mx8YnKysVsa8',
+        gDriveID='1D2Qa-YUNX176Q-wgboGflW0K6un7KYeN',
         hash_dict_networkFiles={
-            'params': ('params.json', '877e17df8fa511a03bc99cd507a54403'),
-            'model': ('model.py', '741b79903507b11769e3f7aa4cdd4dbe'),
-            'state_dict': ('ConvNext_tiny__1_0_unfrozen__simCLR.pth', 'a5fae4c9ea95f2c78b4690222b2928a5'),
+            'params': ('params.json', '68cf1bd47130f9b6d4f9913f86f0ccaa'),
+            'model': ('model.py', '61c85529b7aa33e0dfadb31ee253a7e1'),
+            'state_dict': ('ConvNext_tiny__1_0_best__simCLR.pth', '3287e001ff28d07ada2ae70aa7d0a4da'),
         },
         forward_pass_version='latent',
         verbose=True,
@@ -155,7 +174,7 @@ class ROInet_embedder:
             param.requires_grad = False
         self.net.eval()
 
-        self.net.load_state_dict(torch.load(paths_matching['state_dict']))
+        self.net.load_state_dict(torch.load(paths_matching['state_dict']), map_location=self._device)
         print(f'Loaded state_dict into network from {paths_matching["state_dict"]}') if self._verbose else None
 
         self.net = self.net.to(self._device)
@@ -208,6 +227,11 @@ class ROInet_embedder:
         """
         if numWorkers_dataloader == -1:
             numWorkers_dataloader = mp.cpu_count()
+
+        if self._device == 'cpu':
+            pinMemory_dataloader = False
+            numWorkers_dataloader = 0
+            persistentWorkers_dataloader = False
 
         print('Starting: resizing ROIs') if self._verbose else None
         # sf_ptile = np.array([np.percentile(np.mean(sf>0, axis=(1,2)), ptile_norm) for sf in tqdm(ROI_images)]).mean()
