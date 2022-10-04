@@ -174,7 +174,7 @@ class ROInet_embedder:
             param.requires_grad = False
         self.net.eval()
 
-        self.net.load_state_dict(torch.load(paths_matching['state_dict']), map_location=self._device)
+        self.net.load_state_dict(torch.load(paths_matching['state_dict'], map_location=self._device))
         print(f'Loaded state_dict into network from {paths_matching["state_dict"]}') if self._verbose else None
 
         self.net = self.net.to(self._device)
