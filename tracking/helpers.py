@@ -11,6 +11,7 @@ import torch
 import scipy.sparse
 import sparse
 # import torch_sparse as ts
+import gc
 
 """
 All of these are from basic_neural_processing_modules
