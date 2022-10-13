@@ -845,3 +845,120 @@ def simple_cmap(
     cmap.set_under(under)
 
     return cmap
+
+def confusion_matrix(y_hat, y_true, counts=False):
+    """
+    Compute the confusion matrix from y_hat and y_true.
+    y_hat should be either predictions ().
+    RH 2021
+
+    Args:
+        y_hat (np.ndarray): 
+            numpy array of predictions or probabilities. 
+            Either PREDICTIONS: 2-D array of booleans
+             ('one hots') or 1-D array of predicted 
+             class indices.
+            Or PROBABILITIES: 2-D array floats ('one hot
+             like')
+        y_true (np.ndarray):
+            Either 1-D array of true class indices OR a
+             precomputed onehot matrix.
+    """
+    n_classes = max(np.max(y_true)+1, np.max(y_hat)+1)
+    if y_hat.ndim == 1:
+        y_hat = idx_to_oneHot(y_hat, n_classes)
+    cmat = y_hat.T @ idx_to_oneHot(y_true, n_classes)
+    if not counts:
+        cmat = cmat / np.sum(cmat, axis=0)[None,:]
+    return cmat
+
+
+def import_multiple_stat_files(paths_statFiles=None, dir_statFiles=None, fileNames_statFiles=None, out_height_width=[36,36], max_footprint_width=241):
+    """
+    Imports multiple stat files.
+    RH 2021 
+    
+    Args:
+        paths_statFiles (list):
+            List of paths to stat files.
+            Elements can be either str or pathlib.Path.
+        dir_statFiles (str):
+            Directory of stat files.
+            Optional: if paths_statFiles is provided, this
+             argument is ignored.
+        fileNames_statFiles (list):
+            List of file names of stat files.
+            Optional: if paths_statFiles is provided, this
+             argument is ignored.
+        out_height_width (list):
+            [height, width] of the output spatial footprints.
+        max_footprint_width (int):
+            Maximum width of the spatial footprints.
+        plot_pref (bool):
+            If True, plots the spatial footprints.
+
+    Returns:
+        stat_all (list):
+            List of stat files.
+    """
+    if paths_statFiles is None:
+        paths_statFiles = [pathlib.Path(dir_statFiles) / fileName for fileName in fileNames_statFiles]
+
+    sf_all_list = [statFile_to_spatialFootprints(path_statFile=path_statFile,
+                                                 out_height_width=out_height_width,
+                                                 max_footprint_width=max_footprint_width)
+                  for path_statFile in paths_statFiles]
+    return sf_all_list
+
+def statFile_to_spatialFootprints(path_statFile=None, statFile=None, out_height_width=[36,36], max_footprint_width=241):
+    """
+    Converts a stat file to a list of spatial footprint images.
+    RH 2021
+
+    Args:
+        path_statFile (pathlib.Path or str):
+            Path to the stat file.
+            Optional: if statFile is provided, this
+             argument is ignored.
+        statFile (dict):
+            Suite2p stat file dictionary
+            Optional: if path_statFile is provided, this
+             argument is ignored.
+        out_height_width (list):
+            [height, width] of the output spatial footprints.
+        max_footprint_width (int):
+            Maximum width of the spatial footprints.
+    
+    Returns:
+        sf_all (list):
+            List of spatial footprints images
+    """
+    assert out_height_width[0]%2 == 0 and out_height_width[1]%2 == 0 , "RH: 'out_height_width' must be list of 2 EVEN integers"
+    assert max_footprint_width%2 != 0 , "RH: 'max_footprint_width' must be odd"
+    if statFile is None:
+        stat = np.load(path_statFile, allow_pickle=True)
+    else:
+        stat = statFile
+    n_roi = stat.shape[0]
+    
+    # sf_big: 'spatial footprints' prior to cropping. sf is after cropping
+    sf_big_width = max_footprint_width # make odd number
+    sf_big_mid = sf_big_width // 2
+
+    sf_big = np.zeros((n_roi, sf_big_width, sf_big_width))
+    for ii in range(n_roi):
+        sf_big[ii , stat[ii]['ypix'] - np.int16(stat[ii]['med'][0]) + sf_big_mid, stat[ii]['xpix'] - np.int16(stat[ii]['med'][1]) + sf_big_mid] = stat[ii]['lam'] # (dim0: ROI#) (dim1: y pix) (dim2: x pix)
+
+    sf = sf_big[:,  
+                sf_big_mid - out_height_width[0]//2:sf_big_mid + out_height_width[0]//2,
+                sf_big_mid - out_height_width[1]//2:sf_big_mid + out_height_width[1]//2]
+    
+    return sf
+
+def get_keep_nonnan_entries(original_features):
+    """
+    Gets the image indices where a value is nan and returns a list of image indicies without any nan values
+    original_features: np.array of image values (images x height x width)
+    """
+    has_nan = np.unique(np.where(np.isnan(original_features))[0])
+    return np.array([_ for _ in range(original_features.shape[0]) if _ not in has_nan])
