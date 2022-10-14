@@ -52,8 +52,8 @@ class Data():
         This method can be called before any other function.
 
         Returns:
-            self.statFiles (list):
-                List of imported files. Type depends on sf_type.
+            self.statFiles (np.array):
+                Concatenated set of imported files.
         """
 
         print(f"Starting: Importing spatial footprints from stat files") if self._verbose else None
@@ -93,32 +93,12 @@ class Data():
         
     def import_labelFiles(self):
         """
-        Imports the FOV images from ops files or user defined
-         image arrays.
+        Imports the image labels from an npy file. Should
+        have the same 0th dimension as the stats files.
 
-        Args:
-            type_meanImg (str):
-                Type of the mean image.
-                References the key in the ops.npy file.
-                Options are:
-                    'meanImgE':
-                        Enhanced mean image.
-                    'meanImg':
-                        Mean image.
-            images (list of np.ndarray):
-                Optional. If provided, the FOV images are 
-                 defined by these images.
-                If not provided, the FOV images are defined by
-                 the ops.npy files from self.paths_ops.
-                len(images) must be equal to len(self.paths_stat)
-                Images must be of the same shape.
-        
         Returns:
-            self.FOV_images (list):
-                List of FOV images.
-                Length of the list is the same self.paths_files.
-                Each element is a numpy.ndarray of shape:
-                 (n_files, height, width)
+            self.labelFiles (np.array):
+                Concatenated set of image labels.
         """
         
         print(f"Starting: Importing labels footprints from npy files") if self._verbose else None
@@ -136,6 +116,11 @@ class Data():
 
 
     def drop_nan_rois(self):
+        """
+        Identifies all entries along the 0th dimension of self.statFiles that
+        have any NaN value in any of their dimensions and removes
+        those entries from both self.statFiles and self.labelFiles
+        """
         idx_nne = helpers.get_keep_nonnan_entries(self.statFiles)
         self.statFiles = self.statFiles[idx_nne]
         self.labelFiles = self.labelFiles[idx_nne]
@@ -146,6 +131,10 @@ class Data():
 
         
     def relabeling(self):
+        """
+        TBD if should be implemembted for relabeling all instances of one class to another
+        Or to drop a given class entirely.
+        """
 #         https://github.com/seung-lab/fastremap
 
 #         # Relabel values based on relabels definition
