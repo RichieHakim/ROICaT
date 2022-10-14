@@ -866,11 +866,15 @@ def confusion_matrix(y_hat, y_true, counts=False):
              precomputed onehot matrix.
     """
     n_classes = max(np.max(y_true)+1, np.max(y_hat)+1)
+#     print(y_hat)
     if y_hat.ndim == 1:
-        y_hat = idx_to_oneHot(y_hat, n_classes)
+        y_hat = idx_to_oneHot(y_hat, n_classes).astype('int')
+#     print(y_hat)
     cmat = y_hat.T @ idx_to_oneHot(y_true, n_classes)
+#     print(cmat)
     if not counts:
         cmat = cmat / np.sum(cmat, axis=0)[None,:]
+#     print(cmat)
     return cmat
 
 
