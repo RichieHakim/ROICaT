@@ -14,7 +14,7 @@ class Evaluation():
         y_eval: True labels for examples for evaluation
         counts: Whether to return confusion matrix as counts (False) or percentages (True)
         """
-        proba, preds = self.classifier.classify(x)
+        preds = self.classifier.predict(x).astype(np.int32)
         cm = helpers.confusion_matrix(preds, y.astype(np.int32), counts=counts)
         return cm
         
