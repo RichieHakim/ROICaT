@@ -2,18 +2,28 @@ import numpy as np
 import torch
 from .. import helpers
 
+
+# >>> from sklearn.pipeline import Pipeline
+# >>> from sklearn.svm import SVC
+# >>> from sklearn.decomposition import PCA
+# >>> estimators = [('reduce_dim', PCA()), ('clf', SVC())]
+# >>> pipe = Pipeline(estimators)
+# >>> pipe
+# Pipeline(steps=[('reduce_dim', PCA()), ('clf', SVC())])
+
+
+
 class Preprocessor():
     
-    def __init__(self, use_pca=True, use_zscore=True):
+    def __init__(self, pipeline):
         """
         Instantiate a copy of Preprocessor with
         specifications to use or not use PCA/zscoring
+        
+        Pass in strings for the pipeline stages that should be refit every time
         """
-        self.comp_nn = None
-        self.SVs = None
-        self.EVR_nn = None
-        self.use_pca = use_pca
-        self.use_zscore = use_zscore
+        self.pipeline = pipeline
+        self.refit_every_time = []
     
     # =========================
     
@@ -22,6 +32,7 @@ class Preprocessor():
         Fit PCA (if use_pca is True) and apply PCA (of rank, rank) followed by z-scoring
         to a specified dataset (x).
         """
+        
         scores = self.fit_transform_pca(x, rank=rank) if self.use_pca else x
         zscores = self.transform_zscore(scores) if self.use_zscore else scores
         return zscores

@@ -170,7 +170,7 @@ class Data():
 #         latents_clean = latents_clean[idx_nne]
 #         labels_clean = labels_clean[idx_nne]
             
-            return
+        return
 
 def fix_paths(paths):
     """
