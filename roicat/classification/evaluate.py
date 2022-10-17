@@ -29,3 +29,21 @@ class Evaluation():
         return acc
     
     # =========================
+
+def get_balanced_sample_weights(labels):
+    """
+    Balances sample ways for classification
+    labels: np.array
+        Includes list of labels to balance the weights for classifier training
+    returns weights by samples
+    """
+    labels = np.int64(labels.copy())
+    counts, vals = np.histogram(labels, bins=np.concatenate((np.unique(labels), [labels.max()+1])))
+    vals = vals[:-1]
+
+    n_labels = len(labels)
+    weights = n_labels / counts
+    
+    sample_weights = np.array([weights[l] for l in labels])
+    
+    return sample_weights
