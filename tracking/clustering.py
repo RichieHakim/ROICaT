@@ -583,9 +583,9 @@ class Clusterer:
                  neural network and scattering wavelet transform
                  similarity matrices.
         """
-        if len([s for s in [s_sf, s_NN, s_SWT] if s is not None]) == 0:
-            raise Exception("RH ERROR: All similarity matrices are None.")
-
+        assert (s_sf is not None) or (s_NN is not None) or (s_SWT is not None), \
+            'At least one of s_sf, s_NN, or s_SWT must be provided.'
+        
         p_norm = 1e-9 if p_norm == 0 else p_norm
 
         sSF_data = self._activation_function(s_sf.data, sig_SF_kwargs, power_SF)

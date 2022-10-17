@@ -369,15 +369,26 @@ def idx_to_oneHot(arr, n_classes=None, dtype=None):
     return oneHot
 
 
-def simple_save(obj, filename, mkdir=False):
-    import pickle
-    from pathlib import Path
-    if mkdir:
-        Path(filename).parent.mkdir(parents=True, exist_ok=True)
-    with open(filename, 'wb') as f:
-        pickle.dump(obj, f)
-def simple_load(filename):
-    with open(filename, 'rb') as f:
+# def simple_save(obj, filename, mkdir=False):
+#     import pickle
+#     from pathlib import Path
+#     if mkdir:
+#         Path(filename).parent.mkdir(parents=True, exist_ok=True)
+#     with open(filename, 'wb') as f:
+#         pickle.dump(obj, f)
+# def simple_load(filename):
+#     with open(filename, 'rb') as f:
+#         return pickle.load(f)
+
+def pickle_save(obj, path_save, mode='wb', mkdir=False, allow_overwrite=True):
+    Path(path_save).parent.mkdir(parents=True, exist_ok=True) if mkdir else None
+    assert allow_overwrite or not Path(path_save).exists(), f'{path_save} already exists.'
+    assert Path(path_save).parent.exists(), f'{Path(path_save).parent} does not exist.'
+    assert Path(path_save).parent.is_dir(), f'{Path(path_save).parent} is not a directory.'
+    with open(path_save, mode) as f:
+        pickle.dump(obj, f,)
+def pickle_load(filename, mode='rb'):
+    with open(filename, mode) as f:
         return pickle.load(f)
 
 
