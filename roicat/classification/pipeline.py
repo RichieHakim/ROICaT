@@ -1,6 +1,5 @@
 import numpy as np
 import torch
-from sklearn.pipeline import Pipeline
 import joblib
 from sklearn.pipeline import Pipeline, make_pipeline
 from .. import helpers
