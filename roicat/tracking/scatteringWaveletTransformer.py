@@ -3,7 +3,7 @@ import numpy as np
 from kymatio.torch import Scattering2D
 from tqdm import tqdm
 
-from . import helpers
+from .. import helpers
 
 class SWT:
     """

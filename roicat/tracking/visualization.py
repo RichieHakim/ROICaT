@@ -7,7 +7,7 @@ import scipy.sparse
 
 import copy
 
-from . import helpers
+from .. import helpers
 
 def display_toggle_image_stack(images, clim=None, **kwargs):
 

@@ -589,137 +589,6 @@ def merge_sparse_arrays(s_list, idx_list, shape_full, remove_redundant=True, eli
         remove_redundant_elements(s_full, inPlace=True)
     return s_full
 
-    
-def idx_to_oneHot(arr, n_classes=None, dtype=None):
-    """
-    Convert an array of class indices to matrix of
-     one-hot vectors.
-    RH 2021
-
-    Args:
-        arr (np.ndarray):
-            1-D array of class indices.
-            Values should be integers >= 0.
-            Values will be used as indices in the
-             output array.
-        n_classes (int):
-            Number of classes.
-    
-    Returns:
-        oneHot (np.ndarray):
-            2-D array of one-hot vectors.
-    """
-    if type(arr) is np.ndarray:
-        max = np.max
-        zeros = np.zeros
-        arange = np.arange
-        dtype = np.bool8 if dtype is None else dtype
-    elif type(arr) is torch.Tensor:
-        max = torch.max
-        zeros = torch.zeros
-        arange = torch.arange
-        dtype = torch.bool if dtype is None else dtype
-    assert arr.ndim == 1
-
-    if n_classes is None:
-        n_classes = max(arr)+1
-    oneHot = zeros((len(arr), n_classes), dtype=dtype)
-    oneHot[arange(len(arr)), arr] = True
-    return oneHot
-
-
-# ######################
-# # torch_sparse stuff #
-# ######################
-
-# def pydata_sparse_to_torchSparse(s):
-#     return ts.from_torch_sparse(pydata_sparse_to_torch_coo(s).coalesce())
-
-# def torch_to_torchSparse(s):
-#     return ts.tensor.SparseTensor(
-#         row=s.indices()[0],
-#         col=s.indices()[1],
-#         value=s.values(),
-#         sparse_sizes=s.shape,
-#     )
-
-
-# def diag_sparse(x, return_sparse_vals=True):
-#     """
-#     Get the diagonal of a sparse tensor.
-#     RH 2022
-
-#     Args:
-#         x (torch.sparse.FloatTensor):
-#             Pytorch sparse tensor.
-#         return_sparse_vals (bool):
-#             If True, returns 'sparse' (zeroed) values as well.
-#             If False, returns only specified (non-sparsed out) values.
-#     """
-#     if return_sparse_vals is False:
-#         row, col = x.indices()
-#         return x.values()[row == col]
-#     else:
-#         x_ts = torch_to_torchSparse(x)
-#         return x_ts.get_diag()
-
-# def ts_softmax(x, temperature=1.0):
-#     tmp = ts.tensor.SparseTensor(
-#         row=x.storage.row(),
-#         col=x.storage.col(),
-#         value=torch.exp(x.storage.value()) / temperature,
-#         sparse_sizes=x.sizes()
-#     )
-#     return tmp / tmp.sum(1)[:,None]
-
-# def ts_logSoftmax(x, temperature=1.0, shift=None):
-#     """
-#     Log softmax of a sparse tensor.
-#     OPERATES ONLY ON NON-SPARSE VALUES. SPARSE INDICES ARE IGNORED.
-#     Optimized for sparse tensors; faster and less memory than
-#      torch.sparse.log_softmax().
-
-#     Trickery: 
-#     log softmax can be simplified to:
-#         x - log(sum(exp(x), dim=1))
-#     The above equation is numerically unstable because exp(x) can
-#      overflow. So, we shift the values of x down by x.max(1), or 
-#      a set value to avoid overflow.
-#         x' = x - x.max(1)
-#     """
-#     if shift is None:
-#         shift = x.max(1)
-
-#     x2 = ts.add(x, -shift[:,None])
-    
-#     tmp = ts.tensor.SparseTensor(
-#         row=x2.storage.row(),
-#         col=x2.storage.col(),
-#         value=torch.exp(x2.storage.value()) / temperature,
-#         sparse_sizes=x2.sizes()
-#     )
-#     return ts.add(x2, -torch.log(tmp.sum(1)[:,None]))
-
-
-# def ts_setDiag_lowMem(x, values):
-#     """
-#     This method is better than x.set_diag(values) when
-#      x already has non-sparse diagonal elements, or generally if
-#      the non-sparse digaonal elements of x match up
-#      1 to 1 with the elements in values.
-#     """
-#     vals = x.storage.value()
-#     idx = x.storage.row() == x.storage.col()
-    
-#     vals[idx] = values
-    
-#     return ts.tensor.SparseTensor(
-#         row=x.storage.row(),
-#         col=x.storage.col(),
-#         value=vals,
-#         sparse_sizes=x.sizes()
-#     )
-
 
 #########################
 # visualization helpers #
@@ -886,13 +755,15 @@ def get_keep_nonnan_entries(original_features):
     return np.array([_ for _ in range(original_features.shape[0]) if _ not in has_nan])
 
 
-def torch_pca(  X_in, 
-                device='cpu', 
-                mean_sub=True, 
-                zscore=False, 
-                rank=None, 
-                return_cpu=True, 
-                return_numpy=False):
+def torch_pca(  
+    X_in, 
+    device='cpu', 
+    mean_sub=True, 
+    zscore=False, 
+    rank=None, 
+    return_cpu=True, 
+    return_numpy=False
+):
     """
     Principal Components Analysis for PyTorch.
     If using GPU, then call torch.cuda.empty_cache() after.
@@ -986,15 +857,3 @@ def torch_pca(  X_in,
     torch.cuda.empty_cache()
     gc.collect()
     return components, scores, singVals, EVR
-
-def pickle_save(obj, path_save, mode='wb', mkdir=False, allow_overwrite=True):
-    Path(path_save).parent.mkdir(parents=True, exist_ok=True) if mkdir else None
-    assert allow_overwrite or not Path(path_save).exists(), f'{path_save} already exists.'
-    assert Path(path_save).parent.exists(), f'{Path(path_save).parent} does not exist.'
-    assert Path(path_save).parent.is_dir(), f'{Path(path_save).parent} is not a directory.'
-    with open(path_save, mode) as f:
-        pickle.dump(obj, f,)
-
-def pickle_load(filename, mode='rb'):
-    with open(filename, mode) as f:
-        return pickle.load(f)
