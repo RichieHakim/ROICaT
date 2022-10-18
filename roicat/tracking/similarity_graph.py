@@ -134,7 +134,7 @@ class ROI_graph:
         self._n_sessions = ROI_session_bool.shape[1]
         self._sf_maskPower = spatialFootprint_maskPower
 
-        self.sf_cat = scipy.sparse.vstack(spatialFootprints)
+        self.sf_cat = scipy.sparse.vstack(spatialFootprints).tocsr()
         n_roi = self.sf_cat.shape[0]
 
 
