@@ -2,15 +2,18 @@ import numpy as np
 import torch
 from sklearn.pipeline import Pipeline
 import joblib
+from sklearn.pipeline import Pipeline, make_pipeline
 from .. import helpers
 
 class Pipe():
     
-    def __init__(self, pipeline=None, pipeline_fileloc=None):
+    def __init__(self, *pipeline, pipeline_fileloc=None):
         """
         Create a Pipe from a Pipeline object or a pickled Pipeline object
         """
-        if pipeline is not None:
+        if pipeline and (type(pipeline) is list or type(pipeline) is tuple):
+            self.pipeline = make_pipeline(*pipeline)
+        elif pipeline:
             self.pipeline = pipeline
         else:
             self.pipeline = self.load(pipeline_fileloc)
