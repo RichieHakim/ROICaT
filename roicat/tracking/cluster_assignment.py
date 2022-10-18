@@ -6,7 +6,7 @@ import scipy.sparse
 import numpy as np
 import matplotlib.pyplot as plt
 
-from . import helpers
+from .. import helpers
 
 class Cluster_Assigner:
     """

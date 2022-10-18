@@ -12,7 +12,7 @@ from tqdm import tqdm
 import optuna
 import hdbscan
 
-from . import helpers
+from .. import helpers
 
 class Clusterer:
     """
@@ -595,7 +595,7 @@ class Clusterer:
         sConj_data = self._pNorm(
             s_list=[sSF_data, sNN_data, sSWT_data],
             p=p_norm,
-        )
+        ) * self.s_sesh.data
 
         dConj = s_sf.copy()
         dConj.data = sConj_data.numpy()

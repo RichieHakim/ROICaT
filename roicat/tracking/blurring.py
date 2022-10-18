@@ -5,7 +5,7 @@ import scipy.sparse
 import numpy as np
 from tqdm import tqdm
 
-from . import helpers
+from .. import helpers
     
 class ROI_Blurrer:
     """

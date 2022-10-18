@@ -6,7 +6,7 @@ import numpy as np
 from tqdm import tqdm
 import scipy.sparse
 
-from . import helpers
+from .. import helpers
 
 class Data_suite2p:
     """

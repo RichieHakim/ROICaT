@@ -13,7 +13,7 @@ import multiprocessing as mp
 # import time
 # import copy
 
-from . import helpers
+from .. import helpers
 
 
 class ROI_graph:
