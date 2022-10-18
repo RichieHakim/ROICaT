@@ -11,6 +11,7 @@ import torch
 import scipy.sparse
 import sparse
 # import torch_sparse as ts
+import gc
 
 """
 All of these are from basic_neural_processing_modules
@@ -844,3 +845,156 @@ def simple_cmap(
     cmap.set_under(under)
 
     return cmap
+
+def confusion_matrix(y_hat, y_true, counts=False):
+    """
+    Compute the confusion matrix from y_hat and y_true.
+    y_hat should be either predictions ().
+    RH 2021
+
+    Args:
+        y_hat (np.ndarray): 
+            numpy array of predictions or probabilities. 
+            Either PREDICTIONS: 2-D array of booleans
+             ('one hots') or 1-D array of predicted 
+             class indices.
+            Or PROBABILITIES: 2-D array floats ('one hot
+             like')
+        y_true (np.ndarray):
+            Either 1-D array of true class indices OR a
+             precomputed onehot matrix.
+    """
+    n_classes = max(np.max(y_true)+1, np.max(y_hat)+1)
+#     print(y_hat)
+    if y_hat.ndim == 1:
+        y_hat = idx_to_oneHot(y_hat, n_classes).astype('int')
+#     print(y_hat)
+    cmat = y_hat.T @ idx_to_oneHot(y_true, n_classes)
+#     print(cmat)
+    if not counts:
+        cmat = cmat / np.sum(cmat, axis=0)[None,:]
+#     print(cmat)
+    return cmat
+
+
+def get_keep_nonnan_entries(original_features):
+    """
+    Gets the image indices where a value is nan and returns a list of image indicies without any nan values
+    original_features: np.array of image values (images x height x width)
+    """
+    has_nan = np.unique(np.where(np.isnan(original_features))[0])
+    return np.array([_ for _ in range(original_features.shape[0]) if _ not in has_nan])
+
+
+def torch_pca(  X_in, 
+                device='cpu', 
+                mean_sub=True, 
+                zscore=False, 
+                rank=None, 
+                return_cpu=True, 
+                return_numpy=False):
+    """
+    Principal Components Analysis for PyTorch.
+    If using GPU, then call torch.cuda.empty_cache() after.
+    RH 2021
+
+    Args:
+        X_in (torch.Tensor or np.ndarray):
+            Data to be decomposed.
+            2-D array. Columns are features, rows are samples.
+            PCA will be performed column-wise.
+        device (str):
+            Device to use. ie 'cuda' or 'cpu'. Use a function 
+             torch_helpers.set_device() to get.
+        mean_sub (bool):
+            Whether or not to mean subtract ('center') the 
+             columns.
+        zscore (bool):
+            Whether or not to z-score the columns. This is 
+             equivalent to doing PCA on the correlation-matrix.
+        rank (int):
+            Maximum estimated rank of decomposition. If None,
+             then rank is X.shape[1]
+        return_cpu (bool):  
+            Whether or not to force returns/outputs to be on 
+             the 'cpu' device. If False, and device!='cpu',
+             then returns will be on device.
+        return_numpy (bool):
+            Whether or not to force returns/outputs to be
+             numpy.ndarray type.
+
+    Returns:
+        components (torch.Tensor or np.ndarray):
+            The components of the decomposition. 
+            2-D array.
+            Each column is a component vector. Each row is a 
+             feature weight.
+        scores (torch.Tensor or np.ndarray):
+            The scores of the decomposition.
+            2-D array.
+            Each column is a score vector. Each row is a 
+             sample weight.
+        singVals (torch.Tensor or np.ndarray):
+            The singular values of the decomposition.
+            1-D array.
+            Each element is a singular value.
+        EVR (torch.Tensor or np.ndarray):
+            The explained variance ratio of each component.
+            1-D array.
+            Each element is the explained variance ratio of
+             the corresponding component.
+    """
+    
+    if isinstance(X_in, torch.Tensor) == False:
+        X = torch.from_numpy(X_in).to(device)
+    elif X_in.device != device:
+            X = X_in.to(device)
+    else:
+        X = copy.copy(X_in)
+            
+    if mean_sub and not zscore:
+        X = X - torch.mean(X, dim=0)
+    if zscore:
+        X = X - torch.mean(X, dim=0)
+        stds = torch.std(X, dim=0)
+        X = X / stds[None,:]        
+        
+    if rank is None:
+        rank = X.shape[1]
+    
+    (U,S,V) = torch.pca_lowrank(X, q=rank, center=False, niter=2)
+    components = V
+    scores = torch.matmul(X, V[:, :rank])
+
+    singVals = (S**2)/(len(S)-1)
+    EVR = (singVals) / torch.sum(singVals)
+    
+    if return_cpu:
+        components = components.cpu()
+        scores = scores.cpu()
+        singVals = singVals.cpu()
+        EVR = EVR.cpu()
+    if return_numpy:
+        components = components.cpu().numpy()
+        scores = scores.cpu().numpy()
+        singVals = singVals.cpu().numpy()
+        EVR = EVR.cpu().numpy()
+        
+    gc.collect()
+    torch.cuda.empty_cache()
+    gc.collect()
+    torch.cuda.empty_cache()
+    gc.collect()
+    return components, scores, singVals, EVR
+
+def pickle_save(obj, path_save, mode='wb', mkdir=False, allow_overwrite=True):
+    Path(path_save).parent.mkdir(parents=True, exist_ok=True) if mkdir else None
+    assert allow_overwrite or not Path(path_save).exists(), f'{path_save} already exists.'
+    assert Path(path_save).parent.exists(), f'{Path(path_save).parent} does not exist.'
+    assert Path(path_save).parent.is_dir(), f'{Path(path_save).parent} is not a directory.'
+    with open(path_save, mode) as f:
+        pickle.dump(obj, f,)
+
+def pickle_load(filename, mode='rb'):
+    with open(filename, mode) as f:
+        return pickle.load(f)
