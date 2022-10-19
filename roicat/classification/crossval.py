@@ -3,8 +3,11 @@ import torch
 import joblib
 from tqdm.notebook import tqdm
 from sklearn.linear_model import LogisticRegression
+import matplotlib.pyplot as plt
+import seaborn as sns
 from . import pipeline, evaluate
 from .. import helpers
+from copy import deepcopy
 
 class CrossValidation():
     
@@ -27,22 +30,17 @@ class CrossValidation():
     def get_inx_data(self):
         return list(zip(self.split_x_tr, self.split_y_tr, self.split_x_val, self.split_y_val))
     
+
+def split_loop_c(cv, preproc_init, classifier_kwargs, preproc_refit=True, c_lst=[1, 0.1, 0.01]):
     
-    
-def split_loop(cv, preproc, classifier_kwargs, preproc_refit=True, c_lst=[100, 10, 1, 0.1, 0.01, 0.001], n_trial_fit=[1e1,1e2,1e3,1e4,1e5]):
     results_dct = {}
-    
     for ic, c in enumerate(c_lst):
         cm_train, cm_val, acc_train, acc_val = [], [], [], []
 
         for tmp_trainp_X, tmp_trainp_y, tmp_val_X, tmp_val_y in tqdm(cv.get_inx_data()):
             
-            if preproc_refit:
-                preproc.fit(tmp_trainp_X, tmp_trainp_y)
-            
-            classify = LogisticRegression(**classifier_kwargs, C=c)
-            classify.fit(preproc.transform(tmp_trainp_X), tmp_trainp_y)
-            pipe = pipeline.Pipe(preproc, classify)
+            classify_init = LogisticRegression(**classifier_kwargs, C=c)
+            pipe = pipeline.fit_pipe(tmp_trainp_X, tmp_trainp_y, preproc_init, classify_init, preproc_refit=preproc_refit)
             
             evaluator = evaluate.Evaluation(pipe.pipeline)
             cm_train.append(evaluator.confusion_matrix(tmp_trainp_X, tmp_trainp_y))
@@ -50,7 +48,18 @@ def split_loop(cv, preproc, classifier_kwargs, preproc_refit=True, c_lst=[100, 1
 
             acc_train.append(evaluator.score_classifier_logreg(tmp_trainp_X, tmp_trainp_y))
             acc_val.append(evaluator.score_classifier_logreg(tmp_val_X, tmp_val_y))
-
+        
         results_dct[f'cm_{c}'] = (np.round(np.mean(cm_train,axis=0),2), np.round(np.mean(cm_val,axis=0),2), np.round(np.mean(acc_train, axis=0),2), np.round(np.mean(acc_val, axis=0),2))
     
     return results_dct
+    
+
+def view_cv_dict(cv_dct):
+    for k in cv_dct:
+        c = k.replace('cm_','')
+        fig, ax = plt.subplots(1, 2, figsize=(10,3))
+        fig.suptitle(f'C: {c}')
+        sns.heatmap(cv_dct[k][0], annot=True, annot_kws={"size": 16}, vmax=1., cmap=plt.get_cmap('gray'), ax=ax[0])
+        sns.heatmap(cv_dct[k][1], annot=True, annot_kws={"size": 16}, vmax=1., cmap=plt.get_cmap('gray'), ax=ax[1])
+        ax[0].set_title(f'Train — Acc: {cv_dct[k][2]}')
+        ax[1].set_title(f'Val — Acc: {cv_dct[k][3]}')
