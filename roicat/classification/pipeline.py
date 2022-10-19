@@ -34,6 +34,27 @@ class Pipe():
 
 
 def fit_pipe(feat_train, labels_train, preproc_init, classify_init, preproc_refit=True):
+    """
+    Fit a full pipeline, either maintaining the initialized Preprocessor or refitting it
+    
+    JZ 2022
+    
+    Args:
+        feat_train (np.array):
+         Features on which to train the model
+        labels_train (np.array):
+         Labels on which to train the model
+        preproc_init (sklearn Transform):
+         Preprocessor pipeline for features training data
+        classify_init (sklearn Classifier):
+         Classifier (or pipeline) for features training data
+        preproc_refit (bool):
+         Whether or not to refit the preprocessor to the training data
+         before constructing the final pipeline
+    
+    Returns:
+        Fitted Pipeline
+    """
     
     preproc = deepcopy(preproc_init)
     if preproc_refit:
@@ -46,6 +67,29 @@ def fit_pipe(feat_train, labels_train, preproc_init, classify_init, preproc_refi
     return pipe
     
 def fit_n_train(features_train, labels_train, preproc_init, classify_init, preproc_refit=True, n_train=1e1):
+    """
+    Fit a full pipeline, using only of n_train datapoints from features_train/labels_train
+    
+    JZ 2022
+    
+    Args:
+        feat_train (np.array):
+         Features on which to train the model
+        labels_train (np.array):
+         Labels on which to train the model
+        preproc_init (sklearn Transform):
+         Preprocessor pipeline for features training data
+        classify_init (sklearn Classifier):
+         Classifier (or pipeline) for features training data
+        preproc_refit (bool):
+         Whether or not to refit the preprocessor to the training data
+         before constructing the final pipeline
+        n_train (int):
+         Number of training examples on which to fit the model
+         
+    Returns:
+        Fitted Pipeline
+    """
     
     if n_train < features_train.shape[0]:
         train_size = n_train/features_train.shape[0]

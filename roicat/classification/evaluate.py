@@ -9,6 +9,9 @@ class Evaluation():
     def confusion_matrix(self, x, y, counts=False):
         """
         Generate a confusion matrix for the dataset based on the classifier
+
+        JZ 2022
+
         logreg: sklearn model with score method
         X_eval: Head from which to classify examples
         y_eval: True labels for examples for evaluation
@@ -21,6 +24,9 @@ class Evaluation():
     def score_classifier_logreg(self, x, y):
         """
         Generate a classification score for dataset based on the classifier
+        
+        JZ 2022
+        
         logreg: sklearn model with score method
         X_eval: Head from which to classify examples
         y_eval: True labels for examples for evaluation
@@ -33,6 +39,9 @@ class Evaluation():
 def get_balanced_sample_weights(labels):
     """
     Balances sample ways for classification
+    
+    JZ 2022
+    
     labels: np.array
         Includes list of labels to balance the weights for classifier training
     returns weights by samples
