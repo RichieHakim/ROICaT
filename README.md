@@ -66,6 +66,7 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 
 -------------
 ## TODO:
+- fix constant used for um_per_pixel in ROInet_embedder
 - add tracking to repo
 - add classification to repo
 - unify and refactor backend
