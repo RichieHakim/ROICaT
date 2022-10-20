@@ -65,7 +65,16 @@ def fit_pipe(feat_train, labels_train, preproc_init, classify_init, preproc_refi
     pipe = Pipe(preproc, classify)
     
     return pipe
+
+def stratified_sample(features_train, labels_train, n_splits=1, train_size=None, test_size=None):
+    assert (train_size is not None or test_size is not None) and not (train_size is None and test_size is None), "JZ Error: Exactly one of train_size and test_size should be specified"
     
+    if train_size is not None:
+        sss = StratifiedShuffleSplit(n_splits=n_splits, train_size=train_size)
+    else:
+        sss = StratifiedShuffleSplit(n_splits=n_splits, test_size=test_size)
+    return list(sss.split(features_train, labels_train))
+
 def fit_n_train(features_train, labels_train, preproc_init, classify_init, preproc_refit=True, n_train=1e1):
     """
     Fit a full pipeline, using only of n_train datapoints from features_train/labels_train
@@ -93,8 +102,7 @@ def fit_n_train(features_train, labels_train, preproc_init, classify_init, prepr
     
     if n_train < features_train.shape[0]:
         train_size = n_train/features_train.shape[0]
-        sss = StratifiedShuffleSplit(n_splits=1, train_size=train_size)
-        train_subset_inx, _ = list(sss.split(features_train, labels_train))[0]
+        train_subset_inx, _ = stratified_sample(features_train, labels_train, n_splits=1, train_size=train_size)[0]
     else:
         n_train = features_train.shape[0]
         train_subset_inx = list(range(n_train))

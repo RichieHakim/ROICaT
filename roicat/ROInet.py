@@ -322,6 +322,19 @@ class ROInet_embedder:
         print('Downloaded network files') if self._verbose else None
         return paths_files
     
+    def show_rescaled_rois(self, rows=10, cols=10, figsize=(7,7)):
+        """
+        Show post-rescaling ROIs for um_per_pixel sanity checking.
+        
+        JZ 2022
+        
+        Note: rows & cols both must be > 1.
+        """
+        fig, ax = plt.subplots(rows,cols,figsize=figsize)
+        for ir,roi in enumerate(self.ROI_images_rs[:(rows*cols)]):
+            ax[ir//cols,ir%cols].imshow(roi)
+            ax[ir//cols,ir%cols].axis('off')
+    
 
 def resize_affine(img, scale, clamp_range=False):
     """
