@@ -115,6 +115,7 @@ def view_cv_dict(cv_dct):
     for k in cv_dct:
         c = k.replace('cm_','')
         fig, ax = plt.subplots(1, 2, figsize=(10,3))
+        fig.set_facecolor('white')
         fig.suptitle(f'C: {c}')
         sns.heatmap(cv_dct[k][0], annot=True, annot_kws={"size": 16}, vmax=1., cmap=plt.get_cmap('gray'), ax=ax[0])
         sns.heatmap(cv_dct[k][1], annot=True, annot_kws={"size": 16}, vmax=1., cmap=plt.get_cmap('gray'), ax=ax[1])

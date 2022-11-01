@@ -17,7 +17,10 @@ class Evaluation():
         y_eval: True labels for examples for evaluation
         counts: Whether to return confusion matrix as counts (False) or percentages (True)
         """
-        preds = self.classifier.predict(x).astype(np.int32)
+        try:
+            preds = self.classifier.predict(x).astype(np.int32)
+        except:
+            preds = self.classifier.run(x)[:,0].astype(np.int32)
         cm = helpers.confusion_matrix(preds, y.astype(np.int32), counts=counts)
         return cm
         
@@ -40,19 +43,14 @@ def get_balanced_sample_weights(labels):
     """
     Balances sample ways for classification
     
-    JZ 2022
+    RH/JZ 2022
     
     labels: np.array
         Includes list of labels to balance the weights for classifier training
     returns weights by samples
     """
-    labels = np.int64(labels.copy())
-    counts, vals = np.histogram(labels, bins=np.concatenate((np.unique(labels), [labels.max()+1])))
-    vals = vals[:-1]
-
-    n_labels = len(labels)
-    weights = n_labels / counts
-    
-    sample_weights = np.array([weights[l] for l in labels])
-    
+    labels = labels.astype(np.int64)
+    vals, counts = np.unique(labels, return_counts=True)
+    weights = len(labels) / counts
+    sample_weights = weights[labels]
     return sample_weights

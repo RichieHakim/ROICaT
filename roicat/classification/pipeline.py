@@ -3,9 +3,18 @@ import torch
 import joblib
 from sklearn.pipeline import Pipeline, make_pipeline
 from sklearn.model_selection import StratifiedShuffleSplit
-StratifiedShuffleSplit
 from .. import helpers
 from copy import deepcopy
+from pathlib import Path
+
+dir_github = Path(r'/Users/josh/Documents/github_repos/').resolve()
+# dir_github = Path(r'/n/data1/hms/neurobio/sabatini/josh/github_repos/').resolve()
+
+import sys
+sys.path.append(str(dir_github))
+
+# from suite2p.classification import classifier
+import multiprocessing as mp
 
 class Pipe():
     
@@ -33,7 +42,8 @@ class Pipe():
         return joblib.load(pipeline_fileloc)
 
 
-def fit_pipe(feat_train, labels_train, preproc_init, classify_init, preproc_refit=True):
+
+def fit_pipe(feat_train, labels_train, preproc_init, classify, preproc_refit=True):
     """
     Fit a full pipeline, either maintaining the initialized Preprocessor or refitting it
     
@@ -60,9 +70,20 @@ def fit_pipe(feat_train, labels_train, preproc_init, classify_init, preproc_refi
     if preproc_refit:
         preproc.fit(feat_train, labels_train)
 
-    classify = deepcopy(classify_init)
-    classify.fit(preproc.transform(feat_train), labels_train)
-    pipe = Pipe(preproc, classify)
+    try:
+        classify.fit(preproc.transform(feat_train), labels_train)
+        pipe = Pipe(preproc, classify)
+    except:
+#         s2p_keys = ['npix_norm', 'compact', 'skew']
+        s2p_keys = ['footprint', 'mrs', 'mrs0', 'compact', 'npix', 'radius', 'aspect_ratio', 'npix_norm', 'skew', 'std']
+        
+        x = np.array([[_[__] for __ in s2p_keys] for _ in feat_train])
+        y = labels_train
+        lbl_fit = np.array({'keys': s2p_keys, 'stats': x, 'iscell': y})
+        np.save('/Users/josh/Downloads/test_cls.npy', lbl_fit)
+        classify = classifier.Classifier('/Users/josh/Downloads/test_cls.npy')
+        classify._fit()
+        pipe = classify
     
     return pipe
 
@@ -113,4 +134,3 @@ def fit_n_train(features_train, labels_train, preproc_init, classify_init, prepr
     pipe = fit_pipe(features_train_subset, labels_train_subset, preproc_init, classify_init, preproc_refit=preproc_refit)
     
     return pipe, n_train
-    
