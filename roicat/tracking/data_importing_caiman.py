@@ -669,6 +669,54 @@ class Data_suite2p:
 
 #         return sf_all_list
 
+def collect_components(fn='caiman_analysis_results_RH20221102.hdf5'):
+    cdata = h5_handling.simple_load(fn)
+    hw_FOV = cdata['estimates']['dims']
+    arr_included = scipy.sparse.csr_matrix((cdata['estimates']['A']['data'], cdata['estimates']['A']['indices'], cdata['estimates']['A']['indptr']), shape=cdata['estimates']['A']['shape'][::-1])
+
+    discarded = cdata['estimates']['discarded_components']
+    arr_discarded = scipy.sparse.csr_matrix((discarded['A']['data'], discarded['A']['indices'], discarded['A']['indptr']), shape=discarded['A']['shape'][::-1])
+
+    spatialFootprints = scipy.sparse.vstack((arr_included, arr_discarded))
+    labels = np.hstack((np.ones(arr_included.shape[0]), np.zeros(arr_discarded.shape[0])))
+    return spatialFootprints, labels
+
+def sparse_to_weighted_centroid(sparse_arr):
+    w_wt, h_wt = sparse_arr.sum(axis=2), test2.sum(axis=1)
+    w_mean = (((w_wt*np.arange(w_wt.shape[1]).reshape(1,-1))).sum(1)/w_wt.sum(1)).todense()
+    h_mean = (((h_wt*np.arange(h_wt.shape[1]).reshape(1,-1))).sum(1)/h_wt.sum(1)).todense()
+    return np.vstack([w_mean, h_mean])
+
+def sf_to_individuals(coo_sf, dims, final_rdims=36):
+    n_roi = coo_sf.shape[0]
+    h, w = dims
+    test2 = coo_sf.reshape((n_roi, w, h))
+    centroids = sparse_to_weighted_centroid(centroids)
+    individuals.coords[1:] = individuals.coords[1:] - centroids[centroids.coords[0]] + final_rdims//2
+    individuals = individuals[:, 0:final_rdims, 0:final_rdims]
+    return individuals
+
+
+# coo_sf = sparse.COO(spatialFootprints)
+# n_roi = arr_all.shape[0]
+# h, w = cdata['estimates']['dims']
+
+
+
+
+
+
+
+
+# w_wt, h_wt = test2.sum(axis=2), test2.sum(axis=1)
+# w_mean = (((w_wt*np.arange(w_wt.shape[1]).reshape(1,-1))).sum(1)/w_wt.sum(1)).todense()
+# h_mean = (((h_wt*np.arange(h_wt.shape[1]).reshape(1,-1))).sum(1)/h_wt.sum(1)).todense()
+# test2.coords[1] = test2.coords[1] - w_mean[test2.coords[0]] + final_rdims//2
+# test2.coords[2] = test2.coords[2] - h_mean[test2.coords[0]] + final_rdims//2
+# test2.coords[2] = test2.coords[2] - h_mean[test2.coords[0]] + final_rdims//2
+
+
+
 
 def fix_paths(paths):
     """
