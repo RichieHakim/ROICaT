@@ -10,8 +10,7 @@ import numpy as np
 import torch
 import scipy.sparse
 import sparse
-# import torch_sparse as ts
-import gc
+import hdfdict
 
 """
 All of these are from basic_neural_processing_modules
@@ -754,3 +753,24 @@ def get_keep_nonnan_entries(original_features):
     has_nan = np.unique(np.where(np.isnan(original_features))[0])
     return np.array([_ for _ in range(original_features.shape[0]) if _ not in has_nan])
 
+
+def h5_simple_load(path=None):
+    """
+    Returns a lazy dictionary object (specific
+    to hdfdict package) containing the groups
+    as keys and the datasets as values from
+    given hdf file.
+    RH 2021
+
+    Args:
+        path (string or Path): 
+            Full path name of file to read.
+    
+    Returns:
+        h5_dict (LazyHdfDict):
+            LazyHdfDict object containing the groups
+    """
+    
+    h5Obj = hdfdict.load(str(path), **{'mode': 'r'})
+    
+    return h5Obj
