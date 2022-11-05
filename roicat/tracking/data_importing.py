@@ -10,7 +10,8 @@ from .. import helpers
 
 class Data_suite2p:
     """
-    Class for handling suite2p files and data.
+    Class for handling suite2p output files and data.
+    In particular stat.npy and ops.npy files.
     RH 2022
     """
     def __init__(
@@ -45,15 +46,12 @@ class Data_suite2p:
             self.paths_ops = fix_paths(paths_opsFiles)
         else:
             self.paths_ops = None
-
         self.n_sessions = len(self.paths_stat)
 
         self.statFiles = None
 
         self.um_per_pixel = um_per_pixel
-
         self._new_or_old_suite2p = new_or_old_suite2p
-
         self._verbose = verbose
         
         ## shifts are applied to convert the 'old' matlab version of suite2p indexing (where there is an offset and its 1-indexed)
@@ -63,6 +61,8 @@ class Data_suite2p:
             ] if self._new_or_old_suite2p == 'old' else [np.array([0,0], dtype=np.uint64)]*len(paths_statFiles)
         else:
             self.shifts = [np.array([0,0], dtype=np.uint64)]*len(paths_statFiles)
+
+        self.import_statFiles()
 
 
     def import_statFiles(self):
@@ -324,6 +324,35 @@ class Data_suite2p:
         return sf_all_list
 
 
+# class Data_caiman:
+#     """
+#     Class for importing data from CaImAn output files.
+#     In particular, the hdf5 results files.
+#     """
+#     def __init__(
+#         self,
+#         paths_resultsFiles,
+#         um_per_pixel=1.0,
+#         verbose=True 
+#     ):
+#         """
+#         Args:
+#             paths_resultsFiles (list):
+#                 List of paths to the results files.
+#             um_per_pixel (float):
+#                 Microns per pixel.
+#             verbose (bool):
+#                 If True, print statements will be printed.
+#         """
+
+#         self.paths_resultsFiles = fix_paths(paths_resultsFiles)
+#         self.um_per_pixel = um_per_pixel
+#         self._verbose = verbose
+
+
+####################################
+######### HELPER FUNCTIONS #########
+####################################
 
 def fix_paths(paths):
     """
