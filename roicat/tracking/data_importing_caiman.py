@@ -5,13 +5,8 @@ import multiprocessing as mp
 import numpy as np
 from tqdm import tqdm
 import scipy.sparse
-import hdfdict
-import h5py
-
 
 from .. import helpers
-
-
 
 class Data_suite2p:
     """

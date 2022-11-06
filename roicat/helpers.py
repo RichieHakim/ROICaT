@@ -754,7 +754,7 @@ def get_keep_nonnan_entries(original_features):
     return np.array([_ for _ in range(original_features.shape[0]) if _ not in has_nan])
 
 
-def h5_simple_load(path=None):
+def h5_lazy_load(path=None):
     """
     Returns a lazy dictionary object (specific
     to hdfdict package) containing the groups

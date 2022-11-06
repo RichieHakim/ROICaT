@@ -5,6 +5,7 @@ import multiprocessing as mp
 import numpy as np
 from tqdm import tqdm
 import scipy.sparse
+import sparse
 
 from .. import helpers
 
@@ -20,7 +21,7 @@ class Data_suite2p:
         paths_opsFiles=None,
         um_per_pixel=1.0,
         new_or_old_suite2p='new',
-        verbose=True 
+        verbose=True,
     ):
         """
         Initializes the class for importing spatial footprints.
@@ -63,6 +64,8 @@ class Data_suite2p:
             self.shifts = [np.array([0,0], dtype=np.uint64)]*len(paths_statFiles)
 
         self.import_statFiles()
+
+        self.centroids = self._get_midCoords()
 
 
     def import_statFiles(self):
@@ -140,7 +143,7 @@ class Data_suite2p:
         return self.FOV_images
 
 
-    def get_midCoords(
+    def _get_midCoords(
         self,
     ):
         """
@@ -324,31 +327,239 @@ class Data_suite2p:
         return sf_all_list
 
 
-# class Data_caiman:
-#     """
-#     Class for importing data from CaImAn output files.
-#     In particular, the hdf5 results files.
-#     """
-#     def __init__(
-#         self,
-#         paths_resultsFiles,
-#         um_per_pixel=1.0,
-#         verbose=True 
-#     ):
-#         """
-#         Args:
-#             paths_resultsFiles (list):
-#                 List of paths to the results files.
-#             um_per_pixel (float):
-#                 Microns per pixel.
-#             verbose (bool):
-#                 If True, print statements will be printed.
-#         """
+class Data_caiman:
+    """
+    Class for importing data from CaImAn output files.
+    In particular, the hdf5 results files.
+    RH, JZ 2022
+    """
+    def __init__(
+        self,
+        paths_resultsFiles,
+        include_discarded=True,
+        um_per_pixel=1.0,
+        verbose=True 
+    ):
+        """
+        Args:
+            paths_resultsFiles (list):
+                List of paths to the results files.
+            um_per_pixel (float):
+                Microns per pixel.
+            verbose (bool):
+                If True, print statements will be printed.
 
-#         self.paths_resultsFiles = fix_paths(paths_resultsFiles)
-#         self.um_per_pixel = um_per_pixel
-#         self._verbose = verbose
+        Attributes set:
+            self.paths_resultsFiles (list):
+                List of paths to the CaImAn results files.
+            self.spatialFootprints (list):
+                List of spatial footprints.
+                Each element is a scipy.sparse.csr_matrix that contains
+                 the flattened ('C' order) spatial footprint masks for
+                 each ROI in a given session. Each element is a session,
+                 and each element has shape (n_roi, frame_height_width[0]*frame_height_width[1]).
+            self.sessionID_concat (np.ndarray):
+                a bool np.ndarray of shape(n_roi, n_sessions) indicating
+                 which session each ROI belongs to.
+            self.n_sessions (int):
+                Number of sessions.
+            self.n_roi (list):
+                List of number of ROIs in each session.
+            self.n_roi_total (int):
+                Total number of ROIs across all sessions.
+            self.FOV_height (int):
+                Height of the FOV in pixels.
+            self.FOV_width (int):
+                Width of the FOV in pixels.
+            self.um_per_pixel (float):
+                Microns per pixel of the FOV.
+            self._verbose (bool):
+                If True, print statements will be printed.
+            self._include_discarded (bool):
+                If True, include ROIs that were discarded by CaImAn.
+        """
 
+        self.paths_resultsFiles = fix_paths(paths_resultsFiles)
+        self.um_per_pixel = um_per_pixel
+        self._include_discarded = include_discarded
+        self._verbose = verbose
+
+        for path in self.paths_resultsFiles:
+            if not path.exists():
+                raise FileNotFoundError(f"RH ERROR: {path} does not exist.")
+
+        self.import_caimanResults(paths_resultsFiles, include_discarded=self._include_discarded)
+
+        print(f"Computing centroids from spatial footprints") if self._verbose else None
+        self.centroids = [self.get_centroids(s, self.FOV_height, self.FOV_width) for s in self.spatialFootprints]
+
+        self.sessionID_concat = np.vstack([np.array([helpers.idx2bool(i_sesh, length=len(self.spatialFootprints))]*sesh.shape[0]) for i_sesh, sesh in enumerate(self.spatialFootprints)])
+
+
+    def import_caimanResults(self, paths_resultsFiles, include_discarded=True):
+        """
+        Imports the results file from CaImAn.
+        RH 2022
+
+        Args:
+            path_resultsFile (str or pathlib.Path):
+                Path to the results file.
+
+        Returns:
+            data (dict):
+                Dictionary of data from the results file.
+        """
+
+        def _import_spatialFootprints(path_resultsFile, include_discarded=True):
+            """
+            Imports the spatial footprints from the results file.
+            Note that CaImAn's data['estimates']['A'] is similar to 
+             self.spatialFootprints, but uses 'F' order. ROICaT converts
+             this into 'C' order to make self.spatialFootprints.
+            RH 2022
+
+            Args:
+                path_resultsFile (str or pathlib.Path):
+                    Path to a single results file.
+                include_discarded (bool):
+                    If True, include ROIs that were discarded by CaImAn.
+
+            Returns:
+                spatialFootprints (scipy.sparse.csr_matrix):
+                    Spatial footprints.
+            """
+            data = helpers.h5_lazy_load(path_resultsFile)
+            FOV_height, FOV_width = data['estimates']['dims']
+            
+            ## initialize the estimates.A matrix, which is a 'Fortran' indexed version of sf. Note the flipped dimensions for shape.
+            sf_included = scipy.sparse.csr_matrix((data['estimates']['A']['data'], data['estimates']['A']['indices'], data['estimates']['A']['indptr']), shape=data['estimates']['A']['shape'][::-1])
+            if include_discarded:
+                sf_discarded = scipy.sparse.csr_matrix((data['estimates']['A']['data'], data['estimates']['A']['indices'], data['estimates']['A']['indptr']), shape=data['estimates']['A']['shape'][::-1])
+                sf_F = scipy.sparse.vstack([sf_included, sf_discarded])
+            else:
+                sf_F = sf_included
+
+            ## reshape sf_F (which is in Fortran flattened format) into C flattened format
+            sf = sparse.COO(sf_F).reshape((sf_F.shape[0], FOV_width, FOV_height)).transpose((0,2,1)).reshape((sf_F.shape[0], FOV_width*FOV_height)).tocsr()
+            
+            return sf
+
+        print(f"Importing spatial footprints from CaImAn results hdf5 files") if self._verbose else None
+        self.spatialFootprints = [_import_spatialFootprints(path, include_discarded=include_discarded) for path in paths_resultsFiles]
+
+        self.n_roi = [s.shape[0] for s in self.spatialFootprints]
+        self.n_roi_total = sum(self.n_roi)
+
+        print(f"Importing FOV images from CaImAn results hdf5 files") if self._verbose else None
+        self.import_FOV_images(paths_resultsFiles)
+
+        print(f"Completed: Imported spatial footprints from {len(self.spatialFootprints)} CaImAn results files into class as self.spatialFootprints. Total number of ROIs: {self.n_roi_total}. Number of ROI from each file: {self.n_roi}") if self._verbose else None
+
+    def import_ROI_centeredImages(
+        self,
+        out_height_width=[36,36],
+    ):
+        """
+        Imports the ROI centered images from the CaImAn results files.
+        RH 2022
+
+        Args:
+            out_height_width (list):
+                Height and width of the output images. Default is [36,36].
+
+        Returns:
+            sf_rs_centered (np.ndarray):
+                Centered ROI masks.
+                Shape: (n_roi, out_height_width[0], out_height_width[1]).
+        """
+        def sf_to_centeredROIs(sf, centroids, out_height_width=36):
+            out_height_width = np.array([36,36])
+            half_widths = np.ceil(out_height_width/2).astype(int)
+            sf_rs = sparse.COO(sf).reshape((sf.shape[0], self.FOV_height, self.FOV_width))
+
+            coords_diff = np.diff(sf_rs.coords[0])
+            assert np.all(coords_diff < 1.01) and np.all(coords_diff > -0.01), \
+                "RH ERROR: sparse.COO object has strange .coords attribute. sf_rs.coords[0] should all be 0 or 1. An ROI is possibly all zeros."
+            
+            idx_split = (sf_rs>0).astype(np.bool8).sum((1,2)).todense().cumsum()[:-1]
+            coords_split = [np.split(sf_rs.coords[ii], idx_split) for ii in [0,1,2]]
+            coords_split[1] = [coords - centroids[0][ii] + half_widths[0] for ii,coords in enumerate(coords_split[1])]
+            coords_split[2] = [coords - centroids[1][ii] + half_widths[1] for ii,coords in enumerate(coords_split[2])]
+            sf_rs_centered = sf_rs.copy()
+            sf_rs_centered.coords = np.array([np.concatenate(c) for c in coords_split])
+            sf_rs_centered = sf_rs_centered[:, :out_height_width[0], :out_height_width[1]]
+            return sf_rs_centered.todense()
+
+        print(f"Computing ROI centered images from spatial footprints") if self._verbose else None
+        self.ROI_images = [sf_to_centeredROIs(sf, centroids, out_height_width=out_height_width) for sf, centroids in zip(self.spatialFootprints, self.centroids)]
+
+
+    def import_FOV_images(
+        self,
+        paths_resultsFiles=None,
+        images=None,
+    ):
+        """
+        Imports the FOV images from the CaImAn results files.
+        RH 2022
+
+        Args:
+            paths_resultsFiles (list):
+                List of paths to CaImAn results files.
+            images (list):
+                List of FOV images. If None, will import the 
+                 estimates.b image from paths_resultsFiles.
+
+        Returns:
+            FOV_images (list):
+                List of FOV images (np.ndarray).
+        """
+        def _import_FOV_image(path_resultsFile):
+            data = helpers.h5_lazy_load(path_resultsFile)
+            FOV_height, FOV_width = data['estimates']['dims']
+            FOV_image = data['estimates']['b'][:,0].reshape(FOV_height, FOV_width, order='F')
+            return FOV_image
+
+        if images is not None:
+            if self._verbose:
+                print("Using provided images for FOV_images.")
+            self.FOV_images = images
+        else:
+            if paths_resultsFiles is None:
+                paths_resultsFiles = self.paths_resultsFiles
+            self.FOV_images = [_import_FOV_image(p) for p in paths_resultsFiles]
+
+        self.FOV_height, self.FOV_width = self.FOV_images[0].shape
+
+        return self.FOV_images
+
+    def get_centroids(self, sf, FOV_height, FOV_width):
+        """
+        Gets the centroids of a sparse array of flattented spatial footprints.
+        Calculates the centroid position as the center of mass of the ROI.
+        JZ 2022
+
+        Args:
+            sf (scipy.sparse.csr_matrix):
+                Spatial footprints.
+                Shape: (n_roi, FOV_height*FOV_width) in C flattened format.
+            FOV_height (int):
+                Height of the FOV.
+            FOV_width (int):
+                Width of the FOV.
+
+        Returns:
+            centroids (np.ndarray):
+                Centroids of the ROIs.
+                Shape: (2, n_roi). (y, x) coordinates.
+        """
+        sf_rs = sparse.COO(sf).reshape((sf.shape[0], FOV_height, FOV_width))
+        w_wt, h_wt = sf_rs.sum(axis=2), sf_rs.sum(axis=1)
+        h_mean = (((w_wt*np.arange(w_wt.shape[1]).reshape(1,-1))).sum(1)/w_wt.sum(1)).todense()
+        w_mean = (((h_wt*np.arange(h_wt.shape[1]).reshape(1,-1))).sum(1)/h_wt.sum(1)).todense()
+        return np.round(np.vstack([h_mean, w_mean])).astype(np.int64)
+
+        
 
 ####################################
 ######### HELPER FUNCTIONS #########
