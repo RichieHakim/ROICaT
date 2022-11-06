@@ -228,14 +228,14 @@ class PhaseCorrelation_registration:
                 Template image
             ims_moving (np.ndarray):
                 Images to align to the template.
-        
-        Returns:
             template_method (str):
                 The method used to register the images.
                 Either 'image' or 'sequential'.
                 If 'image':      ims_registered must be a single image.
                 If 'sequential': ims_registered must be an integer corresponding 
                  to the index of the image to set as 'zero' offset.
+        
+        Returns:
             ims_registered (np.ndarray):
                 Registered images
             shifts (np.ndarray):

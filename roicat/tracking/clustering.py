@@ -10,7 +10,7 @@ import torch
 from tqdm import tqdm
 
 import optuna
-# import hdbscan
+import hdbscan
 
 from .. import helpers
 
@@ -187,28 +187,31 @@ class Clusterer:
             s_sf=self.s_sf,
             s_NN=self.s_NN_z,
             s_SWT=self.s_SWT_z,
+            s_sesh=None,
             **kwargs_makeConjunctiveDistanceMatrix
         )
         dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(dConj)
 
-        ssf, snn, sswt = self.s_sf.copy(), self.s_NN_z.copy(), self.s_SWT_z.copy()
-        ssf.data[ssf.data == 0] = 1e-10
-        snn.data[snn.data == 0] = 1e-10
-        sswt.data[sswt.data == 0] = 1e-10
+        ssf, snn, sswt, ssesh = self.s_sf.copy(), self.s_NN_z.copy(), self.s_SWT_z.copy(), self.s_sesh.copy()
+        # ssf.data[ssf.data == 0] = 1e-10
+        # snn.data[snn.data == 0] = 1e-10
+        # sswt.data[sswt.data == 0] = 1e-10
 
         self.d_cutoff = d_crossover if d_cutoff is None else d_cutoff
-        self.graph_pruned = dConj > self.d_cutoff
+        self.graph_pruned = dConj.copy()
+        self.graph_pruned.data = self.graph_pruned.data < self.d_cutoff
         self.graph_pruned.eliminate_zeros()
         
         def prune(s, graph_pruned):
             if s is None:
                 return None
             s_pruned = s.copy()
-            s_pruned[graph_pruned] = 0
-            s_pruned.eliminate_zeros()
+            s_pruned = scipy.sparse.csr_matrix(graph_pruned.shape)
+            s_pruned[graph_pruned] = s[graph_pruned]
+            s_pruned = s_pruned.tocsr()
             return s_pruned
 
-        self.s_sf_pruned, self.s_NN_pruned, self.s_SWT_pruned = tuple([prune(s, self.graph_pruned) for s in [ssf, snn, sswt]])
+        self.s_sf_pruned, self.s_NN_pruned, self.s_SWT_pruned, self.s_sesh_pruned = tuple([prune(s, self.graph_pruned) for s in [ssf, snn, sswt, ssesh]])
 
     def fit(self,
         session_bool,
@@ -232,7 +235,16 @@ class Clusterer:
         d_step=0.05,
     ):
         """
-        Fit clustering using the ROICaT clustering algorithm.
+        Fit clustering using a modified HDBSCAN clustering algorithm.
+        The idea here is to use HDBSCAN but avoid having clusters with
+         multiple ROIs from the same session. This is accomplished by
+         repeating three steps:
+            1. Fit HDBSCAN to the data
+            2. Identify clusters that have multiple ROIs from the same session
+             and walk back down the dendrogram until those clusters are split
+             up into non-violating clusters.
+            3. Disconnect graph edges between ROIs within each new cluster and
+             all other ROIs outside the cluster that are from the same session.
 
         Args:
             session_bool (np.ndarray of bool):
@@ -291,6 +303,7 @@ class Clusterer:
                 s_sf=self.s_sf_pruned,
                 s_NN=self.s_NN_pruned,
                 s_SWT=self.s_SWT_pruned,
+                s_sesh=self.s_sesh_pruned,
                 **kwargs_makeConjunctiveDistanceMatrix
             )
 
@@ -434,7 +447,7 @@ class Clusterer:
             https://github.com/flatironinstitute/CaImAn
             https://github.com/flatironinstitute/CaImAn/blob/master/caiman/base/rois.py
         """
-        print(f"Clustering with CaImAn's iterative Hungarian algorithm method...") if self._verbose else None
+        print(f"Clustering with CaImAn's sequential Hungarian algorithm method...") if self._verbose else None
         def find_matches(D_s):
             # todo todocument
 
@@ -464,6 +477,7 @@ class Clusterer:
                 s_sf=self.s_sf_pruned,
                 s_NN=self.s_NN_pruned,
                 s_SWT=self.s_SWT_pruned,
+                s_sesh=self.s_sesh_pruned,
                 **kwargs_makeConjunctiveDistanceMatrix
             )
 
@@ -537,6 +551,7 @@ class Clusterer:
         s_sf=None,
         s_NN=None,
         s_SWT=None,
+        s_sesh=None,
         power_SF=1,
         power_NN=1,
         power_SWT=1,
@@ -595,10 +610,13 @@ class Clusterer:
         sConj_data = self._pNorm(
             s_list=[sSF_data, sNN_data, sSWT_data],
             p=p_norm,
-        ) * self.s_sesh.data
+        )
+        # sConj_data = sConj_data * s_sesh.data if s_sesh is not None else sConj_data
+        # sConj_data = sConj_data * np.logical_not(s_sesh.data) if s_sesh is not None else sConj_data
 
         dConj = s_sf.copy()
         dConj.data = sConj_data.numpy()
+        dConj = dConj.multiply(s_sesh) if s_sesh is not None else dConj
         # dConj.eliminate_zeros()
         dConj.data = 1 - dConj.data
 
@@ -678,11 +696,12 @@ class Clusterer:
             s_sf=self.s_sf,
             s_NN=self.s_NN_z,
             s_SWT=self.s_SWT_z,
+            s_sesh=None,
             **kwargs_makeConjunctiveDistanceMatrix
         )
 
         ## subsample similarities for plotting
-        idx_rand = np.floor(np.random.rand(min(max_samples, len(sSF_data))) * len(sSF_data)).astype(int)
+        idx_rand = np.floor(np.random.rand(min(max_samples, len(dConj.data))) * len(dConj.data)).astype(int)
         ssf_sub = sSF_data[idx_rand]
         snn_sub = sNN_data[idx_rand]
         sswt_sub = sSWT_data[idx_rand] if sSWT_data is not None else None
@@ -719,6 +738,7 @@ class Clusterer:
             s_sf=self.s_sf,
             s_NN=self.s_NN_z,
             s_SWT=self.s_SWT_z,
+            s_sesh=None,
             **kwargs
         )
         dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(dConj)
@@ -836,6 +856,7 @@ class Clusterer:
             s_sf=self.s_sf,
             s_NN=self.s_NN_z,
             s_SWT=self.s_SWT_z,
+            s_sesh=None,
             power_SF=power_SF,
             power_NN=power_NN,
             power_SWT=power_SWT,
