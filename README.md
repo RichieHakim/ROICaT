@@ -56,8 +56,8 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 **`pip install -e .`**<br>
 
 ### 6. Use ROICaT<br>
-- Run a Jupyter Notebook: [Notebooks](https://github.com/RichieHakim/ROICaT/tree/main/notebooks)<br>
-- Make a parameter file and run in command line: `python -m ROICaT`. See [TODO: link to how-to] for details.<br>
+- Beginner: Run a Jupyter Notebook: [Notebooks](https://github.com/RichieHakim/ROICaT/tree/main/notebooks)<br>
+- Advanced: Make a parameter file and run in command line: `python -m ROICaT`. See [TODO: link to how-to] for details.<br>
 
 -------------
 
