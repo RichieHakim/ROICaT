@@ -64,9 +64,27 @@ class Data_suite2p:
             self.shifts = [np.array([0,0], dtype=np.uint64)]*len(paths_statFiles)
 
         self.import_statFiles()
+        
+        self.import_ROI_centeredImages(
+            out_height_width=[36,36],
+            max_footprint_width=1025,
+        );
 
-        self.centroids = self._get_midCoords()
+        self.import_FOV_images(
+            type_meanImg='meanImgE',
+            images=None
+        );
 
+        self.import_ROI_spatialFootprints(workers=-1);
+        
+        self.centroid_method = 'centroid'
+#         self.centroids = self._get_midCoords()
+        
+        print(type(self.spatialFootprints[0]))
+        
+        self.centroids = [self.get_centroids(sf, self.FOV_height, self.FOV_width) for sf in self.spatialFootprints]
+        
+        
 
     def import_statFiles(self):
         """
@@ -325,6 +343,39 @@ class Data_suite2p:
             sf_all_list.append(sf)
 
         return sf_all_list
+    
+    
+    def get_centroids(self, sf, FOV_height, FOV_width):
+        """
+        Gets the centroids of a sparse array of flattented spatial footprints.
+        Calculates the centroid position as the center of mass of the ROI.
+        JZ 2022
+
+        Args:
+            sf (scipy.sparse.csr_matrix):
+                Spatial footprints.
+                Shape: (n_roi, FOV_height*FOV_width) in C flattened format.
+            FOV_height (int):
+                Height of the FOV.
+            FOV_width (int):
+                Width of the FOV.
+
+        Returns:
+            centroids (np.ndarray):
+                Centroids of the ROIs.
+                Shape: (2, n_roi). (y, x) coordinates.
+        """
+        sf_rs = sparse.COO(sf).reshape((sf.shape[0], FOV_height, FOV_width))
+#         sf_rs = sparse.COO(sf).reshape((sf.shape[0], FOV_height, FOV_width))
+        w_wt, h_wt = sf_rs.sum(axis=2), sf_rs.sum(axis=1)
+        if self.centroid_method == 'centroid':
+            h_mean = (((w_wt*np.arange(w_wt.shape[1]).reshape(1,-1))).sum(1)/w_wt.sum(1)).todense()
+            w_mean = (((h_wt*np.arange(h_wt.shape[1]).reshape(1,-1))).sum(1)/h_wt.sum(1)).todense()
+        elif self.centroid_method == 'median':
+            return None
+        else:
+            raise ValueError('Only valid methods are "centroid" or "median"')
+        return np.round(np.vstack([h_mean, w_mean])).astype(np.int64)
 
 
 class Data_caiman:
@@ -338,6 +389,7 @@ class Data_caiman:
         paths_resultsFiles,
         include_discarded=True,
         um_per_pixel=1.0,
+        centroid_method='centroid',
         verbose=True 
     ):
         """
@@ -373,6 +425,10 @@ class Data_caiman:
                 Width of the FOV in pixels.
             self.um_per_pixel (float):
                 Microns per pixel of the FOV.
+            self.centroid_method (str):
+                Either 'centroid' or 'median'. Centroid computes the weighted
+                mean location of an ROI. Median takes the median of all x and y
+                pixels of an ROI.
             self._verbose (bool):
                 If True, print statements will be printed.
             self._include_discarded (bool):
@@ -380,7 +436,9 @@ class Data_caiman:
         """
 
         self.paths_resultsFiles = fix_paths(paths_resultsFiles)
+        self.n_sessions = len(self.paths_resultsFiles)
         self.um_per_pixel = um_per_pixel
+        self.centroid_method = centroid_method
         self._include_discarded = include_discarded
         self._verbose = verbose
 
@@ -391,9 +449,15 @@ class Data_caiman:
         self.import_caimanResults(paths_resultsFiles, include_discarded=self._include_discarded)
 
         print(f"Computing centroids from spatial footprints") if self._verbose else None
-        self.centroids = [self.get_centroids(s, self.FOV_height, self.FOV_width) for s in self.spatialFootprints]
+        self.centroids = [self.get_centroids(s, self.FOV_height, self.FOV_width).T for s in self.spatialFootprints]
 
         self.sessionID_concat = np.vstack([np.array([helpers.idx2bool(i_sesh, length=len(self.spatialFootprints))]*sesh.shape[0]) for i_sesh, sesh in enumerate(self.spatialFootprints)])
+        
+        
+        self.import_ROI_centeredImages(
+            out_height_width=[36,36],
+        );
+
 
 
     def import_caimanResults(self, paths_resultsFiles, include_discarded=True):
@@ -461,7 +525,7 @@ class Data_caiman:
     ):
         """
         Imports the ROI centered images from the CaImAn results files.
-        RH 2022
+        RH, JZ 2022
 
         Args:
             out_height_width (list):
@@ -491,7 +555,7 @@ class Data_caiman:
             return sf_rs_centered.todense()
 
         print(f"Computing ROI centered images from spatial footprints") if self._verbose else None
-        self.ROI_images = [sf_to_centeredROIs(sf, centroids, out_height_width=out_height_width) for sf, centroids in zip(self.spatialFootprints, self.centroids)]
+        self.ROI_images = [sf_to_centeredROIs(sf, centroids.T, out_height_width=out_height_width) for sf, centroids in zip(self.spatialFootprints, self.centroids)]
 
 
     def import_FOV_images(
@@ -501,7 +565,7 @@ class Data_caiman:
     ):
         """
         Imports the FOV images from the CaImAn results files.
-        RH 2022
+        RH, JZ 2022
 
         Args:
             paths_resultsFiles (list):
@@ -527,7 +591,7 @@ class Data_caiman:
         else:
             if paths_resultsFiles is None:
                 paths_resultsFiles = self.paths_resultsFiles
-            self.FOV_images = [_import_FOV_image(p) for p in paths_resultsFiles]
+            self.FOV_images = np.stack([_import_FOV_image(p) for p in paths_resultsFiles])
 
         self.FOV_height, self.FOV_width = self.FOV_images[0].shape
 
@@ -555,8 +619,18 @@ class Data_caiman:
         """
         sf_rs = sparse.COO(sf).reshape((sf.shape[0], FOV_height, FOV_width))
         w_wt, h_wt = sf_rs.sum(axis=2), sf_rs.sum(axis=1)
-        h_mean = (((w_wt*np.arange(w_wt.shape[1]).reshape(1,-1))).sum(1)/w_wt.sum(1)).todense()
-        w_mean = (((h_wt*np.arange(h_wt.shape[1]).reshape(1,-1))).sum(1)/h_wt.sum(1)).todense()
+        if self.centroid_method == 'centroid':
+            h_mean = (((w_wt*np.arange(w_wt.shape[1]).reshape(1,-1))).sum(1)/w_wt.sum(1)).todense()
+            w_mean = (((h_wt*np.arange(h_wt.shape[1]).reshape(1,-1))).sum(1)/h_wt.sum(1)).todense()
+        elif self.centroid_method == 'median':
+            h_mean = ((((w_wt!=0)*np.arange(w_wt.shape[1]).reshape(1,-1))).todense()).astype(float)
+            h_mean[h_mean==0] = np.nan
+            h_mean = np.nanmedian(h_mean, axis=1)
+            w_mean = ((((h_wt!=0)*np.arange(h_wt.shape[1]).reshape(1,-1))).todense()).astype(float)
+            w_mean[w_mean==0] = np.nan
+            w_mean = np.nanmedian(w_mean, axis=1)
+        else:
+            raise ValueError('Only valid methods are "centroid" or "median"')
         return np.round(np.vstack([h_mean, w_mean])).astype(np.int64)
 
 
