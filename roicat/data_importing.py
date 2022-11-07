@@ -579,6 +579,7 @@ class Data_custom:
         self.n_roi_total = None
         self.n_sessions = None
         self.centroids = None
+        self.um_per_pixel = None
         self._verbose = True 
 
 ####################################
