@@ -78,12 +78,12 @@ class Data_suite2p:
         self.import_ROI_centeredImages(
             out_height_width=out_height_width,
             max_footprint_width=max_footprint_width,
-        );
+        )
 
         self.import_FOV_images(
             type_meanImg=type_meanImg,
             images=images
-        );
+        )
 
         self.import_ROI_spatialFootprints(workers=workers);
         
@@ -160,7 +160,9 @@ class Data_suite2p:
         else:
             if self.paths_ops is None:
                 raise ValueError("'path_ops' must be defined in initialization if 'images' is not provided.")
-            self.FOV_images = np.array([np.load(path, allow_pickle=True)[()][type_meanImg] for path in self.paths_ops])
+            self.FOV_images = np.array([np.load(path, allow_pickle=True)[()][type_meanImg] for path in self.paths_ops]).astype(np.float32)
+            self.FOV_images = self.FOV_images - self.FOV_images.min(axis=(1,2), keepdims=True)
+            self.FOV_images = self.FOV_images / self.FOV_images.mean(axis=(1,2), keepdims=True)
 
             if self._verbose:
                 print(f"Imported {len(self.FOV_images)} FOV images into class as self.FOV_images")
@@ -469,9 +471,7 @@ class Data_caiman:
         
         self.import_ROI_centeredImages(
             out_height_width=out_height_width
-        );
-
-                
+        )
 
 
     def import_caimanResults(self, paths_resultsFiles, include_discarded=True):
@@ -596,7 +596,7 @@ class Data_caiman:
             data = helpers.h5_lazy_load(path_resultsFile)
             FOV_height, FOV_width = data['estimates']['dims']
             FOV_image = data['estimates']['b'][:,0].reshape(FOV_height, FOV_width, order='F')
-            return FOV_image
+            return FOV_image.astype(np.float32)
 
         if images is not None:
             if self._verbose:
@@ -606,6 +606,8 @@ class Data_caiman:
             if paths_resultsFiles is None:
                 paths_resultsFiles = self.paths_resultsFiles
             self.FOV_images = np.stack([_import_FOV_image(p) for p in paths_resultsFiles])
+            self.FOV_images = self.FOV_images - self.FOV_images.min(axis=(1,2), keepdims=True)
+            self.FOV_images = self.FOV_images / self.FOV_images.mean(axis=(1,2), keepdims=True)
 
         self.FOV_height, self.FOV_width = self.FOV_images[0].shape
 
