@@ -41,7 +41,6 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 ### 4. Install dependencies (choose either 4A or 4B)
 >Make sure current directory is the ROICaT repo directory (`cd path/to/ROICaT/directory`)<br>
 >Note: If you are on a server, it might be necessary to load CUDA modules first using something like `module load gcc/9.2.0 cuda/11.2`.<br>
->Note: This step is slow. It needs to compile a large amount of C code the first time you run it. May take around 20 minutes.<br>
 >If you get errors about GCC version, make sure you have version >=5.4.0. Check with `gcc --version`. On some Linux servers (like Harvard's O2 server), you may need to run `module load gcc/9.2.0` or similar.<br>
 
 #### 4A. Install dependencies with GPU support (recommended)<br>
