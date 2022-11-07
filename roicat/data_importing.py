@@ -559,7 +559,27 @@ class Data_caiman:
         w_mean = (((h_wt*np.arange(h_wt.shape[1]).reshape(1,-1))).sum(1)/h_wt.sum(1)).todense()
         return np.round(np.vstack([h_mean, w_mean])).astype(np.int64)
 
-        
+
+class Data_custom:
+    """
+    Incase you want to make a custom data object,
+     you can use this class as a template to fill
+     in the required attributes.
+    RH 2022
+    """
+    def __init__(
+        self,
+    ):       
+        self.FOV_images = None
+        self.FOV_height = None
+        self.FOV_width = None
+        self.spatialFootprints = None
+        self.ROI_images = None
+        self.n_roi = None
+        self.n_roi_total = None
+        self.n_sessions = None
+        self.centroids = None
+        self._verbose = True 
 
 ####################################
 ######### HELPER FUNCTIONS #########

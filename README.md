@@ -71,11 +71,7 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 -------------
 ## TODO:
 - fix constant used for um_per_pixel in ROInet_embedder
-- add tracking to repo
-- add classification to repo
 - unify and refactor backend
-- make better installation process (setup.py or PyPi package)
-- add CaImAn support
 - integration tests
 - make demo notebooks
 - port demo notebooks to CoLab
@@ -86,6 +82,6 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 
 -------------
 # Frequently asked questions:
-- Getting the error `OSError: [Errno 12] Cannot allocate memory`
+- Getting the error `OSError: [Errno 12] Cannot allocate memory` during `data.import_ROI_spatialFootprints()`
     - There's something weird about the data you're using. I haven't figured out why this happens sometimes (albeit rarely).
     - Solution: set `data.import_ROI_spatialFootprints(workers=1)` and `roinet.generate_dataloader(..., numWorkers_dataloader=0, persistentWorkers_dataloader=False)`
