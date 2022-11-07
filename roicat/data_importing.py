@@ -21,6 +21,15 @@ class Data_suite2p:
         paths_opsFiles=None,
         um_per_pixel=1.0,
         new_or_old_suite2p='new',
+        
+        out_height_width=[36,36],
+        max_footprint_width=1025,
+        type_meanImg='meanImgE',
+        images=None,
+        workers=-1,
+        
+        centroid_method = 'centroid',
+        
         verbose=True,
     ):
         """
@@ -65,19 +74,20 @@ class Data_suite2p:
 
         self.import_statFiles()
         
+        
         self.import_ROI_centeredImages(
-            out_height_width=[36,36],
-            max_footprint_width=1025,
+            out_height_width=out_height_width,
+            max_footprint_width=max_footprint_width,
         );
 
         self.import_FOV_images(
-            type_meanImg='meanImgE',
-            images=None
+            type_meanImg=type_meanImg,
+            images=images
         );
 
-        self.import_ROI_spatialFootprints(workers=-1);
+        self.import_ROI_spatialFootprints(workers=workers);
         
-        self.centroid_method = 'centroid'
+        self.centroid_method = centroid_method
 #         self.centroids = self._get_midCoords()
         
         print(type(self.spatialFootprints[0]))
@@ -389,7 +399,10 @@ class Data_caiman:
         paths_resultsFiles,
         include_discarded=True,
         um_per_pixel=1.0,
-        centroid_method='centroid',
+        
+        out_height_width=[36,36],        
+        centroid_method = 'centroid',
+        
         verbose=True 
     ):
         """
@@ -455,9 +468,10 @@ class Data_caiman:
         
         
         self.import_ROI_centeredImages(
-            out_height_width=[36,36],
+            out_height_width=out_height_width
         );
 
+                
 
 
     def import_caimanResults(self, paths_resultsFiles, include_discarded=True):
