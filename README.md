@@ -52,6 +52,7 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 
 #### 5. Install ROICaT<br>
 >Make sure your current directory is the ROICaT repo directory (`cd path/to/ROICaT/directory`)<br>
+
 **`pip install -e .`**<br>
 
 ### 6. Use ROICaT<br>
