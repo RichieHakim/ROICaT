@@ -44,6 +44,7 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 >If you get errors about GCC version, make sure you have version >=5.4.0. Check with `gcc --version`. On some Linux servers (like Harvard's O2 server), you may need to run `module load gcc/9.2.0` or similar.<br>
 
 >First, run:
+
 **`conda install -c conda-forge hdbscan==0.8.28`**<br>
 
 >Then, select 4A or 4B...
