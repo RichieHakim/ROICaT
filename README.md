@@ -50,7 +50,11 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 #### 4B. Install dependencies with only CPU support<br>
 **`pip install -r requirements_CPU_only.txt`**<br>
 
-### 5. Use ROICaT<br>
+#### 5. Install ROICaT<br>
+>Make sure your current directory is the ROICaT repo directory (`cd path/to/ROICaT/directory`)<br>
+**`pip install -e .`**<br>
+
+### 6. Use ROICaT<br>
 - Run a Jupyter Notebook: [Notebooks](https://github.com/RichieHakim/ROICaT/tree/main/notebooks)<br>
 - Make a parameter file and run in command line: `python -m ROICaT`. See [TODO: link to how-to] for details.<br>
 
