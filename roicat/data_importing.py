@@ -75,11 +75,6 @@ class Data_suite2p:
         self.import_statFiles()
         
         
-        self.import_ROI_centeredImages(
-            out_height_width=out_height_width,
-            max_footprint_width=max_footprint_width,
-        )
-
         self.import_FOV_images(
             type_meanImg=type_meanImg,
             images=images
@@ -92,8 +87,12 @@ class Data_suite2p:
         
         print(type(self.spatialFootprints[0]))
         
-        self.centroids = [self.get_centroids(sf, self.FOV_height, self.FOV_width) for sf in self.spatialFootprints]
+        self.centroids = [self.get_centroids(sf, self.FOV_height, self.FOV_width).T for sf in self.spatialFootprints]
         
+        self.import_ROI_centeredImages(
+            out_height_width=out_height_width,
+            max_footprint_width=max_footprint_width,
+        )
         
 
     def import_statFiles(self):
@@ -335,15 +334,23 @@ class Data_suite2p:
         sf_big_mid = np.uint64(sf_big_width // 2)
 
         sf_all_list = []
-        for ii, stat in tqdm(enumerate(statFiles), mininterval=60):
+        for i, stat in tqdm(enumerate(statFiles), mininterval=60):
             if type(stat) is str or type(stat) is Path:
                 stat = np.load(stat, allow_pickle=True)
             n_roi = stat.shape[0]
+            
+            centroid_set = self.centroids[i]
 
             sf_big = np.zeros((n_roi, sf_big_width, sf_big_width))
             for ii in range(n_roi):
-                yIdx = np.array(stat[ii]['ypix'], dtype=np.uint64) - np.int64(stat[ii]['med'][0]) + sf_big_mid
-                xIdx = np.array(stat[ii]['xpix'], dtype=np.uint64) - np.int64(stat[ii]['med'][1]) + sf_big_mid
+#                 yIdx = np.array(stat[ii]['ypix'], dtype=np.uint64) - np.int64(stat[ii]['med'][0]) + sf_big_mid
+#                 xIdx = np.array(stat[ii]['xpix'], dtype=np.uint64) - np.int64(stat[ii]['med'][1]) + sf_big_mid
+
+                print(centroid_set.shape)
+                
+                yIdx = np.array(stat[ii]['ypix'], dtype=np.uint64) - np.int64(centroid_set[ii][0]) + sf_big_mid
+                xIdx = np.array(stat[ii]['xpix'], dtype=np.uint64) - np.int64(centroid_set[ii][1]) + sf_big_mid
+                
                 if np.any(yIdx < 0) or np.any(xIdx < 0) or np.any(yIdx >= sf_big_width) or np.any(xIdx >= sf_big_width):
                     raise IndexError(f"RH ERROR: Spatial footprint is out of bounds. Increase max_footprint_width.")
                 sf_big[ii][np.uint64(yIdx), np.uint64(xIdx)] = stat[ii]['lam'] # (dim0: ROI#) (dim1: y pix) (dim2: x pix)
@@ -670,7 +677,11 @@ class Data_custom:
         self.n_sessions = None
         self.centroids = None
         self.um_per_pixel = None
-        self._verbose = True 
+        self._verbose = True
+    
+    def get_sess_id_concat(self):
+        self.sessionID_concat = np.vstack([np.array([helpers.idx2bool(i_sesh, length=len(self.spatialFootprints))]*sesh.shape[0]) for i_sesh, sesh in enumerate(self.spatialFootprints)])
+
 
 ####################################
 ######### HELPER FUNCTIONS #########
