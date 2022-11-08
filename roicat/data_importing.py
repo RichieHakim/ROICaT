@@ -19,6 +19,7 @@ class Data_suite2p:
         self,
         paths_statFiles,
         paths_opsFiles=None,
+        paths_labelFiles=None,
         um_per_pixel=1.0,
         new_or_old_suite2p='new',
         
@@ -52,47 +53,48 @@ class Data_suite2p:
         """
 
         self.paths_stat = fix_paths(paths_statFiles)
-        if paths_opsFiles is not None:
-            self.paths_ops = fix_paths(paths_opsFiles)
-        else:
-            self.paths_ops = None
         self.n_sessions = len(self.paths_stat)
 
         self.statFiles = None
 
         self.um_per_pixel = um_per_pixel
         self._new_or_old_suite2p = new_or_old_suite2p
+        self.centroid_method = centroid_method
         self._verbose = verbose
         
         ## shifts are applied to convert the 'old' matlab version of suite2p indexing (where there is an offset and its 1-indexed)
-        if self.paths_ops is not None:
-            self.shifts = [
-                np.array([op['yrange'].min()-1, op['xrange'].min()-1], dtype=np.uint64) for op in [np.load(path, allow_pickle=True)[()] for path in self.paths_ops]
-            ] if self._new_or_old_suite2p == 'old' else [np.array([0,0], dtype=np.uint64)]*len(paths_statFiles)
+        if paths_opsFiles is not None:
+            self.paths_ops = fix_paths(paths_opsFiles)
+            if self._new_or_old_suite2p == 'old':
+                self.shifts = [np.array([op['yrange'].min()-1, op['xrange'].min()-1], dtype=np.uint64) for op in [np.load(path, allow_pickle=True)[()] for path in self.paths_ops]]
+            else:
+                self.shifts = [np.array([0,0], dtype=np.uint64)]*len(paths_statFiles)
+            
         else:
+            self.paths_ops = None
             self.shifts = [np.array([0,0], dtype=np.uint64)]*len(paths_statFiles)
 
         self.import_statFiles()
-        
-        
         self.import_FOV_images(
             type_meanImg=type_meanImg,
             images=images
         )
-
         self.import_ROI_spatialFootprints(workers=workers);
         
-        self.centroid_method = centroid_method
 #         self.centroids = self._get_midCoords()
-        
-        print(type(self.spatialFootprints[0]))
-        
         self.centroids = [self.get_centroids(sf, self.FOV_height, self.FOV_width).T for sf in self.spatialFootprints]
         
         self.import_ROI_centeredImages(
             out_height_width=out_height_width,
             max_footprint_width=max_footprint_width,
         )
+        
+        if paths_labelFiles is not None:
+            self.paths_labels = fix_paths(paths_labelFiles)
+            self.import_ROI_labels()
+        else:
+            self.paths_labels = None
+            self.labelFiles = None
         
 
     def import_statFiles(self):
@@ -170,7 +172,29 @@ class Data_suite2p:
         self.FOV_width = self.FOV_images[0].shape[1]
 
         return self.FOV_images
+    
+    def import_ROI_labels(self):
+        """
+        Imports the image labels from an npy file. Should
+        have the same 0th dimension as the stats files.
 
+        Returns:
+            self.labelFiles (np.array):
+                Concatenated set of image labels.
+        """
+        
+        print(f"Starting: Importing labels footprints from npy files") if self._verbose else None
+        
+        raw_labels = [np.load(path) for path in self.paths_labels]
+        self.n_label = [len(stat) for stat in raw_labels]
+        self.n_label_total = sum(self.n_label)
+        self.labelFiles = helpers.squeeze_integers(np.concatenate(raw_labels))
+        if type(self.statFiles) is np.ndarray:
+            assert self.statFiles.shape[0] == self.labelFiles.shape[0] , 'num images in stat files does not correspond to num labels'
+                
+        print(f"Completed: Imported {len(self.labelFiles)} labels into class as self.labelFiles. Total number of ROIs: {self.n_label_total}. Number of ROI from each file: {self.n_label}") if self._verbose else None
+        
+        return self.labelFiles
 
     def _get_midCoords(
         self,
@@ -346,7 +370,7 @@ class Data_suite2p:
 #                 yIdx = np.array(stat[ii]['ypix'], dtype=np.uint64) - np.int64(stat[ii]['med'][0]) + sf_big_mid
 #                 xIdx = np.array(stat[ii]['xpix'], dtype=np.uint64) - np.int64(stat[ii]['med'][1]) + sf_big_mid
 
-                print(centroid_set.shape)
+#                 print(centroid_set.shape)
                 
                 yIdx = np.array(stat[ii]['ypix'], dtype=np.uint64) - np.int64(centroid_set[ii][0]) + sf_big_mid
                 xIdx = np.array(stat[ii]['xpix'], dtype=np.uint64) - np.int64(centroid_set[ii][1]) + sf_big_mid
@@ -406,6 +430,7 @@ class Data_caiman:
     def __init__(
         self,
         paths_resultsFiles,
+        paths_labelFiles=None,
         include_discarded=True,
         um_per_pixel=1.0,
         
@@ -479,8 +504,15 @@ class Data_caiman:
         self.import_ROI_centeredImages(
             out_height_width=out_height_width
         )
-
-
+        
+        if paths_labelFiles is not None:
+            self.paths_labels = fix_paths(paths_labelFiles)
+            self.import_ROI_labels()
+        else:
+            self.paths_labels = None
+            self.labelFiles = None
+            
+    
     def import_caimanResults(self, paths_resultsFiles, include_discarded=True):
         """
         Imports the results file from CaImAn.
@@ -519,7 +551,8 @@ class Data_caiman:
             ## initialize the estimates.A matrix, which is a 'Fortran' indexed version of sf. Note the flipped dimensions for shape.
             sf_included = scipy.sparse.csr_matrix((data['estimates']['A']['data'], data['estimates']['A']['indices'], data['estimates']['A']['indptr']), shape=data['estimates']['A']['shape'][::-1])
             if include_discarded:
-                sf_discarded = scipy.sparse.csr_matrix((data['estimates']['A']['data'], data['estimates']['A']['indices'], data['estimates']['A']['indptr']), shape=data['estimates']['A']['shape'][::-1])
+                discarded = data['estimates']['discarded_components']
+                sf_discarded = scipy.sparse.csr_matrix((discarded['A']['data'], discarded['A']['indices'], discarded['A']['indptr']), shape=discarded['A']['shape'][::-1])
                 sf_F = scipy.sparse.vstack([sf_included, sf_discarded])
             else:
                 sf_F = sf_included
@@ -528,9 +561,41 @@ class Data_caiman:
             sf = sparse.COO(sf_F).reshape((sf_F.shape[0], FOV_width, FOV_height)).transpose((0,2,1)).reshape((sf_F.shape[0], FOV_width*FOV_height)).tocsr()
             
             return sf
+        
+        def _import_overall_caiman_labels(path_resultsFile, include_discarded=True):
+            """
+            
+            """
+            data = helpers.h5_lazy_load(path_resultsFile)
+            labels_included = np.ones(data['estimates']['A']['indptr'].shape[0])
+            if include_discarded:
+                discarded = data['estimates']['discarded_components']
+                labels_discarded = np.zeros(discarded['A']['indptr'].shape[0])
+                labels = np.hstack([labels_included, labels_discarded])
+            else:
+                labels = labels_included
+            
+            return labels
+        
+        def _import_cnn_caiman_preds(path_resultsFile, include_discarded=True):
+            """
+            
+            """
+            data = helpers.h5_lazy_load(path_resultsFile)
+            preds_included = data['estimates']['cnn_preds']
+            if include_discarded:
+                discarded = data['estimates']['discarded_components']
+                preds_discarded = discarded['cnn_preds']
+                preds = np.hstack([preds_included, preds_discarded])
+            else:
+                preds = preds_included
+            
+            return preds
 
         print(f"Importing spatial footprints from CaImAn results hdf5 files") if self._verbose else None
         self.spatialFootprints = [_import_spatialFootprints(path, include_discarded=include_discarded) for path in paths_resultsFiles]
+        self.overall_caiman_labels = [_import_overall_caiman_labels(path, include_discarded=include_discarded) for path in paths_resultsFiles]
+        self.cnn_caiman_preds = [_import_cnn_caiman_preds(path, include_discarded=include_discarded) for path in paths_resultsFiles]
 
         self.n_roi = [s.shape[0] for s in self.spatialFootprints]
         self.n_roi_total = sum(self.n_roi)
@@ -619,7 +684,30 @@ class Data_caiman:
         self.FOV_height, self.FOV_width = self.FOV_images[0].shape
 
         return self.FOV_images
+    
+    def import_ROI_labels(self):
+        """
+        Imports the image labels from an npy file. Should
+        have the same 0th dimension as the stats files.
 
+        Returns:
+            self.labelFiles (np.array):
+                Concatenated set of image labels.
+        """
+        
+        print(f"Starting: Importing labels footprints from npy files") if self._verbose else None
+        
+        raw_labels = [np.load(path) for path in self.paths_labels]
+        self.n_label = [len(stat) for stat in raw_labels]
+        self.n_label_total = sum(self.n_label)
+        self.labelFiles = helpers.squeeze_integers(np.concatenate(raw_labels))
+        if type(self.statFiles) is np.ndarray:
+            assert self.statFiles.shape[0] == self.labelFiles.shape[0] , 'num images in stat files does not correspond to num labels'
+                
+        print(f"Completed: Imported {len(self.labelFiles)} labels into class as self.labelFiles. Total number of ROIs: {self.n_label_total}. Number of ROI from each file: {self.n_label}") if self._verbose else None
+        
+        return self.labelFiles
+    
     def get_centroids(self, sf, FOV_height, FOV_width):
         """
         Gets the centroids of a sparse array of flattented spatial footprints.
