@@ -13,7 +13,7 @@ class Data_suite2p:
     """
     Class for handling suite2p output files and data.
     In particular stat.npy and ops.npy files.
-    RH 2022
+    RH, JZ 2022
     """
     def __init__(
         self,
@@ -365,24 +365,25 @@ class Data_suite2p:
             
             centroid_set = self.centroids[i]
 
-            sf_big = np.zeros((n_roi, sf_big_width, sf_big_width))
+#             sf_big = np.zeros((n_roi, sf_big_width, sf_big_width))
+            
+            rois_to_stack = []
+            
             for ii in range(n_roi):
-#                 yIdx = np.array(stat[ii]['ypix'], dtype=np.uint64) - np.int64(stat[ii]['med'][0]) + sf_big_mid
-#                 xIdx = np.array(stat[ii]['xpix'], dtype=np.uint64) - np.int64(stat[ii]['med'][1]) + sf_big_mid
-
-#                 print(centroid_set.shape)
-                
                 yIdx = np.array(stat[ii]['ypix'], dtype=np.uint64) - np.int64(centroid_set[ii][0]) + sf_big_mid
                 xIdx = np.array(stat[ii]['xpix'], dtype=np.uint64) - np.int64(centroid_set[ii][1]) + sf_big_mid
                 
                 if np.any(yIdx < 0) or np.any(xIdx < 0) or np.any(yIdx >= sf_big_width) or np.any(xIdx >= sf_big_width):
                     raise IndexError(f"RH ERROR: Spatial footprint is out of bounds. Increase max_footprint_width.")
-                sf_big[ii][np.uint64(yIdx), np.uint64(xIdx)] = stat[ii]['lam'] # (dim0: ROI#) (dim1: y pix) (dim2: x pix)
-
-            sf = sf_big[:,  
-                        sf_big_mid - np.uint64(self._out_height_width[0]//2) : sf_big_mid + np.uint64(self._out_height_width[0]//2),
+                
+                tmp_roi = scipy.sparse.csr_array((stat[ii]['lam'], (np.uint64(yIdx), np.uint64(xIdx))), shape=(sf_big_width, sf_big_width))
+                
+                tmp_roi = tmp_roi[sf_big_mid - np.uint64(self._out_height_width[0]//2) : sf_big_mid + np.uint64(self._out_height_width[0]//2),
                         sf_big_mid - np.uint64(self._out_height_width[1]//2) : sf_big_mid + np.uint64(self._out_height_width[1]//2)]
-
+#                 rois_to_stack.append(tmp_roi.reshape(1,-1))
+                rois_to_stack.append(tmp_roi)
+            
+            sf = scipy.sparse.vstack(rois_to_stack).toarray().reshape(n_roi,*tmp_roi.shape)
             sf_all_list.append(sf)
 
         return sf_all_list
