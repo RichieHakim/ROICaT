@@ -811,7 +811,10 @@ def _helper_populate_sf(n_roi, frame_height_width, stat, dtype, isInt, shifts=(0
      used in a multiprocessing. Functions are only 
      picklable if they are defined at the top-level of a module.
     """
-    sf = np.zeros((n_roi, frame_height_width[0], frame_height_width[1]), dtype)
+#     sf = np.zeros((n_roi, frame_height_width[0], frame_height_width[1]), dtype)
+    
+    rois_to_stack = []
+    
     for jj, roi in enumerate(stat):
         lam = np.array(roi['lam'])
         if isInt:
@@ -820,6 +823,10 @@ def _helper_populate_sf(n_roi, frame_height_width, stat, dtype, isInt, shifts=(0
             lam = lam / lam.sum()
         ypix = np.array(roi['ypix'], dtype=np.uint64) + shifts[0]
         xpix = np.array(roi['xpix'], dtype=np.uint64) + shifts[1]
-        sf[jj, ypix, xpix] = lam
+            
+        tmp_roi = scipy.sparse.csr_array((lam, (ypix, xpix)), shape=(frame_height_width[0], frame_height_width[1]))
+        rois_to_stack.append(tmp_roi.reshape(1,-1))
 
-    return scipy.sparse.csr_matrix(sf.reshape(sf.shape[0], -1))
+    return scipy.sparse.vstack(rois_to_stack)
+
+
