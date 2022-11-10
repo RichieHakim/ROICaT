@@ -31,8 +31,6 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 
 ### 2. Create a conda environment and activate it
 **`conda update -n base -c defaults conda`**<br>
-**`conda create -n ROICaT python=3.9`**<br>
-**`conda activate ROICaT`**<br>
 
 ### 3. Upgrade pip
 **`pip install --upgrade pip`**<br>
@@ -43,21 +41,16 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 >Note: If you are on a server, it might be necessary to load CUDA modules first using something like `module load gcc/9.2.0 cuda/11.2`.<br>
 >If you get errors about GCC version, make sure you have version >=5.4.0. Check with `gcc --version`. On some Linux servers (like Harvard's O2 server), you may need to run `module load gcc/9.2.0` or similar.<br>
 
->First, run:
-
-**`conda install -c conda-forge hdbscan==0.8.28`**<br>
-
->Then, select 4A or 4B...
-
 #### 4A. Install dependencies with GPU support (recommended)<br>
-**`pip install -r requirements_GPU.txt`**<br>
+**`conda install -f environment_GPU.yml`**<br>
 
 #### 4B. Install dependencies with only CPU support<br>
-**`pip install -r requirements_CPU_only.txt`**<br>
+**`conda install -f environment_CPU_only.yml`**<br>
 
 #### 5. Install ROICaT<br>
 >Make sure your current directory is the ROICaT repo directory (`cd path/to/ROICaT/directory`)<br>
 
+**`conda activate ROICaT`**<br>
 **`pip install -e .`**<br>
 
 ### 6. Use ROICaT<br>
