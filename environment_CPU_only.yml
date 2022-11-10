@@ -1,4 +1,4 @@
-name: ROICaT
+name: ROICaT2
 channels:
   - conda-forge
 dependencies:

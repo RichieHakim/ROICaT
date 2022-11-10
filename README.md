@@ -42,10 +42,10 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 >If you get errors about GCC version, make sure you have version >=5.4.0. Check with `gcc --version`. On some Linux servers (like Harvard's O2 server), you may need to run `module load gcc/9.2.0` or similar.<br>
 
 #### 4A. Install dependencies with GPU support (recommended)<br>
-**`conda install -f environment_GPU.yml`**<br>
+**`conda env create -f environment_GPU.yml`**<br>
 
 #### 4B. Install dependencies with only CPU support<br>
-**`conda install -f environment_CPU_only.yml`**<br>
+**`conda env create -f environment_CPU_only.yml`**<br>
 
 #### 5. Install ROICaT<br>
 >Make sure your current directory is the ROICaT repo directory (`cd path/to/ROICaT/directory`)<br>
