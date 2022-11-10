@@ -421,6 +421,18 @@ class Data_suite2p:
             raise ValueError('Only valid methods are "centroid" or "median"')
         return np.round(np.vstack([h_mean, w_mean])).astype(np.int64)
 
+    
+#     def drop_nan_rois(self):
+#         """
+#         Identifies all entries along the 0th dimension of self.statFiles that
+#         have any NaN value in any of their dimensions and removes
+#         those entries from both self.statFiles and self.labelFiles
+#         """
+#         idx_nne = [helpers.get_keep_nonnan_entries(sf) for sf in self.statFiles]
+#         self.statFiles = [sf[inne] for sf, inne in zip(self.statFiles, idx_nne)]
+#         self.labelFiles = [lf[inne] for lf, inne in zip(self.labelFiles, idx_nne)]
+#         return self.statFiles, self.labelFiles
+
 
 class Data_caiman:
     """
@@ -827,6 +839,6 @@ def _helper_populate_sf(n_roi, frame_height_width, stat, dtype, isInt, shifts=(0
         tmp_roi = scipy.sparse.csr_array((lam, (ypix, xpix)), shape=(frame_height_width[0], frame_height_width[1]))
         rois_to_stack.append(tmp_roi.reshape(1,-1))
 
-    return scipy.sparse.vstack(rois_to_stack)
+    return scipy.sparse.vstack(rois_to_stack).tocsr()
 
 

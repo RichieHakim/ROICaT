@@ -750,7 +750,7 @@ def get_keep_nonnan_entries(original_features):
         original_features (np.ndarray): 
             image values (images x height x width)
     """
-    has_nan = np.unique(np.where(np.isnan(original_features))[0])
+    has_nan = [np.unique(np.where(np.isnan(of))[0]) for of in original_features]
     return np.array([_ for _ in range(original_features.shape[0]) if _ not in has_nan])
 
 

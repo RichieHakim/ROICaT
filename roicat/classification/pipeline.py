@@ -71,7 +71,7 @@ def fit_pipe(feat_train, labels_train, preproc_init, classify, preproc_refit=Tru
         preproc.fit(feat_train, labels_train)
 
     try:
-        if balance_sample_size:
+        if balance_sample_weights:
             classify.fit(preproc.transform(feat_train), labels_train, sample_weight=get_balanced_sample_weights(labels_train.astype(np.int32)))
         else:
             classify.fit(preproc.transform(feat_train), labels_train)
@@ -137,3 +137,20 @@ def fit_n_train(features_train, labels_train, preproc_init, classify_init, prepr
     pipe = fit_pipe(features_train_subset, labels_train_subset, preproc_init, classify_init, preproc_refit=preproc_refit)
     
     return pipe, n_train
+
+
+def get_balanced_sample_weights(labels):
+    """
+    Balances sample ways for classification
+    
+    RH/JZ 2022
+    
+    labels: np.array
+        Includes list of labels to balance the weights for classifier training
+    returns weights by samples
+    """
+    labels = labels.astype(np.int64)
+    vals, counts = np.unique(labels, return_counts=True)
+    weights = len(labels) / counts
+    sample_weights = weights[labels]
+    return sample_weights
