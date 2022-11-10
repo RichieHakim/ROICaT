@@ -157,9 +157,13 @@ class Alinger:
         for ii, flow in tqdm(enumerate(self.flows), total=len(self.flows), mininterval=60):
             x_remap = (flow[:, :, 0] + x_grid).astype(np.float32)
             y_remap = (flow[:, :, 1] + y_grid).astype(np.float32)
-
+            
+            if type(ROIs[ii]) is scipy.sparse.coo_matrix:
+                ROIs[ii] = ROIs[ii].tocsr()
+            
             rois_toUse = ROIs[ii].toarray().astype(np.float32).reshape(ROIs[ii].shape[0], FOVs[ii].shape[0], FOVs[ii].shape[1]) if type(ROIs[ii]) is scipy.sparse.csr_matrix else ROIs[ii].astype(np.float32)
-
+            
+            
             ROI_aligned = np.stack([safe_ROI_remap(
                 img, 
                 x_remap - shifts[ii][1], 
