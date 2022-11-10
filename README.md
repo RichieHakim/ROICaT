@@ -29,31 +29,29 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 **`git clone https://github.com/RichieHakim/ROICaT`**<br>
 **`cd path/to/ROICaT/directory`**<br>
 
-### 2. Create a conda environment and activate it
+### 2. (Optional) Update base conda environment and pip
 **`conda update -n base -c defaults conda`**<br>
-
-### 3. Upgrade pip
 **`pip install --upgrade pip`**<br>
 >If using Windows, then use: `python -m pip install --upgrade pip`<br>
 
-### 4. Install dependencies (choose either 4A or 4B)
+### 3. Install dependencies (choose either 3A or 3B)
 >Make sure current directory is the ROICaT repo directory (`cd path/to/ROICaT/directory`)<br>
 >Note: If you are on a server, it might be necessary to load CUDA modules first using something like `module load gcc/9.2.0 cuda/11.2`.<br>
 >If you get errors about GCC version, make sure you have version >=5.4.0. Check with `gcc --version`. On some Linux servers (like Harvard's O2 server), you may need to run `module load gcc/9.2.0` or similar.<br>
 
-#### 4A. Install dependencies with GPU support (recommended)<br>
+#### 3A. Install dependencies with GPU support (recommended)<br>
 **`conda env create -f environment_GPU.yml`**<br>
 
-#### 4B. Install dependencies with only CPU support<br>
+#### 3B. Install dependencies with only CPU support<br>
 **`conda env create -f environment_CPU_only.yml`**<br>
 
-#### 5. Install ROICaT<br>
+### 4. Install ROICaT<br>
 >Make sure your current directory is the ROICaT repo directory (`cd path/to/ROICaT/directory`)<br>
 
 **`conda activate ROICaT`**<br>
 **`pip install -e .`**<br>
 
-### 6. Use ROICaT<br>
+### 5. Use ROICaT<br>
 - Beginner: Run a Jupyter Notebook: [Notebooks](https://github.com/RichieHakim/ROICaT/tree/main/notebooks)<br>
 - Advanced: Make a parameter file and run in command line: `python -m ROICaT`. See [TODO: link to how-to] for details.<br>
 
