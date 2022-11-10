@@ -43,7 +43,7 @@ class Pipe():
 
 
 
-def fit_pipe(feat_train, labels_train, preproc_init, classify, preproc_refit=True):
+def fit_pipe(feat_train, labels_train, preproc_init, classify, preproc_refit=True, balance_sample_weights=True):
     """
     Fit a full pipeline, either maintaining the initialized Preprocessor or refitting it
     
@@ -71,7 +71,10 @@ def fit_pipe(feat_train, labels_train, preproc_init, classify, preproc_refit=Tru
         preproc.fit(feat_train, labels_train)
 
     try:
-        classify.fit(preproc.transform(feat_train), labels_train)
+        if balance_sample_size:
+            classify.fit(preproc.transform(feat_train), labels_train, sample_weight=get_balanced_sample_weights(labels_train.astype(np.int32)))
+        else:
+            classify.fit(preproc.transform(feat_train), labels_train)
         pipe = Pipe(preproc, classify)
     except:
 #         s2p_keys = ['npix_norm', 'compact', 'skew']
