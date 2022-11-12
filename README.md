@@ -18,7 +18,7 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 
 
 # Installation
-**We want ROICaT to be installable on all systems. If you have any issues during the installation process, please make a github issue with the error.**
+**We want ROICaT to be installable on all systems. If you have any issues during the installation process, please make a [github issue](https://github.com/RichieHakim/ROICaT/issues) with the error**
 
 ### 0. Requirements
 - [Anaconda](https://www.anaconda.com/distribution/) or [Miniconda](https://docs.conda.io/en/latest/miniconda.html)<br>
