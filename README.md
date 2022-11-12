@@ -56,7 +56,7 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 - Beginner: Run a Jupyter Notebook: [Notebooks](https://github.com/RichieHakim/ROICaT/tree/main/notebooks)<br>
 - Advanced: Make a parameter file and run in command line: `python -m ROICaT`. See [TODO: link to how-to] for details.<br>
 
-# [HowTo]How to use ROICaT
+# [How to use ROICaT](HowTo)
   ***Ways to use ROICaT:***
 -  **Easy:** Try out ROICaT on Google Colab: [TODO: Link]
 -  **Intermediate:** Run it on your own computer. See [Installation](#Installation) for how to install.
