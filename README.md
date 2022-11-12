@@ -44,7 +44,7 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 **`conda env create --file environment_CPU_only.yml`**<br>
 
 > If you'd like to give a custom name to the environment: `conda env create -n my_env_name --file environment_chooseGPUorCPUfile_.yml`<br>
-> If you'd like to install environment into a different directory: ` conda env create --file environment_chooseGPUorCPUfile.yml --prefix /media/rich/OS/Users/Richard/Linux_stuff_on_OS/conda_envs/envs/test_ROICaT`<br>
+> If you'd like to install environment into a different directory: ` conda env create --file environment_chooseGPUorCPUfile.yml --prefix /path/to/virtual/environment`<br>
 
 ### 4. Install ROICaT<br>
 >Make sure your current directory is the ROICaT repo directory (`cd path/to/ROICaT/directory`)<br>
