@@ -18,11 +18,12 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 
 
 # Installation
+**We want ROICaT to be installable on all systems. If you have any issues during the installation process, please make a github issue with the error.**
 
-### Requirements
+### 0. Requirements
 - [Anaconda](https://www.anaconda.com/distribution/) or [Miniconda](https://docs.conda.io/en/latest/miniconda.html)<br>
 - GCC >= 5.4.0, ideally == 9.2.0. Google how to do this on your operating system. For unix/linux: check with `gcc --version`.<br>
-- For GPU support, you just need a CUDA compatible NVIDIA GPU and the relevant drivers. 
+- For GPU support, you just need a CUDA compatible NVIDIA GPU and the relevant drivers. Using a GPU is not required, but can increase speeds 2-20x depending on the GPU and your data. See https://developer.nvidia.com/cuda-gpus for a list of compatible GPUs.
 - On some Linux servers (like Harvard's O2 server), you may need to load modules instead of installing. To load conda, gcc, try: `module load conda3/latest gcc/9.2.0` or similar.<br>
 
 ### 1. Clone the repo
@@ -33,9 +34,8 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 **`conda update -n base -c defaults conda`**<br>
 
 ### 3. Install dependencies (choose either 3A or 3B)
-ROICaT makes use of GPU acceleration. If you have a CUDA compatible NVIDIA GPU (see https://developer.nvidia.com/cuda-gpus), we recommend following step 3A, else use 3B (Mac users should typically choose 3B). The difference in speed can be 2-20x faster, depending on your GPU and dataset size.
 >Make sure current directory is the ROICaT repo directory (`cd path/to/ROICaT/directory`)<br>
->Note: If you are on a server, it might be necessary to load CUDA modules first using something like `module load gcc/9.2.0 cuda/11.2`.<br>
+>Note: If you are on a server and wish to install the GPU version, it might be necessary to load CUDA modules first using something like `module load gcc/9.2.0 cuda/11.2`.<br>
 >If you get errors about GCC version, make sure you have version >=5.4.0. Check with `gcc --version`. On some Linux servers (like Harvard's O2 server), you may need to run `module load gcc/9.2.0` or similar.<br>
 
 #### 3A. Install dependencies with GPU support (recommended)<br>
