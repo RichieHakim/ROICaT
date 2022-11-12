@@ -29,10 +29,8 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 **`git clone https://github.com/RichieHakim/ROICaT`**<br>
 **`cd path/to/ROICaT/directory`**<br>
 
-### 2. (Optional) Update base conda environment and pip
+### 2. (Optional) Update base conda environment
 **`conda update -n base -c defaults conda`**<br>
-**`pip install --upgrade pip`**<br>
->If using Windows, then use: `python -m pip install --upgrade pip`<br>
 
 ### 3. Install dependencies (choose either 3A or 3B)
 >Make sure current directory is the ROICaT repo directory (`cd path/to/ROICaT/directory`)<br>
@@ -40,10 +38,13 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 >If you get errors about GCC version, make sure you have version >=5.4.0. Check with `gcc --version`. On some Linux servers (like Harvard's O2 server), you may need to run `module load gcc/9.2.0` or similar.<br>
 
 #### 3A. Install dependencies with GPU support (recommended)<br>
-**`conda env create -f environment_GPU.yml`**<br>
+**`conda env create --file environment_GPU.yml`**<br>
 
 #### 3B. Install dependencies with only CPU support<br>
-**`conda env create -f environment_CPU_only.yml`**<br>
+**`conda env create --file environment_CPU_only.yml`**<br>
+
+> If you'd like to give a custom name to the environment: `conda env create -n my_env_name --file environment_chooseGPUorCPUfile_.yml`<br>
+> If you'd like to install environment into a different directory: ` conda env create --file environment_chooseGPUorCPUfile.yml --prefix /media/rich/OS/Users/Richard/Linux_stuff_on_OS/conda_envs/envs/test_ROICaT`<br>
 
 ### 4. Install ROICaT<br>
 >Make sure your current directory is the ROICaT repo directory (`cd path/to/ROICaT/directory`)<br>
