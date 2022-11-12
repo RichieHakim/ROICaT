@@ -5,10 +5,11 @@ A simple-to-use Python package for classifying images of cells and tracking them
 Currently designed to be used with Suite2p output data (stat.npy and ops.npy files) and CaImAn output data (results.h5 files), but any image data can be used (see [TODO: link] for details on using non-standard data).
 
 ## Table of contents
-[Announcements](#Announcements)<br>
-[Installation](#Installation)<br>
-[How to use ROICaT](#HowTo)<br>
-[TODO](#TODO)<br>
+- [Announcements](#Announcements)<br>
+- [Installation](#Installation)<br>
+- [How to use ROICaT](#HowTo)<br>
+- [Frequently Asked Questions](#FAQs)<br>
+- [TODO](#TODO)<br>
 
 ## Announcements
 
@@ -72,6 +73,12 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 -  **Tracking**: The feature vectors can be combined with information about the position of the ROIs to track the ROIs across imaging sessions/planes.
 
 -------------
+# <a name="FAQs"></a>Frequently asked questions:
+- Getting the error `OSError: [Errno 12] Cannot allocate memory` during `data.import_ROI_spatialFootprints()`
+- There's something weird about the data you're using. I haven't figured out why this happens sometimes (albeit rarely).
+- Solution: set `data.import_ROI_spatialFootprints(workers=1)` and `roinet.generate_dataloader(..., numWorkers_dataloader=0, persistentWorkers_dataloader=False)`
+
+-------------
 # TODO:
 - fix constant used for um_per_pixel in ROInet_embedder
 - unify and refactor backend
@@ -81,9 +88,3 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 - make reference API
 - make nice README.md
 - version testing
-
--------------
-# Frequently asked questions:
-- Getting the error `OSError: [Errno 12] Cannot allocate memory` during `data.import_ROI_spatialFootprints()`
-- There's something weird about the data you're using. I haven't figured out why this happens sometimes (albeit rarely).
-- Solution: set `data.import_ROI_spatialFootprints(workers=1)` and `roinet.generate_dataloader(..., numWorkers_dataloader=0, persistentWorkers_dataloader=False)`
