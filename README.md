@@ -1,20 +1,20 @@
-# ROICaT <img src="logo.png" width="300" title="ROICaT" alt="ROICaT" align="right" vspace = "200">
+# ROICaT <img src="logo.png"  width="300"  title="ROICaT"  alt="ROICaT"  align="right"  vspace = "200">
+
 **R**egion **O**f **I**nterest **C**lassification **a**nd **T**racking
 A simple-to-use Python package for classifying images of cells and tracking them across imaging sessions/planes.
-Currently designed to be used with Suite2p output data (stat.npy and ops.npy files), but any image data can be used (see [TODO: link] for details on using non-standard data).
+Currently designed to be used with Suite2p output data (stat.npy and ops.npy files) and CaImAn output data (results.h5 files), but any image data can be used (see [TODO: link] for details on using non-standard data).
+
+## Table of contents
+[Announcements](#Announcements)  
+[Installation](#Installation)
+[How to use ROICaT](#HowtouseROICaT)
+[TODO](#TODO)
+
+## Announcements
 
 ### TRACKING NOW IN BETA! Try it out in the demo notebook [here](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/tracking_interactive_notebook.ipynb) or the demo script [here](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/tracking_scripted_notebook.ipynb).
 ### Classification still in Alpha. Contact me if you want to help test it.
-### To help with development or beta test releases, please contact:  rhakim@g.harvard.edu
-
-***Ways to use ROICaT:***
-- **Easy:** Try out ROICaT on Google Colab: [TODO: Link]
-- **Intermediate:** Run it on your own computer. See [Installation](#Installation) for how to install.
-    - Using provided Jupyter Notebook(s): [Notebooks](https://github.com/RichieHakim/ROICaT/tree/main/notebooks).
-    - Using command line: `python -m ROICaT`. See [TODO: link to how-to] for details.
-
-- **Advanced:** Train a new ROInet model using the provided Jupyter Notebook [TODO: link]. Or contribute to the code base! This is a big collaborative effort, so please feel free to send a pull request or open an issue.
-
+### To help with development or beta test releases, please contact: rhakim@g.harvard.edu
 
 # Installation
 **We want ROICaT to be installable on all systems. If you have any issues during the installation process, please make a [github issue](https://github.com/RichieHakim/ROICaT/issues) with the error.**
@@ -56,18 +56,23 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 - Beginner: Run a Jupyter Notebook: [Notebooks](https://github.com/RichieHakim/ROICaT/tree/main/notebooks)<br>
 - Advanced: Make a parameter file and run in command line: `python -m ROICaT`. See [TODO: link to how-to] for details.<br>
 
--------------
+# How to use ROICaT
+  ***Ways to use ROICaT:***
+-  **Easy:** Try out ROICaT on Google Colab: [TODO: Link]
+-  **Intermediate:** Run it on your own computer. See [Installation](#Installation) for how to install.
+- Using provided Jupyter Notebook(s): [Notebooks](https://github.com/RichieHakim/ROICaT/tree/main/notebooks).
+- Using command line: `python -m ROICaT`. See [TODO: link to how-to] for details.
+-  **Advanced:** Train a new ROInet model using the provided Jupyter Notebook [TODO: link]. Or contribute to the code base! This is a big collaborative effort, so please feel free to send a pull request or open an issue.
 
 ***General workflow:***
 - **Pass ROIs through ROInet:** Images of the ROIs are passed through a neural network and outputs a feature vector for each image describing what the ROI looks like.
-- **Classification:** The feature vectors can then be used to classify ROIs:
-    - A simple classifier can be trained using user supplied labeled data (e.g. an array of images of ROIs and a corresponding array of labels for each ROI).
-    - Alternatively, classification can be done by projecting the feature vectors into a lower-dimensional space using UMAP and then simply circling the region of space to classify the ROIs.
-- **Tracking**: The feature vectors can be combined with information about the position of the ROIs to track the ROIs across imaging sessions/planes.
-
+-  **Classification:** The feature vectors can then be used to classify ROIs:
+- A simple classifier can be trained using user supplied labeled data (e.g. an array of images of ROIs and a corresponding array of labels for each ROI).
+- Alternatively, classification can be done by projecting the feature vectors into a lower-dimensional space using UMAP and then simply circling the region of space to classify the ROIs.
+-  **Tracking**: The feature vectors can be combined with information about the position of the ROIs to track the ROIs across imaging sessions/planes.
 
 -------------
-## TODO:
+# TODO:
 - fix constant used for um_per_pixel in ROInet_embedder
 - unify and refactor backend
 - integration tests
@@ -77,9 +82,8 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 - make nice README.md
 - version testing
 
-
 -------------
 # Frequently asked questions:
 - Getting the error `OSError: [Errno 12] Cannot allocate memory` during `data.import_ROI_spatialFootprints()`
-    - There's something weird about the data you're using. I haven't figured out why this happens sometimes (albeit rarely).
-    - Solution: set `data.import_ROI_spatialFootprints(workers=1)` and `roinet.generate_dataloader(..., numWorkers_dataloader=0, persistentWorkers_dataloader=False)`
+- There's something weird about the data you're using. I haven't figured out why this happens sometimes (albeit rarely).
+- Solution: set `data.import_ROI_spatialFootprints(workers=1)` and `roinet.generate_dataloader(..., numWorkers_dataloader=0, persistentWorkers_dataloader=False)`
