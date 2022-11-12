@@ -5,10 +5,10 @@ A simple-to-use Python package for classifying images of cells and tracking them
 Currently designed to be used with Suite2p output data (stat.npy and ops.npy files) and CaImAn output data (results.h5 files), but any image data can be used (see [TODO: link] for details on using non-standard data).
 
 ## Table of contents
-[Announcements](#Announcements)  
-[Installation](#Installation)
-[How to use ROICaT](#HowTo)
-[TODO](#TODO)
+[Announcements](#Announcements)<br>
+[Installation](#Installation)<br>
+[How to use ROICaT](#HowTo)<br>
+[TODO](#TODO)<br>
 
 ## Announcements
 
