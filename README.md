@@ -1,12 +1,11 @@
-# ROICaT
+# ROICaT <img src="ROICaT/logo.png" width="250" title="sweet two pea" alt="sweet two pea" align="right" vspace = "50">
 **R**egion **O**f **I**nterest **C**lassification **a**nd **T**racking
+A simple-to-use Python package for classifying images of cells and tracking them across imaging sessions/planes.
+Currently designed to be used with Suite2p output data (stat.npy and ops.npy files), but any image data can be used (see [TODO: link] for details on using non-standard data).
 
 ### TRACKING NOW IN BETA! Try it out in the demo notebook [here](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/tracking_interactive_notebook.ipynb) or the demo script [here](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/tracking_scripted_notebook.ipynb).
 ### Classification still in Alpha. Contact me if you want to help test it.
 ### To help with development or beta test releases, please contact:  rhakim@g.harvard.edu
-
-A simple-to-use Python package for classifying images of cells and tracking them across imaging sessions/planes.
-Currently designed to be used with Suite2p output data (stat.npy and ops.npy files), but any image data can be used (see [TODO: link] for details on using non-standard data).
 
 ***Ways to use ROICaT:***
 - **Easy:** Try out ROICaT on Google Colab: [TODO: Link]
