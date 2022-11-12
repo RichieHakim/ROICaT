@@ -1,4 +1,4 @@
-# ROICaT <img src="ROICaT/logo.png" width="250" title="sweet two pea" alt="sweet two pea" align="right" vspace = "50">
+# ROICaT <img src="logo.png" width="250" title="ROICaT" alt="ROICaT" align="right" vspace = "50">
 **R**egion **O**f **I**nterest **C**lassification **a**nd **T**racking
 A simple-to-use Python package for classifying images of cells and tracking them across imaging sessions/planes.
 Currently designed to be used with Suite2p output data (stat.npy and ops.npy files), but any image data can be used (see [TODO: link] for details on using non-standard data).
