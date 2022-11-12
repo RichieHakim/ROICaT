@@ -33,6 +33,7 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 **`conda update -n base -c defaults conda`**<br>
 
 ### 3. Install dependencies (choose either 3A or 3B)
+ROICaT makes use of GPU acceleration. If you have a CUDA compatible NVIDIA GPU (see https://developer.nvidia.com/cuda-gpus), we recommend following step 3A, else use 3B (Mac users should typically choose 3B). The difference in speed can be 2-20x faster, depending on your GPU and dataset size.
 >Make sure current directory is the ROICaT repo directory (`cd path/to/ROICaT/directory`)<br>
 >Note: If you are on a server, it might be necessary to load CUDA modules first using something like `module load gcc/9.2.0 cuda/11.2`.<br>
 >If you get errors about GCC version, make sure you have version >=5.4.0. Check with `gcc --version`. On some Linux servers (like Harvard's O2 server), you may need to run `module load gcc/9.2.0` or similar.<br>
