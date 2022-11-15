@@ -610,6 +610,8 @@ class Cluster_Assigner:
                 converged (bool):
                     True if the 'diff_window_convergence' is less than 'tol_convergence'.
             """
+            if len(loss_history) < self.window_convergence:
+                return torch.nan, torch.nan, False
             loss_window = torch.as_tensor(loss_history[-self.window_convergence:], device='cpu', dtype=torch.float32)
             theta, y_rec, bias = self.OLS(y=loss_window)
 

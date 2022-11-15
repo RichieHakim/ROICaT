@@ -47,8 +47,8 @@ def compute_colored_FOV(
     spatialFootprints,
     FOV_height,
     FOV_width,
-    boolSessionID,
     labels,
+    boolSessionID=None,
     confidence=None,
 ):
     """
@@ -56,15 +56,23 @@ def compute_colored_FOV(
      by the predicted class.
 
     Args:
-        spatialFootprints (list of scipy.sparse.csr_matrix):
-            List where each element is the sparse array of all the spatial
-             footprints in that session.
+        spatialFootprints (list of scipy.sparse.csr_matrix or scipy.sparse.csr_matrix):
+            If list, then each element is all the spatial footprints for a given session.
+            If scipy.sparse.csr_matrix, then this is all the spatial footprints for all 
+             sessions, and boolSessionID must be provided.
         FOV_height (int):
             Height of the field of view
         FOV_width (int):
             Width of the field of view
-        labels (np.ndarray):
-            Label (will be a unique color) for each spatial footprint
+        labels (list of arrays or array):
+            Label (will be a unique color) for each spatial footprint.
+            If list, then each element is all the labels for a given session.
+            If array, then this is all the labels for all sessions, and 
+             boolSessionID must be provided.
+        boolSessionID (np.ndarray of bool):
+            Boolean array indicating which session each spatial footprint belongs to.
+            Only required if spatialFootprints and labels are not lists.
+            shape: (n_roi_total, n_sessions)
         confidence (np.ndarray):
             Confidence for each spatial footprint
             If None, all confidence values are set to 1.
@@ -73,30 +81,32 @@ def compute_colored_FOV(
         threshold_confidence (float):
             Threshold for the confidence values.
     """
+    labels_cat = np.concatenate(labels) if isinstance(labels, list) else labels.copy()
     if confidence is None:
-        confidence = np.ones(len(labels))
+        confidence = np.ones(len(labels_cat))
     
     h, w = FOV_height, FOV_width
 
     rois = scipy.sparse.vstack(spatialFootprints)
     rois = rois.multiply(1.2/rois.max(1).A).power(1)
 
-    u = np.unique(labels)
+    u = np.unique(labels_cat)
 
     n_c = len(u)
 
     colors = helpers.rand_cmap(nlabels=n_c, verbose=False)(np.linspace(0.,1.,n_c, endpoint=False))
     colors = colors / colors.max(1, keepdims=True)
 
-    if np.isin(-1, labels):
+    if np.isin(-1, labels_cat):
         colors[0] = [0,0,0,0]
 
-    labels_squeezed = helpers.squeeze_integers(labels)
+    labels_squeezed = helpers.squeeze_integers(labels_cat)
     labels_squeezed -= labels_squeezed.min()
 
     rois_c = scipy.sparse.hstack([rois.multiply(colors[labels_squeezed, ii][:,None]) for ii in range(4)]).tocsr()
     rois_c.data = np.minimum(rois_c.data, 1)
 
+    boolSessionID = np.concatenate([[np.arange(len(labels))==ii]*len(labels[ii]) for ii in range(len(labels))] , axis=0) if boolSessionID is None else boolSessionID
     rois_c_bySessions = [rois_c[idx] for idx in boolSessionID.T]
 
     rois_c_bySessions_FOV = [r.max(0).toarray().reshape(4, h, w).transpose(1,2,0)[:,:,:3] for r in rois_c_bySessions]
