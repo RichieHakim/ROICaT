@@ -8,6 +8,7 @@ import seaborn as sns
 from . import pipeline, evaluate
 from .. import helpers
 from copy import deepcopy
+from ROICaT.roicat.classification import visualization as cviz
 
 class CrossValidation():
     """
@@ -117,7 +118,12 @@ def view_cv_dict(cv_dct):
         fig, ax = plt.subplots(1, 2, figsize=(10,3))
         fig.set_facecolor('white')
         fig.suptitle(f'C: {c}')
-        sns.heatmap(cv_dct[k][0], annot=True, annot_kws={"size": 16}, vmax=1., cmap=plt.get_cmap('gray'), ax=ax[0])
-        sns.heatmap(cv_dct[k][1], annot=True, annot_kws={"size": 16}, vmax=1., cmap=plt.get_cmap('gray'), ax=ax[1])
+        
+#         sns.heatmap(cv_dct[k][0], annot=True, annot_kws={"size": 16}, vmax=1., cmap=plt.get_cmap('gray'), ax=ax[0])
+#         sns.heatmap(cv_dct[k][1], annot=True, annot_kws={"size": 16}, vmax=1., cmap=plt.get_cmap('gray'), ax=ax[1])
+        
+        cviz.confusion_matrix(np.round(cv_dct[k][0],4), ax=ax[0])
+        cviz.confusion_matrix(np.round(cv_dct[k][1],4), ax=ax[1])
+        
         ax[0].set_title(f'Train — Acc: {cv_dct[k][2]}')
         ax[1].set_title(f'Val — Acc: {cv_dct[k][3]}')
