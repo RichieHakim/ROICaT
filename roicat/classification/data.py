@@ -189,7 +189,7 @@ def fix_paths(paths):
         paths = [Path(paths)]
     if type(paths[0]) is str:
         paths = [Path(path) for path in paths]
-    if type(paths[0]) is pathlib.PosixPath:
+    if type(paths[0]) is pathlib.PosixPath or type(paths[0]) is pathlib.WindowsPath:
         paths = paths
     else:
         raise TypeError("path_files must be a list of str or list of pathlib.Path or a str or pathlib.Path")
