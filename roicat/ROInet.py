@@ -185,6 +185,7 @@ class ROInet_embedder:
     def generate_dataloader(
         self,
         ROI_images,
+        classes=None,
         # goal_frac=0.1929,
         um_per_pixel=1.0,
         pref_plot=False,
@@ -241,6 +242,9 @@ class ROInet_embedder:
 
         ROI_images_cat = np.concatenate(ROI_images, axis=0)
         ROI_images_rs = np.concatenate(sf_rs, axis=0)
+        
+        classes_rs = np.concatenate(classes, axis=0)
+        
         print('Completed: resizing ROIs') if self._verbose else None
 
         if pref_plot:
@@ -268,16 +272,26 @@ class ROInet_embedder:
         transforms_scripted = torch.jit.script(transforms)
         print(f'Defined image transformations: {transforms}') if self._verbose else None
 
-
-        self.dataset = dataset_simCLR(
-                X=torch.as_tensor(ROI_images_rs, device='cpu', dtype=torch.float32),
-                y=torch.as_tensor(torch.zeros(ROI_images_rs.shape[0]), device='cpu', dtype=torch.float32),
-                n_transforms=1,
-                class_weights=np.array([1]),
-                transform=transforms_scripted,
-                DEVICE='cpu',
-                dtype_X=torch.float32,
-            )
+        if classes is None:
+            self.dataset = dataset_simCLR(
+                    X=torch.as_tensor(ROI_images_rs, device='cpu', dtype=torch.float32),
+                    y=torch.as_tensor(torch.zeros(ROI_images_rs.shape[0]), device='cpu', dtype=torch.float32),
+                    n_transforms=1,
+                    class_weights=np.array([1]),
+                    transform=transforms_scripted,
+                    DEVICE='cpu',
+                    dtype_X=torch.float32,
+                )
+        else:
+            self.dataset = dataset_simCLR(
+                    X=torch.as_tensor(ROI_images_rs, device='cpu', dtype=torch.float32),
+                    y=torch.as_tensor(classes_rs, device='cpu', dtype=torch.float32),
+                    n_transforms=1,
+                    class_weights=np.array([1]),
+                    transform=transforms_scripted,
+                    DEVICE='cpu',
+                    dtype_X=torch.float32,
+                )
         print(f'Defined dataset') if self._verbose else None
             
         self.dataloader = torch.utils.data.DataLoader( 
