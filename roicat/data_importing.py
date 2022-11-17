@@ -81,12 +81,11 @@ class Data_suite2p:
         )
         self.import_ROI_spatialFootprints(workers=workers);
         
-#         self.centroids = self._get_midCoords()
         self.centroids = [self.get_centroids(sf, self.FOV_height, self.FOV_width).T for sf in self.spatialFootprints]
         
         self.import_ROI_centeredImages(
             out_height_width=out_height_width,
-            max_footprint_width=max_footprint_width,
+            # max_footprint_width=max_footprint_width,
         )
         
         if paths_labelFiles is not None:
@@ -95,7 +94,7 @@ class Data_suite2p:
         else:
             self.paths_labels = None
             self.labelFiles = None
-        
+
 
     def import_statFiles(self):
         """
@@ -196,70 +195,6 @@ class Data_suite2p:
         
         return self.labelFiles
 
-    def _get_midCoords(
-        self,
-    ):
-        """
-        Returns the middle coordinates of the ROIs.
-
-        Returns:
-            midPositions (list of np.ndarray):
-                List of middle coordinates of the ROIs.
-        """
-        
-        statFiles = self.import_statFiles() if self.statFiles is None else self.statFiles
-
-        return [np.array([stat[jj]['med'] for jj in range(len(stat))]) for stat in statFiles]
-        
-
-    def import_ROI_centeredImages(
-        self,
-        out_height_width=[36,36], 
-        max_footprint_width=1025, 
-    ):
-        """
-        Converts the spatial footprints into images, stores them
-         within the class and returns them.
-        This method selects the appropriate method to use based on
-         the type of the spatial footprints.
-        If you want to dump the images from the class into a
-         variable:
-            var = None
-            var, self.ROI_images = self.ROI_images, var
-
-        Args:
-            out_height_width (list):
-                [height, width] of the output spatial footprints.
-            max_footprint_width (int):
-                Maximum width of the spatial footprints.
-                Must be odd number.
-                Make sure this number is larger than the largest
-                 ROI you want to convert to an image.
-
-        Returns:
-            ROI_images (list):
-                List of images.
-                Length of the list is the same self.paths_files.
-                Each element is a numpy.ndarray of shape:
-                 (n_roi, self._out_height_width[0], self._out_height_width[1])
-        """
-
-        assert out_height_width[0]%2 == 0 and out_height_width[1]%2 == 0 , "'out_height_width' must be list of 2 EVEN integers"
-        assert max_footprint_width%2 != 0 , "'max_footprint_width' must be odd"
-
-        self._out_height_width = np.uint64(out_height_width)
-        self._max_footprint_width = np.uint64(max_footprint_width)
-
-        statFiles = self.import_statFiles() if self.statFiles is None else self.statFiles
-
-        self.ROI_images = self._convert_stat_to_centeredImages(statFiles=statFiles)
-        
-        if self._verbose:
-            print(f"Converted {len(self.ROI_images)} spatial footprint files into small centered images in self.ROI_images.")
-        
-        return self.ROI_images
-
-
     def import_ROI_spatialFootprints(
         self,
         frame_height_width=None,
@@ -335,59 +270,6 @@ class Data_suite2p:
 
         return self.spatialFootprints
 
-
-    def _convert_stat_to_centeredImages(
-        self,
-        statFiles=None, 
-    ):
-        """
-        Converts stat files to centered images.
-        
-        Args:
-            statFiles (list):
-                List of paths (str or pathlib.Path)
-                 or stat files (numpy.ndarray).
-
-        Returns:
-            stat_all (list):
-                List of stat files.
-        """
-
-        # sf_big: 'spatial footprints' prior to cropping. sf is after cropping
-        sf_big_width = self._max_footprint_width # make odd number
-        sf_big_mid = np.uint64(sf_big_width // 2)
-
-        sf_all_list = []
-        for i, stat in tqdm(enumerate(statFiles), mininterval=60):
-            if type(stat) is str or type(stat) is Path:
-                stat = np.load(stat, allow_pickle=True)
-            n_roi = stat.shape[0]
-            
-            centroid_set = self.centroids[i]
-
-#             sf_big = np.zeros((n_roi, sf_big_width, sf_big_width))
-            
-            rois_to_stack = []
-            
-            for ii in range(n_roi):
-                yIdx = np.array(stat[ii]['ypix'], dtype=np.uint64) - np.int64(centroid_set[ii][0]) + sf_big_mid
-                xIdx = np.array(stat[ii]['xpix'], dtype=np.uint64) - np.int64(centroid_set[ii][1]) + sf_big_mid
-                
-                if np.any(yIdx < 0) or np.any(xIdx < 0) or np.any(yIdx >= sf_big_width) or np.any(xIdx >= sf_big_width):
-                    raise IndexError(f"RH ERROR: Spatial footprint is out of bounds. Increase max_footprint_width.")
-                
-                tmp_roi = scipy.sparse.csr_array((stat[ii]['lam'], (np.uint64(yIdx), np.uint64(xIdx))), shape=(sf_big_width, sf_big_width))
-                
-                tmp_roi = tmp_roi[sf_big_mid - np.uint64(self._out_height_width[0]//2) : sf_big_mid + np.uint64(self._out_height_width[0]//2),
-                        sf_big_mid - np.uint64(self._out_height_width[1]//2) : sf_big_mid + np.uint64(self._out_height_width[1]//2)]
-#                 rois_to_stack.append(tmp_roi.reshape(1,-1))
-                rois_to_stack.append(tmp_roi)
-            
-            sf = scipy.sparse.vstack(rois_to_stack).toarray().reshape(n_roi,*tmp_roi.shape)
-            sf_all_list.append(sf)
-
-        return sf_all_list
-    
     
     def get_centroids(self, sf, FOV_height, FOV_width):
         """
@@ -421,7 +303,46 @@ class Data_suite2p:
             raise ValueError('Only valid methods are "centroid" or "median"')
         return np.round(np.vstack([h_mean, w_mean])).astype(np.int64)
 
-    
+        
+    def import_ROI_centeredImages(
+        self,
+        out_height_width=[36,36],
+    ):
+        """
+        Imports the ROI centered images from the CaImAn results files.
+        RH, JZ 2022
+
+        Args:
+            out_height_width (list):
+                Height and width of the output images. Default is [36,36].
+
+        Returns:
+            sf_rs_centered (np.ndarray):
+                Centered ROI masks.
+                Shape: (n_roi, out_height_width[0], out_height_width[1]).
+        """
+        def sf_to_centeredROIs(sf, centroids, out_height_width=36):
+            out_height_width = np.array([36,36])
+            half_widths = np.ceil(out_height_width/2).astype(int)
+            sf_rs = sparse.COO(sf).reshape((sf.shape[0], self.FOV_height, self.FOV_width))
+
+            coords_diff = np.diff(sf_rs.coords[0])
+            assert np.all(coords_diff < 1.01) and np.all(coords_diff > -0.01), \
+                "RH ERROR: sparse.COO object has strange .coords attribute. sf_rs.coords[0] should all be 0 or 1. An ROI is possibly all zeros."
+            
+            idx_split = (sf_rs>0).astype(np.bool8).sum((1,2)).todense().cumsum()[:-1]
+            coords_split = [np.split(sf_rs.coords[ii], idx_split) for ii in [0,1,2]]
+            coords_split[1] = [coords - centroids[0][ii] + half_widths[0] for ii,coords in enumerate(coords_split[1])]
+            coords_split[2] = [coords - centroids[1][ii] + half_widths[1] for ii,coords in enumerate(coords_split[2])]
+            sf_rs_centered = sf_rs.copy()
+            sf_rs_centered.coords = np.array([np.concatenate(c) for c in coords_split])
+            sf_rs_centered = sf_rs_centered[:, :out_height_width[0], :out_height_width[1]]
+            return sf_rs_centered.todense()
+
+        print(f"Computing ROI centered images from spatial footprints") if self._verbose else None
+        self.ROI_images = [sf_to_centeredROIs(sf, centroids.T, out_height_width=out_height_width) for sf, centroids in zip(self.spatialFootprints, self.centroids)]
+
+
 #     def drop_nan_rois(self):
 #         """
 #         Identifies all entries along the 0th dimension of self.statFiles that

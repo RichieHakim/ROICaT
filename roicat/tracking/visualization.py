@@ -81,7 +81,7 @@ def compute_colored_FOV(
         threshold_confidence (float):
             Threshold for the confidence values.
     """
-    labels_cat = np.concatenate(labels) if isinstance(labels, list) else labels.copy()
+    labels_cat = np.concatenate(labels) if (isinstance(labels, list) and (isinstance(labels[0], list) or isinstance(labels[0], np.ndarray))) else labels.copy()
     if confidence is None:
         confidence = np.ones(len(labels_cat))
     
