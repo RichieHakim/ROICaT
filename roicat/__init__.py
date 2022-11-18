@@ -1,6 +1,7 @@
 __all__ = [
     'classification',
     'tracking',
+    'model_training',
     'data_importing',
     'helpers',
     'ROInet',

@@ -193,7 +193,6 @@ class ROInet_embedder:
         numWorkers_dataloader=-1,
         persistentWorkers_dataloader=True,
         prefetchFactor_dataloader=2,
-        class_labels=None,
         transforms=None,
     ):
         """
@@ -226,8 +225,6 @@ class ROInet_embedder:
             prefetchFactor_dataloader (int):
                 The prefetch factor to use for the dataloader.
                 See pytorch documentation on dataloaders.
-            class_labels (list or array of int):
-                (Optional) The class labels for each ROI.
             transforms (torchvision.transforms):
                 (Optional) The transforms to use for the dataloader.
                 If None, will only scale dynamic range (to 0-1),
@@ -246,8 +243,7 @@ class ROInet_embedder:
         print('Starting: resizing ROIs') if self._verbose else None
         # sf_ptile = np.array([np.percentile(np.mean(sf>0, axis=(1,2)), ptile_norm) for sf in tqdm(ROI_images)]).mean()
         # scale_forRS = (goal_frac/sf_ptile)**scale_norm
-        scale_forRS = 0.7 * um_per_pixel  ## hardcoded for now sorry
-        sf_rs = [np.stack([resize_affine(img, scale=scale_forRS, clamp_range=True) for img in sf], axis=0) for ii, sf in enumerate(tqdm(ROI_images, mininterval=60))]
+        sf_rs = [self.resize_ROIs(rois, um_per_pixel) for rois in ROI_images]
 
         ROI_images_cat = np.concatenate(ROI_images, axis=0)
         ROI_images_rs = np.concatenate(sf_rs, axis=0)
@@ -280,27 +276,15 @@ class ROInet_embedder:
         transforms_scripted = torch.jit.script(transforms)
         print(f'Defined image transformations: {transforms}') if self._verbose else None
 
-        if class_labels is None:
-            self.dataset = dataset_simCLR(
-                    X=torch.as_tensor(ROI_images_rs, device='cpu', dtype=torch.float32),
-                    y=torch.as_tensor(torch.zeros(ROI_images_rs.shape[0]), device='cpu', dtype=torch.float32),
-                    n_transforms=1,
-                    class_weights=np.array([1]),
-                    transform=transforms_scripted,
-                    DEVICE='cpu',
-                    dtype_X=torch.float32,
-                )
-        else:
-            classes_rs = np.concatenate(class_labels, axis=0)
-            self.dataset = dataset_simCLR(
-                    X=torch.as_tensor(ROI_images_rs, device='cpu', dtype=torch.float32),
-                    y=torch.as_tensor(classes_rs, device='cpu', dtype=torch.float32),
-                    n_transforms=1,
-                    class_weights=np.array([1]),
-                    transform=transforms_scripted,
-                    DEVICE='cpu',
-                    dtype_X=torch.float32,
-                )
+        self.dataset = dataset_simCLR(
+                X=torch.as_tensor(ROI_images_rs, device='cpu', dtype=torch.float32),
+                y=torch.as_tensor(torch.zeros(ROI_images_rs.shape[0]), device='cpu', dtype=torch.float32),
+                n_transforms=1,
+                class_weights=np.array([1]),
+                transform=transforms_scripted,
+                DEVICE='cpu',
+                dtype_X=torch.float32,
+            )
         print(f'Defined dataset') if self._verbose else None
             
         self.dataloader = torch.utils.data.DataLoader( 
@@ -317,6 +301,28 @@ class ROInet_embedder:
 
         self.ROI_images_rs = ROI_images_rs
         return ROI_images_rs
+
+    def resize_ROIs(self, ROI_images, um_per_pixel):
+        """
+        Resize the ROI images to prepare for pass through network.
+        RH 2022
+
+        Args:
+            ROI_images (np.ndarray):
+                The ROI images to resize.
+                Array of shape (n_rois, height, width)
+            um_per_pixel (float):
+                The number of microns per pixel. Used to rescale the
+                 ROI images so that they occupy a standard region of
+                 the image frame.
+
+        Returns:
+            ROI_images_rs (np.ndarray):
+                The resized ROI images.
+        """
+        scale_forRS = 0.7 * um_per_pixel  ## hardcoded for now sorry
+        return np.stack([resize_affine(img, scale=scale_forRS, clamp_range=True) for img in ROI_images], axis=0)
+
 
     def generate_latents(self):
         """
