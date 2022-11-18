@@ -8,7 +8,7 @@ import seaborn as sns
 from . import pipeline, evaluate
 from .. import helpers
 from copy import deepcopy
-from ROICaT.roicat.classification import visualization as cviz
+from . import visualization as cviz
 
 class CrossValidation():
     """

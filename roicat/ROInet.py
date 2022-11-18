@@ -185,7 +185,6 @@ class ROInet_embedder:
     def generate_dataloader(
         self,
         ROI_images,
-        classes=None,
         # goal_frac=0.1929,
         um_per_pixel=1.0,
         pref_plot=False,
@@ -194,6 +193,8 @@ class ROInet_embedder:
         numWorkers_dataloader=-1,
         persistentWorkers_dataloader=True,
         prefetchFactor_dataloader=2,
+        class_labels=None,
+        transforms=None,
     ):
         """
         Generate a dataloader for the given ROI_images.
@@ -225,6 +226,14 @@ class ROInet_embedder:
             prefetchFactor_dataloader (int):
                 The prefetch factor to use for the dataloader.
                 See pytorch documentation on dataloaders.
+            class_labels (list or array of int):
+                (Optional) The class labels for each ROI.
+            transforms (torchvision.transforms):
+                (Optional) The transforms to use for the dataloader.
+                If None, will only scale dynamic range (to 0-1),
+                 resize (to 224x224), and tile channels (to 3).
+                 These are the minimum transforms required to pass
+                 images through the network.
         """
         if numWorkers_dataloader == -1:
             numWorkers_dataloader = mp.cpu_count()
@@ -242,9 +251,7 @@ class ROInet_embedder:
 
         ROI_images_cat = np.concatenate(ROI_images, axis=0)
         ROI_images_rs = np.concatenate(sf_rs, axis=0)
-        
-        classes_rs = np.concatenate(classes, axis=0)
-        
+                
         print('Completed: resizing ROIs') if self._verbose else None
 
         if pref_plot:
@@ -261,18 +268,19 @@ class ROInet_embedder:
             axs[1].set_ylabel('mean npix');
             axs[1].set_title('ROI sizes resized')
 
-        transforms = torch.nn.Sequential(
-            ScaleDynamicRange(scaler_bounds=(0,1)),
-            torchvision.transforms.Resize(
-                size=(224, 224),
-                interpolation=torchvision.transforms.InterpolationMode.BILINEAR
-            ), 
-            TileChannels(dim=0, n_channels=3),
-        )
+        if transforms is None:
+            transforms = torch.nn.Sequential(
+                ScaleDynamicRange(scaler_bounds=(0,1)),
+                torchvision.transforms.Resize(
+                    size=(224, 224),
+                    interpolation=torchvision.transforms.InterpolationMode.BILINEAR
+                ), 
+                TileChannels(dim=0, n_channels=3),
+            )
         transforms_scripted = torch.jit.script(transforms)
         print(f'Defined image transformations: {transforms}') if self._verbose else None
 
-        if classes is None:
+        if class_labels is None:
             self.dataset = dataset_simCLR(
                     X=torch.as_tensor(ROI_images_rs, device='cpu', dtype=torch.float32),
                     y=torch.as_tensor(torch.zeros(ROI_images_rs.shape[0]), device='cpu', dtype=torch.float32),
@@ -283,6 +291,7 @@ class ROInet_embedder:
                     dtype_X=torch.float32,
                 )
         else:
+            classes_rs = np.concatenate(class_labels, axis=0)
             self.dataset = dataset_simCLR(
                     X=torch.as_tensor(ROI_images_rs, device='cpu', dtype=torch.float32),
                     y=torch.as_tensor(classes_rs, device='cpu', dtype=torch.float32),

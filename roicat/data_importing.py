@@ -19,14 +19,12 @@ class Data_suite2p:
         self,
         paths_statFiles,
         paths_opsFiles=None,
-        paths_labelFiles=None,
         um_per_pixel=1.0,
         new_or_old_suite2p='new',
         
         out_height_width=[36,36],
-        max_footprint_width=1025,
         type_meanImg='meanImgE',
-        images=None,
+        FOV_images=None,
         workers=-1,
         
         centroid_method = 'centroid',
@@ -77,24 +75,14 @@ class Data_suite2p:
         self.import_statFiles()
         self.import_FOV_images(
             type_meanImg=type_meanImg,
-            images=images
+            images=FOV_images
         )
         self.import_ROI_spatialFootprints(workers=workers);
         
         self.centroids = [self.get_centroids(sf, self.FOV_height, self.FOV_width).T for sf in self.spatialFootprints]
         
-        self.import_ROI_centeredImages(
-            out_height_width=out_height_width,
-            # max_footprint_width=max_footprint_width,
-        )
+        self.import_ROI_centeredImages(out_height_width=out_height_width)
         
-        if paths_labelFiles is not None:
-            self.paths_labels = fix_paths(paths_labelFiles)
-            self.import_ROI_labels()
-        else:
-            self.paths_labels = None
-            self.labelFiles = None
-
 
     def import_statFiles(self):
         """
@@ -172,7 +160,7 @@ class Data_suite2p:
 
         return self.FOV_images
     
-    def import_ROI_labels(self):
+    def import_ROI_labels(self, paths_classLabelFiles):
         """
         Imports the image labels from an npy file. Should
         have the same 0th dimension as the stats files.
@@ -182,18 +170,20 @@ class Data_suite2p:
                 Concatenated set of image labels.
         """
         
-        print(f"Starting: Importing labels footprints from npy files") if self._verbose else None
+        print(f"Starting: Importing labels footprints from label npy files") if self._verbose else None
+
+        self.paths_classLabels = fix_paths(paths_classLabelFiles)
         
-        raw_labels = [np.load(path) for path in self.paths_labels]
-        self.n_label = [len(stat) for stat in raw_labels]
-        self.n_label_total = sum(self.n_label)
-        self.labelFiles = helpers.squeeze_integers(np.concatenate(raw_labels))
+        raw_labels = [np.load(path) for path in self.paths_classLabels]
+        self.n_classLabels = [len(stat) for stat in raw_labels]
+        self.n_classLabels_total = sum(self.n_classLabels)
+        self.classlabels = helpers.squeeze_integers(np.concatenate(raw_labels))
         if type(self.statFiles) is np.ndarray:
-            assert self.statFiles.shape[0] == self.labelFiles.shape[0] , 'num images in stat files does not correspond to num labels'
+            assert self.statFiles.shape[0] == self.classlabels.shape[0] , 'number of images in stat files does not correspond to number of class labels'
                 
-        print(f"Completed: Imported {len(self.labelFiles)} labels into class as self.labelFiles. Total number of ROIs: {self.n_label_total}. Number of ROI from each file: {self.n_label}") if self._verbose else None
+        print(f"Completed: Imported {len(self.classlabels)} labels into class as self.classlabels. Total number of ROIs: {self.n_classLabels_total}. Number of ROI from each file: {self.n_classLabels}") if self._verbose else None
         
-        return self.labelFiles
+        return self.classlabels;
 
     def import_ROI_spatialFootprints(
         self,
@@ -348,6 +338,7 @@ class Data_suite2p:
 #         Identifies all entries along the 0th dimension of self.statFiles that
 #         have any NaN value in any of their dimensions and removes
 #         those entries from both self.statFiles and self.labelFiles
+#         JZ 2022
 #         """
 #         idx_nne = [helpers.get_keep_nonnan_entries(sf) for sf in self.statFiles]
 #         self.statFiles = [sf[inne] for sf, inne in zip(self.statFiles, idx_nne)]
