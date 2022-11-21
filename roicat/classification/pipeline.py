@@ -43,7 +43,7 @@ class Pipe():
 
 
 
-def fit_pipe(feat_train, labels_train, preproc_init, classify, preproc_refit=True, balance_sample_weights=True):
+def fit_pipe(feat_train, labels_train, preproc_init, classify, preproc_refit=True, balance_sample_weights=True, class_weights=None):
     """
     Fit a full pipeline, either maintaining the initialized Preprocessor or refitting it
     
@@ -72,7 +72,7 @@ def fit_pipe(feat_train, labels_train, preproc_init, classify, preproc_refit=Tru
 
     try:
         if balance_sample_weights:
-            classify.fit(preproc.transform(feat_train), labels_train, sample_weight=get_balanced_sample_weights(labels_train.astype(np.int32)))
+            classify.fit(preproc.transform(feat_train), labels_train, sample_weight=helpers.get_balanced_sample_weights(labels_train.astype(np.int32), class_weights=class_weights))
         else:
             classify.fit(preproc.transform(feat_train), labels_train)
         pipe = Pipe(preproc, classify)
@@ -99,7 +99,7 @@ def stratified_sample(features_train, labels_train, n_splits=1, train_size=None,
         sss = StratifiedShuffleSplit(n_splits=n_splits, test_size=test_size)
     return list(sss.split(features_train, labels_train))
 
-def fit_n_train(features_train, labels_train, preproc_init, classify_init, preproc_refit=True, n_train=1e1):
+def fit_n_train(features_train, labels_train, preproc_init, classify_init, preproc_refit=True, n_train=1e1, balance_sample_weights=True, class_weights=None):
     """
     Fit a full pipeline, using only of n_train datapoints from features_train/labels_train
     
@@ -134,23 +134,7 @@ def fit_n_train(features_train, labels_train, preproc_init, classify_init, prepr
 #     print(train_size, sss, len(train_subset_inx), train_subset_inx)
     
     features_train_subset, labels_train_subset = features_train[train_subset_inx], labels_train[train_subset_inx]
-    pipe = fit_pipe(features_train_subset, labels_train_subset, preproc_init, classify_init, preproc_refit=preproc_refit)
+    pipe = fit_pipe(features_train_subset, labels_train_subset, preproc_init, classify_init, preproc_refit=preproc_refit, balance_sample_weights=balance_sample_weights, class_weights=class_weights)
     
     return pipe, n_train
 
-
-def get_balanced_sample_weights(labels):
-    """
-    Balances sample ways for classification
-    
-    RH/JZ 2022
-    
-    labels: np.array
-        Includes list of labels to balance the weights for classifier training
-    returns weights by samples
-    """
-    labels = labels.astype(np.int64)
-    vals, counts = np.unique(labels, return_counts=True)
-    weights = len(labels) / counts
-    sample_weights = weights[labels]
-    return sample_weights

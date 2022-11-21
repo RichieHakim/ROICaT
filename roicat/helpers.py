@@ -845,4 +845,40 @@ def find_paths(
     if natsorted:
         paths = natsort.natsorted(paths, alg=alg_ns)
     return paths
-        
+
+
+
+def get_balanced_class_weights(labels):
+    """
+    Balances sample ways for classification
+    
+    RH/JZ 2022
+    
+    labels: np.array
+        Includes list of labels to balance the weights for classifier training
+    returns weights by samples
+    """
+    labels = labels.astype(np.int64)
+    vals, counts = np.unique(labels, return_counts=True)
+    weights = len(labels) / counts
+    return weights
+
+def get_balanced_sample_weights(labels, class_weights=None):
+    """
+    Balances sample ways for classification
+    
+    RH/JZ 2022
+    
+    labels: np.array
+        Includes list of labels to balance the weights for classifier training
+    returns weights by samples
+    """
+#     print(type(class_weights), class_weights)
+    
+    if type(class_weights) is not np.ndarray and type(class_weights) is not np.array:
+        print('Warning: Class weights not pre-fit. Using provided sample labels.')
+        weights = get_balanced_class_weights(labels)
+    else:
+        weights = class_weights
+    sample_weights = weights[labels]
+    return sample_weights
