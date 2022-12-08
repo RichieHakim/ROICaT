@@ -27,7 +27,7 @@ dependencies:
     - natsort
     - jupyter
     - paramiko
-    - PyYAML
+    - pyyaml==5.4.1
     - hdfdict==0.3.1
     - optuna==3.0.1
     - joblib==1.1.0
