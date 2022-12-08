@@ -194,6 +194,7 @@ class ROInet_embedder:
         persistentWorkers_dataloader=True,
         prefetchFactor_dataloader=2,
         transforms=None,
+        img_size_out=(224, 224)
     ):
         """
         Generate a dataloader for the given ROI_images.
@@ -228,9 +229,11 @@ class ROInet_embedder:
             transforms (torchvision.transforms):
                 (Optional) The transforms to use for the dataloader.
                 If None, will only scale dynamic range (to 0-1),
-                 resize (to 224x224), and tile channels (to 3).
+                 resize (to img_size_out dimensions), and tile channels (to 3).
                  These are the minimum transforms required to pass
                  images through the network.
+            img_size_out (tuple of ints):
+                (Optional) Image output dimensions of dataloader if transforms is None.
         """
         if numWorkers_dataloader == -1:
             numWorkers_dataloader = mp.cpu_count()
@@ -268,7 +271,7 @@ class ROInet_embedder:
             transforms = torch.nn.Sequential(
                 ScaleDynamicRange(scaler_bounds=(0,1)),
                 torchvision.transforms.Resize(
-                    size=(224, 224),
+                    size=img_size_out,
                     interpolation=torchvision.transforms.InterpolationMode.BILINEAR
                 ), 
                 TileChannels(dim=0, n_channels=3),

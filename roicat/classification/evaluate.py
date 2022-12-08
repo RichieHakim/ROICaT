@@ -24,7 +24,7 @@ class Evaluation():
         cm = helpers.confusion_matrix(preds, y.astype(np.int32), counts=counts)
         return cm
         
-    def score_classifier_logreg(self, x, y):
+    def score_classifier_logreg(self, x, y, class_weights=None):
         """
         Generate a classification score for dataset based on the classifier
         
@@ -34,23 +34,7 @@ class Evaluation():
         X_eval: Head from which to classify examples
         y_eval: True labels for examples for evaluation
         """
-        acc = self.classifier.score(x, y.astype(np.int32), sample_weight=get_balanced_sample_weights(y.astype(np.int32)))
+        acc = self.classifier.score(x, y.astype(np.int32), sample_weight=helpers.get_balanced_sample_weights(y.astype(np.int32), class_weights=class_weights))
         return acc
     
     # =========================
-
-def get_balanced_sample_weights(labels):
-    """
-    Balances sample ways for classification
-    
-    RH/JZ 2022
-    
-    labels: np.array
-        Includes list of labels to balance the weights for classifier training
-    returns weights by samples
-    """
-    labels = labels.astype(np.int64)
-    vals, counts = np.unique(labels, return_counts=True)
-    weights = len(labels) / counts
-    sample_weights = weights[labels]
-    return sample_weights

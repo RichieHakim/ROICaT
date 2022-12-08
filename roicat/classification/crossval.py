@@ -59,7 +59,7 @@ class CrossValidation():
         return list(zip(self.split_x_tr, self.split_y_tr, self.split_x_val, self.split_y_val))
     
 
-def split_loop_c(cv, preproc_init, classifier_kwargs, preproc_refit=True, c_lst=[1, 0.1, 0.01]):
+def split_loop_c(cv, preproc_init, classifier_kwargs, preproc_refit=True, c_lst=[1, 0.1, 0.01], class_weights=None):
     """
     Return a list of zipped validation splits for x/y, training/validation data
     for validation iteration
@@ -88,14 +88,14 @@ def split_loop_c(cv, preproc_init, classifier_kwargs, preproc_refit=True, c_lst=
         for tmp_trainp_X, tmp_trainp_y, tmp_val_X, tmp_val_y in tqdm(cv.get_inx_data()):
             
             classify_init = LogisticRegression(**classifier_kwargs, C=c)
-            pipe = pipeline.fit_pipe(tmp_trainp_X, tmp_trainp_y, preproc_init, classify_init, preproc_refit=preproc_refit)
+            pipe = pipeline.fit_pipe(tmp_trainp_X, tmp_trainp_y, preproc_init, classify_init, preproc_refit=preproc_refit, class_weights=class_weights)
             
             evaluator = evaluate.Evaluation(pipe.pipeline)
             cm_train.append(evaluator.confusion_matrix(tmp_trainp_X, tmp_trainp_y))
             cm_val.append(evaluator.confusion_matrix(tmp_val_X, tmp_val_y))
 
-            acc_train.append(evaluator.score_classifier_logreg(tmp_trainp_X, tmp_trainp_y))
-            acc_val.append(evaluator.score_classifier_logreg(tmp_val_X, tmp_val_y))
+            acc_train.append(evaluator.score_classifier_logreg(tmp_trainp_X, tmp_trainp_y, class_weights=class_weights))
+            acc_val.append(evaluator.score_classifier_logreg(tmp_val_X, tmp_val_y, class_weights=class_weights))
         
         results_dct[f'cm_{c}'] = (np.round(np.mean(cm_train,axis=0),2), np.round(np.mean(cm_val,axis=0),2), np.round(np.mean(acc_train, axis=0),2), np.round(np.mean(acc_val, axis=0),2))
     
