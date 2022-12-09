@@ -44,16 +44,6 @@ class Data_roicat:
         self,
         verbose=True,
     ):       
-        # self.FOV_images = None
-        # self.FOV_height = None
-        # self.FOV_width = None
-        # self.spatialFootprints = None
-        # self.ROI_images = None
-        # self.n_roi = None
-        # self.n_roi_total = None
-        # self.n_sessions = None
-        # self.centroids = None
-        # self.um_per_pixel = None
         self._verbose = verbose
     
     #########################################################
@@ -151,10 +141,15 @@ class Data_roicat:
          check to make sure the new values are the same.
 
         Args:
-            class_labels (list of np.ndarray):
-                List of numpy arrays of shape (n_roi,).
-                Each element is an imaging session and is associated
-                 with the n-th element of the self.ROI_images list.
+            class_labels ((list of np.ndarray) or (list of str to paths) or None):
+                Optional. If None, class labels are not set.
+                If list of np.ndarray, each element should be
+                 1D integer array of length n_roi specifying
+                 the class label for each ROI.
+                If list of str, each element should be a path
+                 to a .npy file containing 
+                 of length n_roi specifying the class label 
+                 for each ROI.
                 Label values will be 'squeezed' to remove non-contiguous
                  integer values: [2, 4, 6, 7] -> [0, 1, 2, 3].
             n_classes (int):
@@ -165,6 +160,14 @@ class Data_roicat:
 
         print(f"Starting: Importing class labels") if self._verbose else None
 
+        ## If class_labels is list of str, load the numpy arrays
+        if isinstance(class_labels, list) and all([isinstance(lbls, str) for lbls in class_labels]):
+            print("RH WARNING: class_labels is a list of strings. Assuming each string is a path to a .npy file containing the class labels as a 1D integer array.")
+            class_labels = [np.load(lbls) for lbls in class_labels]
+            assert all([isinstance(lbls, np.ndarray) for lbls in class_labels]), f"Class labels should be a list of 1-D numpy arrays. First element of list is of type {type(class_labels[0])}"
+            assert all([lbls.ndim==1 for lbls in class_labels]), f"Class labels should be a list of 1-D numpy arrays. First element of list is of shape {class_labels[0].shape}"
+            class_labels = [lbls.astype(np.int) for lbls in class_labels]
+            
         ## Check the validity of the input
         if isinstance(class_labels, np.ndarray):
             print("RH WARNING: class_labels is a numpy array. Assuming n_sessions==1 and wrapping array in a list.")
@@ -339,6 +342,31 @@ class Data_roicat:
             assert self.n_sessions == n_sessions, f"n_sessions is already set to {self.n_sessions} but new value is {n_sessions}"
 
         print(f"Completed: Set FOV_images for {len(FOV_images)} sessions successfully.") if self._verbose else None
+
+
+    def set_FOVHeightWidth(
+        self,
+        FOV_height: int,
+        FOV_width: int,
+    ):
+        """
+        Sets the FOV_height and FOV_width attributes.
+
+        Args:
+            FOV_height (int):
+                The height of the FOV in pixels.
+            FOV_width (int):
+                The width of the FOV in pixels.
+        """
+        ## Check inputs
+        assert isinstance(FOV_height, int), f"RH ERROR: FOV_height must be an integer."
+        assert isinstance(FOV_width, int), f"RH ERROR: FOV_width must be an integer."
+
+        ## Set attributes
+        self.FOV_height = FOV_height
+        self.FOV_width = FOV_width
+
+        print(f"Completed: Set FOV_height and FOV_width successfully.") if self._verbose else None
 
 
     def _checkValidity_spatialFootprints_and_FOVImages(self, verbose=None):
@@ -616,6 +644,7 @@ class Data_suite2p(Data_roicat):
         centroid_method = 'centerOfMass',
 
         class_labels=None,
+        FOV_height_width=None,
         
         verbose=True,
     ):
@@ -624,24 +653,49 @@ class Data_suite2p(Data_roicat):
         Initializes the class for importing FOV images,
          spatial footprints and prepareing ROI images.
         Args:
-            paths_stat (list of str or pathlib.Path):
+            paths_statFiles (list of str or pathlib.Path):
                 List of paths to the stat.npy files.
                 Elements should be one of: str, pathlib.Path,
                  list of str or list of pathlib.Path
-            paths_ops (list of str or pathlib.Path):
-                Optional. Only used to get FOV images.
+            paths_opsFiles (list of str or pathlib.Path):
                 List of paths to the ops.npy files.
                 Elements should be one of: str, pathlib.Path,
                  list of str or list of pathlib.Path
+                Optional. 
+                Used to get FOV_images, FOV_height,
+                 FOV_width, and shifts (if old matlab ops file).
             um_per_pixel (float):
+                Resolution of imaging field of view.
                 'micrometers per pixel' of the imaging field
                   of view.
+            new_or_old_suite2p (str):
+                Type of suite2p output files. Matlab=old, Python=new.
+                Should be: 'new' or 'old'.
+            out_height_width (tuple of int):
+                Height and width of output ROI images.
+                Should be: (int, int) (y, x).                
+            class_labels ((list of np.ndarray) or (list of str to paths) or None):
+                Optional. 
+                If None, class labels are not set.
+                If list of np.ndarray, each element should be
+                 1D integer array of length n_roi specifying
+                 the class label for each ROI.
+                If list of str, each element should be a path
+                 to a .npy file containing 
+                 of length n_roi specifying the class label 
+                 for each ROI.
+            centroid_method (str):
+                Method for calculating centroid of ROI.
+                Should be: 'centerOfMass' or 'median'.
+            FOV_height_width (tuple of int):
+                Optional. If None, paths_opsFiles must be
+                 provided to get FOV height and width.
             verbose (bool):
                 If True, prints results from each function.
         """
 
         self.paths_stat = fix_paths(paths_statFiles)
-        self.paths_ops = fix_paths(paths_opsFiles)
+        self.paths_ops = fix_paths(paths_opsFiles) if paths_opsFiles is not None else None
         self.n_sessions = len(self.paths_stat)
 
         self._verbose = verbose
@@ -650,8 +704,19 @@ class Data_suite2p(Data_roicat):
         self.shifts = self._make_shifts(paths_ops=self.paths_ops, new_or_old_suite2p=new_or_old_suite2p)
 
         ## Import FOV images
-        FOV_images = self.import_FOV_images(type_meanImg=type_meanImg) if FOV_images is None else FOV_images
-        self.set_FOV_images(FOV_images=FOV_images)
+        ### Assert only one of self.paths_ops, FOV_images, or FOV_height_width is provided
+        assert sum([self.paths_ops is not None, FOV_images is not None, FOV_height_width is not None]) == 1, "RH ERROR: One (and only one) of self.paths_ops, FOV_images, or FOV_height_width must be provided."
+
+        ### Import FOV images if self.paths_ops or FOV_images is provided
+        if self.paths_ops is not None:
+            FOV_images = self.import_FOV_images(type_meanImg=type_meanImg)
+        ### Set FOV height and width if FOV_height_width is provided
+        elif FOV_height_width is not None:
+            assert isinstance(FOV_height_width, tuple), "RH ERROR: FOV_height_width must be a tuple of length 2."
+            assert len(FOV_height_width) == 2, "RH ERROR: FOV_height_width must be a tuple of length 2."
+            assert all([isinstance(x, int) for x in FOV_height_width]), "RH ERROR: FOV_height_width must be a tuple of length 2 of integers."
+            self.set_FOVHeightWidth(FOV_height=FOV_height_width[0], FOV_width=FOV_height_width[1])
+        self.set_FOV_images(FOV_images=FOV_images) if FOV_images is not None else None
 
         ## Import spatial footprints
         spatialFootprints = self.import_spatialFootprints()
@@ -668,7 +733,7 @@ class Data_suite2p(Data_roicat):
 
         ## Make class labels
         self.set_class_labels(class_labels=class_labels) if class_labels is not None else None
-                
+
 
     def import_FOV_images(
         self,
@@ -773,11 +838,14 @@ class Data_suite2p(Data_roicat):
         return spatialFootprints
     
 
-    @staticmethod
-    def _make_shifts(paths_ops: list, new_or_old_suite2p: str='new'):
+    def _make_shifts(self, paths_ops: list=None, new_or_old_suite2p: str='new'):
         """
         Helper function to make the shifts for the old suite2p indexing.
         """
+        if paths_ops is None:
+            shifts = [np.array([0,0], dtype=np.uint64)]*self.n_sessions
+            return shifts
+
         if new_or_old_suite2p == 'old':
             shifts = [np.array([op['yrange'].min()-1, op['xrange'].min()-1], dtype=np.uint64) for op in [np.load(path, allow_pickle=True)[()] for path in paths_ops]]
         elif new_or_old_suite2p == 'new':
@@ -829,7 +897,7 @@ class Data_caiman(Data_roicat):
         um_per_pixel=1.0,
         
         out_height_width=[36,36],        
-        centroid_method = 'centroid',
+        centroid_method = 'median',
         
         verbose=True 
     ):
@@ -867,7 +935,7 @@ class Data_caiman(Data_roicat):
             self.um_per_pixel (float):
                 Microns per pixel of the FOV.
             self.centroid_method (str):
-                Either 'centroid' or 'median'. Centroid computes the weighted
+                Either 'centerOfMass' or 'median'. Centroid computes the weighted
                 mean location of an ROI. Median takes the median of all x and y
                 pixels of an ROI.
             self._verbose (bool):
@@ -1124,7 +1192,7 @@ class Data_caiman(Data_roicat):
         """
         sf_rs = sparse.COO(sf).reshape((sf.shape[0], FOV_height, FOV_width))
         w_wt, h_wt = sf_rs.sum(axis=2), sf_rs.sum(axis=1)
-        if self.centroid_method == 'centroid':
+        if self.centroid_method == 'centerOfMass':
             h_mean = (((w_wt*np.arange(w_wt.shape[1]).reshape(1,-1))).sum(1)/w_wt.sum(1)).todense()
             w_mean = (((h_wt*np.arange(h_wt.shape[1]).reshape(1,-1))).sum(1)/h_wt.sum(1)).todense()
         elif self.centroid_method == 'median':
