@@ -602,10 +602,7 @@ class Data_suite2p(Data_roicat):
     In particular stat.npy and ops.npy files.
     RH, JZ 2022
     """
-    def __init__(self):
-        super().__init__()
-
-    def init_tracking(
+    def __init__(
         self,
         paths_statFiles,
         paths_opsFiles=None,
@@ -617,11 +614,15 @@ class Data_suite2p(Data_roicat):
         FOV_images=None,
         
         centroid_method = 'centerOfMass',
+
+        class_labels=None,
         
         verbose=True,
     ):
+        super().__init__()
         """
-        Initializes the class for importing spatial footprints.
+        Initializes the class for importing FOV images,
+         spatial footprints and prepareing ROI images.
         Args:
             paths_stat (list of str or pathlib.Path):
                 List of paths to the stat.npy files.
@@ -664,7 +665,10 @@ class Data_suite2p(Data_roicat):
         
         ## Transform spatial footprints to ROI images
         self._transform_spatialFootprints_to_ROIImages(out_height_width=out_height_width)
-        
+
+        ## Make class labels
+        self.set_class_labels(class_labels=class_labels) if class_labels is not None else None
+                
 
     def import_FOV_images(
         self,
