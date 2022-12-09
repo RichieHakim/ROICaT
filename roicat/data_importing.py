@@ -10,6 +10,24 @@ import sparse
 from . import helpers
 
 
+"""
+Classes for importing data into the roicat package.
+
+API Conventions:
+    - Data_roicat is the super class for all data objects.
+    - Data_roicat can be used to make a custom data object.
+    - Subclasses like Data_suite2p and Data_caiman should be used
+        to import data from files and convert it to a
+        Data_roicat ingestable format.
+    - Subclass import methods should have the following properties:
+        - Method name: .import_thing()
+        - Should use a self.path attribute to find the data.
+        - Should return a variable.
+    - Subclass __init__(...) should be mostly empty. Only set verbose.
+    - Subclass should have initialization methods for each pipeline
+        type: .init_tracking(), .init_classification(), etc.
+"""
+
 ############################################################################################################################
 ####################################### SUPER CLASS FOR ALL DATA OBJECTS ###################################################
 ############################################################################################################################
@@ -584,7 +602,10 @@ class Data_suite2p(Data_roicat):
     In particular stat.npy and ops.npy files.
     RH, JZ 2022
     """
-    def __init__(
+    def __init__(self):
+        super().__init__()
+
+    def init_tracking(
         self,
         paths_statFiles,
         paths_opsFiles=None,
@@ -595,7 +616,7 @@ class Data_suite2p(Data_roicat):
         type_meanImg='meanImgE',
         FOV_images=None,
         
-        centroid_method = 'centroid',
+        centroid_method = 'centerOfMass',
         
         verbose=True,
     ):
@@ -619,36 +640,29 @@ class Data_suite2p(Data_roicat):
         """
 
         self.paths_stat = fix_paths(paths_statFiles)
+        self.paths_ops = fix_paths(paths_opsFiles)
         self.n_sessions = len(self.paths_stat)
 
-        self.statFiles = None
-
-        self.um_per_pixel = um_per_pixel
-        self._new_or_old_suite2p = new_or_old_suite2p
-        self.centroid_method = centroid_method
         self._verbose = verbose
         
         ## shifts are applied to convert the 'old' matlab version of suite2p indexing (where there is an offset and its 1-indexed)
-        if paths_opsFiles is not None:
-            self.paths_ops = fix_paths(paths_opsFiles)
-            if self._new_or_old_suite2p == 'old':
-                self.shifts = [np.array([op['yrange'].min()-1, op['xrange'].min()-1], dtype=np.uint64) for op in [np.load(path, allow_pickle=True)[()] for path in self.paths_ops]]
-            else:
-                self.shifts = [np.array([0,0], dtype=np.uint64)]*len(paths_statFiles)
-            
-        else:
-            self.paths_ops = None
-            self.shifts = [np.array([0,0], dtype=np.uint64)]*len(paths_statFiles)
+        self.shifts = self._make_shifts(paths_ops=self.paths_ops, new_or_old_suite2p=new_or_old_suite2p)
 
+        ## Import FOV images
         FOV_images = self.import_FOV_images(type_meanImg=type_meanImg) if FOV_images is None else FOV_images
         self.set_FOV_images(FOV_images=FOV_images)
 
+        ## Import spatial footprints
         spatialFootprints = self.import_spatialFootprints()
         self.set_spatialFootprints(spatialFootprints=spatialFootprints, um_per_pixel=um_per_pixel)
 
+        ## Make sessionID
         self._make_sessionID_concat()
-        self._make_spatialFootprintCentroids()
+
+        ## Make spatial footprint centroids
+        self._make_spatialFootprintCentroids(method=centroid_method)
         
+        ## Transform spatial footprints to ROI images
         self._transform_spatialFootprints_to_ROIImages(out_height_width=out_height_width)
         
 
@@ -735,6 +749,8 @@ class Data_suite2p(Data_roicat):
         assert len(self.paths_stat) > 0, "RH ERROR: paths_stat is empty. Please set paths_stat before calling this function."
         assert all([Path(path).exists() for path in self.paths_stat]), "RH ERROR: One or more paths in paths_stat do not exist."
 
+        assert hasattr(self, 'shifts'), "RH ERROR: shifts is not defined. Please call ._make_shifts before calling this function."
+
         statFiles = [np.load(path, allow_pickle=True) for path in self.paths_stat]
 
         n = self.n_sessions
@@ -752,6 +768,20 @@ class Data_suite2p(Data_roicat):
 
         return spatialFootprints
     
+
+    @staticmethod
+    def _make_shifts(paths_ops: list, new_or_old_suite2p: str='new'):
+        """
+        Helper function to make the shifts for the old suite2p indexing.
+        """
+        if new_or_old_suite2p == 'old':
+            shifts = [np.array([op['yrange'].min()-1, op['xrange'].min()-1], dtype=np.uint64) for op in [np.load(path, allow_pickle=True)[()] for path in paths_ops]]
+        elif new_or_old_suite2p == 'new':
+            shifts = [np.array([0,0], dtype=np.uint64)]*len(paths_ops)
+        else:
+            raise ValueError(f"RH ERROR: new_or_old_suite2p should be 'new' or 'old'. Got {new_or_old_suite2p}")
+        return shifts
+
     @staticmethod
     def _transform_statFile_to_spatialFootprints(frame_height_width, stat, dtype, isInt, shifts=(0,0)):
         """
