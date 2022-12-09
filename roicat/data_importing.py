@@ -371,9 +371,93 @@ class Data_roicat:
         return completeness
 
 
+    def _make_sessionID_concat(self):
+        """
+        Creates a boolean array of shape (n_roi_total, n_sessions) 
+         where each row is a boolean vector indicating which session(s) 
+         the ROI was present in.
+        Use the self.n_roi attribute to determine which rows belong to 
+         which session.
+        """
+        ## Check that n_roi is set
+        assert hasattr(self, 'n_roi'), f"RH ERROR: n_roi must be set before sessionID_concat can be created."
+        ## Check that n_roi is the correct length
+        assert len(self.n_roi) == self.n_sessions, f"RH ERROR: n_roi must be the same length as n_sessions."
+        ## Check that n_roi_total is correct
+        assert sum(self.n_roi) == self.n_roi_total, f"RH ERROR: n_roi must sum to n_roi_total."
+        ## Create sessionID_concat
+        self.sessionID_concat = np.vstack([np.array([helpers.idx2bool(i_sesh, length=self.n_sessions)]*n) for i_sesh, n in enumerate(self.n_roi)])
+        print(f"Completed: Created sessionID_concat.") if self._verbose else None
 
-    # def get_sess_id_concat(self):
-    #     self.sessionID_concat = np.vstack([np.array([helpers.idx2bool(i_sesh, length=len(self.spatialFootprints))]*sesh.shape[0]) for i_sesh, sesh in enumerate(self.spatialFootprints)])
+
+    def _make_spatialFootprints_centroids(self, method='centerOfMass'):
+        """
+        Gets the centroids of a sparse array of flattented spatial footprints.
+        Calculates the centroid position as the center of mass of the ROI.
+        JZ 2022
+
+        Args:
+            method (str):
+                Method to use to calculate the centroid.
+                Options:
+                    'centerOfMass':
+                        Calculates the centroid position as the mean center of
+                         mass of the ROI.
+                    'median':
+                        Calculates the centroid position as the median center of
+                         mass of the ROI.
+
+        Input Attributes:
+            self.spatialFootprints (scipy.sparse.csr_matrix):
+                Spatial footprints.
+                Shape: (n_roi, FOV_height*FOV_width) in C flattened format.
+            self.FOV_height (int):
+                Height of the FOV.
+            self.FOV_width (int):
+                Width of the FOV.
+
+        Returns:
+            self.centroids (np.ndarray):
+                Centroids of the ROIs.
+                Shape: (2, n_roi). (y, x) coordinates.
+        """
+        ## Check that sf is a list of csr sparse arrays
+        assert isinstance(self.spatialFootprints, list), f"RH ERROR: spatialFootprints must be a list of scipy.sparse.csr_matrix."
+        assert all([isinstance(sf, scipy.sparse.csr_matrix) for sf in self.spatialFootprints]), f"RH ERROR: spatialFootprints must be a list of scipy.sparse.csr_matrix."
+        ## Check that FOV_height and FOV_width are set
+        assert hasattr(self, 'FOV_height') and hasattr(self, 'FOV_width'), f"RH ERROR: FOV_height and FOV_width must be set before centroids can be calculated."
+        ## Check that sf is the correct shape
+        assert all([sf.shape[1] == self.FOV_height*self.FOV_width for sf in self.spatialFootprints]), f"RH ERROR: spatialFootprints must have shape (n_roi, FOV_height*FOV_width)."
+        ## Check that centroid_method is set
+        assert method in ['centerOfMass', 'median'], f"RH ERROR: centroid_method must be one of ['centerOfMass', 'median']."
+
+        ## Calculate centroids
+        sf = self.spatialFootprints
+        FOV_height, FOV_width = self.FOV_height, self.FOV_width
+        ## Reshape sf to (n_roi, FOV_height, FOV_width)
+        sf_rs = [sparse.COO(s).reshape((s.shape[0], FOV_height, FOV_width), order='C') for s in sf]
+        ## Calculate the sum of the weights along each axis
+        y_w, x_w = [s.sum(axis=2) for s in sf_rs], [s.sum(axis=1) for s in sf_rs]
+        ## Calculate the centroids
+        if method == 'centerOfMass':
+            y_cent = [(((w*np.arange(w.shape[1]).reshape(1,-1))).sum(1)/(w.sum(1)+1e-12)).todense() for w in y_w]
+            x_cent = [(((w*np.arange(w.shape[1]).reshape(1,-1))).sum(1)/(w.sum(1)+1e-12)).todense() for w in x_w]
+        elif method == 'median':
+            y_cent = [((((w!=0)*np.arange(w.shape[1]).reshape(1,-1, order='C'))).todense()).astype(np.float32) for w in y_w]
+            y_cent = [np.ma.masked_array(w, mask=(w==0)).filled(np.nan) for w in y_cent]
+            y_cent = [np.nanmedian(w, axis=1) for w in y_cent]
+            x_cent = [((((w!=0)*np.arange(w.shape[1]).reshape(1,-1, order='C'))).todense()).astype(np.float32) for w in x_w]
+            x_cent = [np.ma.masked_array(w, mask=(w==0)).filled(np.nan) for w in x_cent]
+            x_cent = [np.nanmedian(w, axis=1) for w in x_cent]
+
+        ## Round to nearest integer
+        y_cent = [np.round(h).astype(np.int64) for h in y_cent]
+        x_cent = [np.round(w).astype(np.int64) for w in x_cent]
+        
+        ## Concatenate and store
+        self.centroids = [np.stack([y, x], axis=1) for y, x in zip(y_cent, x_cent)]
+        print(f"Completed: Created centroids.") if self._verbose else None
+        
 
     def __repr__(self):
         ## Check which attributes are set
@@ -817,7 +901,7 @@ class Data_caiman(Data_roicat):
             self.spatialFootprints (list):
                 List of spatial footprints.
                 Each element is a scipy.sparse.csr_matrix that contains
-                 the flattened ('C' order) spatial footprint masks for
+                 the flattened (order='C', C-memory order) spatial footprint masks for
                  each ROI in a given session. Each element is a session,
                  and each element has shape (n_roi, frame_height_width[0]*frame_height_width[1]).
             self.sessionID_concat (np.ndarray):
