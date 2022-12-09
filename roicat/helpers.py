@@ -12,6 +12,7 @@ import torch
 import scipy.sparse
 import sparse
 import hdfdict
+from tqdm import tqdm
 
 """
 All of these are from basic_neural_processing_modules
@@ -944,7 +945,175 @@ def find_paths(
         paths = natsort.natsorted(paths, alg=alg_ns)
     return paths
 
+######################################################################################################################################
+######################################################## FILE HELPERS ################################################################
+######################################################################################################################################
 
+def hash_file(path, type_hash='MD5', buffer_size=65536):
+    """
+    Gets hash of a file.
+    Based on: https://stackoverflow.com/questions/22058048/hashing-a-file-in-python
+    RH 2022
+
+    Args:
+        path (str):
+            Path to file to be hashed.
+        type_hash (str):
+            Type of hash to use. Can be:
+                'MD5'
+                'SHA1'
+                'SHA256'
+                'SHA512'
+        buffer_size (int):
+            Buffer size for reading file.
+            65536 corresponds to 64KB.
+
+    Returns:
+        hash_val (str):
+            Hash of file.
+    """
+    import hashlib
+
+    if type_hash == 'MD5':
+        hasher = hashlib.md5()
+    elif type_hash == 'SHA1':
+        hasher = hashlib.sha1()
+    elif type_hash == 'SHA256':
+        hasher = hashlib.sha256()
+    elif type_hash == 'SHA512':
+        hasher = hashlib.sha512()
+    else:
+        raise ValueError(f'{type_hash} is not a valid hash type.')
+
+    with open(path, 'rb') as f:
+        while True:
+            data = f.read(buffer_size)
+            if not data:
+                break
+            hasher.update(data)
+
+    hash_val = hasher.hexdigest()
+        
+    return hash_val
+    
+
+def download_file(
+    url, 
+    path_save, 
+    check_local_first=True, 
+    check_hash=False, 
+    hash_type='MD5', 
+    hash_hex=None,
+    mkdir=False,
+    allow_overwrite=True,
+    write_mode='wb',
+    verbose=True,
+    chunk_size=1024,
+):
+    """
+    Download a file from a URL to a local path using requests.
+    Allows for checking if file already exists locally and
+    checking the hash of the downloaded file against a provided hash.
+    RH 2022
+
+    Args:
+        url (str):
+            URL of file to download.
+        path_save (str):
+            Path to save file to.
+        check_local_first (bool):
+            If True, checks if file already exists locally.
+            If True and file exists locally, plans to skip download.
+            If True and check_hash is True, checks hash of local file.
+             If hash matches, skips download. If hash does not match, 
+             downloads file.
+        check_hash (bool):
+            If True, checks hash of local or downloaded file against
+             hash_hex.
+        hash_type (str):
+            Type of hash to use. Can be:
+                'MD5', 'SHA1', 'SHA256', 'SHA512'
+        hash_hex (str):
+            Hash to compare to. In hex format (e.g. 'a1b2c3d4e5f6...').
+            Can be generated using hash_file() or hashlib and .hexdigest().
+            If check_hash is True, hash_hex must be provided.
+        mkdir (bool):
+            If True, creates parent directory of path_save if it does not exist.
+        write_mode (str):
+            Write mode for saving file. Should be one of:
+                'wb' (write binary)
+                'ab' (append binary)
+                'xb' (write binary, fail if file exists)
+        verbose (bool):
+            If True, prints status messages.
+        chunk_size (int):
+            Size of chunks to download file in.
+    """
+    import os
+    import requests
+
+    # Check if file already exists locally
+    if check_local_first:
+        if os.path.isfile(path_save):
+            print(f'File already exists locally: {path_save}') if verbose else None
+            # Check hash of local file
+            if check_hash:
+                hash_local = hash_file(path_save, type_hash=hash_type)
+                if hash_local == hash_hex:
+                    print('Hash of local file matches provided hash_hex.') if verbose else None
+                    return True
+                else:
+                    print('Hash of local file does not match provided hash_hex.') if verbose else None
+                    print(f'Hash of local file: {hash_local}') if verbose else None
+                    print(f'Hash provided in hash_hex: {hash_hex}') if verbose else None
+                    print('Downloading file...') if verbose else None
+            else:
+                return True
+        else:
+            print(f'File does not exist locally: {path_save}. Will attempt download from {url}') if verbose else None
+
+    # Download file
+    try:
+        response = requests.get(url, stream=True)
+    except requests.exceptions.RequestException as e:
+        print(f'Error downloading file: {e}') if verbose else None
+        return False
+    # Check response
+    if response.status_code != 200:
+        print(f'Error downloading file. Response status code: {response.status_code}') if verbose else None
+        return False
+    # Create parent directory if it does not exist
+    prepare_filepath_for_saving(path_save, mkdir=mkdir, allow_overwrite=allow_overwrite)
+    # Download file with progress bar
+    total_size = int(response.headers.get('content-length', 0))
+    wrote = 0
+    with open(path_save, write_mode) as f:
+        with tqdm(total=total_size, disable=(verbose==False), unit='B', unit_scale=True, unit_divisor=1024) as pbar:
+            for data in response.iter_content(chunk_size):
+                wrote = wrote + len(data)
+                f.write(data)
+                pbar.update(len(data))
+    if total_size != 0 and wrote != total_size:
+        print("ERROR, something went wrong")
+        return False
+    # Check hash
+    if check_hash:
+        hash_local = hash_file(path_save, type_hash=hash_type)
+        if hash_local == hash_hex:
+            print('Hash of downloaded file matches hash_hex.') if verbose else None
+            return True
+        else:
+            print('Hash of downloaded file does not match hash_hex.') if verbose else None
+            print(f'Hash of downloaded file: {hash_local}') if verbose else None
+            print(f'Hash provided in hash_hex: {hash_hex}') if verbose else None
+            return False
+    else:
+        return True
+
+
+######################################################################################################################################
+###################################################### OTHER FUNCTIONS ###############################################################
+######################################################################################################################################
 
 def get_balanced_class_weights(labels):
     """
