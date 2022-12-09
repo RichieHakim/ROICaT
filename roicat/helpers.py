@@ -5,6 +5,7 @@ from pathlib import Path
 import copy
 import pickle
 import re
+import zipfile
 
 import numpy as np
 import torch
@@ -368,16 +369,113 @@ def idx_to_oneHot(arr, n_classes=None, dtype=None):
     oneHot[arange(len(arr)), arr] = True
     return oneHot
 
-def pickle_save(obj, path_save, mode='wb', mkdir=False, allow_overwrite=True):
-    Path(path_save).parent.mkdir(parents=True, exist_ok=True) if mkdir else None
-    assert allow_overwrite or not Path(path_save).exists(), f'{path_save} already exists.'
-    assert Path(path_save).parent.exists(), f'{Path(path_save).parent} does not exist.'
-    assert Path(path_save).parent.is_dir(), f'{Path(path_save).parent} is not a directory.'
-    with open(path_save, mode) as f:
-        pickle.dump(obj, f,)
-def pickle_load(filename, mode='rb'):
-    with open(filename, mode) as f:
-        return pickle.load(f)
+def prepare_filepath_for_saving(path, mkdir=False, allow_overwrite=True):
+    """
+    Checks if a file path is valid.
+    RH 2022
+
+    Args:
+        path (str):
+            Path to check.
+        mkdir (bool):
+            If True, creates parent directory if it does not exist.
+        allow_overwrite (bool):
+            If True, allows overwriting of existing file.
+    """
+    Path(path).parent.mkdir(parents=True, exist_ok=True) if mkdir else None
+    assert allow_overwrite or not Path(path).exists(), f'{path} already exists.'
+    assert Path(path).parent.exists(), f'{Path(path).parent} does not exist.'
+    assert Path(path).parent.is_dir(), f'{Path(path).parent} is not a directory.'
+
+def pickle_save(
+    obj, 
+    path_save, 
+    mode='wb', 
+    zipCompress=False, 
+    mkdir=False, 
+    allow_overwrite=True,
+    **kwargs_zipfile,
+):
+    """
+    Saves an object to a pickle file.
+    Allows for zipping of file.
+    Uses pickle.dump.
+    RH 2022
+
+    Args:
+        obj (object):
+            Object to save.
+        path_save (str):
+            Path to save object to.
+        mode (str):
+            Mode to open file in.
+            Can be:
+                'wb' (write binary)
+                'ab' (append binary)
+                'xb' (exclusive write binary. Raises FileExistsError if file already exists.)
+        zipCompress (bool):
+            If True, compresses pickle file using zipfileCompressionMethod.
+            This is similar to savez_compressed in numpy (with zipfile.ZIP_DEFLATED),
+             and is useful for saving redundant and/or sparse arrays objects.
+        mkdir (bool):
+            If True, creates parent directory if it does not exist.
+        allow_overwrite (bool):
+            If True, allows overwriting of existing file.        
+        kwargs_zipfile (dict):
+            Keyword arguments that will be passed into zipfile.ZipFile.
+            compression=zipfile.ZIP_DEFLATED by default.
+            See https://docs.python.org/3/library/zipfile.html#zipfile-objects.
+            Other options for 'compression' are (input can be either int or object):
+                0:  zipfile.ZIP_STORED (no compression)
+                8:  zipfile.ZIP_DEFLATED (usual zip compression)
+                12: zipfile.ZIP_BZIP2 (bzip2 compression) (usually not as good as ZIP_DEFLATED)
+                14: zipfile.ZIP_LZMA (lzma compression) (usually better than ZIP_DEFLATED but slower)
+    """
+    prepare_filepath_for_saving(path_save, mkdir=mkdir, allow_overwrite=allow_overwrite)
+
+    if len(kwargs_zipfile)==0:
+        kwargs_zipfile = {
+            'compression': zipfile.ZIP_DEFLATED,
+        }
+
+    if zipCompress:
+        with zipfile.ZipFile(path_save, 'w', **kwargs_zipfile) as f:
+            f.writestr('data', pickle.dumps(obj))
+    else:
+        with open(path_save, mode) as f:
+            pickle.dump(obj, f)
+
+def pickle_load(
+    filename, 
+    zipCompressed=False,
+    mode='rb'
+):
+    """
+    Loads a pickle file.
+    Allows for loading of zipped pickle files.
+    RH 2022
+
+    Args:
+        filename (str):
+            Path to pickle file.
+        zipCompressed (bool):
+            If True, then file is assumed to be a .zip file.
+            This function will first unzip the file, then
+             load the object from the unzipped file.
+        mode (str):
+            Mode to open file in.
+
+    Returns:
+        obj (object):
+            Object loaded from pickle file.
+    """
+    if zipCompressed:
+        with zipfile.ZipFile(filename, 'r') as f:
+            return pickle.loads(f.read('data'))
+    else:
+        with open(filename, mode) as f:
+            return pickle.load(f)
+
 
 
 def deep_update_dict(dictionary, key, val, in_place=False):

@@ -9,6 +9,248 @@ import sparse
 
 from . import helpers
 
+
+############################################################################################################################
+####################################### SUPER CLASS FOR ALL DATA OBJECTS ###################################################
+############################################################################################################################
+
+class Data_roicat:
+    """
+    Incase you want to make a custom data object,
+     you can use this class as a template to fill
+     in the required attributes.
+    RH 2022
+    """
+    def __init__(
+        self,
+        verbose=True,
+    ):       
+        # self.FOV_images = None
+        # self.FOV_height = None
+        # self.FOV_width = None
+        # self.spatialFootprints = None
+        # self.ROI_images = None
+        # self.n_roi = None
+        # self.n_roi_total = None
+        # self.n_sessions = None
+        # self.centroids = None
+        # self.um_per_pixel = None
+        self._verbose = verbose
+    
+    def set_ROI_images(
+        self,
+        ROI_images,
+    ):
+        """
+        Imports ROI images into the class.
+        Images are expected to be formated as a list of 
+         numpy arrays. Each element is an imaging session.
+         Each element is a numpy array of shape 
+         (n_roi, FOV_height, FOV_width).
+        This function will set the attributes:
+            self.ROI_images, self.n_roi, self.n_roi_total,
+             self.n_sessions.
+        If any of these attributes are already set, they will
+         check to make sure the new values are the same.
+
+        Args:
+            ROI_images (list of np.ndarray):
+                List of numpy arrays of shape (n_roi, FOV_height, FOV_width).
+        """
+
+        print(f"Starting: Importing ROI images") if self._verbose else None
+
+        ## Check the validity of the input
+        if isinstance(ROI_images, np.ndarray):
+            print("RH WARNING: ROI_images is a numpy array. Assuming n_sessions==1 and wrapping array in a list.")
+            ROI_images = [ROI_images]
+        assert isinstance(ROI_images, list), f"ROI_images should be a list. It is a {type(ROI_images)}"
+        assert all([isinstance(roi, np.ndarray) for roi in ROI_images]), f"ROI_images should be a list of numpy arrays. First element of list is of type {type(ROI_images[0])}"
+        assert all([roi.ndim==3 for roi in ROI_images]), f"ROI_images should be a list of numpy arrays of shape (n_roi, FOV_height, FOV_width). First element of list is of shape {ROI_images[0].shape}"
+        ### Assert that all the FOV heights and widths are the same
+        assert all([roi.shape[1]==ROI_images[0].shape[1] for roi in ROI_images]), f"All the FOV heights should be the same. First element of list is of shape {ROI_images[0].shape}"
+        assert all([roi.shape[2]==ROI_images[0].shape[2] for roi in ROI_images]), f"All the FOV widths should be the same. First element of list is of shape {ROI_images[0].shape}"
+            
+        ## Define some variables
+        n_sessions = len(ROI_images)
+        n_roi = [roi.shape[0] for roi in ROI_images]
+        n_roi_total = sum(n_roi)
+
+        ## Check that attributes match if they already exist as an attribute
+        if hasattr(self, 'n_sessions'):
+            assert self.n_sessions == n_sessions, f"n_sessions is already set to {self.n_sessions} but new value is {n_sessions}"
+        if hasattr(self, 'n_roi'):
+            assert self.n_roi == n_roi, f"n_roi is already set to {self.n_roi} but new value is {n_roi}"
+        if hasattr(self, 'n_roi_total'):
+            assert self.n_roi_total == n_roi_total, f"n_roi_total is already set to {self.n_roi_total} but new value is {n_roi_total}"
+
+        ## Set attributes
+        self.n_sessions = n_sessions
+        self.n_roi = n_roi
+        self.n_roi_total = n_roi_total
+        self.ROI_images = ROI_images
+        
+        print(f"Completed: Imported {n_sessions} sessions. Each session has {n_roi} ROIs. Total number of ROIs is {n_roi_total}.") if self._verbose else None
+
+    def set_class_labels(
+        self,
+        class_labels,
+        n_classes=None,
+    ):
+        """
+        Imports class labels into the class.
+        Class labels are expected to be formated as a list of 
+         numpy arrays. Each element is an imaging session and
+         is associated with the n-th element of the self.ROI_images
+         list.
+        Each element is a numpy array of shape (n_roi,).
+        Sets the attributes:
+            self.class_labels, self.n_classes, self.n_class_labels,
+            self.n_class_labels_total, self.unique_class_labels.
+        If any of these attributes are already set, they will
+         check to make sure the new values are the same.
+
+        Args:
+            class_labels (list of np.ndarray):
+                List of numpy arrays of shape (n_roi,).
+                Each element is an imaging session and is associated
+                 with the n-th element of the self.ROI_images list.
+                Label values will be 'squeezed' to remove non-contiguous
+                 integer values: [2, 4, 6, 7] -> [0, 1, 2, 3].
+            n_classes (int):
+                Optional.
+                Number of classes. If not provided, will be inferred
+                 from the class labels.
+        """
+
+        print(f"Starting: Importing class labels") if self._verbose else None
+
+        ## Check the validity of the input
+        if isinstance(class_labels, np.ndarray):
+            print("RH WARNING: class_labels is a numpy array. Assuming n_sessions==1 and wrapping array in a list.")
+            class_labels = [class_labels]
+        assert isinstance(class_labels, list), f"class_labels should be a list. It is a {type(class_labels)}"
+        assert all([isinstance(lbls, np.ndarray) for lbls in class_labels]), f"class_labels should be a list of 1-Dnumpy arrays. First element of list is of type {type(class_labels[0])}"
+        assert all([lbls.ndim==1 for lbls in class_labels]), f"class_labels should be a list of 1-D numpy arrays. First element of list is of shape {class_labels[0].shape}"
+        assert all([lbls.dtype==np.int for lbls in class_labels]), f"class_labels should be a list of 1-D numpy arrays of dtype np.int. First element of list is of dtype {class_labels[0].dtype}"
+        assert all([np.all(lbls>=0) for lbls in class_labels]), f"All class labels should be non-negative. Found negative values."
+
+        ## Define some variables
+        n_sessions = len(class_labels)
+        class_labels_cat = np.concatenate(class_labels)
+        class_labels_cat_squeezeInt = helpers.squeeze_integers(class_labels_cat)
+        unique_class_labels = np.unique(class_labels_cat)
+        if n_classes is not None:
+            assert len(unique_class_labels) <= n_classes, f"RH ERROR: User provided n_classes={n_classes} but there are {len(unique_class_labels)} unique class labels in the provided class_labels." if self._verbose else None
+        else:
+            n_classes = len(unique_class_labels)
+        n_class_labels = [lbls.shape[0] for lbls in class_labels]
+        n_class_labels_total = sum(n_class_labels)
+        class_labels_squeezeInt = [class_labels_cat_squeezeInt[sum(n_class_labels[:ii]):sum(n_class_labels[:ii+1])] for ii in range(n_sessions)]
+
+        ## Check that attributes match if they already exist as an attribute
+        if hasattr(self, 'n_sessions'):
+            assert self.n_sessions == n_sessions, f"n_sessions is already set to {self.n_sessions} but new value is {n_sessions}"
+        if hasattr(self, 'n_classes'):
+            assert self.n_classes == n_classes, f"n_classes is already set to {self.n_classes} but new value is {n_classes}"
+        if hasattr(self, 'n_class_labels'):
+            assert self.n_class_labels == n_class_labels, f"n_class_labels is already set to {self.n_class_labels} but new value is {n_class_labels}"
+        if hasattr(self, 'n_class_labels_total'):
+            assert self.n_class_labels_total == n_class_labels_total, f"n_class_labels_total is already set to {self.n_class_labels_total} but new value is {n_class_labels_total}"
+        if hasattr(self, 'unique_class_labels'):
+            assert np.array_equal(self.unique_class_labels, unique_class_labels), f"unique_class_labels is already set to {self.unique_class_labels} but new value is {unique_class_labels}"
+
+        ## Set attributes
+        self.class_labels = class_labels_squeezeInt
+        self.n_classes = n_classes
+        self.n_class_labels = n_class_labels
+        self.n_class_labels_total = n_class_labels_total
+        self.unique_class_labels = unique_class_labels
+
+        ## Check if label data shapes match ROI_image data shapes
+        self._checkValidity_classLabels_vs_ROIImages()
+
+        print(f"Completed: Imported labels for {n_sessions} sessions. Each session has {n_class_labels} class labels. Total number of class labels is {n_class_labels_total}.") if self._verbose else None
+
+    
+    def _checkValidity_classLabels_vs_ROIImages(self):
+        """
+        Checks that the class labels and the ROI images have the same
+         number of sessions and the same number of ROIs in each session.
+        """
+        ## Check num sessions
+        n_sessions_classLabels = len(self.class_labels)
+        n_sessions_ROIImages = len(self.ROI_images)
+        assert n_sessions_classLabels == n_sessions_ROIImages, f"RH ERROR: Number of sessions (list elements) in class_labels ({n_sessions_classLabels}) does not match number of sessions (list elements) in ROI_images ({n_sessions_ROIImages})."
+        ## Check num ROIs
+        n_ROIs_classLabels = [lbls.shape[0] for lbls in self.class_labels]
+        n_ROIs_ROIImages = [img.shape[0] for img in self.ROI_images]
+        assert all([l == r for l, r in zip(n_ROIs_classLabels, n_ROIs_ROIImages)]), f"RH ERROR: Number of ROIs in each session in class_labels ({n_ROIs_classLabels}) does not match number of ROIs in each session in ROI_images ({n_ROIs_ROIImages})."
+        print(f"Labels and ROI Images match in shapes: Class labels and ROI images have the same number of sessions and the same number of ROIs in each session.") if self._verbose else None
+    
+    # def get_sess_id_concat(self):
+    #     self.sessionID_concat = np.vstack([np.array([helpers.idx2bool(i_sesh, length=len(self.spatialFootprints))]*sesh.shape[0]) for i_sesh, sesh in enumerate(self.spatialFootprints)])
+
+    def __repr__(self):
+        ## Check which attributes are set
+        attr_to_print = {key: val for key,val in self.__dict__.items() if key in ['n_sessions', 'n_classes', 'n_class_labels', 'n_class_labels_total', 'unique_class_labels']}
+        return f"Data_roicat object: {attr_to_print}."
+    
+    def save(
+        self, 
+        path_save,
+        compress=False,
+        allow_overwrite=False,
+    ):
+        """
+        Save Data_roicat object to pickle file.
+        
+        Args:
+            save_path (str or pathlib.Path):
+                Path to save pickle file.
+        """
+        from pathlib import Path
+        ## Check if file already exists
+        if not allow_overwrite:
+            assert not Path(path_save).exists(), f"RH ERROR: File already exists: {path_save}. Set allow_overwrite=True to overwrite."
+
+        helpers.pickle_save(
+            obj=self,
+            path_save=path_save,
+            zipCompress=compress,
+            allow_overwrite=allow_overwrite,
+        )
+        print(f"Saved Data_roicat as a pickled object to {path_save}.") if self._verbose else None
+
+    @classmethod
+    def load(cls, path_load):
+        """
+        Load attributes from Data_roicat object from pickle file.
+        
+        Args:
+            path_load (str or pathlib.Path):
+                Path to pickle file.
+        
+        Returns:
+            Data_roicat object.
+        """
+        from pathlib import Path
+        assert Path(path_load).exists(), f"RH ERROR: File does not exist: {path_load}."
+        obj = helpers.pickle_load(path_load)
+        assert type(obj) is cls, f"RH ERROR: Loaded object is not a Data_roicat object. Loaded object is of type {type(obj)}."
+
+        ## Set attributes
+        for key, val in obj.__dict__.items():
+            setattr(cls, key, val)
+
+        print(f"Loaded Data_roicat object from {path_load}.") if obj._verbose else None
+
+
+
+############################################################################################################################
+############################## CUSTOM CLASSES FOR SUITE2P AND CAIMAN OUTPUT FILES ##########################################
+############################################################################################################################
+
 class Data_suite2p:
     """
     Class for handling suite2p output files and data.
@@ -670,30 +912,6 @@ class Data_caiman:
         return np.round(np.vstack([h_mean, w_mean])).astype(np.int64)
 
 
-class Data_custom:
-    """
-    Incase you want to make a custom data object,
-     you can use this class as a template to fill
-     in the required attributes.
-    RH 2022
-    """
-    def __init__(
-        self,
-    ):       
-        self.FOV_images = None
-        self.FOV_height = None
-        self.FOV_width = None
-        self.spatialFootprints = None
-        self.ROI_images = None
-        self.n_roi = None
-        self.n_roi_total = None
-        self.n_sessions = None
-        self.centroids = None
-        self.um_per_pixel = None
-        self._verbose = True
-    
-    def get_sess_id_concat(self):
-        self.sessionID_concat = np.vstack([np.array([helpers.idx2bool(i_sesh, length=len(self.spatialFootprints))]*sesh.shape[0]) for i_sesh, sesh in enumerate(self.spatialFootprints)])
 
 
 ####################################
