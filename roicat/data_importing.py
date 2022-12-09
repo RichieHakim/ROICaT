@@ -16,6 +16,7 @@ from . import helpers
 
 class Data_roicat:
     """
+    Super class for all data objects.
     Incase you want to make a custom data object,
      you can use this class as a template to fill
      in the required attributes.
@@ -37,9 +38,14 @@ class Data_roicat:
         # self.um_per_pixel = None
         self._verbose = verbose
     
+    #########################################################
+    ################# CLASSIFICATION ########################
+    #########################################################
+
     def set_ROI_images(
         self,
-        ROI_images,
+        ROI_images: list,
+        um_per_pixel: float=None,
     ):
         """
         Imports ROI images into the class.
@@ -56,11 +62,20 @@ class Data_roicat:
         Args:
             ROI_images (list of np.ndarray):
                 List of numpy arrays of shape (n_roi, FOV_height, FOV_width).
+            um_per_pixel (float):
+                The number of microns per pixel. This is used to
+                 resize the images to a common size.
         """
+
+        ## Warn if no um_per_pixel is provided
+        if um_per_pixel is None:
+            print("RH WARNING: No um_per_pixel provided. We recommend making an educated guess. Assuming 1.0 um per pixel. This will affect the embedding results.")
+            um_per_pixel = 1.0
 
         print(f"Starting: Importing ROI images") if self._verbose else None
 
-        ## Check the validity of the input
+        ## Check the validity of the inputs
+        ### Check ROI_images
         if isinstance(ROI_images, np.ndarray):
             print("RH WARNING: ROI_images is a numpy array. Assuming n_sessions==1 and wrapping array in a list.")
             ROI_images = [ROI_images]
@@ -70,6 +85,9 @@ class Data_roicat:
         ### Assert that all the FOV heights and widths are the same
         assert all([roi.shape[1]==ROI_images[0].shape[1] for roi in ROI_images]), f"All the FOV heights should be the same. First element of list is of shape {ROI_images[0].shape}"
         assert all([roi.shape[2]==ROI_images[0].shape[2] for roi in ROI_images]), f"All the FOV widths should be the same. First element of list is of shape {ROI_images[0].shape}"
+
+        self._check_um_per_pixel(um_per_pixel)
+        um_per_pixel = float(um_per_pixel)
             
         ## Define some variables
         n_sessions = len(ROI_images)
@@ -89,8 +107,9 @@ class Data_roicat:
         self.n_roi = n_roi
         self.n_roi_total = n_roi_total
         self.ROI_images = ROI_images
+        self.um_per_pixel = um_per_pixel
         
-        print(f"Completed: Imported {n_sessions} sessions. Each session has {n_roi} ROIs. Total number of ROIs is {n_roi_total}.") if self._verbose else None
+        print(f"Completed: Imported {n_sessions} sessions. Each session has {n_roi} ROIs. Total number of ROIs is {n_roi_total}. The um_per_pixel is {um_per_pixel} um per pixel.") if self._verbose else None
 
     def set_class_labels(
         self,
@@ -172,12 +191,25 @@ class Data_roicat:
 
         print(f"Completed: Imported labels for {n_sessions} sessions. Each session has {n_class_labels} class labels. Total number of class labels is {n_class_labels_total}.") if self._verbose else None
 
+    def _check_um_per_pixel(self, um_per_pixel):
+        ### Check um_per_pixel
+        assert isinstance(um_per_pixel, (int, float)), f"um_per_pixel should be a float. It is a {type(um_per_pixel)}"
+        assert um_per_pixel > 0, f"um_per_pixel should be a positive number. It is {um_per_pixel}"
+
+
     
-    def _checkValidity_classLabels_vs_ROIImages(self):
+    def _checkValidity_classLabels_vs_ROIImages(self, verbose=None):
         """
         Checks that the class labels and the ROI images have the same
          number of sessions and the same number of ROIs in each session.
         """
+        if verbose is None:
+            verbose = self._verbose
+
+        ## Check if class_labels and ROI_images exist
+        if not (hasattr(self, 'class_labels') and hasattr(self, 'ROI_images')):
+            print("Cannot check validity of class_labels and ROI_images because one or both do not exist as attributes.") if verbose else None
+            return False
         ## Check num sessions
         n_sessions_classLabels = len(self.class_labels)
         n_sessions_ROIImages = len(self.ROI_images)
@@ -186,14 +218,171 @@ class Data_roicat:
         n_ROIs_classLabels = [lbls.shape[0] for lbls in self.class_labels]
         n_ROIs_ROIImages = [img.shape[0] for img in self.ROI_images]
         assert all([l == r for l, r in zip(n_ROIs_classLabels, n_ROIs_ROIImages)]), f"RH ERROR: Number of ROIs in each session in class_labels ({n_ROIs_classLabels}) does not match number of ROIs in each session in ROI_images ({n_ROIs_ROIImages})."
-        print(f"Labels and ROI Images match in shapes: Class labels and ROI images have the same number of sessions and the same number of ROIs in each session.") if self._verbose else None
+        print(f"Labels and ROI Images match in shapes: Class labels and ROI images have the same number of sessions and the same number of ROIs in each session.") if verbose else None
+        return True
     
+    #########################################################
+    #################### TRACKING ###########################
+    #########################################################
+
+    def set_spatialFootprints(
+        self,
+        spatialFootprints: list,
+        um_per_pixel: float=None,
+    ):
+        """
+        Sets the spatialFootprints attribute.
+
+        Args:
+            spatialFootprints (list):
+                List of scipy.sparse.csr_matrix objects, one for
+                 each session. Each matrix should have shape
+                 (n_ROIs, FOV_height * FOV_width). Reshaping should
+                 be done with 'C' indexing (standard).
+            um_per_pixel (float):
+                The number of microns per pixel. This is used to
+                 resize the images to a common size.
+        """
+        ## Warn if no um_per_pixel is provided
+        if um_per_pixel is None:
+            print("RH WARNING: No um_per_pixel provided. We recommend making an educated guess. Assuming 1.0 um per pixel. This will affect the embedding results.")
+            um_per_pixel = 1.0
+
+        ## Check inputs
+        assert isinstance(spatialFootprints, list), f"RH ERROR: spatialFootprints must be a list."
+        assert all([scipy.sparse.issparse(sf) for sf in spatialFootprints]), f"RH ERROR: All elements in spatialFootprints must be scipy.sparse.csr_matrix objects."
+        if spatialFootprints[0].format != 'csr':
+            spatialFootprints = [sf.tocsr() for sf in spatialFootprints]
+        assert all([isinstance(sfp, scipy.sparse.csr_matrix) for sfp in spatialFootprints]), f"RH ERROR: All elements in spatialFootprints must be scipy.sparse.csr_matrix objects."
+
+        self._check_um_per_pixel(um_per_pixel)
+        um_per_pixel = float(um_per_pixel)
+
+        ## Get some variables
+        n_sessions = len(spatialFootprints)
+        n_roi = [sf.shape[0] for sf in spatialFootprints]
+        n_roi_total = np.sum(n_roi)
+
+        ## Check that attributes match if they already exist as an attribute
+        if hasattr(self, 'n_sessions'):
+            assert self.n_sessions == n_sessions, f"n_sessions is already set to {self.n_sessions} but new value is {n_sessions}"
+        if hasattr(self, 'n_roi'):
+            assert self.n_roi == n_roi, f"n_roi is already set to {self.n_roi} but new value is {n_roi}"
+        if hasattr(self, 'n_roi_total'):
+            assert self.n_roi_total == n_roi_total, f"n_roi_total is already set to {self.n_roi_total} but new value is {n_roi_total}"
+
+        ## Set attributes
+        self.spatialFootprints = spatialFootprints
+        self.um_per_pixel = um_per_pixel
+        self.n_sessions = n_sessions
+        self.n_roi = n_roi
+        self.n_roi_total = n_roi_total
+        print(f"Completed: Imported spatialFootprints for {len(spatialFootprints)} sessions.") if self._verbose else None
+
+
+    def set_FOV_images(
+        self,
+        FOV_images: list,
+    ):
+        """
+        Sets the FOV_images attribute.
+
+        Args:
+            FOV_images (list):
+                List of 2D numpy arrays, one for each session.
+                 Each array should have shape (FOV_height, FOV_width).
+        """
+        if isinstance(FOV_images, np.ndarray):
+            assert FOV_images.ndim == 3, f"RH ERROR: FOV_images must be a list of 2D numpy arrays."
+            FOV_images = [fov for fov in FOV_images]
+        ## Check inputs
+        assert isinstance(FOV_images, list), f"RH ERROR: FOV_images must be a list."
+        assert all([isinstance(img, np.ndarray) for img in FOV_images]), f"RH ERROR: All elements in FOV_images must be numpy arrays."
+        assert all([img.ndim == 2 for img in FOV_images]), f"RH ERROR: All elements in FOV_images must be 2D numpy arrays."
+        assert all([img.shape[0] == FOV_images[0].shape[0] for img in FOV_images]), f"RH ERROR: All elements in FOV_images must have the same height and width."
+        assert all([img.shape[1] == FOV_images[0].shape[1] for img in FOV_images]), f"RH ERROR: All elements in FOV_images must have the same height and width."
+
+        ## Set attributes
+        self.FOV_images = FOV_images
+        self.FOV_height = FOV_images[0].shape[0]
+        self.FOV_width = FOV_images[0].shape[1]
+
+        ## Get some variables
+        n_sessions = len(FOV_images)
+
+        ## Check that attributes match if they already exist as an attribute
+        if hasattr(self, 'n_sessions'):
+            assert self.n_sessions == n_sessions, f"n_sessions is already set to {self.n_sessions} but new value is {n_sessions}"
+
+        print(f"Completed: Imported FOV_images for {len(FOV_images)} sessions.") if self._verbose else None
+
+
+    def _checkValidity_spatialFootprints_and_FOVImages(self, verbose=None):
+        """
+        Checks that spatialFootprints and FOV_images are compatible.
+        """
+        if verbose is None:
+            verbose = self._verbose
+        if hasattr(self, 'spatialFootprints') and hasattr(self, 'FOV_images'):
+            assert len(self.spatialFootprints) == len(self.FOV_images), f"RH ERROR: spatialFootprints and FOV_images must have the same length."
+            assert all([sf.shape[1] == self.FOV_images[0].size for sf in self.spatialFootprints]), f"RH ERROR: spatialFootprints and FOV_images must have the same size."
+            print("Completed: spatialFootprints and FOV_images are compatible.") if verbose else None
+            return True
+        else:
+            print("Cannot check validity of spatialFootprints and FOV_images because one or both do not exist as attributes.") if verbose else None
+            return False
+
+    def check_completeness(self, verbose=True):
+        """
+        Checks which pipelines the data object is capable of running
+         given the attributes that have been set.
+        """
+        completeness = {}
+        ## Check classification inference:
+        ### ROI_images, um_per_pixel
+        if hasattr(self, 'ROI_images') and hasattr(self, 'um_per_pixel'):
+            completeness['classification_inference'] = True
+        else:
+            completeness['classification_inference'] = False
+        ## Check classification training:
+        ### ROI_images, um_per_pixel, class_labels
+        if hasattr(self, 'ROI_images') and hasattr(self, 'um_per_pixel') and hasattr(self, 'class_labels'):
+            completeness['classification_training'] = True
+        else:
+            completeness['classification_training'] = False
+        ## Check tracking:
+        ### um_per_pixel, spatialFootprints, FOV_images
+        if hasattr(self, 'ROI_images') and hasattr(self, 'um_per_pixel') and hasattr(self, 'spatialFootprints') and hasattr(self, 'FOV_images'):
+            completeness['tracking'] = True
+        else:
+            completeness['tracking'] = False
+
+        self._checkValidity_classLabels_vs_ROIImages(verbose=verbose)
+        self._checkValidity_spatialFootprints_and_FOVImages(verbose=verbose)
+
+        ## Print completeness
+        print(f"Data_roicat object completeness: {completeness}") if verbose else None
+        return completeness
+
+
+
     # def get_sess_id_concat(self):
     #     self.sessionID_concat = np.vstack([np.array([helpers.idx2bool(i_sesh, length=len(self.spatialFootprints))]*sesh.shape[0]) for i_sesh, sesh in enumerate(self.spatialFootprints)])
 
     def __repr__(self):
         ## Check which attributes are set
-        attr_to_print = {key: val for key,val in self.__dict__.items() if key in ['n_sessions', 'n_classes', 'n_class_labels', 'n_class_labels_total', 'unique_class_labels']}
+        attr_to_print = {key: val for key,val in self.__dict__.items() if key in [
+            'um_per_pixel', 
+            'n_sessions', 
+            'n_classes', 
+            'n_class_labels', 
+            'n_class_labels_total', 
+            'unique_class_labels',
+            'n_roi',
+            'n_roi_total',
+            'FOV_height',
+            'FOV_width',
+            ]}
         return f"Data_roicat object: {attr_to_print}."
     
     def save(
@@ -222,8 +411,7 @@ class Data_roicat:
         )
         print(f"Saved Data_roicat as a pickled object to {path_save}.") if self._verbose else None
 
-    @classmethod
-    def load(cls, path_load):
+    def load(self, path_load):
         """
         Load attributes from Data_roicat object from pickle file.
         
@@ -234,14 +422,16 @@ class Data_roicat:
         Returns:
             Data_roicat object.
         """
+        # print(dir(cls))
         from pathlib import Path
         assert Path(path_load).exists(), f"RH ERROR: File does not exist: {path_load}."
         obj = helpers.pickle_load(path_load)
-        assert type(obj) is cls, f"RH ERROR: Loaded object is not a Data_roicat object. Loaded object is of type {type(obj)}."
+        assert isinstance(obj, type(self)), f"RH ERROR: Loaded object is not a Data_roicat object. Loaded object is of type {type(obj)}."
 
         ## Set attributes
         for key, val in obj.__dict__.items():
-            setattr(cls, key, val)
+            setattr(self, key, val)
+        
 
         print(f"Loaded Data_roicat object from {path_load}.") if obj._verbose else None
 
@@ -251,7 +441,7 @@ class Data_roicat:
 ############################## CUSTOM CLASSES FOR SUITE2P AND CAIMAN OUTPUT FILES ##########################################
 ############################################################################################################################
 
-class Data_suite2p:
+class Data_suite2p(Data_roicat):
     """
     Class for handling suite2p output files and data.
     In particular stat.npy and ops.npy files.
@@ -588,7 +778,7 @@ class Data_suite2p:
 #         return self.statFiles, self.labelFiles
 
 
-class Data_caiman:
+class Data_caiman(Data_roicat):
     """
     Class for importing data from CaImAn output files.
     In particular, the hdf5 results files.
