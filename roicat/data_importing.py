@@ -69,6 +69,9 @@ class Data_roicat:
 
         ## Warn if no um_per_pixel is provided
         if um_per_pixel is None:
+            ## Check if it is already set
+            if hasattr(self, 'um_per_pixel'):
+                um_per_pixel = self.um_per_pixel
             print("RH WARNING: No um_per_pixel provided. We recommend making an educated guess. Assuming 1.0 um per pixel. This will affect the embedding results.")
             um_per_pixel = 1.0
 
@@ -245,6 +248,9 @@ class Data_roicat:
         """
         ## Warn if no um_per_pixel is provided
         if um_per_pixel is None:
+            ## Check if it is already set
+            if hasattr(self, 'um_per_pixel'):
+                um_per_pixel = self.um_per_pixel
             print("RH WARNING: No um_per_pixel provided. We recommend making an educated guess. Assuming 1.0 um per pixel. This will affect the embedding results.")
             um_per_pixel = 1.0
 
