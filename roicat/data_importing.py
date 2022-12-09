@@ -556,7 +556,6 @@ class Data_roicat:
         Returns:
             Data_roicat object.
         """
-        # print(dir(cls))
         from pathlib import Path
         assert Path(path_load).exists(), f"RH ERROR: File does not exist: {path_load}."
         obj = helpers.pickle_load(path_load)
@@ -595,7 +594,6 @@ class Data_suite2p(Data_roicat):
         out_height_width=(36,36),
         type_meanImg='meanImgE',
         FOV_images=None,
-        workers=-1,
         
         centroid_method = 'centroid',
         
@@ -642,7 +640,7 @@ class Data_suite2p(Data_roicat):
             self.paths_ops = None
             self.shifts = [np.array([0,0], dtype=np.uint64)]*len(paths_statFiles)
 
-        FOV_images = self.import_FOV_images(type_meanImg=type_meanImg)
+        FOV_images = self.import_FOV_images(type_meanImg=type_meanImg) if FOV_images is None else FOV_images
         self.set_FOV_images(FOV_images=FOV_images)
 
         spatialFootprints = self.import_spatialFootprints()
