@@ -283,7 +283,7 @@ class Data_roicat:
         self.n_sessions = n_sessions
         self.n_roi = n_roi
         self.n_roi_total = n_roi_total
-        print(f"Completed: Imported spatialFootprints for {len(spatialFootprints)} sessions.") if self._verbose else None
+        print(f"Completed: Set spatialFootprints for {len(spatialFootprints)} sessions successfully.") if self._verbose else None
 
 
     def set_FOV_images(
@@ -320,7 +320,7 @@ class Data_roicat:
         if hasattr(self, 'n_sessions'):
             assert self.n_sessions == n_sessions, f"n_sessions is already set to {self.n_sessions} but new value is {n_sessions}"
 
-        print(f"Completed: Imported FOV_images for {len(FOV_images)} sessions.") if self._verbose else None
+        print(f"Completed: Set FOV_images for {len(FOV_images)} sessions successfully.") if self._verbose else None
 
 
     def _checkValidity_spatialFootprints_and_FOVImages(self, verbose=None):
@@ -390,11 +390,11 @@ class Data_roicat:
         print(f"Completed: Created sessionID_concat.") if self._verbose else None
 
 
-    def _make_spatialFootprints_centroids(self, method='centerOfMass'):
+    def _make_spatialFootprintCentroids(self, method='centerOfMass'):
         """
         Gets the centroids of a sparse array of flattented spatial footprints.
         Calculates the centroid position as the center of mass of the ROI.
-        JZ 2022
+        JZ, RH 2022
 
         Args:
             method (str):
@@ -457,6 +457,47 @@ class Data_roicat:
         ## Concatenate and store
         self.centroids = [np.stack([y, x], axis=1) for y, x in zip(y_cent, x_cent)]
         print(f"Completed: Created centroids.") if self._verbose else None
+
+    
+    def _transform_spatialFootprints_to_ROIImages(self, out_height_width=(36,36)):
+        """
+        Transform sparse spatial footprints to dense ROI images.
+
+        Args:
+            out_height_width (tuple):
+                Height and width of the output images. Default is (36,36).
+        """
+        ## Check inputs
+        assert hasattr(self, 'spatialFootprints'), f"RH ERROR: spatialFootprints must be set before ROI images can be created."
+        assert hasattr(self, 'FOV_height') and hasattr(self, 'FOV_width'), f"RH ERROR: FOV_height and FOV_width must be set before ROI images can be created."
+        assert hasattr(self, 'centroids'), f"RH ERROR: centroids must be set before ROI images can be created."
+        assert isinstance(out_height_width, (tuple, list)), f"RH ERROR: out_height_width must be a tuple or list containing two elements (y, x)."
+        assert len(out_height_width) == 2, f"RH ERROR: out_height_width must be a tuple of length 2."
+        assert all([isinstance(h, int) for h in out_height_width]), f"RH ERROR: out_height_width must be a tuple of integers."
+        assert all([h > 0 for h in out_height_width]), f"RH ERROR: out_height_width must be a tuple of positive integers."
+
+        ## Make helper function
+        def sf_to_centeredROIs(sf, centroids):
+            half_widths = np.ceil(np.array(out_height_width)/2).astype(int)
+            sf_rs = sparse.COO(sf).reshape((sf.shape[0], self.FOV_height, self.FOV_width))
+
+            coords_diff = np.diff(sf_rs.coords[0])
+            assert np.all(coords_diff < 1.01) and np.all(coords_diff > -0.01), \
+                "RH ERROR: sparse.COO object has strange .coords attribute. sf_rs.coords[0] should all be 0 or 1. An ROI is possibly all zeros."
+            
+            idx_split = (sf_rs>0).astype(np.bool8).sum((1,2)).todense().cumsum()[:-1]
+            coords_split = [np.split(sf_rs.coords[ii], idx_split) for ii in [0,1,2]]
+            coords_split[1] = [coords - centroids[0][ii] + half_widths[0] for ii,coords in enumerate(coords_split[1])]
+            coords_split[2] = [coords - centroids[1][ii] + half_widths[1] for ii,coords in enumerate(coords_split[2])]
+            sf_rs_centered = sf_rs.copy()
+            sf_rs_centered.coords = np.array([np.concatenate(c) for c in coords_split])
+            sf_rs_centered = sf_rs_centered[:, :out_height_width[0], :out_height_width[1]]
+            return sf_rs_centered.todense()
+            
+        ## Transform
+        print(f"Staring: Creating centered ROI images from spatial footprints...") if self._verbose else None
+        self.ROIImages = [sf_to_centeredROIs(sf, centroids.T) for sf, centroids in zip(self.spatialFootprints, self.centroids)]
+        print(f"Completed: Created ROI images.") if self._verbose else None
         
 
     def __repr__(self):
@@ -544,7 +585,7 @@ class Data_suite2p(Data_roicat):
         um_per_pixel=1.0,
         new_or_old_suite2p='new',
         
-        out_height_width=[36,36],
+        out_height_width=(36,36),
         type_meanImg='meanImgE',
         FOV_images=None,
         workers=-1,
@@ -594,44 +635,21 @@ class Data_suite2p(Data_roicat):
             self.paths_ops = None
             self.shifts = [np.array([0,0], dtype=np.uint64)]*len(paths_statFiles)
 
-        self.import_statFiles()
-        self.import_FOV_images(
-            type_meanImg=type_meanImg,
-            images=FOV_images
-        )
-        self.import_ROI_spatialFootprints(workers=workers);
+        FOV_images = self.import_FOV_images(type_meanImg=type_meanImg)
+        self.set_FOV_images(FOV_images=FOV_images)
+
+        spatialFootprints = self.import_spatialFootprints()
+        self.set_spatialFootprints(spatialFootprints=spatialFootprints, um_per_pixel=um_per_pixel)
+
+        self._make_sessionID_concat()
+        self._make_spatialFootprintCentroids()
         
-        self.centroids = [self.get_centroids(sf, self.FOV_height, self.FOV_width).T for sf in self.spatialFootprints]
+        self._transform_spatialFootprints_to_ROIImages(out_height_width=out_height_width)
         
-        self.import_ROI_centeredImages(out_height_width=out_height_width)
-        
-
-    def import_statFiles(self):
-        """
-        Imports the stats.npy contents into the class.
-        This method can be called before any other function.
-
-        Returns:
-            self.statFiles (list):
-                List of imported files. Type depends on sf_type.
-        """
-
-        print(f"Starting: Importing spatial footprints from stat files") if self._verbose else None
-
-        self.statFiles = [np.load(path, allow_pickle=True) for path in self.paths_stat]
-
-        self.n_roi = [len(stat) for stat in self.statFiles]
-        self.n_roi_total = sum(self.n_roi)
-
-        print(f"Completed: Imported {len(self.statFiles)} stat files into class as self.statFiles. Total number of ROIs: {self.n_roi_total}. Number of ROI from each file: {self.n_roi}") if self._verbose else None
-
-        return self.statFiles
-
 
     def import_FOV_images(
         self,
         type_meanImg='meanImgE',
-        images=None
     ):
         """
         Imports the FOV images from ops files or user defined
@@ -646,72 +664,32 @@ class Data_suite2p(Data_roicat):
                         Enhanced mean image.
                     'meanImg':
                         Mean image.
-            images (list of np.ndarray):
-                Optional. If provided, the FOV images are 
-                 defined by these images.
-                If not provided, the FOV images are defined by
-                 the ops.npy files from self.paths_ops.
-                len(images) must be equal to len(self.paths_stat)
-                Images must be of the same shape.
         
         Returns:
-            self.FOV_images (list):
+            FOV_images (list):
                 List of FOV images.
                 Length of the list is the same self.paths_files.
                 Each element is a numpy.ndarray of shape:
                  (n_files, height, width)
         """
 
-        if images is not None:
-            if self._verbose:
-                print("Using provided images for FOV_images.")
-            self.FOV_images = images
+        print(f"Starting: Importing FOV images from ops files") if self._verbose else None
+        
+        assert self.paths_ops is not None, "RH ERROR: paths_ops is None. Please set paths_ops before calling this function."
+        assert len(self.paths_ops) > 0, "RH ERROR: paths_ops is empty. Please set paths_ops before calling this function."
+        assert all([Path(path).exists() for path in self.paths_ops]), "RH ERROR: One or more paths in paths_ops do not exist."
 
-        else:
-            if self.paths_ops is None:
-                raise ValueError("'path_ops' must be defined in initialization if 'images' is not provided.")
-            self.FOV_images = np.array([np.load(path, allow_pickle=True)[()][type_meanImg] for path in self.paths_ops]).astype(np.float32)
-            self.FOV_images = self.FOV_images - self.FOV_images.min(axis=(1,2), keepdims=True)
-            self.FOV_images = self.FOV_images / self.FOV_images.mean(axis=(1,2), keepdims=True)
-
-            if self._verbose:
-                print(f"Imported {len(self.FOV_images)} FOV images into class as self.FOV_images")
-
-        self.FOV_height = self.FOV_images[0].shape[0]
-        self.FOV_width = self.FOV_images[0].shape[1]
-
-        return self.FOV_images
+        FOV_images = np.array([np.load(path, allow_pickle=True)[()][type_meanImg] for path in self.paths_ops]).astype(np.float32)
+        
+        print(f"Completed: Imported {len(FOV_images)} FOV images.") if self._verbose else None
+        
+        return FOV_images
     
-    def import_ROI_labels(self, paths_classLabelFiles):
-        """
-        Imports the image labels from an npy file. Should
-        have the same 0th dimension as the stats files.
 
-        Returns:
-            self.labelFiles (np.array):
-                Concatenated set of image labels.
-        """
-        
-        print(f"Starting: Importing labels footprints from label npy files") if self._verbose else None
-
-        self.paths_classLabels = fix_paths(paths_classLabelFiles)
-        
-        raw_labels = [np.load(path) for path in self.paths_classLabels]
-        self.n_classLabels = [len(stat) for stat in raw_labels]
-        self.n_classLabels_total = sum(self.n_classLabels)
-        self.classlabels = helpers.squeeze_integers(np.concatenate(raw_labels))
-        if type(self.statFiles) is np.ndarray:
-            assert self.statFiles.shape[0] == self.classlabels.shape[0] , 'number of images in stat files does not correspond to number of class labels'
-                
-        print(f"Completed: Imported {len(self.classlabels)} labels into class as self.classlabels. Total number of ROIs: {self.n_classLabels_total}. Number of ROI from each file: {self.n_classLabels}") if self._verbose else None
-        
-        return self.classlabels;
-
-    def import_ROI_spatialFootprints(
+    def import_spatialFootprints(
         self,
         frame_height_width=None,
         dtype=np.float32,
-        workers=1,
     ):
         """
         Imports and converts the spatial footprints of the ROIs
@@ -731,12 +709,6 @@ class Data_suite2p(Data_roicat):
                  image.
             dtype (np.dtype):
                 Data type of the sparse array.
-            workers (int):
-                Number of workers to use for multiprocessing.
-                Set to -1. Note that this will use more memory.
-            new_or_old_suite2p (str):
-                'new': Python versions of Suite2p
-                'old': Matlab versions of Suite2p
 
         Returns:
             sf (list):
@@ -748,124 +720,57 @@ class Data_suite2p(Data_roicat):
 
         print("Importing spatial footprints from stat files.") if self._verbose else None
 
+        ## Check and fix inputs
         if frame_height_width is None:
             frame_height_width = [self.FOV_height, self.FOV_width]
 
         isInt = np.issubdtype(dtype, np.integer)
 
-        statFiles = self.import_statFiles() if self.statFiles is None else self.statFiles
+        assert self.paths_stat is not None, "RH ERROR: paths_stat is None. Please set paths_stat before calling this function."
+        assert len(self.paths_stat) > 0, "RH ERROR: paths_stat is empty. Please set paths_stat before calling this function."
+        assert all([Path(path).exists() for path in self.paths_stat]), "RH ERROR: One or more paths in paths_stat do not exist."
+
+        statFiles = [np.load(path, allow_pickle=True) for path in self.paths_stat]
 
         n = self.n_sessions
-        if workers == -1:
-            workers = mp.cpu_count()
-        if workers != 1:
-            self.spatialFootprints = helpers.simple_multiprocessing(
-                _helper_populate_sf, 
-                (self.n_roi, [frame_height_width]*n, statFiles, [dtype]*n, [isInt]*n, self.shifts),
-                workers=mp.cpu_count()
-            )
-        else:
-            self.spatialFootprints = [
-                _helper_populate_sf(
-                    n_roi=self.n_roi[ii], 
-                    frame_height_width=frame_height_width,
-                    stat=statFiles[ii],
-                    dtype=dtype,
-                    isInt=isInt,
-                    shifts=self.shifts[ii]
-                ) for ii in tqdm(range(n), mininterval=60)]
-
-        self.sessionID_concat = np.vstack([np.array([helpers.idx2bool(i_sesh, length=len(self.spatialFootprints))]*sesh.shape[0]) for i_sesh, sesh in enumerate(self.spatialFootprints)])
+        spatialFootprints = [
+            self._transform_statFile_to_spatialFootprints(
+                frame_height_width=frame_height_width,
+                stat=statFiles[ii],
+                dtype=dtype,
+                isInt=isInt,
+                shifts=self.shifts[ii]
+            ) for ii in tqdm(range(n))]
 
         if self._verbose:
-            print(f"Imported {len(self.spatialFootprints)} sessions of spatial footprints into sparse arrays.")
+            print(f"Imported {len(spatialFootprints)} sessions of spatial footprints into sparse arrays.")
 
-        return self.spatialFootprints
-
+        return spatialFootprints
     
-    def get_centroids(self, sf, FOV_height, FOV_width):
+    @staticmethod
+    def _transform_statFile_to_spatialFootprints(frame_height_width, stat, dtype, isInt, shifts=(0,0)):
         """
-        Gets the centroids of a sparse array of flattented spatial footprints.
-        Calculates the centroid position as the center of mass of the ROI.
-        JZ 2022
-
-        Args:
-            sf (scipy.sparse.csr_matrix):
-                Spatial footprints.
-                Shape: (n_roi, FOV_height*FOV_width) in C flattened format.
-            FOV_height (int):
-                Height of the FOV.
-            FOV_width (int):
-                Width of the FOV.
-
-        Returns:
-            centroids (np.ndarray):
-                Centroids of the ROIs.
-                Shape: (2, n_roi). (y, x) coordinates.
+        Populates a sparse array with the spatial footprints from ROIs
+        in a stat file.
         """
-        sf_rs = sparse.COO(sf).reshape((sf.shape[0], FOV_height, FOV_width))
-#         sf_rs = sparse.COO(sf).reshape((sf.shape[0], FOV_height, FOV_width))
-        w_wt, h_wt = sf_rs.sum(axis=2), sf_rs.sum(axis=1)
-        if self.centroid_method == 'centroid':
-            h_mean = (((w_wt*np.arange(w_wt.shape[1]).reshape(1,-1))).sum(1)/w_wt.sum(1)).todense()
-            w_mean = (((h_wt*np.arange(h_wt.shape[1]).reshape(1,-1))).sum(1)/h_wt.sum(1)).todense()
-        elif self.centroid_method == 'median':
-            return None
-        else:
-            raise ValueError('Only valid methods are "centroid" or "median"')
-        return np.round(np.vstack([h_mean, w_mean])).astype(np.int64)
-
         
-    def import_ROI_centeredImages(
-        self,
-        out_height_width=[36,36],
-    ):
-        """
-        Imports the ROI centered images from the CaImAn results files.
-        RH, JZ 2022
+        rois_to_stack = []
+        
+        for jj, roi in enumerate(stat):
+            lam = np.array(roi['lam'], ndmin=1)
+            if isInt:
+                lam = dtype(lam / lam.sum() * np.iinfo(dtype).max)
+            else:
+                lam = lam / lam.sum()
+            ypix = np.array(roi['ypix'], dtype=np.uint64, ndmin=1) + shifts[0]
+            xpix = np.array(roi['xpix'], dtype=np.uint64, ndmin=1) + shifts[1]
+        
+            tmp_roi = scipy.sparse.csr_matrix((lam, (ypix, xpix)), shape=(frame_height_width[0], frame_height_width[1]), dtype=dtype)
+            rois_to_stack.append(tmp_roi.reshape(1,-1))
 
-        Args:
-            out_height_width (list):
-                Height and width of the output images. Default is [36,36].
-
-        Returns:
-            sf_rs_centered (np.ndarray):
-                Centered ROI masks.
-                Shape: (n_roi, out_height_width[0], out_height_width[1]).
-        """
-        def sf_to_centeredROIs(sf, centroids, out_height_width=36):
-            out_height_width = np.array([36,36])
-            half_widths = np.ceil(out_height_width/2).astype(int)
-            sf_rs = sparse.COO(sf).reshape((sf.shape[0], self.FOV_height, self.FOV_width))
-
-            coords_diff = np.diff(sf_rs.coords[0])
-            assert np.all(coords_diff < 1.01) and np.all(coords_diff > -0.01), \
-                "RH ERROR: sparse.COO object has strange .coords attribute. sf_rs.coords[0] should all be 0 or 1. An ROI is possibly all zeros."
-            
-            idx_split = (sf_rs>0).astype(np.bool8).sum((1,2)).todense().cumsum()[:-1]
-            coords_split = [np.split(sf_rs.coords[ii], idx_split) for ii in [0,1,2]]
-            coords_split[1] = [coords - centroids[0][ii] + half_widths[0] for ii,coords in enumerate(coords_split[1])]
-            coords_split[2] = [coords - centroids[1][ii] + half_widths[1] for ii,coords in enumerate(coords_split[2])]
-            sf_rs_centered = sf_rs.copy()
-            sf_rs_centered.coords = np.array([np.concatenate(c) for c in coords_split])
-            sf_rs_centered = sf_rs_centered[:, :out_height_width[0], :out_height_width[1]]
-            return sf_rs_centered.todense()
-
-        print(f"Computing ROI centered images from spatial footprints") if self._verbose else None
-        self.ROI_images = [sf_to_centeredROIs(sf, centroids.T, out_height_width=out_height_width) for sf, centroids in zip(self.spatialFootprints, self.centroids)]
+        return scipy.sparse.vstack(rois_to_stack).tocsr()
 
 
-#     def drop_nan_rois(self):
-#         """
-#         Identifies all entries along the 0th dimension of self.statFiles that
-#         have any NaN value in any of their dimensions and removes
-#         those entries from both self.statFiles and self.labelFiles
-#         JZ 2022
-#         """
-#         idx_nne = [helpers.get_keep_nonnan_entries(sf) for sf in self.statFiles]
-#         self.statFiles = [sf[inne] for sf, inne in zip(self.statFiles, idx_nne)]
-#         self.labelFiles = [lf[inne] for lf, inne in zip(self.labelFiles, idx_nne)]
-#         return self.statFiles, self.labelFiles
 
 
 class Data_caiman(Data_roicat):
@@ -1223,31 +1128,5 @@ def fix_paths(paths):
     return paths_files
 
 
-def _helper_populate_sf(n_roi, frame_height_width, stat, dtype, isInt, shifts=(0,0)):
-    """
-    Helper function for populate_sf.
-    Populates a sparse array with the spatial footprints from ROIs
-     in a stat file. See import_ROI_spatialFootprints for more
-     details.
-    This needs to be a separate function because it is 
-     used in a multiprocessing. Functions are only 
-     picklable if they are defined at the top-level of a module.
-    """
-    
-    rois_to_stack = []
-    
-    for jj, roi in enumerate(stat):
-        lam = np.array(roi['lam'], ndmin=1)
-        if isInt:
-            lam = dtype(lam / lam.sum() * np.iinfo(dtype).max)
-        else:
-            lam = lam / lam.sum()
-        ypix = np.array(roi['ypix'], dtype=np.uint64, ndmin=1) + shifts[0]
-        xpix = np.array(roi['xpix'], dtype=np.uint64, ndmin=1) + shifts[1]
-    
-        tmp_roi = scipy.sparse.csr_matrix((lam, (ypix, xpix)), shape=(frame_height_width[0], frame_height_width[1]), dtype=dtype)
-        rois_to_stack.append(tmp_roi.reshape(1,-1))
-
-    return scipy.sparse.vstack(rois_to_stack).tocsr()
 
 
