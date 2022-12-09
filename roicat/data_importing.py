@@ -349,18 +349,21 @@ class Data_roicat:
         if hasattr(self, 'ROI_images') and hasattr(self, 'um_per_pixel'):
             completeness['classification_inference'] = True
         else:
+            print(f"RH WARNING: Classification-Inference incomplete because following attributes are missing: {[key for key in ['ROI_images', 'um_per_pixel'] if not hasattr(self, key)]}") if verbose else None
             completeness['classification_inference'] = False
         ## Check classification training:
         ### ROI_images, um_per_pixel, class_labels
         if hasattr(self, 'ROI_images') and hasattr(self, 'um_per_pixel') and hasattr(self, 'class_labels'):
             completeness['classification_training'] = True
         else:
+            print(f"RH WARNING: Classification-Training incomplete because following attributes are missing: {[key for key in ['ROI_images', 'um_per_pixel', 'class_labels'] if not hasattr(self, key)]}") if verbose else None
             completeness['classification_training'] = False
         ## Check tracking:
         ### um_per_pixel, spatialFootprints, FOV_images
         if hasattr(self, 'ROI_images') and hasattr(self, 'um_per_pixel') and hasattr(self, 'spatialFootprints') and hasattr(self, 'FOV_images'):
             completeness['tracking'] = True
         else:
+            print(f"RH WARNING: Tracking incomplete because following attributes are missing: {[key for key in ['ROI_images', 'um_per_pixel', 'spatialFootprints', 'FOV_images'] if not hasattr(self, key)]}") if verbose else None
             completeness['tracking'] = False
 
         self._checkValidity_classLabels_vs_ROIImages(verbose=verbose)
@@ -496,7 +499,7 @@ class Data_roicat:
             
         ## Transform
         print(f"Staring: Creating centered ROI images from spatial footprints...") if self._verbose else None
-        self.ROIImages = [sf_to_centeredROIs(sf, centroids.T) for sf, centroids in zip(self.spatialFootprints, self.centroids)]
+        self.ROI_images = [sf_to_centeredROIs(sf, centroids.T) for sf, centroids in zip(self.spatialFootprints, self.centroids)]
         print(f"Completed: Created ROI images.") if self._verbose else None
         
 
@@ -571,6 +574,10 @@ class Data_roicat:
 ############################################################################################################################
 ############################## CUSTOM CLASSES FOR SUITE2P AND CAIMAN OUTPUT FILES ##########################################
 ############################################################################################################################
+
+#########################################################
+#################### DATA S2P ###########################
+#########################################################
 
 class Data_suite2p(Data_roicat):
     """
@@ -772,6 +779,9 @@ class Data_suite2p(Data_roicat):
 
 
 
+#########################################################
+################## DATA CAIMAN ##########################
+#########################################################
 
 class Data_caiman(Data_roicat):
     """
