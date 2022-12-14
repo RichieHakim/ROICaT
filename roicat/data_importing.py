@@ -890,6 +890,7 @@ class Data_suite2p(Data_roicat):
 
 
 
+
 #########################################################
 ################## DATA CAIMAN ##########################
 #########################################################
@@ -903,14 +904,24 @@ class Data_caiman(Data_roicat):
     def __init__(
         self,
         paths_resultsFiles,
-        paths_labelFiles=None,
+        # paths_labelFiles=None,
         include_discarded=True,
         um_per_pixel=1.0,
         
         out_height_width=[36,36],        
         centroid_method = 'median',
         
-        verbose=True 
+        verbose=True,
+
+        # type_meanImg='meanImgE',
+        # FOV_images=None,
+        
+        # centroid_method = 'centerOfMass',
+
+        class_labels=None,
+        # FOV_height_width=None,
+        
+        # verbose=True,
     ):
         """
         Args:
@@ -957,131 +968,230 @@ class Data_caiman(Data_roicat):
 
         self.paths_resultsFiles = fix_paths(paths_resultsFiles)
         self.n_sessions = len(self.paths_resultsFiles)
-        self.um_per_pixel = um_per_pixel
-        self.centroid_method = centroid_method
-        self._include_discarded = include_discarded
+        # self._include_discarded = include_discarded
         self._verbose = verbose
 
-        for path in self.paths_resultsFiles:
-            if not path.exists():
-                raise FileNotFoundError(f"RH ERROR: {path} does not exist.")
 
-        self.import_caimanResults(paths_resultsFiles, include_discarded=self._include_discarded)
+        # Things to get...
 
-        print(f"Computing centroids from spatial footprints") if self._verbose else None
-        self.centroids = [self.get_centroids(s, self.FOV_height, self.FOV_width).T for s in self.spatialFootprints]
+        # 1. import_caiman_results
+        # # self.spatialFootprints
+        # ?? # self.overall_caiman_labels
+        # ?? # self.cnn_caiman_preds
+        # # self.n_roi
+        # # self.n_roi_total
+        
+        spatialFootprints = [self.import_spatialFootprints(path, include_discarded=include_discarded) for path in self.paths_resultsFiles]
+        # print(len(spatialFootprints))
+        self.set_spatialFootprints(spatialFootprints=spatialFootprints, um_per_pixel=um_per_pixel)
 
-        self.sessionID_concat = np.vstack([np.array([helpers.idx2bool(i_sesh, length=len(self.spatialFootprints))]*sesh.shape[0]) for i_sesh, sesh in enumerate(self.spatialFootprints)])
+        # spatialFootprints = self.import_spatialFootprints(paths_resultsFiles, include_discarded=include_discarded)
+        overall_caimanLabels = [self.import_overall_caiman_labels(path, include_discarded=include_discarded) for path in self.paths_resultsFiles]
+        # print(sum(overall_caimanLabels),len(overall_caimanLabels))
+        self.set_caimanLabels(overall_caimanLabels=overall_caimanLabels)
+
+        cnn_caimanPreds = [self.import_cnn_caiman_preds(path, include_discarded=include_discarded) for path in self.paths_resultsFiles]
+        self.set_caimanPreds(cnn_caimanPreds=cnn_caimanPreds)
+
+        # 1.A. self.import_FOV_images
+        # # self.FOV_images
+        # # self.FOV_height
+        # # self.FOV_width
+        FOV_images = self.import_FOV_images(self.paths_resultsFiles) # TODO JZ
+        self.set_FOV_images(FOV_images=FOV_images)
+
+        # 2. self.get_centroids
+        # # self.centroids =
+        self._make_spatialFootprintCentroids(method=centroid_method)
+
+        # 3. helpers.idx2Bool
+        # # self.session_ID_concat = 
+        self._make_sessionID_concat()
+        
+        # 4. self.import_ROI_centered_images
+        # # self.ROI_images =
+        # ROI_images = self.import_ROI_centeredImages(out_height_width=out_height_width, centroid_method=centroid_method)
+        ROI_images = self.import_ROI_centeredImages(out_height_width=out_height_width)
+        self.set_ROI_images(ROI_images=ROI_images, um_per_pixel=um_per_pixel)
+        
+        # 5. self.import_ROI_labels
+        # # self.labelFiles
+        self.set_class_labels(class_labels=class_labels) if class_labels is not None else None
+        
+
         
         
-        self.import_ROI_centeredImages(
-            out_height_width=out_height_width
-        )
+
+
+
+
+
+
+
+
+
+
+        # # ## shifts are applied to convert the 'old' matlab version of suite2p indexing (where there is an offset and its 1-indexed)
+        # # self.shifts = self._make_shifts(paths_ops=self.paths_ops, new_or_old_suite2p=new_or_old_suite2p)
+
+        # ### Import FOV images if self.paths_ops or FOV_images is provided
+        # FOV_images = self.import_FOV_images()
+        # self.set_FOV_images(FOV_images=FOV_images)
+
+        # ## Import spatial footprints
+        # spatialFootprints = self.import_spatialFootprints()
+        # self.set_spatialFootprints(spatialFootprints=spatialFootprints, um_per_pixel=um_per_pixel)
+
+        # ## Make sessionID
+        # self._make_sessionID_concat()
+
+        # ## Make spatial footprint centroids
+        # self._make_spatialFootprintCentroids(method=centroid_method)
         
-        if paths_labelFiles is not None:
-            self.paths_labels = fix_paths(paths_labelFiles)
-            self.import_ROI_labels()
-        else:
-            self.paths_labels = None
-            self.labelFiles = None
-            
-    
-    def import_caimanResults(self, paths_resultsFiles, include_discarded=True):
+        # ## Transform spatial footprints to ROI images
+        # self._transform_spatialFootprints_to_ROIImages(out_height_width=out_height_width)
+
+        # ## Make class labels
+        # self.set_class_labels(class_labels=class_labels) if class_labels is not None else None
+
+        # ############################################
+        # ############################################
+        # ############################################
+        # ############################################
+
+
+        # self.import_caimanResults(paths_resultsFiles, include_discarded=self._include_discarded)
+        
+        # print(f"Computing centroids from spatial footprints") if self._verbose else None
+        # self.centroids = [self.get_centroids(s, self.FOV_height, self.FOV_width).T for s in self.spatialFootprints]
+
+        # self.import_ROI_centeredImages(
+        #     out_height_width=out_height_width
+        # )
+
+    def set_caimanLabels(self, overall_caimanLabels):
         """
-        Imports the results file from CaImAn.
+        Sets the CaImAn labels
+
+        Args:
+            overall_caimanLabels (list):
+                List of lists of CaImAn labels.
+                The outer list is over sessions, and the inner list is over ROIs.
+        """
+        assert len(overall_caimanLabels) == self.n_sessions
+        print('kept labels', sum(overall_caimanLabels).sum(), len(sum(overall_caimanLabels))-sum(overall_caimanLabels).sum())
+        # print([overall_caimanLabels[i] for i in range(self.n_sessions)])
+        # print([self.n_roi[i] for i in range(self.n_sessions)])
+        assert all([len(overall_caimanLabels[i]) == self.n_roi[i] for i in range(self.n_sessions)])
+        self.cnn_caimanLabels = overall_caimanLabels
+
+    def set_caimanPreds(self, cnn_caimanPreds):
+        """
+        Sets the CNN-CaImAn predictions
+
+        Args:
+            cnn_caimanPreds (list):
+                List of lists of CNN-CaImAn predictions.
+                The outer list is over sessions, and the inner list is over ROIs.
+        """
+        assert len(cnn_caimanPreds) == self.n_sessions
+        assert all([len(cnn_caimanPreds[i]) == self.n_roi[i] for i in range(self.n_sessions)])
+        self.cnn_caimanPreds = cnn_caimanPreds
+
+    def import_spatialFootprints(self, path_resultsFile, include_discarded=True):
+        """
+        Imports the spatial footprints from the results file.
+        Note that CaImAn's data['estimates']['A'] is similar to 
+            self.spatialFootprints, but uses 'F' order. ROICaT converts
+            this into 'C' order to make self.spatialFootprints.
         RH 2022
 
         Args:
             path_resultsFile (str or pathlib.Path):
-                Path to the results file.
+                Path to a single results file.
+            include_discarded (bool):
+                If True, include ROIs that were discarded by CaImAn.
 
         Returns:
-            data (dict):
-                Dictionary of data from the results file.
+            spatialFootprints (scipy.sparse.csr_matrix):
+                Spatial footprints.
+        """
+        data = helpers.h5_lazy_load(path_resultsFile)
+        FOV_height, FOV_width = data['estimates']['dims']
+        
+        ## initialize the estimates.A matrix, which is a 'Fortran' indexed version of sf. Note the flipped dimensions for shape.
+        sf_included = scipy.sparse.csr_matrix((data['estimates']['A']['data'], data['estimates']['A']['indices'], data['estimates']['A']['indptr']), shape=data['estimates']['A']['shape'][::-1])
+        print('kept ROIs',sf_included.shape)
+        if include_discarded:
+            discarded = data['estimates']['discarded_components']
+            sf_discarded = scipy.sparse.csr_matrix((discarded['A']['data'], discarded['A']['indices'], discarded['A']['indptr']), shape=discarded['A']['shape'][::-1])
+            print('dropped ROIs',sf_discarded.shape)
+            sf_F = scipy.sparse.vstack([sf_included, sf_discarded])
+        else:
+            sf_F = sf_included
+
+        ## reshape sf_F (which is in Fortran flattened format) into C flattened format
+        sf = sparse.COO(sf_F).reshape((sf_F.shape[0], FOV_width, FOV_height)).transpose((0,2,1)).reshape((sf_F.shape[0], FOV_width*FOV_height)).tocsr()
+        
+        return sf
+
+
+    def import_overall_caiman_labels(self, path_resultsFile, include_discarded=True):
+        """
+        Imports the overall CaImAn labels from the results file.
+        
+        Args:
+            path_resultsFile (str or pathlib.Path):
+                Path to a single results file.
+            include_discarded (bool):
+                If True, include ROIs that were discarded by CaImAn.
+
+        Returns:
+            labels (np.ndarray):
+                Overall CaImAn labels.
         """
 
-        def _import_spatialFootprints(path_resultsFile, include_discarded=True):
-            """
-            Imports the spatial footprints from the results file.
-            Note that CaImAn's data['estimates']['A'] is similar to 
-             self.spatialFootprints, but uses 'F' order. ROICaT converts
-             this into 'C' order to make self.spatialFootprints.
-            RH 2022
 
-            Args:
-                path_resultsFile (str or pathlib.Path):
-                    Path to a single results file.
-                include_discarded (bool):
-                    If True, include ROIs that were discarded by CaImAn.
+        data = helpers.h5_lazy_load(path_resultsFile)
+        labels_included = np.ones(data['estimates']['A']['indptr'].shape[0] - 1)
+        if include_discarded:
+            discarded = data['estimates']['discarded_components']
+            labels_discarded = np.zeros(discarded['A']['indptr'].shape[0] - 1)
+            labels = np.hstack([labels_included, labels_discarded])
+        else:
+            labels = labels_included
 
-            Returns:
-                spatialFootprints (scipy.sparse.csr_matrix):
-                    Spatial footprints.
-            """
-            data = helpers.h5_lazy_load(path_resultsFile)
-            FOV_height, FOV_width = data['estimates']['dims']
-            
-            ## initialize the estimates.A matrix, which is a 'Fortran' indexed version of sf. Note the flipped dimensions for shape.
-            sf_included = scipy.sparse.csr_matrix((data['estimates']['A']['data'], data['estimates']['A']['indices'], data['estimates']['A']['indptr']), shape=data['estimates']['A']['shape'][::-1])
-            if include_discarded:
-                discarded = data['estimates']['discarded_components']
-                sf_discarded = scipy.sparse.csr_matrix((discarded['A']['data'], discarded['A']['indices'], discarded['A']['indptr']), shape=discarded['A']['shape'][::-1])
-                sf_F = scipy.sparse.vstack([sf_included, sf_discarded])
-            else:
-                sf_F = sf_included
+        return labels
 
-            ## reshape sf_F (which is in Fortran flattened format) into C flattened format
-            sf = sparse.COO(sf_F).reshape((sf_F.shape[0], FOV_width, FOV_height)).transpose((0,2,1)).reshape((sf_F.shape[0], FOV_width*FOV_height)).tocsr()
-            
-            return sf
+    def import_cnn_caiman_preds(self, path_resultsFile, include_discarded=True):
+        """
+        Imports the CNN-based CaImAn prediction probabilities of a single path results file
+        Args:
+            path_resultsFile (str or pathlib.Path):
+                Path to a single results file.
+            include_discarded (bool):
+                If True, include ROIs that were discarded by CaImAn.
+
+        Returns:
+            preds (np.ndarray):
+                CNN-based CaImAn prediction probabilities
+        """
+        data = helpers.h5_lazy_load(path_resultsFile)
+        preds_included = data['estimates']['cnn_preds']
+        if include_discarded:
+            discarded = data['estimates']['discarded_components']
+            preds_discarded = discarded['cnn_preds']
+            preds = np.hstack([preds_included, preds_discarded])
+        else:
+            preds = preds_included
         
-        def _import_overall_caiman_labels(path_resultsFile, include_discarded=True):
-            """
-            
-            """
-            data = helpers.h5_lazy_load(path_resultsFile)
-            labels_included = np.ones(data['estimates']['A']['indptr'].shape[0])
-            if include_discarded:
-                discarded = data['estimates']['discarded_components']
-                labels_discarded = np.zeros(discarded['A']['indptr'].shape[0])
-                labels = np.hstack([labels_included, labels_discarded])
-            else:
-                labels = labels_included
-            
-            return labels
-        
-        def _import_cnn_caiman_preds(path_resultsFile, include_discarded=True):
-            """
-            
-            """
-            data = helpers.h5_lazy_load(path_resultsFile)
-            preds_included = data['estimates']['cnn_preds']
-            if include_discarded:
-                discarded = data['estimates']['discarded_components']
-                preds_discarded = discarded['cnn_preds']
-                preds = np.hstack([preds_included, preds_discarded])
-            else:
-                preds = preds_included
-            
-            return preds
-
-        print(f"Importing spatial footprints from CaImAn results hdf5 files") if self._verbose else None
-        self.spatialFootprints = [_import_spatialFootprints(path, include_discarded=include_discarded) for path in paths_resultsFiles]
-        self.overall_caiman_labels = [_import_overall_caiman_labels(path, include_discarded=include_discarded) for path in paths_resultsFiles]
-        self.cnn_caiman_preds = [_import_cnn_caiman_preds(path, include_discarded=include_discarded) for path in paths_resultsFiles]
-
-        self.n_roi = [s.shape[0] for s in self.spatialFootprints]
-        self.n_roi_total = sum(self.n_roi)
-
-        print(f"Importing FOV images from CaImAn results hdf5 files") if self._verbose else None
-        self.import_FOV_images(paths_resultsFiles)
-
-        print(f"Completed: Imported spatial footprints from {len(self.spatialFootprints)} CaImAn results files into class as self.spatialFootprints. Total number of ROIs: {self.n_roi_total}. Number of ROI from each file: {self.n_roi}") if self._verbose else None
+        return preds
 
     def import_ROI_centeredImages(
         self,
         out_height_width=[36,36],
     ):
+        ### TODO: add centroid_method option (based on code in superclass)
         """
         Imports the ROI centered images from the CaImAn results files.
         RH, JZ 2022
@@ -1099,7 +1209,7 @@ class Data_caiman(Data_roicat):
             out_height_width = np.array([36,36])
             half_widths = np.ceil(out_height_width/2).astype(int)
             sf_rs = sparse.COO(sf).reshape((sf.shape[0], self.FOV_height, self.FOV_width))
-
+            
             coords_diff = np.diff(sf_rs.coords[0])
             assert np.all(coords_diff < 1.01) and np.all(coords_diff > -0.01), \
                 "RH ERROR: sparse.COO object has strange .coords attribute. sf_rs.coords[0] should all be 0 or 1. An ROI is possibly all zeros."
@@ -1114,8 +1224,9 @@ class Data_caiman(Data_roicat):
             return sf_rs_centered.todense()
 
         print(f"Computing ROI centered images from spatial footprints") if self._verbose else None
-        self.ROI_images = [sf_to_centeredROIs(sf, centroids.T, out_height_width=out_height_width) for sf, centroids in zip(self.spatialFootprints, self.centroids)]
+        ROI_images = [sf_to_centeredROIs(sf, centroids.T, out_height_width=out_height_width) for sf, centroids in zip(self.spatialFootprints, self.centroids)]
 
+        return ROI_images
 
     def import_FOV_images(
         self,
@@ -1146,17 +1257,15 @@ class Data_caiman(Data_roicat):
         if images is not None:
             if self._verbose:
                 print("Using provided images for FOV_images.")
-            self.FOV_images = images
+            FOV_images = images
         else:
             if paths_resultsFiles is None:
                 paths_resultsFiles = self.paths_resultsFiles
-            self.FOV_images = np.stack([_import_FOV_image(p) for p in paths_resultsFiles])
-            self.FOV_images = self.FOV_images - self.FOV_images.min(axis=(1,2), keepdims=True)
-            self.FOV_images = self.FOV_images / self.FOV_images.mean(axis=(1,2), keepdims=True)
+            FOV_images = np.stack([_import_FOV_image(p) for p in paths_resultsFiles])
+            FOV_images = FOV_images - FOV_images.min(axis=(1,2), keepdims=True)
+            FOV_images = FOV_images / FOV_images.mean(axis=(1,2), keepdims=True)
 
-        self.FOV_height, self.FOV_width = self.FOV_images[0].shape
-
-        return self.FOV_images
+        return FOV_images
     
     def import_ROI_labels(self):
         """
