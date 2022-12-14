@@ -997,7 +997,7 @@ class Data_caiman(Data_roicat):
         # # self.FOV_images
         # # self.FOV_height
         # # self.FOV_width
-        FOV_images = self.import_FOV_images(self.paths_resultsFiles) # TODO JZ
+        FOV_images = self.import_FOV_images(self.paths_resultsFiles)
         self.set_FOV_images(FOV_images=FOV_images)
 
         # 2. self.get_centroids
@@ -1011,8 +1011,11 @@ class Data_caiman(Data_roicat):
         # 4. self.import_ROI_centered_images
         # # self.ROI_images =
         # ROI_images = self.import_ROI_centeredImages(out_height_width=out_height_width, centroid_method=centroid_method)
-        ROI_images = self.import_ROI_centeredImages(out_height_width=out_height_width)
-        self.set_ROI_images(ROI_images=ROI_images, um_per_pixel=um_per_pixel)
+        # ROI_images = self.import_ROI_centeredImages(out_height_width=out_height_width)
+        ## Transform spatial footprints to ROI images
+        self._transform_spatialFootprints_to_ROIImages(out_height_width=out_height_width)
+        # self.set_ROI_images(ROI_images=ROI_images, um_per_pixel=um_per_pixel)
+        
         
         # 5. self.import_ROI_labels
         # # self.labelFiles
@@ -1191,7 +1194,6 @@ class Data_caiman(Data_roicat):
         self,
         out_height_width=[36,36],
     ):
-        ### TODO: add centroid_method option (based on code in superclass)
         """
         Imports the ROI centered images from the CaImAn results files.
         RH, JZ 2022
