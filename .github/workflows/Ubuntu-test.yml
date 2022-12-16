@@ -18,7 +18,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: conda-incubator/setup-miniconda@v2
+        with:
+          auto-update-conda: true
+          python-version: "3.9.15"
+      - name: Conda info
+        shell: bash -el {0}
+        run: conda info
+      - name: Conda install
+        shell: pwsh
+        run: conda install pytorch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1 cudatoolkit=11.3 -c pytorch
+    - uses: actions/checkout@v3    
     - name: Set up Python 3.9
       uses: actions/setup-python@v3
       with:
