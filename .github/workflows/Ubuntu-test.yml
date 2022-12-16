@@ -1,7 +1,7 @@
 # This workflow will install Python dependencies, run tests and lint with a single version of Python
 # For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
 
-name: Ubuntu-test
+name: ROICaT-test
 
 on:
   push:
@@ -18,16 +18,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: conda-incubator/setup-miniconda@v2
-      with:
-          auto-update-conda: true
-          python-version: "3.9.15"
-      - name: Conda info
+   - uses: conda-incubator/setup-miniconda@v2
+        with:
+          miniconda-version: "latest"
+          activate-environment: ROICaT
+      - name: Bash
         shell: bash -el {0}
-        run: conda info
-      - name: Conda install
+        run: |
+          conda info
+          conda list
+          conda install
+      - name: PowerShell Core
         shell: pwsh
-        run: conda install pytorch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1 cudatoolkit=11.3 -c pytorch
+        run: |
+          conda info
+          conda list
+          conda install pytorch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1 cudatoolkit=11.3 -c pytorch
     - uses: actions/checkout@v3    
     - name: Set up Python 3.9
       uses: actions/setup-python@v3
