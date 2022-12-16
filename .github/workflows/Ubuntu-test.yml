@@ -19,7 +19,7 @@ jobs:
 
     steps:
     - uses: conda-incubator/setup-miniconda@v2
-        with:
+      with:
           auto-update-conda: true
           python-version: "3.9.15"
       - name: Conda info
