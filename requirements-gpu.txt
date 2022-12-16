@@ -3,6 +3,7 @@ hdbscan==0.8.28
 torch==1.12.0+cu113
 torchvision==0.13.0+cu113
 torchaudio==0.12.0
+--extra-index-url https://download.pytorch.org/whl/cu113
 gdown==4.5.1
 ipywidgets==7.7.1
 kymatio==0.2.1
