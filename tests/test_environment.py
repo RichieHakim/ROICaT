@@ -79,14 +79,6 @@ def test_python_version(
 #################################################### TEST ROICAT MODULES #############################################################
 ######################################################################################################################################
 
-def test_import_roicat():
-    """
-    Test importing the roicat package.
-    This test expects that the roicat package is installed
-     in the current environment.
-    """
-    import roicat
-
 def test_import_modules():
     """
     Test importing the inner modules of the roicat 
