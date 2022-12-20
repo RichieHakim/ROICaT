@@ -779,6 +779,11 @@ class Data_suite2p(Data_roicat):
         assert all([Path(path).exists() for path in self.paths_ops]), "RH ERROR: One or more paths in paths_ops do not exist."
 
         FOV_images = np.array([np.load(path, allow_pickle=True)[()][type_meanImg] for path in self.paths_ops]).astype(np.float32)
+
+        assert all([FOV_images[0].shape[0] == FOV_images[i].shape[0] for i in range(1, len(FOV_images))]), "RH ERROR: FOV images are not all the same height."
+        assert all([FOV_images[0].shape[1] == FOV_images[i].shape[1] for i in range(1, len(FOV_images))]), "RH ERROR: FOV images are not all the same width."
+
+        self.set_FOVHeightWidth(FOV_height=FOV_images[0].shape[0], FOV_width=FOV_images[0].shape[1])
         
         print(f"Completed: Imported {len(FOV_images)} FOV images.") if self._verbose else None
         
