@@ -17,37 +17,58 @@ on:
   pull_request:
     branches: [ "main" ]
 
-permissions:
-  contents: read
+# permissions:
+#   contents: read
 
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    # Do not ignore bash profile files. From:
+    # https://github.com/marketplace/actions/setup-miniconda
+    defaults:
+      run:
+        shell: bash -l {0}
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python-version: [3.8, 3.9, 3.10.9]
+        python-version: ["3.8", "3.9", "3.10"]
+        
     steps:
     - uses: conda-incubator/setup-miniconda@v2
       with:
+          channels: conda-forge, defaults
           miniconda-version: "latest"
-          activate-environment: ROICaT
-    - name: PowerShell Core
-      shell: pwsh
-      run: |
-          conda info
-          conda list
-          conda env update --file environment_GPU.yml
-    - uses: actions/checkout@v3
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v3
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip setuptools wheel pytest tox
-        # if [ -f requirements_GPU.txt ]; then pip install -r requirements_GPU.txt; fi
-        pip install -e .
+          # environment-file: environment_GPU.yml
+          # activate-environment: ROICaT
+          auto-update-conda: true
+          auto-activate-base: true
+    - name: Install roicat
+        run: |
+            echo "begin: PATH=$PATH;"
+
+            conda create -y --name ROICaT --file environment_GPU.yml
+
+            conda activate ROICaT || true
+            echo "after conda activate ROICaT: PATH=$PATH;"
+            which ROICaT || true
+            pip install -e .
+            # Use ROICaT here.
+    # - name: PowerShell Core
+    #   shell: pwsh
+    #   run: |
+    #       conda info
+    #       conda list
+    #       conda env update --file environment_GPU.yml
+    # - uses: actions/checkout@v3
+    # - name: Set up Python ${{ matrix.python-version }}
+    #   uses: actions/setup-python@v3
+    #   with:
+    #     python-version: ${{ matrix.python-version }}
+    # - name: Install dependencies
+    #   run: |
+    #     python -m pip install --upgrade pip setuptools wheel pytest tox
+    #     # if [ -f requirements_GPU.txt ]; then pip install -r requirements_GPU.txt; fi
+    #     pip install -e .
     - name: Test with tox
       run: |
         tox
