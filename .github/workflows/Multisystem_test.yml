@@ -43,16 +43,16 @@ jobs:
           auto-update-conda: true
           auto-activate-base: true
     - name: Install roicat
-        run: |
-            echo "begin: PATH=$PATH;"
+      run: |
+          echo "begin: PATH=$PATH;"
 
-            conda create -y --name ROICaT --file environment_GPU.yml
+          conda create -y --name ROICaT --file environment_GPU.yml
 
-            conda activate ROICaT || true
-            echo "after conda activate ROICaT: PATH=$PATH;"
-            which ROICaT || true
-            pip install -e .
-            # Use ROICaT here.
+          conda activate ROICaT || true
+          echo "after conda activate ROICaT: PATH=$PATH;"
+          which ROICaT || true
+          pip install -e .
+          # Use ROICaT here.
     # - name: PowerShell Core
     #   shell: pwsh
     #   run: |
