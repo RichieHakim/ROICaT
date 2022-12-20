@@ -36,9 +36,15 @@ jobs:
     - name: Install ROICaT dependencies
       run: |
         python -m pip install --upgrade pip setuptools wheel
-        if [ -f requirements_GPU.txt ]; then pip install -r requirements_GPU.txt; fi
+        # if [ -f requirements_GPU.txt ]; then pip install -r requirements_GPU.txt; fi
         conda env update --file environment_GPU.yml
         pip install -e .
     - name: Test with pytest
       run: |
         pytest
+    - name: Test with tox
+      run: |
+        tox
+      env:
+        PLATFORM: ${{ matrix.os }}
+        PYTHON_VERSION: ${{ matrix.python-version }}
