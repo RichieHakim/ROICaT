@@ -8,7 +8,6 @@ def get_roicat_version():
     """
     return importlib_metadata.version('roicat')
 
-# def get_
 
 def make_params_default_tracking(
     dir_networkFiles=None,
@@ -27,113 +26,119 @@ def make_params_default_tracking(
 
     params = {
         'paths': {
-            # 'dir_allOuterFolders': dir_data,  ## directory where directories containing below 'pathSuffixTo...' are
-            # 'folderName_inner': plane_name,
+            # 'dir_allOuterFolders': r"/home/rich/data/folder_containing_folders_containing_suite2p_output_files",  ## directory where directories containing below 'pathSuffixTo...' are
             # 'pathSuffixToStat': 'stat.npy',  ## path suffix to where the stat.npy file is
-            # 'pathSuffixToOps':  'ops.npy',  ## path suffix to where the ops.npy file is
+            # 'pathSuffixToOps': 'ops.npy',  ## path suffix to where the ops.npy file is
+            # 'dir_save': r'/home/rich/data/roicat_results/',  ## default: None. Directory to save output file to. If None then saves in dir_allOuterFolders.
+            # 'filenamePrefix_save': None,  ##  default: None. Filename prefix to save results to. If None then just uses the dir_allOuterFolders.name.
         },
         'importing': {
             'data_verbose': True,  ## default: True. Whether to print out data importing information
-            'out_height_width': [36, 36],  ## default: [36, 36]. Height and width of output images (note that this must agree with the input of the ROInet input)
+            'out_height_width': [36, 36],  ## default: [36,36]. Height and width of small cropped output images of each ROI. Check how large your ROIs are in pixels.
             'max_footprint_width': 1025,  ## default: 1025. Maximum length of a spatial footprint. If you get an error during importing, try increasing this value.
-            'type_meanImg': 'mimg',  ## default: 'meanImgE'. Type of mean image to use for normalization. Use 'mimg' for old matlab suite2p files. This is just a field in the ops.npy file.
+            'type_meanImg': 'meanImgE',  ## default: 'meanImgE'. Type of mean image to use for normalization. This is just a field in the ops.npy file.
+            'um_per_pixel': 2.0,  ## default: 1.0. Number of microns per pixel for the imaging dataset. Doesn't need to be exact. Used for resizing the ROIs. Check the images of the resized ROIs to tweak.
+            'new_or_old_suite2p': 'new',  ## default: 'new'. If using suite2p, this specifices whether the stat.npy file is in the old MATLAB format or new Python format.
             'images': None,  ## default: None. Set to None if you want to use the images extracted from Suite2p
-            'import_workers': -1, ## default: -1. Number of workers to use for importing. Set to -1 to use all available workers. Values other than 1 result in using multiprocessing.
-            'um_per_pixel': 1.0,  ## default: 1.0. Microns per pixel of imaging field of view. A rough estimate (to within ~40% of true value) is okay.
-            'new_or_old_suite2p': 'old',  ## default: 'new'. Set to 'old' if you are using old MATLAB style suite2p files.
+            'import_workers': -1, ## default: -1. Number of workers to use for importing. Set to -1 to use all available workers.
         },
         'alignment': {
-            'method': 'createOptFlow_DeepFlow',  ## default: 'createOptFlow_DeepFlow'. Method to use for creating optical flow.
-            'kwargs_method': None,  ## default: None. Keyword arguments to pass to the method.
-            'return_sparse': True,  ## default: True. Whether to return a sparse matrix or a dense matrix.
-            'normalize': True,  ## default: True. Whether to normalize the optical flow.
+            'do_phaseCorrReg': True,  ## default: True. If you are having issues with alignment due to big movements of the FOV. Try setting this to False.
+            'session_template': 0.5,  ## default: 0.5. Which session to use as a registration template. If input is float (ie 0.0, 0.5, 1.0, etc.), then it is the fractional position of the session to use; if input is int (ie 1, 2, 3), then it is the index of the session to use (0-indexed)
+            'use_CLAHE': True,  ## default: False. Whether or not to use 'Contrast Limited Adaptive Histogram Equalization'. Useful if params['importing']['type_meanImg'] is not a contrast enhanced image (like 'meanImgE' in Suite2p)
+            'CLAHE_nGrid': 10,  ## default 10. Unsed if 'use_CLAHE' is False. Defines how many blocks to split the FOV into to normalize the local contrast. See openCV's clahe function. Larger means more CLAHE.
+            'phaseCorr': {
+                'freq_highPass': 0.01,  ## default: 0.01. Spatial frequency upper-bound cut-off to use for phase correlation. Units in fraction of the height of the FOV. Spatial frequencies correlations higher than this will be set to zero.
+                'freq_lowPass': 0.3,  ## default: 0.3. Spatial frequency lower-bound cut-off to use for phase correlation. Units in fraction of the height of the FOV. Spatial frequencies correlations lower than this will be set to zero.
+                'template_method': 'sequential',  # default: 'sequential'. Either 'sequential' or 'image'. 'sequential' is better if there is significant drift over sessions. If 'sequential', then pcr.register(template=idx) where idx is the index of the image you want the shifts to be relative to. If 'image', then idx is FOVs[idx].
+            },
+            'nonrigid':{
+                'method': 'createOptFlow_DeepFlow',  ## default: 'createOptFlow_DeepFlow'. Method to use for creating optical flow. 'calcOpticalFlowFarneback' and 'createOptFlow_DeepFlow' available.
+                'kwargs_method': None,  ## default: None. Keyword arguments to pass to the cv2 optical flow method.
+                'template_method': 'sequential',  ## default: 'image'. Either 'sequential' or 'image'. 'sequential' is better if there is significant drift over sessions.
+                'return_sparse': True,  ## default: True. Whether to return a sparse matrix (True) or a dense matrix (False).
+                'normalize': True,  ## default: True. If True, normalize the spatial footprints to have a sum of 1.
+            },
         },
         'blurring': {
-            'kernel_halfWidth': 1.4,  ## default: 2.0. Half-width of the Gaussian kernel used for blurring. Use smaller values for smaller ROIs (dendrites) and larger values for larger ROIs (somata).
-            'device': 'cpu',  ## default: 'cpu'. Device to use for blurring. Recommend using 'cpu' even if you have a GPU.
+            'kernel_halfWidth': 2.0,  ## default: 2.0. Half-width of the cosine kernel used for blurring. Set value based on how much you think the ROIs move from session to session.
             'plot_kernel': False,  ## default: False. Whether to plot the kernel used for blurring.
-            'batch_size': 2000,  ## default: 2000. Number of images to use for each batch.
         },
         'ROInet': {
-            'device': 'cuda:0',  ## default: 'cuda:0'. Device to use for ROInet. Recommend using a GPU.
-            'dir_networkFiles': dir_networkFiles,  ## local directory where network files are stored
+            'device': 'cpu',  ## default: 'cpu'. Device to use for SWT. Recommend using a GPU (device='cuda').
+            'hash_dict_true': {
+                'params': ('params.json', '68cf1bd47130f9b6d4f9913f86f0ccaa'),
+                'model': ('model.py', '61c85529b7aa33e0dfadb31ee253a7e1'),
+                'state_dict': ('ConvNext_tiny__1_0_best__simCLR.pth', '3287e001ff28d07ada2ae70aa7d0a4da'),
+            },
+            'dir_networkFiles': '/home/rich/Downloads/ROInet',  ## local directory where network files are stored
             'download_from_gDrive': 'check_local_first',  ## default: 'check_local_first'. Whether to download the network files from Google Drive or to use the local files.
-            'gDriveID': '1FCcPZUuOR7xG-hdO6Ei6mx8YnKysVsa8',  ## default: '1FCcPZUuOR7xG-hdO6Ei6mx8YnKysVsa8'. Google Drive ID of the network files.
+            'gDriveID': '1D2Qa-YUNX176Q-wgboGflW0K6un7KYeN',  ## default: '1FCcPZUuOR7xG-hdO6Ei6mx8YnKysVsa8'. Google Drive ID of the network files.
+            'forward_pass_version': 'latent', # default: 'latent'. Leave as 'latent' for most things. Can be 'latent' (full pass through network), 'head' (output of the head layers), or 'base' (pass through just base layers)
             'verbose': True,  ## default: True. Whether to print out ROInet information.
             'pref_plot': False,  ## default: False. Whether to plot the ROI and the normalized ROI.
             'batchSize_dataloader': 8,  ## default: 8. Number of images to use for each batch.
             'pinMemory_dataloader': True,  ## default: True. Whether to pin the memory of the dataloader.
             'persistentWorkers_dataloader': True,  ## default: True. Whether to use persistent workers for the dataloader.
-            'numWorkers_dataloader': -1,  ## default: -1. num_workers as a positive integer will turn on multi-process data loading. 0 will not use multiprocessing
             'prefetchFactor_dataloader': 2,  ## default: 2. Number of prefetch factors to use for the dataloader.
         },
         'SWT': {
-            'kwargs_Scattering2D': {'J': 2, 'L': 8},  ## default: {'J': 2, 'L': 8}. Keyword arguments to pass to the Scattering2D function.
-            'image_shape': (36, 36),  ## default: (36,36). Shape of the images.
-            'device': 'cuda:0',  ## default: 'cuda:0'. Device to use for SWT. Recommend using a GPU.
-            'batch_size': 100,  ## default: 100. Number of images to use for each batch.
+            'kwargs_Scattering2D': {'J': 2, 'L': 2},  ## default: {'J': 2, 'L': 2}. Keyword arguments to pass to the kymatio Scattering2D function.
+            'device': 'cpu',  ## default: 'cpu'. Device to use for SWT. Recommend using a GPU (device='cuda').
         }, 
         'similarity': {
-            'device': 'cpu',  ## default: 'cpu'. Device to use for similarity. Recommend using 'cpu' even if you have a GPU.
+            'spatialFootprint_maskPower': 1.0,  ## default: 1.0. This determines the power to take the ROI mask images to. Higher for more dependent on brightness, lower for more dependent on binary overlap.
             'n_workers': -1,  ## default: -1. Number of workers to use for similarity. Set to -1 to use all available workers.
-            'spatialFootprint_maskPower': 0.8,  ## default: 0.8. Power to use for the spatial footprint.
-            'block_height': 50,  ## default: 50. Height of the block to use for similarity.
-            'block_width': 50,  ## default: 50. Width of the block to use for similarity.
-            'overlapping_width_Multiplier': 0.1,  ## default: 0.1. Multiplier to use for the overlapping width.
+            'block_height': 128,  ## default: 64. Maximum height of the FOV block bins to use for pairwise ROI similarity calculations. Use smaller values (16-64) if n_sessions is large (<12), else keep around (64-128)
+            'block_width': 128,  ## default: 64. Maximum width of the FOV block bins to use for pairwise ROI similarity calculations. Use smaller values (16-64) if n_sessions is large (<12), else keep around (64-128)
             'algorithm_nearestNeigbors_spatialFootprints': 'brute',  ## default: 'brute'. Algorithm to use for nearest neighbors.
-            'n_neighbors_nearestNeighbors_spatialFootprints': 'full',  ## default: 'full'. Number of neighbors to use for nearest neighbors.
-            'locality': 1,  ## default: 1. Locality to use for nearest neighbors. Exponent applied to the similarity matrix input.
             'verbose': True,  ## default: True. Whether to print out similarity information.
+            'normalization': {
+                'k_max': 4000,  ## default: 4000. Maximum kNN distance to use for building a distribution of pairwise similarities for each ROI.
+                'k_min': 150,  ## default: 150. Set around n_sessions*10. Minimum kNN distance to use for building a distribution of pairwise similarities for each ROI. 
+                'algo_NN': 'kd_tree',  ## default: 'kd_tree'. Algorithm to use for the nearest neighbors search across positional distances of different ROIs center positions. 'kd_tree' seems to be fastest. See sklearn nearest neighbor documentation for details.
+                'device': 'cpu',  ## default: 'cpu'. Device to use for SWT. Recommend using a GPU (device='cuda').
+            },
         },
-        'similarity_compute': {
-            'linkage_methods': ['single', 'complete', 'ward', 'average'],  ## default: ['single', 'complete', 'ward', 'average']. Linkage methods to use for computing linkage distances and ultimately clusters.
-            'bounded_logspace_args': (0.05, 2, 50),  ## default: (0.05, 2, 50). Linkage distances to use to find clusters.
-            'min_cluster_size': 2,  ## default: 2. Minimum size of a cluster.
-            'max_cluster_size': None,  ## default: None. Maximum size of a cluster. If None, then set to n_sessions.
-            'batch_size_hashing': 100,  ## default: 100. Number of images to use for each batch.
-            'cluster_similarity_reduction_intra': 'mean',  ## default: 'mean'. Reduction method to use for intra-cluster similarity.
-            'cluster_similarity_reduction_inter': 'max',  ## default: 'max'. Reduction method to use for inter-cluster similarity.
-            'cluster_silhouette_reduction_intra': 'mean',  ## default: 'mean'. Reduction method to use for intra-cluster silhouette.
-            'cluster_silhouette_reduction_inter': 'max',  ## default: 'max'. Reduction method to use for inter-cluster silhouette.
-            'n_workers': 8,  ## default: 8. Number of workers to use for similarity. WARNING, using many workers requires large memory requirement. Set to -1 to use all available workers.
-            'power_clusterSize': 1.3,  ## default: 2. Used in calculating custom cluster score. This is the exponent applied to the number of ROIs in a cluster.
-            'power_clusterSilhouette': 1.5,  ## default: 1.5. Used in calculating custom cluster score. This is the exponent applied to the silhouette score of a cluster.
+        ## Cluster
+        'clustering': {
+            'plot_pref': True,
+            'auto_pruning':{
+                'n_bins': 50,  ## default: 50. Number of bins to use for estimating the distributions for 'different' and 'same' pairwise similarities
+                'find_parameters_automatically': True,  ## default: True. Use optuna automatic parameter searching to find the best values for 'kwargs_makeConjunctiveDistanceMatrix'
+                'n_jobs': -1, ## default: 2. Number of jobs to use for the optuna parameter search. Large values or -1 can result in high memory usage.
+                'kwargs_findParameters': {
+                    'n_patience': 100,
+                    'tol_frac': 0.05,
+                    'max_trials': 350,
+                    'max_duration': 60*10,
+                    'verbose': False,
+                },
+                'bounds_findParameters': {
+                    'power_SF': (0.3, 2),
+                    'power_NN': (0.2, 2),
+                    'power_SWT': (0.1, 1),
+                    'p_norm': (-5, 5),
+                    'sig_NN_kwargs_mu': (0, 0.5),
+                    'sig_NN_kwargs_b': (0.05, 2),
+                    'sig_SWT_kwargs_mu': (0, 0.5),
+                    'sig_SWT_kwargs_b': (0.05, 2),
+                },
+            },
+            'method': 'auto',  ## default: 'auto'. Can be 'hungarian', 'hdbscan', or 'auto'. If 'auto', then if n_sessions >=8 'hdbscan' will be used.
+            'hdbscan':{  ## Used only if 'method' is 'hdbscan'
+                'min_cluster_size': 2,  ## default: 2. Best practice is to keep at 2 because issues can occur otherwise. Just manually throw out clusters with fewer ROIs if needed.
+                'alpha': 0.999,  ## default: 0.999. Use slightly smaller values (~0.8) if you want bigger less conservative clusters. See hdbscan documentation: https://hdbscan.readthedocs.io/en/latest/parameter_selection.html
+                'd_clusterMerge': None,  ## default: None. Distance (mixed conjunctive distance) at which all samples less than this far apart are joined in clusters. If None, then set to mean + 1.0 std of the distribution. See 'cluster_selection_epsilon' in hdbscan documentation: https://hdbscan.readthedocs.io/en/latest/parameter_selection.html
+                'cluster_selection_method': 'leaf',  ## default: 'leaf'. 'leaf' is better for smaller homogeneous clusters, 'eom' is better for larger clusters of various densities. See hdbscan documentation: https://hdbscan.readthedocs.io/en/latest/parameter_selection.html
+                'split_intraSession_clusters': True,  ## default: True. Splits up clusters with multiple ROIs from the same session into multiple clusters.
+                'd_step': 0.01,  ## default: 0.03. Size of steps to take when splitting clusters with multiple ROIs from the same session. Smaller values give higher quality clusters.
+                'discard_failed_pruning': True,  ## default: Failsafe. If the splitting doesn't work for whatever reason, then just set all violating clusters to label=-1.
+                'n_iter_violationCorrection': 6,  ## default: 5. Number of times to iterate a correcting process to improve clusters. Warning: This can increase run time linearly for large datasets. Typically converges after around 5 iterations. If n_sessions is large (>30), consider increasing.
+            },
+            'hungarian': {
+                'thresh_cost': 0.6, ## default: 0.95. Threshold distance at which all clusters larger than this are discarded. Note that typically no change will occur after values > d_cutoff.
+            },
         },
-        'clusterAssigner': {
-            'device': 'cuda:0',  ## default: 'cuda:0'. Device to use for clusterAssigner. Recommend using a GPU.
-            'optimizer_partial_lr': 1e-1,  ## default: 1e-1. Learning rate for the optimizer.
-            'optimizer_partial_betas': (0.9, 0.900),  ## default: (0.9, 0.900). Betas for the optimizer.
-            'scheduler_partial_base_lr': 1e-3,  ## default: 1e-3. Base learning rate for the scheduler.
-            'scheduler_partial_max_lr': 3e0,  ## default: 3e0. Maximum learning rate for the scheduler.
-            'scheduler_partial_step_size_up': 250,  ## default: 250. Step size for the scheduler.
-            'scheduler_partial_cycle_momentum': False,  ## default: False. Whether to cycle the momentum of the optimizer.
-            'scheduler_partial_verbose': False,  ## default: False. Whether to print out scheduler information.
-            'dmCEL_temp': 1,  ## default: 1. Temperature to use for the dmCEL loss.
-            'dmCEL_sigSlope': 2,  ## default: 2. Slope to use for the dmCEL loss.
-            'dmCEL_sigCenter': 0.5,  ## default: 0.5. Center to use for the dmCEL loss.
-            'dmCEL_penalty': 1e0,  ## default: 1e0. Penalty to use for the dmCEL loss.
-            'sampleWeight_softplusKwargs': {'beta': 150, 'threshold': 50},  ## default: {'beta': 150, 'threshold': 50}. Keyword arguments to pass to the softplus function.
-            'sampleWeight_penalty': 1e3,  ## default: 1e3. Penalty to use for when an ROI is assigned to multiple clusters.
-            'fracWeighted_goalFrac': 1.0,  ## default: 1.0. Goal fraction ROIs assigned to a cluster.
-            'fracWeighted_sigSlope': 2,  ## default: 2. Slope to use for the sigmoid activation for the fracWeighted loss.
-            'fracWeighted_sigCenter': 0.5,  ## default: 0.5. Center to use for the fracWeighted loss sigmoid.
-            'fracWeight_penalty': 1e3,  ## default: 1e2. Penalty to use for the fracWeighted loss.
-            'maskL1_penalty': 4e-4,  ## default: 2e-4. Penalty to use for the L1 loss applied to the number of non-zero clusters.
-            'tol_convergence': 1e-9,  ## default: 1e-9. Tolerance to use for convergence.
-            'window_convergence': 50,  ## default: 50. Number of past iterations to use in calculating a smooth value for the loss derivative for convergence.
-            'freqCheck_convergence': 50,  ## default: 50. Period between checking for convergence.
-            'verbose': True,  ## default: True. Whether to print out information about the initialization.
-        },
-        'clusterAssigner_fit': {
-            'min_iter': 1e3,  ## default: 1e3. Minimum number of iterations to run.
-            'max_iter': 5e3,  ## default: 5e3. Maximum number of iterations to run.
-            'verbose': True,  ## default: True. Whether to print out information about the optimization.
-            'verbose_interval': 100,  ## default: 100. Number of iterations between printing out information about the optimization.
-            'm_threshold': 0.8,  ## default: 0.8. Threshold for the activated mask vector to define as an included cluster when making predictions.
-        },
-        'visualization': {
-            'FOV_threshold_confidence': 0.5,  ## default: 0.5. Threshold for the confidence scores when displaying ROIs.
-        }
     }
-
     return params
