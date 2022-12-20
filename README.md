@@ -31,7 +31,9 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 **`cd path/to/ROICaT/directory`**<br>
 
 ### 2. (Optional) Update base conda environment
-**`conda update -n base -c defaults conda`**<br>
+**`conda update -n base -c defaults conda python=3.10`**<br>
+If you are on OSX or the above fails, try:\
+**`conda update -n base conda python=3.10`**<br>
 
 ### 3. Install dependencies (choose either 3A or 3B)
 >Make sure current directory is the ROICaT repo directory (`cd path/to/ROICaT/directory`)<br>

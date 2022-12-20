@@ -66,8 +66,8 @@ class Alinger:
             template_method (str):
                 The method used to register the images.
                 Either 'image' or 'sequential'.
-                If 'image':      ims_registered must be a single image.
-                If 'sequential': ims_registered must be an integer corresponding 
+                If 'image':      template must be a single image.
+                If 'sequential': template must be an integer corresponding 
                  to the index of the image to set as 'zero' offset.
             shifts (list of numpy.ndarray):
                 The shifts to apply to the ROIs.

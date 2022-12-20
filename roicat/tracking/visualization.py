@@ -10,6 +10,21 @@ import copy
 from .. import helpers
 
 def display_toggle_image_stack(images, clim=None, **kwargs):
+    """
+    Display a stack of images using a slider.
+    REQUIRES use of Jupyter Notebook.
+    RH 2022
+
+    Args:
+        images (np.ndarray):
+            Stack of images.
+            Shape: (num_frames, height, width)
+            Optionally, shape: (num_frames, height, width, num_channels)
+        clim (tuple, optional):
+            Color limits.
+        kwargs (dict, optional):
+            Keyword arguments to pass to imshow.
+    """
 
     fig = plt.figure()
     ax = fig.add_subplot(1, 1, 1)
