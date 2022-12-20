@@ -38,15 +38,16 @@ jobs:
       with:
           channels: conda-forge, defaults
           miniconda-version: "latest"
-          # environment-file: environment_GPU.yml
-          # activate-environment: ROICaT
+          environment-file: environment_GPU.yml
+          activate-environment: ROICaT
           auto-update-conda: true
           auto-activate-base: true
     - name: Install roicat
       run: |
+          cd $GITHUB_WORKSPACE
           echo "begin: PATH=$PATH;"
 
-          conda create -y --name ROICaT --file environment_GPU.yml
+          # conda create -y --name ROICaT --file environment_GPU.yml
 
           conda activate ROICaT || true
           echo "after conda activate ROICaT: PATH=$PATH;"

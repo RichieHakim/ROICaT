@@ -27,18 +27,26 @@ jobs:
       run: |
           conda info
           conda list
-    - uses: actions/checkout@v3    
+    - name: Check out repository code
+      uses: actions/checkout@v3    
     - name: Set up Python 3.9
       uses: actions/setup-python@v3
       with:
         python-version: "3.9.15"
     - name: Install ROICaT dependencies
       run: |
+        ## make sure we are using the right directory
+        cd $GITHUB_WORKSPACE
         python -m pip install --upgrade pip setuptools wheel pytest tox
-        # python -m pip install -r requirements_GPU.txt
-        if [ -f requirements_GPU.txt ]; then pip install -r requirements_GPU.txt; fi
+        python -m pip install -r requirements_GPU.txt
+        # if [ -f requirements_GPU.txt ]; then pip install -r requirements_GPU.txt; fi
         conda env update --file environment_GPU.yml
+    - name: Install ROICaT
+      run: |
         pip install -e .
+    - name: Install ROICaT test dependencies
+      run: |
+        pip install pytest
     - name: Test with pytest
       run: |
         pytest -v
