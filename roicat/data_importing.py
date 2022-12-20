@@ -341,9 +341,9 @@ class Data_roicat:
         assert all([img.shape[1] == FOV_images[0].shape[1] for img in FOV_images]), f"RH ERROR: All elements in FOV_images must have the same height and width."
 
         ## Set attributes
-        self.FOV_images = FOV_images
-        self.FOV_height = FOV_images[0].shape[0]
-        self.FOV_width = FOV_images[0].shape[1]
+        self.FOV_images = [f.astype(np.float32) for f in FOV_images]
+        self.FOV_height = int(FOV_images[0].shape[0])
+        self.FOV_width = int(FOV_images[0].shape[1])
 
         ## Get some variables
         n_sessions = len(FOV_images)
@@ -552,7 +552,7 @@ class Data_roicat:
             sf_rs_centered = sf_rs.copy()
             sf_rs_centered.coords = np.array([np.concatenate(c) for c in coords_split])
             sf_rs_centered = sf_rs_centered[:, :out_height_width[0], :out_height_width[1]]
-            return sf_rs_centered.todense()
+            return sf_rs_centered.todense().astype(np.float32)
             
         ## Transform
         print(f"Staring: Creating centered ROI images from spatial footprints...") if self._verbose else None
@@ -1342,15 +1342,15 @@ class Data_caiman(Data_roicat):
 
 def fix_paths(paths):
     """
-    Make sure path_files is a list of pathlib.Path
+    Make sure path_files is a list of str
     
     Args:
         paths (list of str or pathlib.Path or str or pathlib.Path):
             Potentially dirty input.
             
     Returns:
-        paths (list of pathlib.Path):
-            List of pathlib.Path
+        paths (list of str):
+            List of str
     """
     
     if (type(paths) is str) or (type(paths) is pathlib.PosixPath):
@@ -1362,7 +1362,7 @@ def fix_paths(paths):
     else:
         raise TypeError("path_files must be a list of str or list of pathlib.Path or a str or pathlib.Path")
 
-    return paths_files
+    return [str(p) for p in paths_files]
 
 
 
