@@ -949,54 +949,6 @@ def find_paths(
 ######################################################## FILE HELPERS ################################################################
 ######################################################################################################################################
 
-def hash_file(path, type_hash='MD5', buffer_size=65536):
-    """
-    Gets hash of a file.
-    Based on: https://stackoverflow.com/questions/22058048/hashing-a-file-in-python
-    RH 2022
-
-    Args:
-        path (str):
-            Path to file to be hashed.
-        type_hash (str):
-            Type of hash to use. Can be:
-                'MD5'
-                'SHA1'
-                'SHA256'
-                'SHA512'
-        buffer_size (int):
-            Buffer size for reading file.
-            65536 corresponds to 64KB.
-
-    Returns:
-        hash_val (str):
-            Hash of file.
-    """
-    import hashlib
-
-    if type_hash == 'MD5':
-        hasher = hashlib.md5()
-    elif type_hash == 'SHA1':
-        hasher = hashlib.sha1()
-    elif type_hash == 'SHA256':
-        hasher = hashlib.sha256()
-    elif type_hash == 'SHA512':
-        hasher = hashlib.sha512()
-    else:
-        raise ValueError(f'{type_hash} is not a valid hash type.')
-
-    with open(path, 'rb') as f:
-        while True:
-            data = f.read(buffer_size)
-            if not data:
-                break
-            hasher.update(data)
-
-    hash_val = hasher.hexdigest()
-        
-    return hash_val
-    
-
 def download_file(
     url, 
     path_save, 
@@ -1109,6 +1061,144 @@ def download_file(
             return False
     else:
         return True
+
+
+def hash_file(path, type_hash='MD5', buffer_size=65536):
+    """
+    Gets hash of a file.
+    Based on: https://stackoverflow.com/questions/22058048/hashing-a-file-in-python
+    RH 2022
+
+    Args:
+        path (str):
+            Path to file to be hashed.
+        type_hash (str):
+            Type of hash to use. Can be:
+                'MD5'
+                'SHA1'
+                'SHA256'
+                'SHA512'
+        buffer_size (int):
+            Buffer size for reading file.
+            65536 corresponds to 64KB.
+
+    Returns:
+        hash_val (str):
+            Hash of file.
+    """
+    import hashlib
+
+    if type_hash == 'MD5':
+        hasher = hashlib.md5()
+    elif type_hash == 'SHA1':
+        hasher = hashlib.sha1()
+    elif type_hash == 'SHA256':
+        hasher = hashlib.sha256()
+    elif type_hash == 'SHA512':
+        hasher = hashlib.sha512()
+    else:
+        raise ValueError(f'{type_hash} is not a valid hash type.')
+
+    with open(path, 'rb') as f:
+        while True:
+            data = f.read(buffer_size)
+            if not data:
+                break
+            hasher.update(data)
+
+    hash_val = hasher.hexdigest()
+        
+    return hash_val
+    
+def compare_file_hashes(
+    hash_dict_true,
+    dir_files_test=None,
+    paths_files_test=None,
+    verbose=True,
+):
+    """
+    Compares hashes of files in a directory or list of paths
+     to user provided hashes.
+    RH 2022
+
+    Args:
+        hash_dict_true (dict):
+            Dictionary of hashes to compare to.
+            Each entry should be:
+                {'key': ('filename', 'hash')}
+        dir_files_test (str):
+            Path to directory to compare hashes of files in.
+            Unused if paths_files_test is not None.
+        paths_files_test (list of str):
+            List of paths to files to compare hashes of.
+            Optional. dir_files_test is used if None.
+        verbose (bool):
+            Whether or not to print out failed comparisons.
+
+    Returns:
+        total_result (bool):
+            Whether or not all hashes were matched.
+        individual_results (list of bool):
+            Whether or not each hash was matched.
+        paths_matching (dict):
+            Dictionary of paths that matched.
+            Each entry is:
+                {'key': 'path'}
+    """
+    if paths_files_test is None:
+        if dir_files_test is None:
+            raise ValueError('Must provide either dir_files_test or path_files_test.')
+        
+        ## make a dict of {filename: path} for each file in dir_files_test
+        files_test = {filename: (Path(dir_files_test).resolve() / filename).as_posix() for filename in get_dir_contents(dir_files_test)[1]} 
+    else:
+        files_test = {Path(path).name: path for path in paths_files_test}
+
+    paths_matching = {}
+    results_matching = {}
+    for key, (filename, hash_true) in hash_dict_true.items():
+        match = True
+        if filename not in files_test:
+            print(f'{filename} not found in test directory: {dir_files_test}.') if verbose else None
+            match = False
+        elif hash_true != hash_file(files_test[filename]):
+            print(f'{filename} hash mismatch with {key, filename}.') if verbose else None
+            match = False
+        if match:
+            paths_matching[key] = files_test[filename]
+        results_matching[key] = match
+
+    return all(results_matching.values()), results_matching, paths_matching
+
+
+def extract_zip(
+    path_zip,
+    path_extract=None,
+    verbose=True,
+):
+    """
+    Extracts a zip file.
+    RH 2022
+
+    Args:
+        path_zip (str):
+            Path to zip file.
+        path_extract (str):
+            Path to extract zip file to.
+            If None, extracts to the same directory as the zip file.
+        verbose (int):
+            Whether to print progress.
+    """
+    import zipfile
+    if path_extract is None:
+        path_extract = str(Path(path_zip).parent)
+
+    print(f'Extracting {path_zip} to {path_extract}.') if verbose else None
+
+    with zipfile.ZipFile(path_zip, 'r') as zip_ref:
+        zip_ref.extractall(path_extract)
+
+    print('Completed zip extraction.') if verbose else None
 
 
 ######################################################################################################################################
