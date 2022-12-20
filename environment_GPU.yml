@@ -4,8 +4,8 @@ channels:
 dependencies:
   - python=3.9
   - pip
-  - umap-learn
-  - hdbscan=0.8.28
+  # - umap-learn=0.5.3
+  # - hdbscan=0.8.28
   - pip:
     ## Get from requirements.txt
     - -r requirements_GPU.txt
