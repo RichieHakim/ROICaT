@@ -114,7 +114,7 @@ class Data_roicat:
         ## Define some variables
         n_sessions = len(ROI_images)
         n_roi = [roi.shape[0] for roi in ROI_images]
-        n_roi_total = sum(n_roi)
+        n_roi_total = int(sum(n_roi))
 
         ## Check that attributes match if they already exist as an attribute
         if hasattr(self, 'n_sessions'):
@@ -299,7 +299,7 @@ class Data_roicat:
         ## Get some variables
         n_sessions = len(spatialFootprints)
         n_roi = [sf.shape[0] for sf in spatialFootprints]
-        n_roi_total = np.sum(n_roi)
+        n_roi_total = int(np.sum(n_roi))
 
         ## Check that attributes match if they already exist as an attribute
         if hasattr(self, 'n_sessions'):
@@ -511,11 +511,11 @@ class Data_roicat:
             x_cent = [np.nanmedian(w, axis=1) for w in x_cent]
 
         ## Round to nearest integer
-        y_cent = [np.round(h).astype(np.int64) for h in y_cent]
-        x_cent = [np.round(w).astype(np.int64) for w in x_cent]
+        y_cent = [np.round(h) for h in y_cent]
+        x_cent = [np.round(w) for w in x_cent]
         
         ## Concatenate and store
-        self.centroids = [np.stack([y, x], axis=1) for y, x in zip(y_cent, x_cent)]
+        self.centroids = [np.stack([y, x], axis=1).astype(np.int64) for y, x in zip(y_cent, x_cent)]
         print(f"Completed: Created centroids.") if self._verbose else None
 
     

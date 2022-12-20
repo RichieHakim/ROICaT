@@ -52,6 +52,14 @@ def download_data_test_zip(dir_data_test):
     )
     return path_save
 
+@pytest.fixture(scope='session')
+def array_hasher():
+    """
+    Returns a function that hashes an array.
+    """
+    from functools import partial
+    import xxhash
+    return partial(xxhash.xxh64_hexdigest, seed=0)
 
 ######################################################################################################################################
 ########################################################### HELPERS ##################################################################

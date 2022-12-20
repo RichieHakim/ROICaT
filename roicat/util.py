@@ -39,8 +39,10 @@ def make_params_default_tracking(
             'type_meanImg': 'meanImgE',  ## default: 'meanImgE'. Type of mean image to use for normalization. This is just a field in the ops.npy file.
             'um_per_pixel': 2.0,  ## default: 1.0. Number of microns per pixel for the imaging dataset. Doesn't need to be exact. Used for resizing the ROIs. Check the images of the resized ROIs to tweak.
             'new_or_old_suite2p': 'new',  ## default: 'new'. If using suite2p, this specifices whether the stat.npy file is in the old MATLAB format or new Python format.
-            'images': None,  ## default: None. Set to None if you want to use the images extracted from Suite2p
-            'import_workers': -1, ## default: -1. Number of workers to use for importing. Set to -1 to use all available workers.
+            'FOV_images': None,  ## default: None. Set to None if you want to use the images extracted from Suite2p
+            'centroid_method': 'centerOfMass',  ## default: 'centerOfMass'. Method to use for calculating the centroid of the ROI. 'centerOfMass' or 'median' available.
+            'FOV_height_width': None,  ## default: None. Set to None if you want to use the images extracted from Suite2p. Otherwise, set to [height, width] of the FOV.
+            'verbose': True,  ## default: True. Whether to print out importing information
         },
         'alignment': {
             'do_phaseCorrReg': True,  ## default: True. If you are having issues with alignment due to big movements of the FOV. Try setting this to False.
