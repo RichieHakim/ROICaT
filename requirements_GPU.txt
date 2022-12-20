@@ -1,5 +1,5 @@
-umap-learn
-hdbscan==0.8.28
+# umap-learn
+# hdbscan==0.8.28
 torch==1.12.0+cu113
 torchvision==0.13.0+cu113
 torchaudio==0.12.0
@@ -27,3 +27,4 @@ joblib==1.1.0
 Cython==0.29.32
 einops==0.6.0
 xxhash==3.1.0
+pytest==7.2.0
