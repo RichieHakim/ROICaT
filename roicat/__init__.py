@@ -5,6 +5,7 @@ __all__ = [
     'data_importing',
     'helpers',
     'ROInet',
+    'util',
 ]
 
 for pkg in __all__:
