@@ -35,23 +35,24 @@ jobs:
         
     steps:
     - uses: conda-incubator/setup-miniconda@v2
-      with:
-          channels: conda-forge, defaults
-          miniconda-version: "latest"
-          environment-file: environment_GPU.yml
-          activate-environment: ROICaT
-          auto-update-conda: true
-          auto-activate-base: true
+      # with:
+      #     channels: conda-forge, defaults
+      #     miniconda-version: "latest"
+      #     environment-file: environment_GPU.yml
+      #     activate-environment: ROICaT
+      #     auto-update-conda: true
+      #     auto-activate-base: true
     - name: Install roicat
       run: |
-          cd $GITHUB_WORKSPACE
           echo "begin: PATH=$PATH;"
+          cd $GITHUB_WORKSPACE
+          echo "after cd: PATH=$PATH;"
 
-          # conda create -y --name ROICaT --file environment_GPU.yml
+          conda create -y --name ROICaT --file environment_GPU.yml
 
           conda activate ROICaT || true
           echo "after conda activate ROICaT: PATH=$PATH;"
-          which ROICaT || true
+          # which ROICaT || true
           pip install -e .
           # Use ROICaT here.
     # - name: PowerShell Core
