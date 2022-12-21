@@ -33,36 +33,38 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
-    # - name: Set up conda
-    #   uses: conda-incubator/setup-miniconda@v2
-    #   with:
-    #     miniconda-version: latest
-    #     activate-environment: ROICaT
-    #     auto-activate-base: true
-    #     auto-update-conda: false
-    #     remove-profiles: true
-    #     architecture: x64
-    #     clean-patched-environment-file: true
-    #     run-post: true
+    - name: Set up conda
+      uses: conda-incubator/setup-miniconda@v2
+      with:
+        miniconda-version: latest
+        activate-environment: ROICaT
+        auto-activate-base: true
+        auto-update-conda: false
+        remove-profiles: true
+        architecture: x64
+        clean-patched-environment-file: true
+        run-post: true
 
-    # - name: PowerShell Core
-    #   shell: pwsh
-    #   run: |
-    #       conda info
-    #       conda list
+    - name: PowerShell Core
+      shell: pwsh
+      run: |
+          conda info
+          conda list
     
     - name: Prepare path, environment, and basic pip packages
       run: |
-        ## make sure we are using the right directory
-        # ls -l
+        ## cd to github workspace
         # cd $GITHUB_WORKSPACE
-        # ls -l
+        
         ## check current directory (pwd)
         pwd
-        # conda info
-        
-        # conda activate ROICaT || true
+
+        ## activate conda environment        
+        conda activate ROICaT || true
+
+        ## install pip, wheel, setuptools, tox
         python -m pip install --upgrade pip setuptools wheel pytest tox tox-gh-actions
+        
         # python -m pip install -r requirements_GPU.txt
         # if [ -f requirements_GPU.txt ]; then pip install -r requirements_GPU.txt; fi
         # conda env update --name ROICaT --file environment_GPU.yml
