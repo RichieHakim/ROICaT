@@ -34,6 +34,18 @@ jobs:
         python-version: ["3.8", "3.9", "3.10"]
 
     steps:
+    - name: Set up conda
+      uses: conda-incubator/setup-miniconda@v2
+      with:
+        miniconda-version: latest
+        activate-environment: ROICaT
+        auto-activate-base: true
+        auto-update-conda: false
+        remove-profiles: true
+        architecture: x64
+        clean-patched-environment-file: true
+        run-post: true
+
     - name: PowerShell Core
       shell: pwsh
       run: |

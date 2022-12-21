@@ -18,7 +18,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    ## 1. Prepare conda environment with Python 3.9
     - name: Set up conda
       uses: conda-incubator/setup-miniconda@v2
       with:
