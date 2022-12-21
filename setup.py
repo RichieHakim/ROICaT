@@ -4,7 +4,7 @@ from distutils.core import setup
 
 ## Get install dependencies from requirements.txt
 pip_deps = []
-with open('requirements.txt', 'r') as f:
+with open('requirements_GPU.txt', 'r') as f:
     for line in f.readlines():
         pip_deps.append(line.strip())
 
