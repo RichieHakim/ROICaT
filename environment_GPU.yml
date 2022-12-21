@@ -2,7 +2,7 @@ name: ROICaT
 channels:
   - conda-forge
 dependencies:
-  - python=3.9
+  - python=3.10
   - pip
   - umap-learn=0.5.3
   - hdbscan=0.8.28
