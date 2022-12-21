@@ -11,7 +11,8 @@ import os
 ### (e.g. torch --extra-index-url https://download.pytorch.org/whl/torch_stable.html)
 ### 1. Find path to requirements.txt
 ### 2. Call pip install -r requirements.txt
-path_reqs = Path(__file__) / 'requirements_GPU.txt'
+path_reqs = Path(__file__).parent / 'requirements_GPU.txt'
+print(f'Installing dependencies from {path_reqs}')
 assert path_reqs.exists(), 'No requirements.txt file found!'
 os.system(f'pip install -r {path_reqs}')
 
