@@ -2,11 +2,11 @@
 
 from distutils.core import setup
 
-# ## Get install dependencies from requirements.txt
-# install_deps = []
-# with open('requirements.txt', 'r') as f:
-#     for line in f.readlines():
-#         install_deps.append(line.strip())
+## Get install dependencies from requirements.txt
+pip_deps = []
+with open('requirements.txt', 'r') as f:
+    for line in f.readlines():
+        pip_deps.append(line.strip())
 
 setup(
     name='roicat',
@@ -21,6 +21,6 @@ setup(
     license='LICENSE',
     description='A library for classifying and tracking ROIs.',
     long_description=open('README.md').read(),
-    # install_requires=install_deps,
+    install_requires=pip_deps,
     url='https://github.com/RichieHakim/ROICaT',
 )

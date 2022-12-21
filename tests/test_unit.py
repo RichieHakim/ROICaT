@@ -18,7 +18,6 @@ import pytest
 import numpy as np
 import scipy.sparse
 
-import roicat
 from roicat import helpers, util
 
 ######################################################################################################################################
@@ -62,7 +61,7 @@ def test_data_suite2p(dir_data_test, array_hasher):
     params = util.make_params_default_tracking(dir_networkFiles=dir_data_test)
 
     ## Instantiate class with test data
-    data = roicat.data_importing.Data_suite2p(
+    data = Data_suite2p(
         paths_statFiles=paths_stat,
         paths_opsFiles=paths_ops,
         um_per_pixel=params['importing']['um_per_pixel'],
