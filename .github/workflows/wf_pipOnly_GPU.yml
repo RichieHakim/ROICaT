@@ -69,12 +69,15 @@ jobs:
         # if [ -f requirements_GPU.txt ]; then pip install -r requirements_GPU.txt; fi
         # conda env update --name ROICaT --file environment_GPU.yml
 
-    - name: Install ROICaT with pip dependencies
-      run: |
-        ## If it is Windows use set "INSTALL_ROICAT_GPU=1" && pip install -v --user -e .
-        ## If it is Linux use INSTALL_ROICAT_GPU=1 pip install -v --user -e .
-        if [ "$RUNNER_OS" = "Windows" ]; then set "INSTALL_ROICAT_GPU=1" && pip install -v --user -e .; fi
-        if [ "$RUNNER_OS" = "Linux" ]; then INSTALL_ROICAT_GPU=1 pip install -v --user -e .; fi
+    ## If it is Windows use set "INSTALL_ROICAT_GPU=1" && pip install -v --user -e . (remember to use parentheses for the if statement, no else statement)
+    ## If it is Linux use INSTALL_ROICAT_GPU=1 pip install -v --user -e .
+    - name: Install ROICaT with pip dependencies - Windows
+      run: set "INSTALL_ROICAT_GPU=1" && pip install -v --user -e .
+      if: ${{ matrix.platform == 'windows-latest' }}
+    - name: Install ROICaT with pip dependencies - Linux
+      run: INSTALL_ROICAT_GPU=1 pip install -v --user -e .
+      if: ${{ matrix.platform == 'ubuntu-latest' }}
+
 
     - name: Install ROICaT test dependencies
       run: |
