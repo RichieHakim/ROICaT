@@ -9,7 +9,7 @@
 ### 2.2. Install ROICaT dependencies from requirements_GPU.txt
 ## 3. Run tests using tox
 
-name: ROICaT-test
+name: createEnv_GPU
 
 on:
   push:
@@ -17,21 +17,18 @@ on:
   pull_request:
     branches: [ "main" ]
 
-# permissions:
-#   contents: read
+permissions:
+  contents: read
 
 jobs:
   test:
-    runs-on: ${{ matrix.os }}
-    # Do not ignore bash profile files. From:
-    # https://github.com/marketplace/actions/setup-miniconda
-    defaults:
-      run:
-        shell: bash -l {0}
+  
+    name: ${{ matrix.platform }} py${{ matrix.python-version }}
+    runs-on: ${{ matrix.platform }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        platform: [ubuntu-latest, windows-latest]
         python-version: ["3.8", "3.9", "3.10"]
 
     steps:
@@ -47,31 +44,21 @@ jobs:
         # clean-patched-environment-file: true
         # run-post: true
 
-    - name: PowerShell Core
-      shell: pwsh
-      run: |
-          conda info
-          conda list
-    
-    - name: Check out repository code
-      uses: actions/checkout@v3
-    
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v3
       with:
         python-version: ${{ matrix.python-version }}
             
-    - name: cd to $GITHUB_WORKSPACE
+    - name: Check out repository code
+      uses: actions/checkout@v3
+    
+    - name: PowerShell Core
+      shell: pwsh
       run: |
-          echo "begin PATH: $PATH;"
-          echo "begin pwd: $(pwd);"
-          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
-          cd $GITHUB_WORKSPACE
-          echo "after cd PATH: $PATH;"
-          echo "after cd pwd: $(pwd);"
-          echo "after cd ls -l:"
-          ls -l
-        
+          conda info
+          conda list
+
+
     # - uses: conda-incubator/setup-miniconda@v2
     #   with:
     #   #     channels: conda-forge, defaults
@@ -83,11 +70,15 @@ jobs:
 
     - name: Make conda environment
       run: |
-          echo "pwd: $(pwd);"
-          echo "ls -l:"
-          ls -l
-          conda env create --file environment_GPU.yml
-          conda activate ROICaT || true
+        ## cd to github workspace
+        # cd $GITHUB_WORKSPACE
+        
+        ## check current directory (pwd)
+        pwd
+
+        ## create conda environment
+        conda env create --file environment_GPU.yml
+        conda activate ROICaT || true
 
     - name: Install roicat
       run: |
