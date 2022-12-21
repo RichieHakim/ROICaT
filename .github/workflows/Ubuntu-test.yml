@@ -71,7 +71,7 @@ jobs:
 
     - name: Install ROICaT with pip dependencies
       run: |
-        pip install -v -e .
+        pip install -v --user -e .
 
     - name: Install ROICaT test dependencies
       run: |

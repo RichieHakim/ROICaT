@@ -91,7 +91,7 @@ jobs:
 
     - name: Install roicat
       run: |
-          pip install -v -e .
+        pip install -v --user -e .
           
     - name: Test with tox
       run: |
