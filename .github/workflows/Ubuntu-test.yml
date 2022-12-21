@@ -20,19 +20,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [ubuntu-latest, windows-latest, macos-latest]
+        platform: [ubuntu-latest, windows-latest]
         python-version: ["3.8", "3.9", "3.10"]
 
     steps:
     
-    - name: Check out repository code
-      uses: actions/checkout@v3
-        
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v3
-      with:
-        python-version: ${{ matrix.python-version }}
-
     - name: Set up conda
       uses: conda-incubator/setup-miniconda@v2
       with:
@@ -45,6 +37,14 @@ jobs:
         clean-patched-environment-file: true
         run-post: true
 
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v3
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Check out repository code
+      uses: actions/checkout@v3
+        
     - name: PowerShell Core
       shell: pwsh
       run: |
@@ -64,14 +64,14 @@ jobs:
 
         ## install pip, wheel, setuptools, tox
         python -m pip install --upgrade pip setuptools wheel pytest tox tox-gh-actions
-        
+
         # python -m pip install -r requirements_GPU.txt
         # if [ -f requirements_GPU.txt ]; then pip install -r requirements_GPU.txt; fi
         # conda env update --name ROICaT --file environment_GPU.yml
 
     - name: Install ROICaT with pip dependencies
       run: |
-        pip install -e .
+        pip install -v -e .
 
     - name: Install ROICaT test dependencies
       run: |
