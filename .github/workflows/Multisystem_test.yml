@@ -38,13 +38,13 @@ jobs:
       uses: conda-incubator/setup-miniconda@v2
       with:
         miniconda-version: latest
-        activate-environment: ROICaT
-        auto-activate-base: true
-        auto-update-conda: false
-        remove-profiles: true
-        architecture: x64
-        clean-patched-environment-file: true
-        run-post: true
+        # activate-environment: ROICaT
+        # auto-activate-base: true
+        # auto-update-conda: false
+        # remove-profiles: true
+        # architecture: x64
+        # clean-patched-environment-file: true
+        # run-post: true
 
     - name: PowerShell Core
       shell: pwsh
