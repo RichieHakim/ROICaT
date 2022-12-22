@@ -144,3 +144,85 @@ def make_params_default_tracking(
         },
     }
     return params
+
+
+def get_system_versions(verbose=False):
+    """
+    Checks the versions of various important softwares.
+    Prints those versions
+    RH 2022
+
+    Args:
+        verbose (bool): 
+            Whether to print the versions
+
+    Returns:
+        versions (dict):
+            Dictionary of versions
+    """
+    ## Operating system and version
+    import platform
+    operating_system = str(platform.system()) + ': ' + str(platform.release()) + ', ' + str(platform.version()) + ', ' + str(platform.machine()) + ', node: ' + str(platform.node()) 
+    print(f'Operating System: {operating_system}') if verbose else None
+
+    ## Conda Environment
+    import os
+    conda_env = os.environ['CONDA_DEFAULT_ENV']
+    print(f'Conda Environment: {conda_env}') if verbose else None
+
+    ## Python
+    import sys
+    python_version = sys.version.split(' ')[0]
+    print(f'Python Version: {python_version}') if verbose else None
+
+    ## GCC
+    import subprocess
+    gcc_version = subprocess.check_output(['gcc', '--version']).decode('utf-8').split('\n')[0].split(' ')[-1]
+    print(f'GCC Version: {gcc_version}') if verbose else None
+    
+    ## PyTorch
+    import torch
+    torch_version = str(torch.__version__)
+    print(f'PyTorch Version: {torch_version}') if verbose else None
+    ## CUDA
+    if torch.cuda.is_available():
+        cuda_version = torch.version.cuda
+        print(f"\
+CUDA Version: {cuda_version}, \
+CUDNN Version: {torch.backends.cudnn.version()}, \
+Number of Devices: {torch.cuda.device_count()}, \
+Devices: {[f'device {i}: Name={torch.cuda.get_device_name(i)}, Memory={torch.cuda.get_device_properties(i).total_memory / 1e9} GB' for i in range(torch.cuda.device_count())]}, \
+") if verbose else None
+    else:
+        cuda_version = None
+        print('CUDA is not available') if verbose else None
+
+    ## Numpy
+    import numpy
+    numpy_version = numpy.__version__
+    print(f'Numpy Version: {numpy_version}') if verbose else None
+
+    ## OpenCV
+    import cv2
+    opencv_version = cv2.__version__
+    print(f'OpenCV Version: {opencv_version}') if verbose else None
+    # print(cv2.getBuildInformation())
+
+    ## face-rhythm
+    import roicat
+    faceRhythm_version = roicat.__version__
+    print(f'roicat Version: {faceRhythm_version}') if verbose else None
+
+    versions = {
+        'roicat_version': faceRhythm_version,
+        'operating_system': operating_system,
+        'conda_env': conda_env,
+        'python_version': python_version,
+        'gcc_version': gcc_version,
+        'torch_version': torch_version,
+        'cuda_version': cuda_version,
+        'numpy_version': numpy_version,
+        'opencv_version': opencv_version,
+    }
+
+    return versions

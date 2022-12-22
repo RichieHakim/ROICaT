@@ -3,8 +3,10 @@ name: build_CPU
 on:
   push:
     branches: [ "main" ]
+    tags: [ "*testCPU*" ]
   pull_request:
     branches: [ "main" ]
+    tags: [ "*testCPU*" ]
 
 permissions:
   contents: read

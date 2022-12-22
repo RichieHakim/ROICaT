@@ -6,8 +6,10 @@ name: build_GPU
 on:
   push:
     branches: [ "main" ]
+    tags: [ "*testGPU*" ]
   pull_request:
     branches: [ "main" ]
+    tags: [ "*testGPU*" ]
 
 permissions:
   contents: read
@@ -22,13 +24,17 @@ jobs:
       matrix:
         platform: [
           ubuntu-latest,
-          windows-latest,
-          ubuntu-22.04,
-          ubuntu-20.04,
-          windows-2022,
-          windows-2019,
+          # windows-latest,
+          # ubuntu-22.04,
+          # ubuntu-20.04,
+          # windows-2022,
+          # windows-2019,
         ]
-        python-version: ["3.8", "3.9", "3.10"]
+        python-version: [
+          # "3.8", 
+          # "3.9", 
+          "3.10"
+        ]
 
     steps:
     
@@ -76,17 +82,16 @@ jobs:
         # if [ -f requirements_GPU.txt ]; then pip install -r requirements_GPU.txt; fi
         # conda env update --name ROICaT --file environment_GPU.yml
 
-    ## If it is Windows use set "INSTALL_ROICAT_GPU=1" && pip install -v --user -e . (remember to use parentheses for the if statement, no else statement)
-    ## If it is Linux use INSTALL_ROICAT_GPU=1 pip install -v --user -e .
-    - name: Install ROICaT with pip dependencies - Windows
-      if: runner.os == 'Windows'
-      run: set "INSTALL_ROICAT_GPU=1" && pip install -v --user -e .
+    # - name: Install ROICaT with pip dependencies - Windows
+    #   if: runner.os == 'Windows'
+    #   run: $env:INSTALL_ROICAT_GPU = 1; pip install -v --user -e .
       
     - name: Install ROICaT with pip dependencies - Linux
       if: runner.os == 'Linux'
-      run: INSTALL_ROICAT_GPU=1 pip install -v --user -e .
+      run: |
+      pip install torch==1.12.1+cu113 torchvision==0.13.1+cu113 torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cu113
+      pip install -v --user -e .
       
-
     - name: Install ROICaT test dependencies
       run: |
         pip install pytest

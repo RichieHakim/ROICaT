@@ -20,6 +20,13 @@ def test_import_modules():
     # TODO: ## from roicat.classification import stuff
     from roicat.tracking import alignment, blurring, clustering, scatteringWaveletTransformer, similarity_graph, visualization
     from roicat.model_training import augmentation
+
+def test_system_versions():
+    """
+    Test system versions.
+    """
+    from roicat import util
+    util.get_system_versions(verbose=True)
     
 
 ######################################################################################################################################
