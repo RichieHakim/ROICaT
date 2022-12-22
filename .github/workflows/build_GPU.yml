@@ -79,12 +79,13 @@ jobs:
     ## If it is Windows use set "INSTALL_ROICAT_GPU=1" && pip install -v --user -e . (remember to use parentheses for the if statement, no else statement)
     ## If it is Linux use INSTALL_ROICAT_GPU=1 pip install -v --user -e .
     - name: Install ROICaT with pip dependencies - Windows
+      if: runner.os == 'Windows'
       run: set "INSTALL_ROICAT_GPU=1" && pip install -v --user -e .
-      if: ${{ matrix.platform == 'windows-latest' }}
+      
     - name: Install ROICaT with pip dependencies - Linux
+      if: runner.os == 'Linux'
       run: INSTALL_ROICAT_GPU=1 pip install -v --user -e .
-      if: ${{ matrix.platform == 'ubuntu-latest' }}
-
+      
 
     - name: Install ROICaT test dependencies
       run: |
