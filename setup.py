@@ -7,16 +7,16 @@ import os
 
 import sys
 import os
-environmentVariables_names = ['INSTALL_ROICAT_GPU']
-environmentVariables = {key: os.environ.get(key, None) for key in environmentVariables_names}
+# environmentVariables_names = ['INSTALL_ROICAT_GPU']
+# environmentVariables = {key: os.environ.get(key, None) for key in environmentVariables_names}
 
-print(f"Installing with environment variables: {environmentVariables}")
-print(f"\n")
-print("To change, on Windows use: set 'ENVIRONMENT_VARIABLE_NAME=ENVIRONMENT_VARIABLE_VALUE'. \n On Linux use: ENVIRONMENT_VARIABLE_NAME=ENVIRONMENT_VARIABLE_VALUE. \n")
+# print(f"Installing with environment variables: {environmentVariables}")
+# print(f"\n")
+# print("To change, on Windows use: set 'ENVIRONMENT_VARIABLE_NAME=ENVIRONMENT_VARIABLE_VALUE'. \n On Linux use: ENVIRONMENT_VARIABLE_NAME=ENVIRONMENT_VARIABLE_VALUE. \n")
 
-use_gpu = ['True', 'TRUE', 'true', '1', 'yes', 'YES', 'Yes', 'y', 'Y'].count(environmentVariables['INSTALL_ROICAT_GPU']) > 0
+# use_gpu = ['True', 'TRUE', 'true', '1', 'yes', 'YES', 'Yes', 'y', 'Y'].count(environmentVariables['INSTALL_ROICAT_GPU']) > 0
 
-print(f"sys.argv: {sys.argv}")
+# print(f"sys.argv: {sys.argv}")
 
 ## Manually install dependencies from requirements.txt
 ### This is a workaround for the fact that pip does not support

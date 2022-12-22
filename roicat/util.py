@@ -167,7 +167,10 @@ def get_system_versions(verbose=False):
 
     ## Conda Environment
     import os
-    conda_env = os.environ['CONDA_DEFAULT_ENV']
+    if 'CONDA_DEFAULT_ENV' not in os.environ:
+        conda_env = 'None'
+    else:
+        conda_env = os.environ['CONDA_DEFAULT_ENV']
     print(f'Conda Environment: {conda_env}') if verbose else None
 
     ## Python
