@@ -1,6 +1,3 @@
-# This workflow will install Python dependencies, run tests and lint with a single version of Python
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
-
 name: build_CPU
 
 on:
@@ -28,7 +25,7 @@ jobs:
           windows-2022,
           windows-2019,
         ]
-        python-version: ["3.8", "3.9", "3.10", "3.11"]
+        python-version: ["3.8", "3.9", "3.10"]
 
     steps:
     
@@ -65,25 +62,19 @@ jobs:
         
         ## check current directory (pwd)
         pwd
-
         ## activate conda environment        
         conda activate ROICaT || true
-
         ## install pip, wheel, setuptools, tox
         python -m pip install --upgrade pip setuptools wheel pytest tox tox-gh-actions
-
         # python -m pip install -r requirements_GPU.txt
         # if [ -f requirements_GPU.txt ]; then pip install -r requirements_GPU.txt; fi
         # conda env update --name ROICaT --file environment_GPU.yml
-
     - name: Install ROICaT with pip dependencies
       run: |
         pip install -v --user -e .
-
     - name: Install ROICaT test dependencies
       run: |
         pip install pytest
-
     - name: Test with pytest
       run: |
         pytest -v
