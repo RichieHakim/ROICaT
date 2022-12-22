@@ -10,8 +10,9 @@ import os
 environmentVariables_names = ['INSTALL_ROICAT_GPU']
 environmentVariables = {key: os.environ.get(key, None) for key in environmentVariables_names}
 
-sys.stderr.write(f"Installing with environment variables: {environmentVariables}")
-sys.stderr.write("To change, on Windows use: set 'ENVIRONMENT_VARIABLE_NAME=ENVIRONMENT_VARIABLE_VALUE'. \n On Linux use: ENVIRONMENT_VARIABLE_NAME=ENVIRONMENT_VARIABLE_VALUE. \n")
+print(f"Installing with environment variables: {environmentVariables}")
+print(f"\n")
+print("To change, on Windows use: set 'ENVIRONMENT_VARIABLE_NAME=ENVIRONMENT_VARIABLE_VALUE'. \n On Linux use: ENVIRONMENT_VARIABLE_NAME=ENVIRONMENT_VARIABLE_VALUE. \n")
 
 use_gpu = ['True', 'TRUE', 'true', '1', 'yes', 'YES', 'Yes', 'y', 'Y'].count(environmentVariables['INSTALL_ROICAT_GPU']) > 0
 
@@ -23,7 +24,7 @@ use_gpu = ['True', 'TRUE', 'true', '1', 'yes', 'YES', 'Yes', 'y', 'Y'].count(env
 ### 1. Find path to requirements.txt
 ### 2. Call pip install -r requirements.txt
 path_reqs = Path(__file__).parent / 'requirements_GPU.txt' if use_gpu else Path(__file__).parent / 'requirements_CPU_only.txt'
-sys.stderr.write(f'use_gpu: {use_gpu}, installing requirements from: {path_reqs}')
+print(f'use_gpu: {use_gpu}, installing requirements from: {path_reqs}')
 
 assert path_reqs.exists(), 'No requirements.txt file found!'
 os.system(f'pip install -r {path_reqs}')
