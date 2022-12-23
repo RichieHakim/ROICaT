@@ -81,7 +81,7 @@ jobs:
       run: |
         pip install -v --user -e .[torchCPU]
 
-      - name: Run pytest
-        run: |
-          pip install pytest
-          python -m -v pytest
+    - name: Run pytest
+      run: |
+        pip install pytest
+        python -m -v pytest
