@@ -1,8 +1,7 @@
 # ROICaT <img src="logo.png"  width="300"  title="ROICaT"  alt="ROICaT"  align="right"  vspace = "60">
 
 <!-- badges -->
-[![build status CPU](https://github.com/RichieHakim/ROICaT/actions/workflows/.github/workflows/build_CPU.yml/badge.svg)](https://github.com/RichieHakim/ROICaT/actions/workflows/build_CPU.yml) 
-[![build status GPU](https://github.com/RichieHakim/ROICaT/actions/workflows/.github/workflows/build_GPU.yml/badge.svg)](https://github.com/RichieHakim/ROICaT/actions/workflows/build_GPU.yml)
+[![build](https://github.com/RichieHakim/ROICaT/actions/workflows/.github/workflows/build.yml/badge.svg)](https://github.com/RichieHakim/ROICaT/actions/workflows/build.yml) 
 
 
 **R**egion **O**f **I**nterest **C**lassification **a**nd **T**racking
@@ -64,18 +63,18 @@ If you are on OSX or the above fails, try:\
 
 
 ### 3. Install ROICaT (choose A. or B.)<br>
-**A.** **CPU**-only version: MacOS, Windows, Linux<br>
+-  **A.** **CPU**-only version: MacOS, Windows, Linux<br>
 ```
 pip install -v --user -e .[torch_cpu]
 ```
 
-**B.** **GPU** version: Windows and Linux systems with GPU<br>
-- Install the CUDA version of `torch` and `torchvision`. See here for instructions: https://pytorch.org/get-started/locally/<br>
+-  **B.** **GPU** version: Windows and Linux systems with GPU<br>
+  -- First, install the CUDA version of `torch` and `torchvision`. See here for instructions: https://pytorch.org/get-started/locally/<br>
 example: 
 ```
-pip install torch==1.12.1+cu113 torchvision==0.13.1+cu113 torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cu113<br>
+conda install pytorch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1 cudatoolkit=11.6 -c pytorch -c conda-forge
 ```
-- Install ROICaT:
+- Then, install ROICaT:
 ```
 pip install -v --user -e .
 ```
