@@ -65,7 +65,7 @@ If you are on OSX or the above fails, try:\
 ### 3. Install ROICaT (choose A. or B.)<br>
 -  **A.** **CPU**-only version: MacOS, Windows, Linux<br>
 ```
-pip install -v --user -e .[torch_cpu]
+pip install --user -v -e .[torchCPU]
 ```
 
 -  **B.** **GPU** version: Windows and Linux systems with GPU<br>
@@ -76,7 +76,7 @@ conda install pytorch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1 cudatoolkit
 ```
 - Then, install ROICaT:
 ```
-pip install -v --user -e .
+pip install --user -v -e .[torchCPU]
 ```
 
 ### 4. Use ROICaT<br>

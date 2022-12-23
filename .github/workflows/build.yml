@@ -84,4 +84,4 @@ jobs:
     - name: Run pytest
       run: |
         pip install pytest
-        python -m -v pytest
+        python -m pytest -v
