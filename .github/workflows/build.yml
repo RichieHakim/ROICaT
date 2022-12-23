@@ -79,7 +79,7 @@ jobs:
 
     - name: Install ROICaT with pip dependencies
       run: |
-        pip install -v --user -e .[torchCPU]
+        pip install --user -v -e .[torchCPU]
 
     - name: Run pytest
       run: |
