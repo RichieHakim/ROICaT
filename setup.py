@@ -7,43 +7,54 @@ import os
 
 import sys
 import os
-# environmentVariables_names = ['INSTALL_ROICAT_GPU']
-# environmentVariables = {key: os.environ.get(key, None) for key in environmentVariables_names}
 
-# print(f"Installing with environment variables: {environmentVariables}")
-# print(f"\n")
-# print("To change, on Windows use: set 'ENVIRONMENT_VARIABLE_NAME=ENVIRONMENT_VARIABLE_VALUE'. \n On Linux use: ENVIRONMENT_VARIABLE_NAME=ENVIRONMENT_VARIABLE_VALUE. \n")
-
-# use_gpu = ['True', 'TRUE', 'true', '1', 'yes', 'YES', 'Yes', 'y', 'Y'].count(environmentVariables['INSTALL_ROICAT_GPU']) > 0
-
-# print(f"sys.argv: {sys.argv}")
-
-## Manually install dependencies from requirements.txt
-### This is a workaround for the fact that pip does not support
-### installing from a requirements.txt file with custom URLs
-### (e.g. torch --extra-index-url https://download.pytorch.org/whl/torch_stable.html)
-### 1. Find path to requirements.txt
-### 2. Call pip install -r requirements.txt
-# path_reqs = Path(__file__).parent / 'requirements_GPU.txt' if use_gpu else Path(__file__).parent / 'requirements_CPU_only.txt'
-# print(f'use_gpu: {use_gpu}, installing requirements from: {path_reqs}')
-# path_reqs = Path(__file__).parent / 'requirements.txt'
-
-# assert path_reqs.exists(), 'No requirements.txt file found!'
-# os.system(f'pip install -r {path_reqs}')
-
-
-pip_deps = []
-with open('requirements.txt', 'r') as f:
-    for line in f.readlines():
-        pip_deps.append(line.strip())
-
-extras_torchCPU = [
-    'torch==1.12.1',
-    'torchvision==0.13.1',
-    'torchaudio==0.12.1',
+## Dependencies: core requirements
+deps_core = [
+    "umap-learn==0.5.3",
+    "hdbscan==0.8.29",
+    "gdown==4.5.1",
+    "ipywidgets==7.7.1",
+    "kymatio==0.2.1",
+    "matplotlib==3.5.2",
+    "numpy==1.23.2",
+    "opencv_contrib_python==4.6.0.66",
+    "pandas==1.4.3",
+    "Pillow==9.2.0",
+    "scikit_learn==1.1.2",
+    "scipy==1.8.1",
+    "seaborn==0.11.2",
+    "sparse==0.13.0",
+    "tqdm==4.64.0",
+    "natsort==8.2.0",
+    "jupyter",
+    "paramiko==2.12.0",
+    "pyyaml==5.4.1",
+    "hdfdict==0.3.1",
+    "optuna==3.0.1",
+    "joblib==1.1.0",
+    "Cython==0.29.32",
+    "einops==0.6.0",
+    "xxhash==3.1.0",
+    "pytest==7.2.0",
 ]
+## Dependencies: latest versions of core requirements
+### remove everything starting and after the first =,>,<,! sign
+deps_core_latest = [req.split('=')[0].split('>')[0].split('<')[0].split('!')[0] for req in deps_core]
 
-path_README = str(Path(__file__).parent / 'README.md')
+
+# ## Dependencies: torch CPU
+# deps_torchCPU = [
+#     "torch==1.12.1",
+#     "torchvision==0.13.1",
+#     "torchaudio==0.12.1",
+# ]
+# ## Dependencies: torch CPU, latest versions
+# deps_torchCPU_latest = [req.split('=')[0].split('>')[0].split('<')[0].split('!')[0] for req in deps_torchCPU]
+
+
+## Get README.md
+with open("README.md", "r") as f:
+    readme = f.read()
 
 setup(
     name='roicat',
@@ -52,7 +63,7 @@ setup(
     keywords=['neuroscience', 'neuroimaging', 'machine learning', 'deep learning'],
     license='LICENSE',
     description='A library for classifying and tracking ROIs.',
-    long_description=open(path_README).read(),
+    long_description=readme,
     url='https://github.com/RichieHakim/ROICaT',
 
     packages=[
@@ -61,8 +72,11 @@ setup(
         'roicat.classification'
     ],
     
-    install_requires=pip_deps,
+    install_requires=[],
     extras_require={
-        'torchCPU': extras_torchCPU,
+        'core': deps_core,
+        'core_latest': deps_core_latest,
+        # 'torchCPU': deps_torchCPU,
+        # 'torchCPU_latest': deps_torchCPU_latest,
     },
 )

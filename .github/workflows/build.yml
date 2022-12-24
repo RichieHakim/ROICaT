@@ -34,6 +34,10 @@ jobs:
           "3.9", 
           # "3.10"
         ]
+        extra: [
+          core,
+          core_latest,
+        ]
 
     steps:
     
@@ -79,9 +83,9 @@ jobs:
 
     - name: Install ROICaT with pip dependencies
       run: |
-        pip install --user -v -e .[torchCPU]
+        pip install --user -v -e .[{{ matrix.extra }}]
 
-    - name: Run pytest
+    - name: Run pytest on ROICaT and some key dependencies
       run: |
-        pip install pytest
-        python -m pytest -v
+        pip install tox pytest
+        tox -v -v -v

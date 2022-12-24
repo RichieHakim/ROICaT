@@ -32,7 +32,7 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 
 ### 1. (Recommended) Create a new conda environment
 ```
-conda create -n ROICaT python=3.10
+conda create -n ROICaT python=3.9
 conda activate ROICaT
 ```
 
@@ -43,9 +43,9 @@ cd path/to/ROICaT/directory
 ```
 
 <!-- ### 2. (Optional) Update base conda environment
-**`conda update -n base -c defaults conda python=3.10`**<br>
+**`conda update -n base -c defaults conda python=3.9`**<br>
 If you are on OSX or the above fails, try:\
-**`conda update -n base conda python=3.10`**<br>
+**`conda update -n base conda python=3.9`**<br>
 
 ### 3. Install dependencies (choose either 3A or 3B)
 >Make sure current directory is the ROICaT repo directory (`cd path/to/ROICaT/directory`)<br>
@@ -61,25 +61,16 @@ If you are on OSX or the above fails, try:\
 > If you'd like to give a custom name to the environment: `conda env create -n my_env_name --file environment_chooseGPUorCPUfile_.yml`<br>
 > If you'd like to install environment into a different directory: ` conda env create --file environment_chooseGPUorCPUfile.yml --prefix /path/to/virtual/environment`<br> -->
 
+### 3. Install PyTorch: <br>
+Follow the instructions here: https://pytorch.org/get-started/locally/<br>
+To use a GPU, you will need to install the CUDA version of PyTorch. If you aren't familiar, read the instructions at the link.
 
-### 3. Install ROICaT (choose A. or B.)<br>
--  **A.** **CPU**-only version: MacOS, Windows, Linux<br>
+### 4. Install ROICaT
 ```
-pip install --user -v -e .[torchCPU]
-```
-
--  **B.** **GPU** version: Windows and Linux systems with GPU<br>
-  -- First, install the CUDA version of `torch` and `torchvision`. See here for instructions: https://pytorch.org/get-started/locally/<br>
-example: 
-```
-conda install pytorch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1 cudatoolkit=11.6 -c pytorch -c conda-forge
-```
-- Then, install ROICaT:
-```
-pip install --user -v -e .[torchCPU]
+pip install --user -v -e .[core]
 ```
 
-### 4. Use ROICaT<br>
+### 5. Use ROICaT<br>
 - Beginner: Run a Jupyter Notebook: [Notebooks](https://github.com/RichieHakim/ROICaT/tree/main/notebooks)<br>
 - Advanced: Make a parameter file and run in command line: `python -m ROICaT`. See [TODO: link to how-to] for details.<br>
 

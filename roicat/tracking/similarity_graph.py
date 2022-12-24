@@ -1,5 +1,4 @@
 import scipy.sparse
-import scipy.cluster
 import numpy as np
 import torch
 import sklearn
