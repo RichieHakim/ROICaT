@@ -35,8 +35,8 @@ jobs:
           # "3.10"
         ]
         extra: [
-          core,
-          core_latest,
+          "[core]",
+          "[core_latest]",
         ]
 
     steps:
@@ -83,7 +83,7 @@ jobs:
 
     - name: Install ROICaT with pip dependencies
       run: |
-        pip install --user -v -e .[{{ matrix.extra }}]
+        pip install --user -v -e .{{ matrix.extra }}
 
     - name: Run pytest on ROICaT and some key dependencies
       run: |
