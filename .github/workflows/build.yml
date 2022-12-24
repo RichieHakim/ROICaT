@@ -3,8 +3,10 @@ name: build
 on:
   push:
     branches: [ "main" ]
+    tags: [ "run-build", "run-build.*"]
   pull_request:
     branches: [ "main" ]
+    tags: [ "run-build", "run-build.*"]
 
 permissions:
   contents: read
@@ -18,25 +20,36 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        if: github.ref == 'refs/tags/run-build-all'
         platform: [
           # ubuntu-latest,
           # windows-latest,
           # macos-latest,
           ubuntu-22.04,
-          # ubuntu-20.04,
-          # windows-2022,
-          # windows-2019,
-          # macos-12.0,
+          ubuntu-20.04,
+          windows-2022,
+          windows-2019,
+          macos-12.0,
           macos-11.0,
         ]
         python-version: [
-          # "3.8", 
+          "3.8", 
           "3.9", 
-          # "3.10"
+          "3.10"
         ]
         extra: [
           core,
-          # core_latest,
+          core_latest,
+        ]
+        else:
+        platform: [
+          ubuntu-latest,
+        ]
+        python-version: [ 
+          "3.9",
+        ]
+        extra: [
+          core,
         ]
 
     steps:
