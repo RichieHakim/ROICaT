@@ -69,6 +69,7 @@ To use a GPU, you will need to install the CUDA version of PyTorch. If you aren'
 ```
 pip install --user -v -e .[core]
 ```
+Note: if you are using a zsh terminal, change command to: `pip3 install --user -v -e '.[core]'`
 
 ### 5. Use ROICaT<br>
 - Beginner: Run a Jupyter Notebook: [Notebooks](https://github.com/RichieHakim/ROICaT/tree/main/notebooks)<br>
