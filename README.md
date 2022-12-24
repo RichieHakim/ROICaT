@@ -16,13 +16,12 @@ Currently designed to be used with Suite2p and CaImAn output data (stat.npy and 
 - [TODO](#TODO)<br>
 
 ## Announcements
-
-### TRACKING NOW IN BETA! Try it out in the demo notebook [here](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/tracking_interactive_notebook.ipynb) or the demo script [here](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/tracking_scripted_notebook.ipynb).
-### Classification still in Alpha. Contact me if you want to help test it.
-### To help with development or beta test releases, please contact: rhakim@g.harvard.edu
+- **TRACKING:** Try it out in the demo notebook [here](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/tracking_interactive_notebook.ipynb) or the demo script [here](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/tracking_scripted_notebook.ipynb).
+- **CLASSIFICATION:** still in Alpha. Contact me if you want to help test it.
+- To help with development or beta test releases, please contact: rhakim@g.harvard.edu
 
 # Installation
-**We want ROICaT to be installable on all systems. If you have any issues during the installation process, please make a [github issue](https://github.com/RichieHakim/ROICaT/issues) with the error.**
+ROICaT works on Windows, MacOS, and Linux. If you have any issues during the installation process, please make a [github issue](https://github.com/RichieHakim/ROICaT/issues) with the error.
 
 ### 0. Requirements
 - [Anaconda](https://www.anaconda.com/distribution/) or [Miniconda](https://docs.conda.io/en/latest/miniconda.html)<br>
