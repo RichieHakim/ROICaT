@@ -87,8 +87,19 @@ jobs:
     - name: Install ROICaT with pip dependencies
       run: |
         pip install --user -v -e .[${{ matrix.extra }}]
+        if [ "${{ matrix.extra }}" == "core_latest" ]; then
+          pip install torch torchvision torchaudio -f https://download.pytorch.org/whl/torch_stable.html
+        fi
+        ## If matrix.extra == 'core' and the OS is linux or windows (avoid using matrix.platform)
+        if [ "${{ matrix.extra }}" == "core" ] && ([ "${{ runner.os }}" == "Linux" ] || [ "${{ runner.os }}" == "Windows" ]); then
+          pip install torch==1.12.1+cpu torchvision==0.13.1+cpu torchaudio==0.12.1 -f https://download.pytorch.org/whl/torch_stable.html
+        fi
+        if [ "${{ matrix.extra }}" == "core" ] && [ "${{ runner.os }}" == "macOS" ]; then
+          pip install torch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1 -f https://download.pytorch.org/whl/torch_stable.html
+        fi
 
-    - name: Run tox + pytest on ROICaT and some key dependencies
+
+    - name: Run pytest on ROICaT and some key dependencies
       run: |
         pip install tox pytest
-        tox -v -v -v
+        pytest -v
