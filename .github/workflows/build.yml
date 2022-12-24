@@ -23,10 +23,10 @@ jobs:
           # windows-latest,
           # macos-latest,
           ubuntu-22.04,
-          ubuntu-20.04,
-          windows-2022,
-          windows-2019,
-          macos-12.0,
+          # ubuntu-20.04,
+          # windows-2022,
+          # windows-2019,
+          # macos-12.0,
           macos-11.0,
         ]
         python-version: [
@@ -36,7 +36,7 @@ jobs:
         ]
         extra: [
           core,
-          core_latest,
+          # core_latest,
         ]
 
     steps:
