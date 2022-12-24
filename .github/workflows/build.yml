@@ -20,7 +20,8 @@ jobs:
       matrix:
         platform:
           - ubuntu-latest
-          if: !contains(github.ref, 'build')
+          ## If the tag is 'build' then run on all platforms
+          if: github.ref == 'refs/tags/build'
           - windows-latest
           - macOS-latest
         python-version: [ 
