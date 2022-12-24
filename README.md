@@ -6,7 +6,7 @@
 
 **R**egion **O**f **I**nterest **C**lassification **a**nd **T**racking
 A simple-to-use Python package for classifying images of cells and tracking them across imaging sessions/planes.
-Currently designed to be used with Suite2p output data (stat.npy and ops.npy files) and CaImAn output data (results.h5 files), but any image data can be used (see [TODO: link] for details on using non-standard data).
+Currently designed to be used with Suite2p and CaImAn output data (stat.npy and ops.npy files) and CaImAn output data (results.h5 files), but any image data can be used (see [TODO: link] for details on using non-standard data).
 
 ## Table of contents
 - [Announcements](#Announcements)<br>
@@ -27,8 +27,8 @@ Currently designed to be used with Suite2p output data (stat.npy and ops.npy fil
 ### 0. Requirements
 - [Anaconda](https://www.anaconda.com/distribution/) or [Miniconda](https://docs.conda.io/en/latest/miniconda.html)<br>
 - GCC >= 5.4.0, ideally == 9.2.0. Google how to do this on your operating system. For unix/linux: check with `gcc --version`.<br>
-- For GPU support, you just need a CUDA compatible NVIDIA GPU and the relevant [drivers](https://www.nvidia.com/Download/index.aspx?lang=en-us). There is no need to download CUDA or CUDNN as PyTorch takes care of this during the installation. Using a GPU is not required, but can increase speeds 2-20x depending on the GPU and your data. See https://developer.nvidia.com/cuda-gpus for a list of compatible GPUs.
 - On some Linux servers (like Harvard's O2 server), you may need to load modules instead of installing. To load conda, gcc, try: `module load conda3/latest gcc/9.2.0` or similar.<br>
+- **Optional:** [CUDA compatible NVIDIA GPU](https://developer.nvidia.com/cuda-gpus). Using a GPU can increase ROICaT speeds 2-20x. To use one, you
 
 ### 1. (Recommended) Create a new conda environment
 ```
@@ -62,8 +62,8 @@ If you are on OSX or the above fails, try:\
 > If you'd like to install environment into a different directory: ` conda env create --file environment_chooseGPUorCPUfile.yml --prefix /path/to/virtual/environment`<br> -->
 
 ### 3. Install PyTorch: <br>
-Follow the instructions here: https://pytorch.org/get-started/locally/<br>
-To use a GPU, you will need to install the CUDA version of PyTorch. If you aren't familiar, read the instructions at the link.
+- PyTorch is required for ROICaT and is well tested on torch versions `1.12.0` to `1.13.1`
+- **Follow steps to install:** Follow the instructions here: https://pytorch.org/get-started/locally/. Read closely if you wish to install a GPU/CUDA version of PyTorch. The key takeaways are that you need a [CUDA compatible NVIDIA GPU](https://developer.nvidia.com/cuda-gpus) and [drivers](https://developer.nvidia.com/cuda-toolkit-archive) that match the same version as the PyTorch CUDA version you choose. All CUDA 11.x versions are intercompatible, so if you have CUDA 11.8 drivers, you can install `torch==1.13.1+cu116`.
 
 ### 4. Install ROICaT
 ```
