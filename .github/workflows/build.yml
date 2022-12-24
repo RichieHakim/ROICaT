@@ -18,6 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        if: github.ref != 'refs/tags/build'
         platform:
           [ ubuntu-latest ]
           # ## If the tag is 'build' then run on all platforms
