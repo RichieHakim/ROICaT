@@ -20,7 +20,7 @@ jobs:
       matrix:
         platform:
           - ubuntu-latest
-          if: contains(toJson(github.ref), 'build')
+          if: !contains(github.ref, 'build')
           - windows-latest
           - macOS-latest
         python-version: [ 
