@@ -23,15 +23,12 @@ jobs:
           if: contains(toJson(github.ref), 'build')
           - windows-latest
           - macOS-latest
-        python-version:
-          - 3.9
-          if: contains(toJson(github.ref), 'build')
-          - 3.8
-          - 3.10
-        extra:
-          - core
-          if: contains(toJson(github.ref), 'build')
-          - core_latest
+        python-version: [ 
+          "3.9",
+        ]
+        extra: [
+          core,
+        ]
 
     steps:
     
