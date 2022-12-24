@@ -81,16 +81,8 @@ jobs:
         ## install pip, wheel, setuptools, tox
         python -m pip install --upgrade pip setuptools wheel pytest tox tox-gh-actions
 
-    - name: Install ROICaT with pip dependencies - MacOS
-      if: runner.os == 'macOS'
+    - name: Install ROICaT with pip dependencies
       run: |
-        pip install torch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1
-        pip install --user -v -e .[${{ matrix.extra }}]
-
-    - name: Install ROICaT with pip dependencies - Windows or Linux
-      if: (runner.os == 'Linux') || (runner.os == 'Windows')
-      run: |
-        pip install torch==1.12.1+cpu torchvision==0.13.1+cpu torchaudio==0.12.1 -f https://download.pytorch.org/whl/torch_stable.html
         pip install --user -v -e .[${{ matrix.extra }}]
 
     - name: Run tox + pytest on ROICaT and some key dependencies
