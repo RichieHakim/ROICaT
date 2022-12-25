@@ -1,4 +1,5 @@
 from pathlib import Path
+import warnings
 
 import importlib_metadata
 
@@ -180,7 +181,11 @@ def get_system_versions(verbose=False):
 
     ## GCC
     import subprocess
-    gcc_version = subprocess.check_output(['gcc', '--version']).decode('utf-8').split('\n')[0].split(' ')[-1]
+    try:
+        gcc_version = subprocess.check_output(['gcc', '--version']).decode('utf-8').split('\n')[0].split(' ')[-1]
+    except Exception as e:
+        warnings.warn(f'RH WARNING: unable to get gcc version. Got error: {e}')
+        gcc_version = 'Faled to get'
     print(f'GCC Version: {gcc_version}') if verbose else None
     
     ## PyTorch
