@@ -3,6 +3,8 @@ import warnings
 
 import importlib_metadata
 
+from . import helpers
+
 def get_roicat_version():
     """
     Get the version of the roicat package.
@@ -234,3 +236,33 @@ Devices: {[f'device {i}: Name={torch.cuda.get_device_name(i)}, Memory={torch.cud
     }
 
     return versions
+
+
+def download_data_test_zip(dir_data_test):
+    """
+    Downloads the test data if it does not exist.
+    If the data exists, check its hash.
+
+    Args:
+        dir_data_test (str):
+            directory to download zip file into
+
+    Returns:
+        path_save (str):
+            path to data_test.zip file
+    """
+    path_save = str(Path(dir_data_test) / 'data_test.zip')
+    helpers.download_file(
+        url=r'https://github.com/RichieHakim/ROICaT/raw/main/tests/data_test.zip', 
+        path_save=path_save, 
+        check_local_first=True, 
+        check_hash=True, 
+        hash_type='MD5', 
+        hash_hex=r'764d9b3fc481e078d1ef59373695ecce',
+        mkdir=True,
+        allow_overwrite=True,
+        write_mode='wb',
+        verbose=True,
+        chunk_size=1024,
+    )
+    return path_save
