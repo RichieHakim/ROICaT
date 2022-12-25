@@ -27,7 +27,7 @@ ROICaT works on Windows, MacOS, and Linux. If you have any issues during the ins
 - [Anaconda](https://www.anaconda.com/distribution/) or [Miniconda](https://docs.conda.io/en/latest/miniconda.html)<br>
 - GCC >= 5.4.0, ideally == 9.2.0. Google how to do this on your operating system. For unix/linux: check with `gcc --version`.<br>
 - On some Linux servers (like Harvard's O2 server), you may need to load modules instead of installing. To load conda, gcc, try: `module load conda3/latest gcc/9.2.0` or similar.<br>
-- **Optional:** [CUDA compatible NVIDIA GPU](https://developer.nvidia.com/cuda-gpus). Using a GPU can increase ROICaT speeds 2-20x. To use one, you
+- **Optional:** [CUDA compatible NVIDIA GPU](https://developer.nvidia.com/cuda-gpus) and [drivers](https://developer.nvidia.com/cuda-toolkit-archive). Using a GPU can increase ROICaT speeds 2-20x.
 
 ### 1. (Recommended) Create a new conda environment
 ```
