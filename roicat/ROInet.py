@@ -1,19 +1,23 @@
 """
-hashes = {'baseline': ('1FCcPZUuOR7xG-hdO6Ei6mx8YnKysVsa8',
-                       {'params': ('params.json', '877e17df8fa511a03bc99cd507a54403'),
-                        'model': ('model.py', '55e1dd233989753fe0719c8238d0345e'),
-                        'state_dict': ('ConvNext_tiny__1_0_unfrozen__simCLR.pth',
-                                       'a5fae4c9ea95f2c78b4690222b2928a5')}),
-          'occlusion': ('1D2Qa-YUNX176Q-wgboGflW0K6un7KYeN',
-                        {'params': ('params.json', '68cf1bd47130f9b6d4f9913f86f0ccaa'),
-                         'model': ('model.py', '61c85529b7aa33e0dfadb31ee253a7e1'),
-                         'state_dict': ('ConvNext_tiny__1_0_best__simCLR.pth',
-                                        '3287e001ff28d07ada2ae70aa7d0a4da')}),
-          'minaffine': ('1Xh02nfw_Fgb9uih1WCrsFNI-WIYXDVDn',
-                        {'params': ('params.json', '9399a311d47e6966c1201defde4c6c34'),
-                        'model': ('model.py', '8789a7b27e41b39ee94c9f732f38eafc'),
-                        'state_dict': ('ConvNext_tiny__1_0_unfrozen__simCLR.pth',
-                                       '172a992fed5e4bbabc5503e19630b621')})}
+OSF.io links to ROInet versions:
+
+ROInet_classification:
+    Info:
+        This version includes occlusions and large affine
+         transformations.
+    Link:
+        https://osf.io/scm27/download
+    Hash (MD5 hex):
+        3d767bfec446c91dad8e5909c1b697c1
+
+ROInet_tracking:
+    Info:
+        This version does not includde occlusions or large
+         affine transformations.
+    Link:
+        https://osf.io/pkc2x/download
+    Hash (MD5 hex):
+        1e62893d8e944819516e793656afc31d
 """
 
 
@@ -24,6 +28,7 @@ import os
 import hashlib
 import PIL
 import multiprocessing as mp
+from functools import partial
 
 import numpy as np
 import gdown
@@ -48,13 +53,10 @@ class ROInet_embedder:
         self,
         device='cpu',
         dir_networkFiles=None,
-        download_from_gDrive='check_local_first',
-        gDriveID='1D2Qa-YUNX176Q-wgboGflW0K6un7KYeN',
-        hash_dict_networkFiles={
-            'params': ('params.json', '68cf1bd47130f9b6d4f9913f86f0ccaa'),
-            'model': ('model.py', '61c85529b7aa33e0dfadb31ee253a7e1'),
-            'state_dict': ('ConvNext_tiny__1_0_best__simCLR.pth', '3287e001ff28d07ada2ae70aa7d0a4da'),
-        },
+        download_method='check_local_first',
+        download_url='https://osf.io/pkc2x/download',
+        download_hash=None,
+        names_networkFiles=None,
         forward_pass_version='latent',
         verbose=True,
     ):
@@ -62,37 +64,60 @@ class ROInet_embedder:
         Initialize the class.
         This will look for a local copy of the network files, and
          if they don't exist, it will download them from Google Drive
-         using a user specified gDriveID.
+         using a user specified download_url.
         There is some hash checking to make sure the files are the same.
 
         Args:
             device (str):
                 The device to use for the model and data.
             dir_networkFiles (str):
-                The directory to find or download the network files into
-            download_from_gDrive (str):
+                The directory to find an existing ROInet.zip file
+                 or download and extract a new one into.                 
+            download_method (str):
                 Approach to downloading the network files.
                 'check_local_first':
                     Check if the network files are already in 
                      dir_networkFiles. If so, use them.
                 'force_download':
-                    Download the network files from Google Drive.
+                    Download an ROInet.zip file from download_url.
                 'force_local':
-                    Use the network files in dir_networkFiles.
+                    Use an existing local copy of an ROInet.zip file.
                     If they don't exist, raise an error.
-                    Hash checking is not done.
-            hash_dict_networkFiles (dict):
-                A dictionary of the hash values of the network files.
-                Each item is {key: (filename, hash_value)}
-                The (filename, hash_value) pairs can be made using:
-                 paths_networkFiles = [(Path(dir_networkFiles).resolve() / name).as_posix() for name in get_dir_contents(dir_networkFiles)[1]]
-                 {Path(path).name: hash_file(path) for path in paths_networkFiles}
+                    Hash checking is done and download_hash must be
+                     specified.
+            download_url (str):
+                The url to download the ROInet.zip file from.
+            download_hash (dict):
+                MD5 hash of the ROInet.zip file. This can be obtained
+                 from ROICaT documentation. If you don't have one,
+                 use download_method='force_download' and determine
+                 the hash using helpers.hash_file().
+            names_networkFiles (dict):
+                Optional. The names of the files in the ROInet.zip
+                 file.
+                If uncertain, leave as None.
+                Should be of form (example):
+                {
+                    'params': 'params.json',
+                    'model': 'model.py',
+                    'state_dict': 'ConvNext_tiny__1_0_unfrozen__simCLR.pth'
+                }
+                'params':
+                    The parameters used to train the network.
+                     Usually a .json file.
+                'model':
+                    The model definition. Usually a .py file.
+                'state_dict':
+                    The weights of the network. Usually a .pth
+                     file.
             forward_pass_version (str):
                 The version of the forward pass to use.
                 'latent':
                     Return the post-head output latents.
+                    Use this for tracking.
                 'head':
                     Return the output of the head layers.
+                    Use this for classification.
                 'base':
                     Return the output of the base model.
             verbose (bool):
@@ -103,69 +128,62 @@ class ROInet_embedder:
 
 
         self._dir_networkFiles = dir_networkFiles
-        self._gDriveID = gDriveID
+        self._download_url = download_url
+
+        self._download_path_save = str(Path(self._dir_networkFiles).resolve() / 'ROInet.zip')
+        
+        fn_download = partial(
+            download_file,
+            path_save=self._download_path_save,
+            hash_type='MD5',
+            hash_hex=download_hash,
+            mkdir=True,
+            allow_overwrite=True,
+            write_mode='wb',
+            verbose=self._verbose,
+            chunk_size=1024,
+        )
 
         ## Find or download network files
-        if download_from_gDrive == 'force_download':
-            paths_downloaded = self._download_network_files()
-            print(paths_downloaded) if self._verbose else None
-            if hash_dict_networkFiles is None:
-                print('Skipping hash check because hash_dict_networkFiles is None')
-                paths_matching = {
-                    'params': np.array(paths_downloaded)[[('params.json' in t) for t in paths_downloaded]][0],
-                    'model': np.array(paths_downloaded)[[('model.py' in t) for t in paths_downloaded]][0],
-                    'state_dict': np.array(paths_downloaded)[[('.pth' in t) for t in paths_downloaded]][0],
-                }
-                print(paths_matching) if self._verbose else None
-            else:
-                results_all, results, paths_matching = compare_file_hashes(  
-                    hash_dict_true=hash_dict_networkFiles,
-                    dir_files_test=dir_networkFiles,
-                    verbose=True,
-                )
-                print(paths_matching) if self._verbose else None
-                if results_all == False:
-                    print(f'WARNING: Hash comparison failed. Could not match downloaded files to hash_dict_networkFiles.')
+        if download_method == 'force_download':
+            fn_download(url=self._download_url, check_local_first=False, check_hash=False)
 
-        if download_from_gDrive == 'check_local_first':
-            assert hash_dict_networkFiles is not None, "if using download_from_gDrive='check_local_first' hash_dict_networkFiles cannot be None"
-            results_all, results, paths_matching = compare_file_hashes(  
-                hash_dict_true=hash_dict_networkFiles,
-                dir_files_test=dir_networkFiles,
-                verbose=True,
-            )
-            print(f'Successful hash comparison. Found matching files: {paths_matching}') if results_all and self._verbose else None
-            if results_all == False:
-                print(f'Hash comparison failed. Downloading from Google Drive.') if self._verbose else None
-                self._download_network_files()
-                results_all, results, paths_matching = compare_file_hashes(  
-                    hash_dict_true=hash_dict_networkFiles,
-                    dir_files_test=dir_networkFiles,
-                    verbose=True,
-                )
-                if results_all:
-                    print(f'Successful hash comparison. Found matching files: {paths_matching}')  if self._verbose else None
-                else:
-                    raise Exception(f'Downloaded network files do not match expected hashes. Results: {results}')
+        if download_method == 'check_local_first':
+            # assert download_hash is not None, "if using download_method='check_local_first' download_hash cannot be None. Either determine the hash of the zip file or use download_method='force_download'."
+            fn_download(url=self._download_url, check_local_first=True, check_hash=True)
         
-        if download_from_gDrive == 'force_local':
-            assert hash_dict_networkFiles is not None, "if using download_from_gDrive='force_local' hash_dict_networkFiles cannot be None"
-            results_all, results, paths_matching = compare_file_hashes(  
-                hash_dict_true=hash_dict_networkFiles,
-                dir_files_test=dir_networkFiles,
-                verbose=True,
-            )
-            if results_all == False:
-                print(f'WARNING: Hash comparison failed. Could not match local files to hash_dict_networkFiles.')
+        if download_method == 'force_local':
+            # assert download_hash is not None, "if using download_method='force_local' download_hash cannot be None"
+            assert Path(self._download_path_save).exists(), f"if using download_method='force_local' the network files must exist in {self._download_path_save}"
+            fn_download(url=None, check_local_first=True, check_hash=True)
+            
+        ## Extract network files from zip
+        paths_extracted = extract_zip(
+            path_zip=self._download_path_save,
+            path_extract=self._dir_networkFiles,
+            verbose=self._verbose,
+        )
+
+        ## Find network files
+        if names_networkFiles is None:
+            names_networkFiles = {
+                'params': 'params.json',
+                'model': 'model.py',
+                'state_dict': '.pth',
+            }
+        paths_networkFiles = {}
+        paths_networkFiles['params'] = [p for p in paths_extracted if names_networkFiles['params'] in str(Path(p).name)][0]
+        paths_networkFiles['model'] = [p for p in paths_extracted if names_networkFiles['model'] in str(Path(p).name)][0]
+        paths_networkFiles['state_dict'] = [p for p in paths_extracted if names_networkFiles['state_dict'] in str(Path(p).name)][0]
 
         ## Import network files
-        sys.path.append(dir_networkFiles)
+        sys.path.append(str(Path(paths_networkFiles['model']).parent.resolve()))
         import model
-        print(f"Imported model from {dir_networkFiles}/model.py") if self._verbose else None
+        print(f"Imported model from {paths_networkFiles['model']}") if self._verbose else None
 
-        with open(paths_matching['params']) as f:
+        with open(paths_networkFiles['params']) as f:
             self.params_model = json.load(f)
-            print(f"Loaded params_model from {paths_matching['params']}") if self._verbose else None
+            print(f"Loaded params_model from {paths_networkFiles['params']}") if self._verbose else None
             self.net = model.make_model(fwd_version=forward_pass_version, **self.params_model)
             print(f"Generated network using params_model") if self._verbose else None
             
@@ -174,8 +192,8 @@ class ROInet_embedder:
             param.requires_grad = False
         self.net.eval()
 
-        self.net.load_state_dict(torch.load(paths_matching['state_dict'], map_location=torch.device(self._device)))
-        print(f'Loaded state_dict into network from {paths_matching["state_dict"]}') if self._verbose else None
+        self.net.load_state_dict(torch.load(paths_networkFiles['state_dict'], map_location=torch.device(self._device)))
+        print(f'Loaded state_dict into network from {paths_networkFiles["state_dict"]}') if self._verbose else None
 
         self.net = self.net.to(self._device)
         print(f'Loaded network onto device {self._device}') if self._verbose else None
@@ -340,17 +358,30 @@ class ROInet_embedder:
             raise Exception('dataloader not defined. Call generate_dataloader() first.')
 
         print(f'starting: running data through network')
-        self.latents = torch.cat([self.net(data[0][0].to(self._device)).detach() for data in tqdm(self.dataloader, mininterval=60)], dim=0).cpu()
+        self.latents = torch.cat([self.net(data[0][0].to(self._device)).detach() for data in tqdm(self.dataloader, mininterval=5)], dim=0).cpu()
         print(f'completed: running data through network')
         return self.latents
 
 
     def _download_network_files(self):
-        if self._gDriveID is None or self._dir_networkFiles is None:
-            raise ValueError('gDriveID and dir_networkFiles must be specified if download_from_gDrive is True')
+        if self._download_url is None or self._dir_networkFiles is None:
+            raise ValueError('download_url and dir_networkFiles must be specified if download_method is True')
 
         print(f'Downloading network files from Google Drive to {self._dir_networkFiles}') if self._verbose else None
-        paths_files = gdown.download_folder(id=self._gDriveID, output=self._dir_networkFiles, quiet=False, use_cookies=False)
+        download_file(
+            url=self._download_url,
+            path_save=self._dir_networkFiles,
+            check_local_first=True,
+            check_hash=True,
+            hash_type='MD5',
+            hash_hex='1e62893d8e944819516e793656afc31d',
+            mkdir=True,
+            allow_overwrite=True,
+            write_mode='wb',
+            verbose=True,
+            chunk_size=1024,
+        )
+        paths_files = gdown.download_folder(id=self._download_url, output=self._dir_networkFiles, quiet=False, use_cookies=False)
         print('Downloaded network files') if self._verbose else None
         return paths_files
     
@@ -412,33 +443,6 @@ def resize_affine(img, scale, clamp_range=False):
 ########### FROM BNPM #############
 ###################################
 
-def get_dir_contents(directory):
-    '''
-    Get the contents of a directory (does not
-     include subdirectories).
-    RH 2021
-
-    Args:
-        directory (str):
-            path to directory
-    
-    Returns:
-        folders (List):
-            list of folder names
-        files (List):
-            list of file names
-    '''
-    walk = os.walk(directory, followlinks=False)
-    folders = []
-    files = []
-    for ii,level in enumerate(walk):
-        folders, files = level[1:]
-        if ii==0:
-            break
-    return folders, files
-
-
-
 def hash_file(path, type_hash='MD5', buffer_size=65536):
     """
     Gets hash of a file.
@@ -486,65 +490,181 @@ def hash_file(path, type_hash='MD5', buffer_size=65536):
     return hash_val
 
 
-def compare_file_hashes(
-    hash_dict_true,
-    dir_files_test=None,
-    paths_files_test=None,
+def download_file(
+    url, 
+    path_save, 
+    check_local_first=True, 
+    check_hash=False, 
+    hash_type='MD5', 
+    hash_hex=None,
+    mkdir=False,
+    allow_overwrite=True,
+    write_mode='wb',
     verbose=True,
+    chunk_size=1024,
 ):
     """
-    Compares hashes of files in a directory or list of paths
-     to user provided hashes.
+    Download a file from a URL to a local path using requests.
+    Allows for checking if file already exists locally and
+    checking the hash of the downloaded file against a provided hash.
     RH 2022
 
     Args:
-        hash_dict_true (dict):
-            Dictionary of hashes to compare to.
-            Each entry should be:
-                {'key': ('filename', 'hash')}
-        dir_files_test (str):
-            Path to directory to compare hashes of files in.
-            Unused if paths_files_test is not None.
-        paths_files_test (list of str):
-            List of paths to files to compare hashes of.
-            Optional. dir_files_test is used if None.
+        url (str):
+            URL of file to download.
+            If url is None, then no download is attempted.
+        path_save (str):
+            Path to save file to.
+        check_local_first (bool):
+            If True, checks if file already exists locally.
+            If True and file exists locally, plans to skip download.
+            If True and check_hash is True, checks hash of local file.
+             If hash matches, skips download. If hash does not match, 
+             downloads file.
+        check_hash (bool):
+            If True, checks hash of local or downloaded file against
+             hash_hex.
+        hash_type (str):
+            Type of hash to use. Can be:
+                'MD5', 'SHA1', 'SHA256', 'SHA512'
+        hash_hex (str):
+            Hash to compare to. In hex format (e.g. 'a1b2c3d4e5f6...').
+            Can be generated using hash_file() or hashlib and .hexdigest().
+            If check_hash is True, hash_hex must be provided.
+        mkdir (bool):
+            If True, creates parent directory of path_save if it does not exist.
+        write_mode (str):
+            Write mode for saving file. Should be one of:
+                'wb' (write binary)
+                'ab' (append binary)
+                'xb' (write binary, fail if file exists)
         verbose (bool):
-            Whether or not to print out failed comparisons.
+            If True, prints status messages.
+        chunk_size (int):
+            Size of chunks to download file in.
+    """
+    import os
+    import requests
+
+    # Check if file already exists locally
+    if check_local_first:
+        if os.path.isfile(path_save):
+            print(f'File already exists locally: {path_save}') if verbose else None
+            # Check hash of local file
+            if check_hash:
+                hash_local = hash_file(path_save, type_hash=hash_type)
+                if hash_local == hash_hex:
+                    print('Hash of local file matches provided hash_hex.') if verbose else None
+                    return True
+                else:
+                    print('Hash of local file does not match provided hash_hex.') if verbose else None
+                    print(f'Hash of local file: {hash_local}') if verbose else None
+                    print(f'Hash provided in hash_hex: {hash_hex}') if verbose else None
+                    print('Downloading file...') if verbose else None
+            else:
+                return True
+        else:
+            print(f'File does not exist locally: {path_save}. Will attempt download from {url}') if verbose else None
+
+    # Download file
+    if url is None:
+        print('No URL provided. No download attempted.') if verbose else None
+        return None
+    try:
+        response = requests.get(url, stream=True)
+    except requests.exceptions.RequestException as e:
+        print(f'Error downloading file: {e}') if verbose else None
+        return False
+    # Check response
+    if response.status_code != 200:
+        print(f'Error downloading file. Response status code: {response.status_code}') if verbose else None
+        return False
+    # Create parent directory if it does not exist
+    prepare_filepath_for_saving(path_save, mkdir=mkdir, allow_overwrite=allow_overwrite)
+    # Download file with progress bar
+    total_size = int(response.headers.get('content-length', 0))
+    wrote = 0
+    with open(path_save, write_mode) as f:
+        with tqdm(total=total_size, disable=(verbose==False), unit='B', unit_scale=True, unit_divisor=1024) as pbar:
+            for data in response.iter_content(chunk_size):
+                wrote = wrote + len(data)
+                f.write(data)
+                pbar.update(len(data))
+    if total_size != 0 and wrote != total_size:
+        print("ERROR, something went wrong")
+        return False
+    # Check hash
+    hash_local = hash_file(path_save, type_hash=hash_type)
+    if check_hash:
+        if hash_local == hash_hex:
+            print('Hash of downloaded file matches hash_hex.') if verbose else None
+            return True
+        else:
+            print('Hash of downloaded file does not match hash_hex.') if verbose else None
+            print(f'Hash of downloaded file: {hash_local}') if verbose else None
+            print(f'Hash provided in hash_hex: {hash_hex}') if verbose else None
+            return False
+    else:
+        print(f'Hash of downloaded file: {hash_local}') if verbose else None
+        return True
+
+
+def extract_zip(
+    path_zip,
+    path_extract=None,
+    verbose=True,
+):
+    """
+    Extracts a zip file.
+    RH 2022
+
+    Args:
+        path_zip (str):
+            Path to zip file.
+        path_extract (str):
+            Path (directory) to extract zip file to.
+            If None, extracts to the same directory as the zip file.
+        verbose (int):
+            Whether to print progress.
 
     Returns:
-        total_result (bool):
-            Whether or not all hashes were matched.
-        individual_results (list of bool):
-            Whether or not each hash was matched.
-        paths_matching (dict):
-            Dictionary of paths that matched.
-            Each entry is:
-                {'key': 'path'}
+        paths_extracted (list):
+            List of paths to extracted files.
     """
-    if paths_files_test is None:
-        if dir_files_test is None:
-            raise ValueError('Must provide either dir_files_test or path_files_test.')
-        
-        ## make a dict of {filename: path} for each file in dir_files_test
-        files_test = {filename: (Path(dir_files_test).resolve() / filename).as_posix() for filename in get_dir_contents(dir_files_test)[1]} 
-    else:
-        files_test = {Path(path).name: path for path in paths_files_test}
+    import zipfile
 
-    paths_matching = {}
-    results_matching = {}
-    for key, (filename, hash_true) in hash_dict_true.items():
-        match = True
-        if filename not in files_test:
-            print(f'{filename} not found in test directory: {dir_files_test}.') if verbose else None
-            match = False
-        elif hash_true != hash_file(files_test[filename]):
-            print(f'{filename} hash mismatch with {key, filename}.') if verbose else None
-            match = False
-        if match:
-            paths_matching[key] = files_test[filename]
-        results_matching[key] = match
+    if path_extract is None:
+        path_extract = str(Path(path_zip).resolve().parent)
+    path_extract = str(Path(path_extract).resolve().absolute())
 
-    return all(results_matching.values()), results_matching, paths_matching
+    print(f'Extracting {path_zip} to {path_extract}.') if verbose else None
+
+    with zipfile.ZipFile(path_zip, 'r') as zip_ref:
+        zip_ref.extractall(path_extract)
+        paths_extracted = [str(Path(path_extract) / p) for p in zip_ref.namelist()]
+
+    print('Completed zip extraction.') if verbose else None
+
+    return paths_extracted
+
+
+def prepare_filepath_for_saving(path, mkdir=False, allow_overwrite=True):
+    """
+    Checks if a file path is valid.
+    RH 2022
+
+    Args:
+        path (str):
+            Path to check.
+        mkdir (bool):
+            If True, creates parent directory if it does not exist.
+        allow_overwrite (bool):
+            If True, allows overwriting of existing file.
+    """
+    Path(path).parent.mkdir(parents=True, exist_ok=True) if mkdir else None
+    assert allow_overwrite or not Path(path).exists(), f'{path} already exists.'
+    assert Path(path).parent.exists(), f'{Path(path).parent} does not exist.'
+    assert Path(path).parent.is_dir(), f'{Path(path).parent} is not a directory.'
 
 
 

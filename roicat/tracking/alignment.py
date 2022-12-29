@@ -118,7 +118,7 @@ class Alinger:
         self.ROIs_aligned, self.FOVs_aligned, self.flows = [], [], []
         flow_old = np.zeros((dims[0], dims[1], 2))
         flows_all = []
-        for ii in tqdm(range(len(FOVs)), mininterval=60):
+        for ii in tqdm(range(len(FOVs)), mininterval=1):
             if template_method == 'sequential':
                 template_norm = FOVs_norm[ii-1] if ii > 0 else FOVs_norm[ii]
 
@@ -154,7 +154,7 @@ class Alinger:
         self.flows = [f - flows_all[template] for f in flows_all] if template_method == 'sequential' else flows_all
 
         print('Registering ROIs...') if self._verbose else None
-        for ii, flow in tqdm(enumerate(self.flows), total=len(self.flows), mininterval=60):
+        for ii, flow in tqdm(enumerate(self.flows), total=len(self.flows), mininterval=1):
             x_remap = (flow[:, :, 0] + x_grid).astype(np.float32)
             y_remap = (flow[:, :, 1] + y_grid).astype(np.float32)
             

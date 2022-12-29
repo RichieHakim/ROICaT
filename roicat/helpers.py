@@ -971,6 +971,7 @@ def download_file(
     Args:
         url (str):
             URL of file to download.
+            If url is None, then no download is attempted.
         path_save (str):
             Path to save file to.
         check_local_first (bool):
@@ -1025,6 +1026,9 @@ def download_file(
             print(f'File does not exist locally: {path_save}. Will attempt download from {url}') if verbose else None
 
     # Download file
+    if url is None:
+        print('No URL provided. No download attempted.') if verbose else None
+        return None
     try:
         response = requests.get(url, stream=True)
     except requests.exceptions.RequestException as e:
@@ -1049,8 +1053,8 @@ def download_file(
         print("ERROR, something went wrong")
         return False
     # Check hash
+    hash_local = hash_file(path_save, type_hash=hash_type)
     if check_hash:
-        hash_local = hash_file(path_save, type_hash=hash_type)
         if hash_local == hash_hex:
             print('Hash of downloaded file matches hash_hex.') if verbose else None
             return True
@@ -1060,6 +1064,7 @@ def download_file(
             print(f'Hash provided in hash_hex: {hash_hex}') if verbose else None
             return False
     else:
+        print(f'Hash of downloaded file: {hash_local}') if verbose else None
         return True
 
 
@@ -1184,21 +1189,30 @@ def extract_zip(
         path_zip (str):
             Path to zip file.
         path_extract (str):
-            Path to extract zip file to.
+            Path (directory) to extract zip file to.
             If None, extracts to the same directory as the zip file.
         verbose (int):
             Whether to print progress.
+
+    Returns:
+        paths_extracted (list):
+            List of paths to extracted files.
     """
     import zipfile
+
     if path_extract is None:
-        path_extract = str(Path(path_zip).parent)
+        path_extract = str(Path(path_zip).resolve().parent)
+    path_extract = str(Path(path_extract).resolve().absolute())
 
     print(f'Extracting {path_zip} to {path_extract}.') if verbose else None
 
     with zipfile.ZipFile(path_zip, 'r') as zip_ref:
         zip_ref.extractall(path_extract)
+        paths_extracted = [str(Path(path_extract) / p) for p in zip_ref.namelist()]
 
     print('Completed zip extraction.') if verbose else None
+
+    return paths_extracted
 
 
 ######################################################################################################################################
