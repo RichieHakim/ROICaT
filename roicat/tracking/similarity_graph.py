@@ -160,6 +160,8 @@ class ROI_graph:
             s_SWT_all.append(s_SWT)
             s_sesh_all.append(s_sesh)
             idxROI_block_all.append(idxROI_block)
+
+            assert [len(s_NN.data)==len(s_sf.data), len(s_SWT.data)==len(s_sf.data), len(s_sesh.data)==len(s_sf.data)], 'The number of data elements in the similarity matrices should be the same.'
         # return s_sf_all, s_NN_all, s_SWT_all, s_sesh_all, idxROI_block_all
 
         print('Joining blocks into full similarity matrices...') if self._verbose else None
@@ -168,8 +170,9 @@ class ROI_graph:
         # self.s_SWT = helpers.merge_sparse_arrays(s_SWT_all, idxROI_block_all, (n_roi, n_roi), remove_redundant=True).tocsr()
         # self.s_sesh = helpers.merge_sparse_arrays(s_sesh_all, idxROI_block_all, (n_roi, n_roi), remove_redundant=True).tocsr()
 
-        def merge_sparse_arrays(s_list, idx_list, shape, shift_val=None, n_batches=1):
+        def merge_sparse_arrays(s_list, idx_list, shape, shift_val=None):
             def csr_to_coo_idxd(s_csr, idx, shift_val, shape):
+                s_csr.data[s_csr.data < 0] = 1e-10
                 s_coo = s_csr.tocoo()
                 return scipy.sparse.coo_matrix(
                     (s_coo.data + shift_val, (idx[s_coo.row], idx[s_coo.col])),
@@ -179,22 +182,22 @@ class ROI_graph:
                 shift_val = min([s.min() for s in s_list]) + 1
             
             s_flat = scipy.sparse.vstack([
-                csr_to_coo_idxd(s, idx, shift_val, shape).reshape(1,-1).tocsr() for s, idx in tqdm(zip(s_list, idx_list))
+                csr_to_coo_idxd(s, idx, shift_val, shape).reshape(1,-1).tocsr() for s, idx in zip(s_list, idx_list)
             ]).tocsr()
-            s_flat = scipy.sparse.vstack([s.max(1) for s in helpers.make_batches(helpers.scipy_sparse_csr_with_length(s_flat.T), num_batches=n_batches)]).T
+            s_flat = scipy.sparse.vstack([s.max(1) for s in tqdm(helpers.make_batches(helpers.scipy_sparse_csr_with_length(s_flat.T), batch_size=100000), total=s_flat.shape[0]/100000)]).T
             
             s_merged = s_flat.reshape(shape)
             s_merged.data = s_merged.data - shift_val
             return s_merged  ## the max operation is why it's so slow
 
         print('Joining s_sf...') if self._verbose else None
-        self.s_sf = merge_sparse_arrays(s_sf_all, idxROI_block_all, (n_roi, n_roi), n_batches=10).tocsr()
+        self.s_sf = merge_sparse_arrays(s_sf_all, idxROI_block_all, (n_roi, n_roi)).tocsr()
         print('Joining s_NN...') if self._verbose else None
-        self.s_NN = merge_sparse_arrays(s_NN_all, idxROI_block_all, (n_roi, n_roi), n_batches=10).tocsr()
+        self.s_NN = merge_sparse_arrays(s_NN_all, idxROI_block_all, (n_roi, n_roi)).tocsr()
         print('Joining s_SWT...') if self._verbose else None
-        self.s_SWT = merge_sparse_arrays(s_SWT_all, idxROI_block_all, (n_roi, n_roi), n_batches=10).tocsr()
+        self.s_SWT = merge_sparse_arrays(s_SWT_all, idxROI_block_all, (n_roi, n_roi)).tocsr()
         print('Joining s_sesh...') if self._verbose else None
-        self.s_sesh = merge_sparse_arrays(s_sesh_all, idxROI_block_all, (n_roi, n_roi), n_batches=10).tocsr()
+        self.s_sesh = merge_sparse_arrays(s_sesh_all, idxROI_block_all, (n_roi, n_roi)).tocsr()
 
 
         # self.s_sf = scipy.sparse.lil_matrix((n_roi, n_roi))
