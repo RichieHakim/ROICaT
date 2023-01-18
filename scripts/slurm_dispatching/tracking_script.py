@@ -159,7 +159,7 @@ print(f'Conda Environment: ' + os.environ['CONDA_DEFAULT_ENV'])
 import sys
 sys.path.append(params['paths']['dir_github'])
 # from ROICaT.tracking import data_importing, visualization, alignment, blurring, helpers, ROInet, scatteringWaveletTransformer, similarity_graph, cluster_assignment
-from ROICaT.tracking import data_importing, visualization, alignment, helpers, ROInet, scatteringWaveletTransformer, similarity_graph, cluster_assignment  ## sans blurring
+from roicat import data_importing, visualization, alignment, helpers, ROInet, scatteringWaveletTransformer, similarity_graph, cluster_assignment  ## sans blurring
 
 
 

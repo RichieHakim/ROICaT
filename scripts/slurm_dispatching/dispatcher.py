@@ -17,7 +17,7 @@ import sys
 sys.path.append(dir_github)
 # %load_ext autoreload
 # %autoreload 2
-from basic_neural_processing_modules import container_helpers, server
+from bnpm import container_helpers, server
 # from s2p_on_o2 import remote_run_s2p
 
 
@@ -58,7 +58,7 @@ params_template = {
     },
     'importing': {
         'data_verbose': True,  ## default: True. Whether to print out data importing information
-        'out_height_width': [72, 72],  ## default: [72, 72]. Height and width of output images (note that this must agree with the input of the ROInet input)
+        'out_height_width': [36, 36],  ## default: [72, 72]. Height and width of output images (note that this must agree with the input of the ROInet input)
         'max_footprint_width': 1025,  ## default: 1025. Maximum length of a spatial footprint. If you get an error during importing, try increasing this value.
         'type_meanImg': 'mimg',  ## default: 'meanImgE'. Type of mean image to use for normalization. Use 'mimg' for old matlab suite2p files. This is just a field in the ops.npy file.
         'images': None,  ## default: None. Set to None if you want to use the images extracted from Suite2p
