@@ -4,6 +4,8 @@ import re
 
 import warnings
 
+from roicat import visualization
+
 
 ######################################################################################################################################
 #################################################### TEST ROICAT MODULES #############################################################
@@ -18,7 +20,7 @@ def test_import_modules():
     import roicat
     from roicat import classification, tracking, model_training, data_importing, helpers, ROInet
     # TODO: ## from roicat.classification import stuff
-    from roicat.tracking import alignment, blurring, clustering, scatteringWaveletTransformer, similarity_graph, visualization
+    from roicat.tracking import alignment, blurring, clustering, scatteringWaveletTransformer, similarity_graph
     from roicat.model_training import augmentation
 
 def test_system_versions():

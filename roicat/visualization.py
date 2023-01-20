@@ -1,5 +1,7 @@
 import matplotlib.pyplot as plt
 from ipywidgets import interact, widgets
+import seaborn as sns
+
 
 import numpy as np
 import sparse
@@ -7,9 +9,15 @@ import scipy.sparse
 
 import copy
 
-from .. import helpers
+from . import helpers
 
-def display_toggle_image_stack(images, clim=None, **kwargs):
+def display_toggle_image_stack(
+    images,
+    fig=None,
+    ax=None,
+    clim=None,
+    **imshow_kwargs
+):
     """
     Display a stack of images using a slider.
     REQUIRES use of Jupyter Notebook.
@@ -20,18 +28,23 @@ def display_toggle_image_stack(images, clim=None, **kwargs):
             Stack of images.
             Shape: (num_frames, height, width)
             Optionally, shape: (num_frames, height, width, num_channels)
+        fig (matplotlib.figure.Figure, optional):
+            Figure to use.
+        ax (matplotlib.axes.Axes, optional):
+            Axes to use.
         clim (tuple, optional):
             Color limits.
         kwargs (dict, optional):
             Keyword arguments to pass to imshow.
     """
 
-    fig = plt.figure()
-    ax = fig.add_subplot(1, 1, 1)
+    if ax is None:
+        fig = plt.figure()
+        ax = fig.add_subplot(1, 1, 1)
+
     imshow_FOV = ax.imshow(
         images[0],
-#         vmax=clim[1]
-        **kwargs
+        **imshow_kwargs
     )
 
     def update(i_frame = 0):
@@ -63,6 +76,7 @@ def compute_colored_FOV(
     FOV_height,
     FOV_width,
     labels,
+    cmap='random',
     boolSessionID=None,
     confidence=None,
 ):
@@ -84,6 +98,10 @@ def compute_colored_FOV(
             If list, then each element is all the labels for a given session.
             If array, then this is all the labels for all sessions, and 
              boolSessionID must be provided.
+        cmap (str or matplotlib.colors.ListedColormap):
+            Colormap to use for the labels.
+            If 'random', then a random colormap is generated.
+            Else, this is passed to matplotlib.colors.ListedColormap.
         boolSessionID (np.ndarray of bool):
             Boolean array indicating which session each spatial footprint belongs to.
             Only required if spatialFootprints and labels are not lists.
@@ -109,7 +127,7 @@ def compute_colored_FOV(
 
     n_c = len(u)
 
-    colors = helpers.rand_cmap(nlabels=n_c, verbose=False)(np.linspace(0.,1.,n_c, endpoint=False))
+    colors = helpers.rand_cmap(nlabels=n_c, verbose=False)(np.linspace(0.,1.,n_c, endpoint=True)) if cmap=='random' else cmap(np.linspace(0.,1.,n_c, endpoint=True))
     colors = colors / colors.max(1, keepdims=True)
 
     if np.isin(-1, labels_cat):
@@ -155,3 +173,16 @@ def crop_cluster_ims(ims):
     im_out[:,(0,-1),:] = 1
     im_out[:,:,(0,-1)] = 1
     return im_out
+
+
+def confusion_matrix(cm, **params):
+    default_params = dict(
+        annot=True,
+        annot_kws={"size": 16},
+        vmin=0.,
+        vmax=1.,
+        cmap=plt.get_cmap('gray')
+    )
+    for key in params:
+        default_params[key] = params[key]
+    sns.heatmap(cm, **default_params)

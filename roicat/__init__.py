@@ -6,6 +6,7 @@ __all__ = [
     'helpers',
     'ROInet',
     'util',
+    'visualization',
 ]
 
 for pkg in __all__:

@@ -6,6 +6,7 @@ import copy
 import pickle
 import re
 import zipfile
+import gc
 
 import numpy as np
 import torch
@@ -1213,6 +1214,114 @@ def extract_zip(
     print('Completed zip extraction.') if verbose else None
 
     return paths_extracted
+
+
+######################################################################################################################################
+####################################################### DECOMPOSITION ################################################################
+######################################################################################################################################
+
+def torch_pca(
+    X_in, 
+    device='cpu', 
+    mean_sub=True, 
+    zscore=False, 
+    rank=None, 
+    return_cpu=True, 
+    return_numpy=False
+):
+    """
+    Principal Components Analysis for PyTorch.
+    If using GPU, then call torch.cuda.empty_cache() after.
+    RH 2021
+
+    Args:
+        X_in (torch.Tensor or np.ndarray):
+            Data to be decomposed.
+            2-D array. Columns are features, rows are samples.
+            PCA will be performed column-wise.
+        device (str):
+            Device to use. ie 'cuda' or 'cpu'. Use a function 
+             torch_helpers.set_device() to get.
+        mean_sub (bool):
+            Whether or not to mean subtract ('center') the 
+             columns.
+        zscore (bool):
+            Whether or not to z-score the columns. This is 
+             equivalent to doing PCA on the correlation-matrix.
+        rank (int):
+            Maximum estimated rank of decomposition. If None,
+             then rank is X.shape[1]
+        return_cpu (bool):  
+            Whether or not to force returns/outputs to be on 
+             the 'cpu' device. If False, and device!='cpu',
+             then returns will be on device.
+        return_numpy (bool):
+            Whether or not to force returns/outputs to be
+             numpy.ndarray type.
+
+    Returns:
+        components (torch.Tensor or np.ndarray):
+            The components of the decomposition. 
+            2-D array.
+            Each column is a component vector. Each row is a 
+             feature weight.
+        scores (torch.Tensor or np.ndarray):
+            The scores of the decomposition.
+            2-D array.
+            Each column is a score vector. Each row is a 
+             sample weight.
+        singVals (torch.Tensor or np.ndarray):
+            The singular values of the decomposition.
+            1-D array.
+            Each element is a singular value.
+        EVR (torch.Tensor or np.ndarray):
+            The explained variance ratio of each component.
+            1-D array.
+            Each element is the explained variance ratio of
+             the corresponding component.
+    """
+    
+    if isinstance(X_in, torch.Tensor) == False:
+        X = torch.from_numpy(X_in).to(device)
+    elif X_in.device != device:
+            X = X_in.to(device)
+    else:
+        X = copy.copy(X_in)
+            
+    if mean_sub and not zscore:
+        X = X - torch.mean(X, dim=0)
+    if zscore:
+        X = X - torch.mean(X, dim=0)
+        stds = torch.std(X, dim=0)
+        X = X / stds[None,:]        
+        
+    if rank is None:
+        rank = min(list(X.shape))
+    
+    (U,S,V) = torch.pca_lowrank(X, q=rank, center=False, niter=2)
+    components = V
+    scores = torch.matmul(X, V[:, :rank])
+
+    singVals = (S**2)/(len(S)-1)
+    EVR = (singVals) / torch.sum(singVals)
+    
+    if return_cpu:
+        components = components.cpu()
+        scores = scores.cpu()
+        singVals = singVals.cpu()
+        EVR = EVR.cpu()
+    if return_numpy:
+        components = components.cpu().numpy()
+        scores = scores.cpu().numpy()
+        singVals = singVals.cpu().numpy()
+        EVR = EVR.cpu().numpy()
+        
+    gc.collect()
+    torch.cuda.empty_cache()
+    gc.collect()
+    torch.cuda.empty_cache()
+    gc.collect()
+    return components, scores, singVals, EVR
 
 
 ######################################################################################################################################

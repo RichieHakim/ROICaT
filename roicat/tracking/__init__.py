@@ -4,7 +4,6 @@ __all__ = [
     'clustering',
     'scatteringWaveletTransformer',
     'similarity_graph',
-    'visualization',
 ]
 
 for pkg in __all__:
