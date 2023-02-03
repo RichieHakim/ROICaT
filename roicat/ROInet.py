@@ -49,23 +49,24 @@ class ROInet_embedder:
 
     OSF.io links to ROInet versions:
 
-    ROInet_classification:
+    ROInet_tracking:
         Info:
-            This version includes occlusions and large affine
-            transformations.
+            This version does not includde occlusions or large
+             affine transformations.
         Link:
             https://osf.io/scm27/download
         Hash (MD5 hex):
             3d767bfec446c91dad8e5909c1b697c1
 
-    ROInet_tracking:
+    ROInet_classification:
         Info:
-            This version does not includde occlusions or large
-            affine transformations.
+            This version includes occlusions and large affine
+             transformations.
         Link:
             https://osf.io/pkc2x/download
         Hash (MD5 hex):
             1e62893d8e944819516e793656afc31d
+
 
     RH 2022
     """
@@ -74,7 +75,7 @@ class ROInet_embedder:
         device='cpu',
         dir_networkFiles=None,
         download_method='check_local_first',
-        download_url='https://osf.io/pkc2x/download',
+        download_url='https://osf.io/scm27/download',
         download_hash=None,
         names_networkFiles=None,
         forward_pass_version='latent',
