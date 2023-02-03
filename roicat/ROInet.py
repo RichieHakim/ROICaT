@@ -1,19 +1,19 @@
 """
 OSF.io links to ROInet versions:
 
-ROInet_classification:
+ROInet_tracking:
     Info:
-        This version includes occlusions and large affine
-         transformations.
+        This version does not includde occlusions or large
+         affine transformations.
     Link:
         https://osf.io/scm27/download
     Hash (MD5 hex):
         3d767bfec446c91dad8e5909c1b697c1
 
-ROInet_tracking:
+ROInet_classification:
     Info:
-        This version does not includde occlusions or large
-         affine transformations.
+        This version includes occlusions and large affine
+         transformations.
     Link:
         https://osf.io/pkc2x/download
     Hash (MD5 hex):
@@ -417,7 +417,24 @@ class ROInet_embedder:
         for ir,roi in enumerate(self.ROI_images_rs[:(rows*cols)]):
             ax[ir//cols,ir%cols].imshow(roi)
             ax[ir//cols,ir%cols].axis('off')
-    
+            
+    def show_augmentations(self, rows=10, cols=10, figsize=(7,7)):
+        """
+        Pass the data in the dataloader (see self.generate_dataloader)
+         to show augmented ROIs for sanity checking.
+        """
+        print(f'starting: running data through network')
+        augmented_lst = []
+        for data in tqdm(self.dataloader, mininterval=60):
+            aug = data[0][0].to(self._device).detach()
+            augmented_lst.append(aug)
+        augmented = torch.cat(augmented_lst, dim=0).cpu()
+        print(f'completed: running data through network')
+        
+        fig, ax = plt.subplots(rows,cols,figsize=figsize)
+        for ir,roi in enumerate(augmented[:(rows*cols)]):
+            ax[ir//cols,ir%cols].imshow(roi[0])
+            ax[ir//cols,ir%cols].axis('off')
 
 def resize_affine(img, scale, clamp_range=False):
     """
