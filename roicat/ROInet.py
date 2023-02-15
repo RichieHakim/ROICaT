@@ -41,6 +41,8 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import scipy.signal
 
+import warnings
+
 
 class ROInet_embedder:
     """
@@ -233,7 +235,9 @@ class ROInet_embedder:
         persistentWorkers_dataloader=True,
         prefetchFactor_dataloader=2,
         transforms=None,
-        img_size_out=(224, 224)
+        img_size_out=(224, 224),
+        jit_script_transforms=True
+
     ):
         """
         Generate a dataloader for the given ROI_images.
@@ -273,6 +277,11 @@ class ROInet_embedder:
                  images through the network.
             img_size_out (tuple of ints):
                 (Optional) Image output dimensions of dataloader if transforms is None.
+            jit_script_transforms (bool):
+                (Optional) Whether or not to convert the transforms pipeline into a
+                TorchScript pipeline. (Should improve calculation speed but can cause
+                problems with multiprocessing.)
+                
         """
         if numWorkers_dataloader == -1:
             numWorkers_dataloader = mp.cpu_count()
@@ -315,7 +324,15 @@ class ROInet_embedder:
                 ), 
                 TileChannels(dim=0, n_channels=3),
             )
-        transforms_scripted = torch.jit.script(transforms)
+        
+        if jit_script_transforms:
+            if numWorkers_dataloader > 0:
+                warnings.warn("\n\nWarning: Converting transforms to a jit-based script has been known to cause issues on Windows when numWorkers_dataloader > 0. If self.generate_latents() raises an Exception similar to 'Tried to serialize object __torch__.torch.nn.modules.container.Sequential which does not have a __getstate__ method defined!' consider setting numWorkers_dataloader=0 or jit_script_transforms=False.\n")
+            
+            transforms_scripted = torch.jit.script(transforms)
+        else:
+            transforms_scripted = transforms
+        
         print(f'Defined image transformations: {transforms}') if self._verbose else None
 
         self.dataset = dataset_simCLR(
