@@ -37,11 +37,9 @@ import torchvision
 from torch.nn import Module
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
-from tqdm import tqdm
+from tqdm import tqdm, trange
 import matplotlib.pyplot as plt
 import scipy.signal
-import warnings
-
 import warnings
 
 
@@ -392,7 +390,22 @@ class ROInet_embedder:
         self.latents = torch.cat([self.net(data[0][0].to(self._device)).detach() for data in tqdm(self.dataloader, mininterval=5)], dim=0).cpu()
         print(f'completed: running data through network')
         return self.latents
-
+    
+    def dump_latents(self, latent_folder_out, file_prefix='latent_dump', num_copies=1, start_copy_num=0):
+        """
+        Run data from the dataloader (see self.generate_dataloader)
+         through the network and dump resulting latents to file.
+        """
+        print(f'starting: dumping latents')
+        for icopy in trange(start_copy_num, start_copy_num+num_copies):
+            augmented_lst = []
+            for data in tqdm(self.dataloader, mininterval=5):
+                aug = self.net(data[0][0].to(self._device)).detach().cpu()
+                augmented_lst.append(aug)
+            
+            augmented_latents = (torch.cat(augmented_lst, dim=0)).detach()
+            dump = np.save(Path(latent_folder_out) / f'{file_prefix}-{icopy}.npy', augmented_latents.numpy())
+            print('al', augmented_latents.shape)
 
     def _download_network_files(self):
         if self._download_url is None or self._dir_networkFiles is None:
@@ -431,7 +444,7 @@ class ROInet_embedder:
 
     def show_augmentations(self, rows=10, cols=10, figsize=(7,7)):
         """
-        Pass the data in the dataloader (see self.generate_dataloader)
+        Pass the data through the dataloader (see self.generate_dataloader)
          to show augmented ROIs for sanity checking.
         """
         print(f'starting: running data through network')
@@ -448,6 +461,7 @@ class ROInet_embedder:
         for ir,roi in enumerate(augmented[:(rows*cols)]):
             ax[ir//cols,ir%cols].imshow(roi[0])
             ax[ir//cols,ir%cols].axis('off')
+    
 
 def resize_affine(img, scale, clamp_range=False):
     """
