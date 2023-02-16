@@ -405,7 +405,6 @@ class ROInet_embedder:
             
             augmented_latents = (torch.cat(augmented_lst, dim=0)).detach()
             dump = np.save(Path(latent_folder_out) / f'{file_prefix}-{icopy}.npy', augmented_latents.numpy())
-            print('al', augmented_latents.shape)
 
     def _download_network_files(self):
         if self._download_url is None or self._dir_networkFiles is None:
