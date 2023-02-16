@@ -452,7 +452,7 @@ class Random_occlusion(Module):
     def forward(self, tensor):
         if torch.rand(1) < self.prob:
             size_rand = torch.rand(1) * (self.size[1] - self.size[0]) + self.size[0]
-            idx_rand = (torch.ceil(tensor.shape[1] * (1-size_rand)).item() , 0)
+            idx_rand = ((torch.ceil(tensor.shape[1] * (1-size_rand)).int().item()) , 0)
             mask = torch.ones_like(tensor)
             mask[:, idx_rand[0]:, :] = torch.zeros(1)
 
