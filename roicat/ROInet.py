@@ -4,20 +4,20 @@ OSF.io links to ROInet versions:
 ROInet_tracking:
     Info:
         This version does not includde occlusions or large
-         affine transformations.
+        affine transformations.
     Link:
-        https://osf.io/scm27/download
+        https://osf.io/x3fd2/download
     Hash (MD5 hex):
-        3d767bfec446c91dad8e5909c1b697c1
+        7a5fb8ad94b110037785a46b9463ea94
 
 ROInet_classification:
     Info:
         This version includes occlusions and large affine
-         transformations.
+        transformations.
     Link:
-        https://osf.io/pkc2x/download
+        https://osf.io/c8m3b/download
     Hash (MD5 hex):
-        1e62893d8e944819516e793656afc31d
+        357a8d9b630ec79f3e015d0056a4c2d5
 """
 
 
@@ -55,28 +55,28 @@ class ROInet_embedder:
             This version does not includde occlusions or large
              affine transformations.
         Link:
-            https://osf.io/scm27/download
+            https://osf.io/x3fd2/download
         Hash (MD5 hex):
-            3d767bfec446c91dad8e5909c1b697c1
+            7a5fb8ad94b110037785a46b9463ea94
 
     ROInet_classification:
         Info:
             This version includes occlusions and large affine
              transformations.
         Link:
-            https://osf.io/pkc2x/download
+            https://osf.io/c8m3b/download
         Hash (MD5 hex):
-            1e62893d8e944819516e793656afc31d
+            357a8d9b630ec79f3e015d0056a4c2d5
 
 
-    RH 2022
+    RH/JZ 2022
     """
     def __init__(
         self,
         device='cpu',
         dir_networkFiles=None,
         download_method='check_local_first',
-        download_url='https://osf.io/scm27/download',
+        download_url='https://osf.io/x3fd2/download',
         download_hash=None,
         names_networkFiles=None,
         forward_pass_version='latent',
@@ -186,6 +186,8 @@ class ROInet_embedder:
             verbose=self._verbose,
         )
 
+        print(paths_extracted)
+
         ## Find network files
         if names_networkFiles is None:
             names_networkFiles = {
@@ -235,7 +237,7 @@ class ROInet_embedder:
         prefetchFactor_dataloader=2,
         transforms=None,
         img_size_out=(224, 224),
-        jit_script_transforms=True
+        jit_script_transforms=True,
     ):
         """
         Generate a dataloader for the given ROI_images.
@@ -284,8 +286,11 @@ class ROInet_embedder:
             numWorkers_dataloader = mp.cpu_count()
 
         print('Starting: resizing ROIs') if self._verbose else None
+        
+        
         sf_rs = [self.resize_ROIs(rois, um_per_pixel) for rois in ROI_images]
-
+        
+        
         ROI_images_cat = np.concatenate(ROI_images, axis=0)
         ROI_images_rs = np.concatenate(sf_rs, axis=0)
 
@@ -397,6 +402,7 @@ class ROInet_embedder:
          through the network and dump resulting latents to file.
         """
         print(f'starting: dumping latents')
+        
         for icopy in trange(start_copy_num, start_copy_num+num_copies):
             augmented_lst = []
             for data in tqdm(self.dataloader, mininterval=5):
