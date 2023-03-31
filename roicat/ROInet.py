@@ -4,20 +4,20 @@ OSF.io links to ROInet versions:
 ROInet_tracking:
     Info:
         This version does not includde occlusions or large
-         affine transformations.
+        affine transformations.
     Link:
-        https://osf.io/scm27/download
+        https://osf.io/x3fd2/download
     Hash (MD5 hex):
-        3d767bfec446c91dad8e5909c1b697c1
+        7a5fb8ad94b110037785a46b9463ea94
 
 ROInet_classification:
     Info:
         This version includes occlusions and large affine
-         transformations.
+        transformations.
     Link:
-        https://osf.io/pkc2x/download
+        https://osf.io/c8m3b/download
     Hash (MD5 hex):
-        1e62893d8e944819516e793656afc31d
+        357a8d9b630ec79f3e015d0056a4c2d5
 """
 
 
@@ -37,16 +37,15 @@ import torchvision
 from torch.nn import Module
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
-from tqdm import tqdm
+from tqdm import tqdm, trange
 import matplotlib.pyplot as plt
 import scipy.signal
-
 import warnings
 
 
 class ROInet_embedder:
     """
-    Class for loading the ROInet model, preparing data for it, 
+    Class for loading the ROInet model, preparing data for it,
      and running it.
 
     OSF.io links to ROInet versions:
@@ -56,28 +55,28 @@ class ROInet_embedder:
             This version does not includde occlusions or large
              affine transformations.
         Link:
-            https://osf.io/scm27/download
+            https://osf.io/x3fd2/download
         Hash (MD5 hex):
-            3d767bfec446c91dad8e5909c1b697c1
+            7a5fb8ad94b110037785a46b9463ea94
 
     ROInet_classification:
         Info:
             This version includes occlusions and large affine
              transformations.
         Link:
-            https://osf.io/pkc2x/download
+            https://osf.io/c8m3b/download
         Hash (MD5 hex):
-            1e62893d8e944819516e793656afc31d
+            357a8d9b630ec79f3e015d0056a4c2d5
 
 
-    RH 2022
+    RH/JZ 2022
     """
     def __init__(
         self,
         device='cpu',
         dir_networkFiles=None,
         download_method='check_local_first',
-        download_url='https://osf.io/scm27/download',
+        download_url='https://osf.io/x3fd2/download',
         download_hash=None,
         names_networkFiles=None,
         forward_pass_version='latent',
@@ -95,11 +94,11 @@ class ROInet_embedder:
                 The device to use for the model and data.
             dir_networkFiles (str):
                 The directory to find an existing ROInet.zip file
-                 or download and extract a new one into.                 
+                 or download and extract a new one into.
             download_method (str):
                 Approach to downloading the network files.
                 'check_local_first':
-                    Check if the network files are already in 
+                    Check if the network files are already in
                      dir_networkFiles. If so, use them.
                 'force_download':
                     Download an ROInet.zip file from download_url.
@@ -154,7 +153,7 @@ class ROInet_embedder:
         self._download_url = download_url
 
         self._download_path_save = str(Path(self._dir_networkFiles).resolve() / 'ROInet.zip')
-        
+
         fn_download = partial(
             download_file,
             path_save=self._download_path_save,
@@ -174,18 +173,20 @@ class ROInet_embedder:
         if download_method == 'check_local_first':
             # assert download_hash is not None, "if using download_method='check_local_first' download_hash cannot be None. Either determine the hash of the zip file or use download_method='force_download'."
             fn_download(url=self._download_url, check_local_first=True, check_hash=True)
-        
+
         if download_method == 'force_local':
             # assert download_hash is not None, "if using download_method='force_local' download_hash cannot be None"
             assert Path(self._download_path_save).exists(), f"if using download_method='force_local' the network files must exist in {self._download_path_save}"
             fn_download(url=None, check_local_first=True, check_hash=True)
-            
+
         ## Extract network files from zip
         paths_extracted = extract_zip(
             path_zip=self._download_path_save,
             path_extract=self._dir_networkFiles,
             verbose=self._verbose,
         )
+
+        print(paths_extracted)
 
         ## Find network files
         if names_networkFiles is None:
@@ -209,7 +210,7 @@ class ROInet_embedder:
             print(f"Loaded params_model from {paths_networkFiles['params']}") if self._verbose else None
             self.net = model.make_model(fwd_version=forward_pass_version, **self.params_model)
             print(f"Generated network using params_model") if self._verbose else None
-            
+
         ## Prep network and load state_dict
         for param in self.net.parameters():
             param.requires_grad = False
@@ -222,7 +223,7 @@ class ROInet_embedder:
         print(f'Loaded network onto device {self._device}') if self._verbose else None
 
         ## Prepare dataloader
-        
+
     def generate_dataloader(
         self,
         ROI_images,
@@ -236,8 +237,7 @@ class ROInet_embedder:
         prefetchFactor_dataloader=2,
         transforms=None,
         img_size_out=(224, 224),
-        jit_script_transforms=True
-
+        jit_script_transforms=True,
     ):
         """
         Generate a dataloader for the given ROI_images.
@@ -281,24 +281,19 @@ class ROInet_embedder:
                 (Optional) Whether or not to convert the transforms pipeline into a
                 TorchScript pipeline. (Should improve calculation speed but can cause
                 problems with multiprocessing.)
-                
         """
         if numWorkers_dataloader == -1:
             numWorkers_dataloader = mp.cpu_count()
 
-        if self._device == 'cpu':
-            pinMemory_dataloader = False
-            numWorkers_dataloader = 0
-            persistentWorkers_dataloader = False
-
         print('Starting: resizing ROIs') if self._verbose else None
-        # sf_ptile = np.array([np.percentile(np.mean(sf>0, axis=(1,2)), ptile_norm) for sf in tqdm(ROI_images)]).mean()
-        # scale_forRS = (goal_frac/sf_ptile)**scale_norm
+        
+        
         sf_rs = [self.resize_ROIs(rois, um_per_pixel) for rois in ROI_images]
-
+        
+        
         ROI_images_cat = np.concatenate(ROI_images, axis=0)
         ROI_images_rs = np.concatenate(sf_rs, axis=0)
-                
+
         print('Completed: resizing ROIs') if self._verbose else None
 
         if pref_plot:
@@ -321,17 +316,17 @@ class ROInet_embedder:
                 torchvision.transforms.Resize(
                     size=img_size_out,
                     interpolation=torchvision.transforms.InterpolationMode.BILINEAR
-                ), 
+                ),
                 TileChannels(dim=0, n_channels=3),
             )
-        
+
         if jit_script_transforms:
             if numWorkers_dataloader > 0:
                 warnings.warn("\n\nWarning: Converting transforms to a jit-based script has been known to cause issues on Windows when numWorkers_dataloader > 0. If self.generate_latents() raises an Exception similar to 'Tried to serialize object __torch__.torch.nn.modules.container.Sequential which does not have a __getstate__ method defined!' consider setting numWorkers_dataloader=0 or jit_script_transforms=False.\n")
-            
-            transforms_scripted = torch.jit.script(transforms)
+
+            self.transforms = torch.jit.script(transforms)
         else:
-            transforms_scripted = transforms
+            self.transforms = transforms
         
         print(f'Defined image transformations: {transforms}') if self._verbose else None
 
@@ -340,13 +335,13 @@ class ROInet_embedder:
                 y=torch.as_tensor(torch.zeros(ROI_images_rs.shape[0]), device='cpu', dtype=torch.float32),
                 n_transforms=1,
                 class_weights=np.array([1]),
-                transform=transforms_scripted,
+                transform=self.transforms,
                 DEVICE='cpu',
                 dtype_X=torch.float32,
             )
         print(f'Defined dataset') if self._verbose else None
-            
-        self.dataloader = torch.utils.data.DataLoader( 
+
+        self.dataloader = torch.utils.data.DataLoader(
                 self.dataset,
                 batch_size=batchSize_dataloader,
                 shuffle=False,
@@ -356,6 +351,7 @@ class ROInet_embedder:
                 persistent_workers=persistentWorkers_dataloader,
                 prefetch_factor=prefetchFactor_dataloader,
         )
+
         print(f'Defined dataloader') if self._verbose else None
 
         self.ROI_images_rs = ROI_images_rs
@@ -389,7 +385,7 @@ class ROInet_embedder:
          through the network and generate latents.
 
         Returns:
-            latents (torch.Tensor): 
+            latents (torch.Tensor):
                 latents for each ROI
         """
         if hasattr(self, 'dataloader') == False:
@@ -399,7 +395,22 @@ class ROInet_embedder:
         self.latents = torch.cat([self.net(data[0][0].to(self._device)).detach() for data in tqdm(self.dataloader, mininterval=5)], dim=0).cpu()
         print(f'completed: running data through network')
         return self.latents
-
+    
+    def dump_latents(self, latent_folder_out, file_prefix='latent_dump', num_copies=1, start_copy_num=0):
+        """
+        Run data from the dataloader (see self.generate_dataloader)
+         through the network and dump resulting latents to file.
+        """
+        print(f'starting: dumping latents')
+        
+        for icopy in trange(start_copy_num, start_copy_num+num_copies):
+            augmented_lst = []
+            for data in tqdm(self.dataloader, mininterval=5):
+                aug = self.net(data[0][0].to(self._device)).detach().cpu()
+                augmented_lst.append(aug)
+            
+            augmented_latents = (torch.cat(augmented_lst, dim=0)).detach()
+            dump = np.save(Path(latent_folder_out) / f'{file_prefix}-{icopy}.npy', augmented_latents.numpy())
 
     def _download_network_files(self):
         if self._download_url is None or self._dir_networkFiles is None:
@@ -422,37 +433,40 @@ class ROInet_embedder:
         paths_files = gdown.download_folder(id=self._download_url, output=self._dir_networkFiles, quiet=False, use_cookies=False)
         print('Downloaded network files') if self._verbose else None
         return paths_files
-    
+
     def show_rescaled_rois(self, rows=10, cols=10, figsize=(7,7)):
         """
         Show post-rescaling ROIs for um_per_pixel sanity checking.
-        
+
         JZ 2022
-        
+
         Note: rows & cols both must be > 1.
         """
         fig, ax = plt.subplots(rows,cols,figsize=figsize)
         for ir,roi in enumerate(self.ROI_images_rs[:(rows*cols)]):
             ax[ir//cols,ir%cols].imshow(roi)
             ax[ir//cols,ir%cols].axis('off')
-            
+
     def show_augmentations(self, rows=10, cols=10, figsize=(7,7)):
         """
-        Pass the data in the dataloader (see self.generate_dataloader)
+        Pass the data through the dataloader (see self.generate_dataloader)
          to show augmented ROIs for sanity checking.
         """
         print(f'starting: running data through network')
         augmented_lst = []
-        for data in tqdm(self.dataloader, mininterval=60):
-            aug = data[0][0].to(self._device).detach()
+        for data in (self.dataloader):
+            aug = data[0][0].detach()
             augmented_lst.append(aug)
+
+
         augmented = torch.cat(augmented_lst, dim=0).cpu()
         print(f'completed: running data through network')
-        
+
         fig, ax = plt.subplots(rows,cols,figsize=figsize)
         for ir,roi in enumerate(augmented[:(rows*cols)]):
             ax[ir//cols,ir%cols].imshow(roi[0])
             ax[ir//cols,ir%cols].axis('off')
+    
 
 def resize_affine(img, scale, clamp_range=False):
     """
@@ -462,7 +476,7 @@ def resize_affine(img, scale, clamp_range=False):
     RH 2022
 
     Args:
-        img (np.ndarray): 
+        img (np.ndarray):
             Image to resize
             shape: (H,W)
         scale (float):
@@ -483,14 +497,14 @@ def resize_affine(img, scale, clamp_range=False):
         scale=scale,
         interpolation=torchvision.transforms.InterpolationMode.BICUBIC
     ))
-    
+
     if clamp_range:
         clamp_high = img.max()
         clamp_low = img.min()
-    
+
         img_rs[img_rs>clamp_high] = clamp_high
         img_rs[img_rs<clamp_low] = clamp_low
-    
+
     return img_rs
 
 
@@ -541,16 +555,16 @@ def hash_file(path, type_hash='MD5', buffer_size=65536):
             hasher.update(data)
 
     hash_val = hasher.hexdigest()
-        
+
     return hash_val
 
 
 def download_file(
-    url, 
-    path_save, 
-    check_local_first=True, 
-    check_hash=False, 
-    hash_type='MD5', 
+    url,
+    path_save,
+    check_local_first=True,
+    check_hash=False,
+    hash_type='MD5',
     hash_hex=None,
     mkdir=False,
     allow_overwrite=True,
@@ -574,7 +588,7 @@ def download_file(
             If True, checks if file already exists locally.
             If True and file exists locally, plans to skip download.
             If True and check_hash is True, checks hash of local file.
-             If hash matches, skips download. If hash does not match, 
+             If hash matches, skips download. If hash does not match,
              downloads file.
         check_hash (bool):
             If True, checks hash of local or downloaded file against
@@ -751,7 +765,29 @@ class TileChannels(Module):
         return torch.tile(tensor, dims)
     def __repr__(self):
         return f"TileChannels(dim={self.dim})"
-        
+
+class Unsqueeze(Module):
+    """
+    Expand dimension dim in X_in and tile to be N channels.
+    JZ 2023
+    """
+    def __init__(self, dim=0):
+        """
+        Initializes the class.
+        Args:
+            dim (int):
+                The dimension to tile.
+            n_channels (int):
+                The number of channels to tile to.
+        """
+        super().__init__()
+        self.dim = dim
+
+    def forward(self, tensor):
+        return torch.unsqueeze(tensor, self.dim)
+    def __repr__(self):
+        return f"Unsqueeze(dim={self.dim})"
+
 class ScaleDynamicRange(Module):
     """
     Min-max scaling of the input tensor.
@@ -771,9 +807,9 @@ class ScaleDynamicRange(Module):
 
         self.bounds = scaler_bounds
         self.range = scaler_bounds[1] - scaler_bounds[0]
-        
+
         self.epsilon = epsilon
-    
+
     def forward(self, tensor):
         tensor_minSub = tensor - tensor.min()
         return tensor_minSub * (self.range / (tensor_minSub.max()+self.epsilon))
@@ -782,43 +818,43 @@ class ScaleDynamicRange(Module):
 
 
 class dataset_simCLR(Dataset):
-    """    
+    """
     demo:
-    
+
     transforms = torch.nn.Sequential(
         torchvision.transforms.RandomHorizontalFlip(p=0.5),
-        
+
         torchvision.transforms.GaussianBlur(
             5,
             sigma=(0.01, 1.)
         ),
         torchvision.transforms.RandomPerspective(
-            distortion_scale=0.6, 
-            p=1, 
-            interpolation=torchvision.transforms.InterpolationMode.BILINEAR, 
+            distortion_scale=0.6,
+            p=1,
+            interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
             fill=0
         ),
         torchvision.transforms.RandomAffine(
             degrees=(-180,180),
             translate=(0.4, 0.4),
-            scale=(0.7, 1.7), 
-            shear=(-20, 20, -20, 20), 
-            interpolation=torchvision.transforms.InterpolationMode.BILINEAR, 
-            fill=0, 
-            fillcolor=None, 
+            scale=(0.7, 1.7),
+            shear=(-20, 20, -20, 20),
+            interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
+            fill=0,
+            fillcolor=None,
             resample=None
         ),
     )
     scripted_transforms = torch.jit.script(transforms)
 
-    dataset = util.dataset_simCLR(  torch.tensor(images), 
-                                labels, 
-                                n_transforms=2, 
+    dataset = util.dataset_simCLR(  torch.tensor(images),
+                                labels,
+                                n_transforms=2,
                                 transform=scripted_transforms,
                                 DEVICE='cpu',
                                 dtype_X=torch.float32,
                                 dtype_y=torch.int64 )
-    
+
     dataloader = torch.utils.data.DataLoader(   dataset,
                                             batch_size=64,
         #                                     sampler=sampler,
@@ -828,9 +864,9 @@ class dataset_simCLR(Dataset):
                                             num_workers=0,
                                             )
     """
-    def __init__(   self, 
-                    X, 
-                    y, 
+    def __init__(   self,
+                    X,
+                    y,
                     n_transforms=2,
                     class_weights=None,
                     transform=None,
@@ -866,13 +902,13 @@ class dataset_simCLR(Dataset):
                  or other methods from torchvision.transforms. Try
                  to use torch.jit.script(transform) if possible.
                 If not None:
-                 Transform(s) are applied to each image and the 
-                 output shape of X_sample_transformed for 
+                 Transform(s) are applied to each image and the
+                 output shape of X_sample_transformed for
                  __getitem__ will be
                  (n_samples, n_transforms, n_channels, height, width)
                 If None:
                  No transform is applied and output shape
-                 of X_sample_trasformed for __getitem__ will be 
+                 of X_sample_trasformed for __getitem__ will be
                  (n_samples, n_channels, height, width)
                  (which is missing the n_transforms dimension).
             DEVICE (str):
@@ -883,18 +919,18 @@ class dataset_simCLR(Dataset):
                 Data type of X.
             dtype_y (torch.dtype):
                 Data type of y.
-        
+
         Returns:
             torch.utils.data.Dataset:
                 torch.utils.data.Dataset object.
         """
 
         self.expand_dim = expand_dim
-        
+
         self.X = torch.as_tensor(X, dtype=dtype_X, device=DEVICE) # first dim will be subsampled from. Shape: (n_samples, n_channels, height, width)
         self.X = self.X[:,None,...] if expand_dim else self.X
         self.y = torch.as_tensor(y, dtype=dtype_y, device=DEVICE) # first dim will be subsampled from.
-        
+
         self.idx = torch.arange(self.X.shape[0], device=DEVICE)
         self.n_samples = self.X.shape[0]
 
@@ -907,15 +943,15 @@ class dataset_simCLR(Dataset):
 
         self.net_model = None
         self.classification_model = None
-        
-        
+
+
         # self.class_weights = torch.as_tensor(class_weights, dtype=torch.float32, device=DEVICE)
 
         # self.classModelParams_coef_ = mp.Array(np.ctypeslib.as_array(mp.Array(ctypes.c_float, feature)))
 
         if X.shape[0] != y.shape[0]:
             raise ValueError('RH Error: X and y must have same first dimension shape')
-    
+
     def tile_channels(X_in, dim=-3):
         """
         Expand dimension dim in X_in and tile to be 3 channels.
@@ -924,7 +960,7 @@ class dataset_simCLR(Dataset):
 
         Args:
             X_in (torch.Tensor or np.ndarray):
-                Input image. 
+                Input image.
                 Shape: [n_channels==1, height, width]
 
         Returns:
@@ -947,11 +983,11 @@ class dataset_simCLR(Dataset):
         Args:
             idx (int):
                 Index / indices of the sample to retrieve.
-            
+
         Returns:
             X_sample_transformed (torch.Tensor):
                 Transformed sample(s).
-                Shape: 
+                Shape:
                     If transform is None:
                         X_sample_transformed[batch_size, n_channels, height, width]
                     If transform is not None:
@@ -964,12 +1000,12 @@ class dataset_simCLR(Dataset):
 
         y_sample = self.y[idx]
         idx_sample = self.idx[idx]
-        
+
         if self.classification_model is not None:
             # features = self.net_model(tile_channels(self.X[idx][:,None,...], dim=1))
             # proba = self.classification_model.predict_proba(features.cpu().detach())[0]
             proba = self.classification_model.predict_proba(self.tile_channels(self.X[idx_sample][:,None,...], dim=-3))[0]
-            
+
             # sample_weight = loss_uncertainty(torch.as_tensor(proba, dtype=torch.float32), temperature=self.temp_uncertainty)
             sample_weight = 1
         else:
@@ -984,7 +1020,6 @@ class dataset_simCLR(Dataset):
                 X_sample_transformed.append(X_transformed)
         else:
             X_sample_transformed = self.tile_channels(self.X[idx_sample], dim=-3)
-        
+
         return X_sample_transformed, y_sample, idx_sample, sample_weight
-
-
+    
