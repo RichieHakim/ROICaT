@@ -843,9 +843,9 @@ class Data_suite2p(Data_roicat):
             self._transform_statFile_to_spatialFootprints(
                 frame_height_width=frame_height_width,
                 stat=statFiles[ii],
-                dtype=dtype,
                 isInt=isInt,
                 shifts=self.shifts[ii],
+                dtype=dtype,
                 normalize_mask=True,
             ) for ii in tqdm(range(n))]
 
@@ -872,7 +872,7 @@ class Data_suite2p(Data_roicat):
         return shifts
 
     @staticmethod
-    def _transform_statFile_to_spatialFootprints(frame_height_width, stat, dtype, isInt, shifts=(0,0), normalize_mask=True):
+    def _transform_statFile_to_spatialFootprints(frame_height_width, stat, isInt, shifts=(0,0), dtype=None, normalize_mask=True):
         """
         Populates a sparse array with the spatial footprints from ROIs
         in a stat file.
@@ -882,6 +882,7 @@ class Data_suite2p(Data_roicat):
         
         for jj, roi in enumerate(stat):
             lam = np.array(roi['lam'], ndmin=1)
+            dtype = dtype if dtype is not None else lam.dtype
             if isInt:
                 lam = dtype(lam / lam.sum() * np.iinfo(dtype).max) if normalize_mask else dtype(lam)
             else:
