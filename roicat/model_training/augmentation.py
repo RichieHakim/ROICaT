@@ -123,7 +123,7 @@ class ScaleDynamicRange(Module):
     
     def forward(self, tensor):
         tensor_minSub = tensor - tensor.min()
-        return tensor_minSub * (self.range / (tensor_minSub.max()+self.epsilon))
+        return tensor_minSub * (self.range / (tensor_minSub.max(dim=-1,keepdim=True)[0].max(dim=-2,keepdim=True)[0]+self.epsilon))
     def __repr__(self):
         return f"ScaleDynamicRange(scaler_bounds={self.bounds})"
 
