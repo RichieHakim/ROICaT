@@ -341,7 +341,7 @@ class Data_roicat:
         assert all([img.shape[1] == FOV_images[0].shape[1] for img in FOV_images]), f"RH ERROR: All elements in FOV_images must have the same height and width."
 
         ## Set attributes
-        self.FOV_images = [f.astype(np.float32) for f in FOV_images]
+        self.FOV_images = [np.array(f, dtype=np.float32) for f in FOV_images]
         self.FOV_height = int(FOV_images[0].shape[0])
         self.FOV_width = int(FOV_images[0].shape[1])
 
@@ -828,8 +828,6 @@ class Data_suite2p(Data_roicat):
         if frame_height_width is None:
             frame_height_width = [self.FOV_height, self.FOV_width]
 
-        isInt = np.issubdtype(dtype, np.integer)
-
         assert self.paths_stat is not None, "RH ERROR: paths_stat is None. Please set paths_stat before calling this function."
         assert len(self.paths_stat) > 0, "RH ERROR: paths_stat is empty. Please set paths_stat before calling this function."
         assert all([Path(path).exists() for path in self.paths_stat]), "RH ERROR: One or more paths in paths_stat do not exist."
@@ -843,7 +841,6 @@ class Data_suite2p(Data_roicat):
             self._transform_statFile_to_spatialFootprints(
                 frame_height_width=frame_height_width,
                 stat=statFiles[ii],
-                isInt=isInt,
                 shifts=self.shifts[ii],
                 dtype=dtype,
                 normalize_mask=True,
@@ -872,12 +869,13 @@ class Data_suite2p(Data_roicat):
         return shifts
 
     @staticmethod
-    def _transform_statFile_to_spatialFootprints(frame_height_width, stat, isInt, shifts=(0,0), dtype=None, normalize_mask=True):
+    def _transform_statFile_to_spatialFootprints(frame_height_width, stat, shifts=(0,0), dtype=None, normalize_mask=True):
         """
         Populates a sparse array with the spatial footprints from ROIs
         in a stat file.
         """
-        
+        isInt = np.issubdtype(dtype, np.integer)
+
         rois_to_stack = []
         
         for jj, roi in enumerate(stat):
