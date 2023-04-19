@@ -1325,6 +1325,90 @@ def torch_pca(
 
 
 ######################################################################################################################################
+###################################################### IMAGE_PROCESSING ##############################################################
+######################################################################################################################################
+
+def make_Fourier_mask(
+    frame_shape_y_x=(512,512),
+    bandpass_spatialFs_bounds=[1/128, 1/3],
+    order_butter=5,
+    mask=None,
+    dtype_fft=torch.complex64,
+    plot_pref=False,
+    verbose=False,
+):
+    """
+    Make a Fourier domain mask for the phase correlation.
+    Used in BWAIN.
+
+    Args:
+        frame_shape_y_x (Tuple[int]):
+            Shape of the images that will be passed through
+                this class.
+        bandpass_spatialFs_bounds (tuple): 
+            (lowcut, highcut) in spatial frequency
+            A butterworth filter is used to make the mask.
+        order_butter (int):
+            Order of the butterworth filter.
+        mask (np.ndarray):
+            If not None, use this mask instead of making one.
+        plot_pref (bool):
+            If True, plot the absolute value of the mask.
+
+    Returns:
+        mask_fft (torch.Tensor):
+            Mask in the Fourier domain.
+    """
+    from .other_peoples_code import get_nd_butterworth_filter
+
+    bandpass_spatialFs_bounds = list(bandpass_spatialFs_bounds)
+    bandpass_spatialFs_bounds[0] = max(bandpass_spatialFs_bounds[0], 1e-9)
+    
+    if (isinstance(mask, (np.ndarray, torch.Tensor))) or ((mask != 'None') and (mask is not None)):
+        mask = torch.as_tensor(mask, dtype=dtype_fft)
+        mask = mask / mask.sum()
+        mask_fftshift = torch.fft.fftshift(mask)
+        print(f'User provided mask of shape: {mask.shape} was normalized to sum=1, fftshift-ed, and converted to a torch.Tensor')
+    else:
+        wfilt_h = get_nd_butterworth_filter(
+            shape=frame_shape_y_x, 
+            factor=bandpass_spatialFs_bounds[0], 
+            order=order_butter, 
+            high_pass=True, 
+            real=False,
+        )
+        wfilt_l = get_nd_butterworth_filter(
+            shape=frame_shape_y_x, 
+            factor=bandpass_spatialFs_bounds[1], 
+            order=order_butter, 
+            high_pass=False, 
+            real=False,
+        )
+
+        kernel = torch.as_tensor(
+            wfilt_h * wfilt_l,
+            dtype=dtype_fft,
+        )
+
+        mask = kernel / kernel.sum()
+        # self.mask_fftshift = torch.fft.fftshift(self.mask)
+        mask_fftshift = mask
+        mask_fftshift = mask_fftshift.contiguous()
+
+        if plot_pref and plot_pref!='False':
+            import matplotlib.pyplot as plt
+            plt.figure()
+            plt.imshow(
+                torch.abs(kernel.cpu()).numpy(), 
+                # clim=[0,1],
+            )
+        if verbose:
+            print(f'Created Fourier domain mask. self.mask_fftshift.shape: {mask_fftshift.shape}. Images input to find_translation_shifts will now be masked in the FFT domain.')
+
+    return mask_fftshift
+
+
+######################################################################################################################################
 ###################################################### OTHER FUNCTIONS ###############################################################
 ######################################################################################################################################
 
