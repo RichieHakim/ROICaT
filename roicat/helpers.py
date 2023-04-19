@@ -716,7 +716,7 @@ def rand_cmap(
     import colorsys
     import numpy as np
 
-
+    assert nlabels > 0, 'Number of labels must be greater than 0'
 
     if verbose:
         print('Number of labels: ' + str(nlabels))

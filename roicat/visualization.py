@@ -127,8 +127,11 @@ def compute_colored_FOV(
 
     n_c = len(u)
 
-    colors = helpers.rand_cmap(nlabels=n_c, verbose=False)(np.linspace(0.,1.,n_c, endpoint=True)) if cmap=='random' else cmap(np.linspace(0.,1.,n_c, endpoint=True))
-    colors = colors / colors.max(1, keepdims=True)
+    if n_c > 1:
+        colors = helpers.rand_cmap(nlabels=n_c, verbose=False)(np.linspace(0.,1.,n_c, endpoint=True)) if cmap=='random' else cmap(np.linspace(0.,1.,n_c, endpoint=True))
+        colors = colors / colors.max(1, keepdims=True)
+    else:
+        colors = np.array([[0,0,0,0]])
 
     if np.isin(-1, labels_cat):
         colors[0] = [0,0,0,0]
