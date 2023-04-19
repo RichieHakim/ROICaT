@@ -97,8 +97,8 @@ class Alinger:
         dims = FOVs[0].shape
         x_grid, y_grid = np.meshgrid(np.arange(0., dims[1]).astype(np.float32), np.arange(0., dims[0]).astype(np.float32))
 
-        template_norm = np.uint8(template * (template > 0) * (1/template.max()) * 255) if template_method == 'image' else None
-        FOVs_norm    = [np.uint8(FOVs[ii] * (FOVs[ii] > 0) * (1/FOVs[ii].max()) * 255) for ii in range(len(FOVs))]
+        template_norm = np.array(template * (template > 0) * (1/template.max()) * 255, dtype=np.uint8) if template_method == 'image' else None
+        FOVs_norm    = [np.array(FOVs[ii] * (FOVs[ii] > 0) * (1/FOVs[ii].max()) * 255, dtype=np.uint8) for ii in range(len(FOVs))]
 
         def safe_ROI_remap(img_ROI, x_remap, y_remap):
             img_ROI_remap = cv2.remap(
@@ -347,7 +347,7 @@ def convert_phaseCorrelationImage_to_shifts(cc_im):
 
 
 def helper_shift(X, shift, fill_val=0):
-    X_shift = np.empty_like(X)
+    X_shift = np.empty_like(X, dtype=X.dtype)
     if shift>0:
         X_shift[:shift] = fill_val
         X_shift[shift:] = X[:-shift]
@@ -358,7 +358,7 @@ def helper_shift(X, shift, fill_val=0):
         X_shift[:] = X
     return X_shift
 def shift_along_axis(X, shift, fill_val=0, axis=0):
-    return np.apply_along_axis(helper_shift, axis, X, shift, fill_val)
+    return np.apply_along_axis(helper_shift, axis, np.array(X, dtype=X.dtype), shift, fill_val)
 
 
 def make_spectral_mask(freq_highPass=0.01, freq_lowPass=0.3, im_shape=(512, 512)):
