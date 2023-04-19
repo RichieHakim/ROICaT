@@ -182,6 +182,7 @@ class Clusterer:
             'sig_NN_kwargs': {'mu':0.5, 'b':0.5},
             'sig_SWT_kwargs': {'mu':0.5, 'b':0.5},
         },
+        stringency=1.0,
     ):
         dConj, sSF_data, sNN_data, sSWT_data, sConj_data = self.make_conjunctive_distance_matrix(
             s_sf=self.s_sf,
@@ -197,7 +198,7 @@ class Clusterer:
         # snn.data[snn.data == 0] = 1e-10
         # sswt.data[sswt.data == 0] = 1e-10
 
-        self.d_cutoff = d_crossover if d_cutoff is None else d_cutoff
+        self.d_cutoff = d_crossover * stringency if d_cutoff is None else d_cutoff
         self.graph_pruned = dConj.copy()
         self.graph_pruned.data = self.graph_pruned.data < self.d_cutoff
         self.graph_pruned.eliminate_zeros()
