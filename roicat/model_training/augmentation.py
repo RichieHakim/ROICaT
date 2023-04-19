@@ -123,7 +123,7 @@ class ScaleDynamicRange(Module):
     
     def forward(self, tensor):
         tensor_minSub = tensor - tensor.min()
-        return tensor_minSub * (self.range / (tensor_minSub.max()+self.epsilon))
+        return tensor_minSub * (self.range / (tensor_minSub.max(dim=-1,keepdim=True)[0].max(dim=-2,keepdim=True)[0]+self.epsilon))
     def __repr__(self):
         return f"ScaleDynamicRange(scaler_bounds={self.bounds})"
 
@@ -245,7 +245,13 @@ class WarpPoints(Module):
         return torch.exp(-((torch.square(self.meshgrid_out[0] - x[None,None,:]) + torch.square(self.meshgrid_out[1] - y[None,None,:]))/(2*torch.square(sigma[None,None,:]))))        
 
     def forward(self, tensor):
-        tensor = tensor[None, ...]
+        if tensor.ndim == 3:
+            tensor = tensor[None, ...]
+            flag_batched = False
+        elif tensor.ndim == 4:
+            flag_batched = True
+        else:
+            raise ValueError("Input tensor must be 3 or 4 dimensional.")
         
         if torch.rand(1) <= self.prob:
             rands = torch.rand(5, self.n_warps)
@@ -262,13 +268,16 @@ class WarpPoints(Module):
             im_newPos = self.meshgrid_out[...,0:1]
         
         im_newPos = torch.permute(im_newPos, [3,2,1,0]) # Requires 1/2 transpose because otherwise results are transposed from torchvision Resize
+        if flag_batched:
+            ## repmat for batch dimension
+            im_newPos = torch.tile(im_newPos, (tensor.shape[0], 1, 1, 1))
         ret = torch.nn.functional.grid_sample( tensor, 
                                                 im_newPos, 
                                                 mode='bilinear',
                                                 # mode='bicubic', 
                                                 padding_mode='zeros', 
                                                 align_corners=True)
-        ret = ret[0]
+        ret = ret[0] if not flag_batched else ret
         return ret
         
     def __repr__(self):
