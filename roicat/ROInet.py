@@ -357,6 +357,7 @@ class ROInet_embedder:
         self.ROI_images_rs = ROI_images_rs
         return ROI_images_rs
 
+    @classmethod
     def resize_ROIs(self, ROI_images, um_per_pixel):
         """
         Resize the ROI images to prepare for pass through network.
