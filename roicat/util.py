@@ -1,7 +1,10 @@
 from pathlib import Path
 import warnings
+import copy
 
 import importlib_metadata
+
+import numpy as np
 
 from . import helpers
 
@@ -266,3 +269,141 @@ def download_data_test_zip(dir_data_test):
         chunk_size=1024,
     )
     return path_save
+
+
+##########################################################################################################################
+############################################### UCID handling ############################################################
+##########################################################################################################################
+
+def check_dataStructure__list_ofListOrArray_ofDtype(lolod, dtype=np.int64, fix=True, verbose=True):
+    """
+    Checks 'lolod' (list of list of dtype) data structure.
+    Structure should be a list of lists of dtypes OR a list of np.arrays of dtypes.
+
+    Args:
+        lolod (list):
+            List of lists of dtypes OR a list of np.arrays of dtypes.
+        fix (bool):
+            Whether to attempt to fix the data structure if it is incorrect.
+            If fix=False, then raises an error if it is not correct.
+
+    Returns:
+        lolod (list):
+            List of lists of dtypes OR a list of np.arrays of dtypes.
+    """
+
+    ## check if lolod is a list
+    if not isinstance(lolod, list):
+        if isinstance(lolod, np.ndarray):
+            ## check to see if elements are not objects
+            if not np.issubdtype(lolod.dtype, np.object_):
+                ## then assume that a single session was passed in.
+                ## output a list containing the single session
+                if fix:
+                    lolod = [lolod]
+                else:
+                    raise ValueError(f'RH ERROR: lolod is a np.ndarray, not a list.')
+            else:
+                ## then raise an error
+                raise ValueError(f'RH ERROR: lolod is a np.ndarray, but it contains objects. Unable to fix.')
+        else:
+            raise ValueError(f'RH ERROR: lolod is not a list or np.ndarray. Unable to fix.')
+        
+    ## check if lolod is a list of lists/arrays
+    if not all([isinstance(ucid, (list, np.ndarray)) for ucid in lolod]):
+        raise ValueError(f'RH ERROR: lolod is not a list of lists/arrays. Unable to fix.')
+    if fix:
+        lolod = copy.deepcopy(lolod)
+        for ii, ucids in enumerate(lolod):
+            if isinstance(ucids, np.ndarray):
+                if not np.issubdtype(ucids.dtype, dtype):
+                    print(f'RH WARNING: lolod[{ii}] is a np.ndarray, but it is not of type {dtype}. Attempting to fix by converting to {dtype}.') if verbose else None
+                    lolod[ii] = ucids.astype(dtype)
+            elif isinstance(ucids, list):
+                if not all([isinstance(ucid, dtype) for ucid in ucids]):
+                    print(f'RH WARNING: lolod[{ii}] is a list, but it contains non-{dtype}. Attempting to fix by converting to {dtype}.') if verbose else None
+                    lolod[ii] = np.array(ucids, dtype=dtype)
+            else:
+                raise ValueError(f'RH ERROR: lolod[{ii}] is not a list or np.ndarray. Unable to fix.')
+    
+    return lolod
+
+
+def mask_UCIDs_with_iscell(ucids, iscell):
+    """
+    Masks the UCIDs with the iscell array.
+    If iscell is False, then the UCID is set to -1.
+
+    Args:
+        ucids (list of [list or array] of int):
+            List of lists of UCIDs.
+        iscell (list of [list or array] of bool):
+            List of lists of iscell.
+
+    Returns:
+        ucids_out (list of [list or array] of int):
+            Masked list of lists of UCIDs.
+            Elements that are not cells are set to -1 in each session.
+    """
+    ucids_out = copy.deepcopy(ucids)
+    ucids_out = check_dataStructure__list_ofListOrArray_ofDtype(
+        lolod=ucids_out,
+        dtype=np.int64,
+        fix=True,
+        verbose=False,
+    )
+    iscell = check_dataStructure__list_ofListOrArray_ofDtype(
+        lolod=iscell,
+        dtype=bool,
+        fix=True,
+        verbose=False,
+    )
+
+    n_sesh = len(ucids)
+    for i_sesh in range(n_sesh):
+        ucids_out[i_sesh][~iscell[i_sesh]] = -1
+    
+    return ucids_out
+
+
+def discard_UCIDs_with_fewer_matches(
+    ucids, 
+    n_sesh_thresh='all',
+    verbose=True,
+):
+    """
+    Discards UCIDs that do not appear in at least n_sesh_thresh sessions.
+    If n_sesh_thresh='all', then only UCIDs that appear in all sessions are kept.
+
+    Args:
+        ucids (list of [list or array] of int):
+            List of lists of UCIDs.
+        n_sesh_thresh (int or 'all'):
+            Number of sessions that a UCID must appear in to be kept.
+            If 'all', then only UCIDs that appear in all sessions are kept.
+
+    Returns:
+        ucids_out (list of [list or array] of int):
+            List of lists of UCIDs with UCIDs that do not appear in at least
+             n_sesh_thresh sessions set to -1.
+    """
+    ucids_out = copy.deepcopy(ucids)
+    ucids_out = check_dataStructure__list_ofListOrArray_ofDtype(
+        lolod=ucids_out,
+        dtype=np.int64,
+        fix=True,
+        verbose=False,
+    )
+    
+    n_sesh = len(ucids)
+    n_sesh_thresh = n_sesh if n_sesh_thresh == 'all' else n_sesh_thresh
+    assert isinstance(n_sesh_thresh, int)
+    
+    ucids_inAllSesh = [u for u in np.unique(ucids_out[0]) if np.array([np.isin(u, u_sesh) for u_sesh in ucids_out]).sum() >= n_sesh_thresh]
+    if verbose:
+        fraction = (np.unique(ucids_inAllSesh) >= 0).sum() / (np.unique(ucids_out[0]) >= 0).sum()
+        print(f'INFO: {fraction*100:.2f}% of UCIDs in first session appear in at least {n_sesh_thresh} sessions.')
+    ucids_out = [[val * np.isin(val, ucids_inAllSesh) - np.logical_not(np.isin(val, ucids_inAllSesh)) for val in u] for u in ucids_out]
+    
+    return ucids_out
+        
