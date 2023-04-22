@@ -489,7 +489,7 @@ def match_arrays_with_ucids(arrays, ucids):
             Array indices with UCIDs corresponding to -1 are set to np.nan.
     """
     ucids_tu = squeeze_UCID_labels(ucids)
-    n_ucids = len(np.unique(np.concatenate(ucids_tu, axis=0)))
+    n_ucids = (np.unique(np.concatenate(ucids_tu, axis=0)) >= 0).sum()
 
     dicts_ucids = [{u: i for i, u in enumerate(u_sesh)} for u_sesh in ucids_tu]
     
