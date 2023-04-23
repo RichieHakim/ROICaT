@@ -488,15 +488,22 @@ def match_arrays_with_ucids(arrays, ucids):
             List of of arrays for each session.
             Array indices with UCIDs corresponding to -1 are set to np.nan.
     """
+    import scipy.sparse
+
+    arrays = [arrays] if not isinstance(arrays, list) else arrays
+
     ucids_tu = squeeze_UCID_labels(ucids)
     n_ucids = (np.unique(np.concatenate(ucids_tu, axis=0)) >= 0).sum()
 
     dicts_ucids = [{u: i for i, u in enumerate(u_sesh)} for u_sesh in ucids_tu]
     
-    n_sesh = len(arrays)
     ## make ndarrays filled with np.nan for each session
-    arrays_out = [np.full((n_ucids, *a.shape[1:]), np.nan) for a in arrays]
+    if isinstance(arrays[0], np.ndarray):
+        arrays_out = [np.full((n_ucids, *a.shape[1:]), np.nan) for a in arrays]
+    elif scipy.sparse.issparse(arrays[0]):
+        arrays_out = [scipy.sparse.lil_matrix((n_ucids, *a.shape[1:])) for a in arrays]
     ## fill in the arrays with the data
+    n_sesh = len(arrays)
     for i_sesh in range(n_sesh):
         for u, idx in dicts_ucids[i_sesh].items():
             if u >= 0:
