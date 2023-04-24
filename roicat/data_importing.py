@@ -852,6 +852,44 @@ class Data_suite2p(Data_roicat):
         return spatialFootprints
     
 
+    def import_neuropil_masks(
+        self,
+        frame_height_width=None,
+    ):
+        """
+        Imports and converts the neuropil masks of the ROIs
+         in the stat files into images in sparse arrays.
+        """
+
+        print("Importing neuropil masks from stat files.") if self._verbose else None
+
+        ## Check and fix inputs
+        if frame_height_width is None:
+            frame_height_width = [self.FOV_height, self.FOV_width]
+
+        assert self.paths_stat is not None, "RH ERROR: paths_stat is None. Please set paths_stat before calling this function."
+        assert len(self.paths_stat) > 0, "RH ERROR: paths_stat is empty. Please set paths_stat before calling this function."
+        assert all([Path(path).exists() for path in self.paths_stat]), "RH ERROR: One or more paths in paths_stat do not exist."
+
+        assert hasattr(self, 'shifts'), "RH ERROR: shifts is not defined. Please call ._make_shifts before calling this function."
+
+        statFiles = [np.load(path, allow_pickle=True) for path in self.paths_stat]
+
+        n = self.n_sessions
+        neuropilMasks = [
+            self._transform_statFile_to_neuropilMasks(
+                frame_height_width=frame_height_width,
+                stat=statFiles[ii],
+                shifts=self.shifts[ii],
+            ) for ii in tqdm(range(n))]
+        
+        if self._verbose:
+            print(f"Imported {len(neuropilMasks)} sessions of neuropil masks into sparse arrays.")  
+
+        self.neuropilMasks = neuropilMasks
+        return neuropilMasks
+    
+
     def _make_shifts(self, paths_ops: list=None, new_or_old_suite2p: str='new'):
         """
         Helper function to make the shifts for the old suite2p indexing.
@@ -893,6 +931,25 @@ class Data_suite2p(Data_roicat):
 
         return scipy.sparse.vstack(rois_to_stack).tocsr()
 
+    @staticmethod
+    def _transform_statFile_to_neuropilMasks(frame_height_width, stat, shifts=(0,0)):
+        """
+        Populates a sparse array with the neuropil masks from ROIs
+        in a stat file.
+        """
+        rois_to_stack = []
+        
+        for jj, roi in enumerate(stat):
+            lam = np.ones(len(roi['neuropil_mask']), dtype=np.bool_)
+            dtype = np.bool_
+            ypix, xpix = np.unravel_index(roi['neuropil_mask'], shape=(frame_height_width[0], frame_height_width[1]), order='C')
+            ypix = ypix + shifts[0]
+            xpix = xpix + shifts[1]
+        
+            tmp_roi = scipy.sparse.csr_matrix((lam, (ypix, xpix)), shape=(frame_height_width[0], frame_height_width[1]), dtype=dtype)
+            rois_to_stack.append(tmp_roi.reshape(1,-1))
+
+        return scipy.sparse.vstack(rois_to_stack).tocsr()
 
 
 
