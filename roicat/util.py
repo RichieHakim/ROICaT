@@ -1,7 +1,10 @@
 from pathlib import Path
 import warnings
+import copy
 
 import importlib_metadata
+
+import numpy as np
 
 from . import helpers
 
@@ -218,13 +221,13 @@ Devices: {[f'device {i}: Name={torch.cuda.get_device_name(i)}, Memory={torch.cud
     print(f'OpenCV Version: {opencv_version}') if verbose else None
     # print(cv2.getBuildInformation())
 
-    ## face-rhythm
+    ## roicat
     import roicat
-    faceRhythm_version = roicat.__version__
-    print(f'roicat Version: {faceRhythm_version}') if verbose else None
+    roicat_version = roicat.__version__
+    print(f'roicat Version: {roicat_version}') if verbose else None
 
     versions = {
-        'roicat_version': faceRhythm_version,
+        'roicat_version': roicat_version,
         'operating_system': operating_system,
         'conda_env': conda_env,
         'python_version': python_version,
@@ -266,3 +269,244 @@ def download_data_test_zip(dir_data_test):
         chunk_size=1024,
     )
     return path_save
+
+
+##########################################################################################################################
+############################################### UCID handling ############################################################
+##########################################################################################################################
+
+def check_dataStructure__list_ofListOrArray_ofDtype(lolod, dtype=np.int64, fix=True, verbose=True):
+    """
+    Checks 'lolod' (list of list of dtype) data structure.
+    Structure should be a list of lists of dtypes OR a list of np.arrays of dtypes.
+
+    Args:
+        lolod (list):
+            List of lists of dtypes OR a list of np.arrays of dtypes.
+        fix (bool):
+            Whether to attempt to fix the data structure if it is incorrect.
+            If fix=False, then raises an error if it is not correct.
+
+    Returns:
+        lolod (list):
+            List of lists of dtypes OR a list of np.arrays of dtypes.
+    """
+
+    ## switch case for if it is a list or np.ndarray
+    if isinstance(lolod, list):
+        ## switch case for if the elements are lists or np.ndarray or numbers (int or float) or dtypes
+        if all([isinstance(lod, list) for lod in lolod]):
+            ## switch case for if the elements are numbers (int or float) or dtype or other
+            if all([all([isinstance(l, (int, float)) for l in lod]) for lod in lolod]):
+                if fix:
+                    print(f'ROICaT WARNING: lolod is a list of lists of numbers (int or float). Converting to np.ndarray.')
+                    lolod = [np.array(lod, dtype=dtype) for lod in lolod]
+                else:
+                    raise ValueError(f'ROICaT ERROR: lolod is a list of lists of numbers (int or float).')
+            elif all([all([isinstance(l, dtype) for l in lod]) for lod in lolod]):
+                pass
+            else:
+                raise ValueError(f'ROICaT ERROR: lolod is a list of lists, but the elements are not all numbers (int or float) or dtype.')
+        elif all([isinstance(lod, np.ndarray) for lod in lolod]):
+            ## switch case for if the elements are numbers (any non-object numpy dtype) or dtype or other
+            if all([all([np.issubdtype(lod.dtype, dtype) for lod in lolod])]):
+                pass
+            if all([all([not np.issubdtype(lod.dtype, np.object_) for lod in lolod])]):
+                if fix:
+                    print(f'ROICaT WARNING: lolod is a list of np.ndarray of numbers (int or float). Converting to np.ndarray.')
+                    lolod = [np.array(lod, dtype=dtype) for lod in lolod]
+                else:
+                    raise ValueError(f'ROICaT ERROR: lolod is a list of np.ndarray of numbers (int or float).')
+            else:
+                raise ValueError(f'ROICaT ERROR: lolod is a list of np.ndarray, but the elements are not all numbers (int or float) or dtype.')
+        elif all([isinstance(lod, (int, float)) for lod in lolod]):
+            if fix:
+                print(f'ROICaT WARNING: lolod is a list of numbers (int or float). Converting to np.ndarray.')
+                lolod = [np.array(lod, dtype=dtype) for lod in lolod]
+            else:
+                raise ValueError(f'ROICaT ERROR: lolod is a list of numbers (int or float).')
+        elif all([isinstance(lod, dtype) for lod in lolod]):
+            if fix:
+                print(f'ROICaT WARNING: lolod is a list of dtype. Converting to np.ndarray.')
+                lolod = [np.array(lolod, dtype=dtype)]
+            else:
+                raise ValueError(f'ROICaT ERROR: lolod is a list of dtype.')
+        else:
+            raise ValueError(f'ROICaT ERROR: lolod is a list, but the elements are not all lists or np.ndarray or numbers (int or float).')
+    elif isinstance(lolod, np.ndarray):
+        ## switch case for if the elements are numbers (any non-object numpy dtype) or dtype or other
+        if np.issubdtype(lolod.dtype, dtype):
+            if fix:
+                print(f'ROICaT WARNING: lolod is a np.ndarray of dtype. Converting to list of np.ndarray of dtype.')
+                lolod = [lolod]
+        elif not np.issubdtype(lolod.dtype, np.object_):
+            if fix:
+                print(f'ROICaT WARNING: lolod is a np.ndarray of numbers (int or float). Converting to list of np.ndarray of dtype.')
+                lolod = [np.array(lolod, dtype=dtype)]
+            else:
+                raise ValueError(f'ROICaT ERROR: lolod is a np.ndarray of numbers (int or float).')
+        else:
+            raise ValueError(f'ROICaT ERROR: lolod is a np.ndarray, but the elements are not all numbers (int or float) or dtype.')
+    else:
+        raise ValueError(f'ROICaT ERROR: lolod is not a list or np.ndarray.')
+
+    return lolod
+
+
+def mask_UCIDs_with_iscell(ucids, iscell):
+    """
+    Masks the UCIDs with the iscell array.
+    If iscell is False, then the UCID is set to -1.
+
+    Args:
+        ucids (list of [list or array] of int):
+            List of lists of UCIDs for each session.
+        iscell (list of [list or array] of bool):
+            List of lists of iscell.
+
+    Returns:
+        ucids_out (list of [list or array] of int):
+            Masked list of lists of UCIDs.
+            Elements that are not cells are set to -1 in each session.
+    """
+    ucids_out = copy.deepcopy(ucids)
+    ucids_out = check_dataStructure__list_ofListOrArray_ofDtype(
+        lolod=ucids_out,
+        dtype=np.int64,
+        fix=True,
+        verbose=False,
+    )
+    iscell = check_dataStructure__list_ofListOrArray_ofDtype(
+        lolod=iscell,
+        dtype=bool,
+        fix=True,
+        verbose=False,
+    )
+
+    n_sesh = len(ucids)
+    for i_sesh in range(n_sesh):
+        ucids_out[i_sesh][~iscell[i_sesh]] = -1
+    
+    return ucids_out
+
+
+def discard_UCIDs_with_fewer_matches(
+    ucids, 
+    n_sesh_thresh='all',
+    verbose=True,
+):
+    """
+    Discards UCIDs that do not appear in at least n_sesh_thresh sessions.
+    If n_sesh_thresh='all', then only UCIDs that appear in all sessions are kept.
+
+    Args:
+        ucids (list of [list or array] of int):
+            List of lists of UCIDs for each session.
+        n_sesh_thresh (int or 'all'):
+            Number of sessions that a UCID must appear in to be kept.
+            If 'all', then only UCIDs that appear in all sessions are kept.
+
+    Returns:
+        ucids_out (list of [list or array] of int):
+            List of lists of UCIDs with UCIDs that do not appear in at least
+             n_sesh_thresh sessions set to -1.
+    """
+    ucids_out = copy.deepcopy(ucids)
+    ucids_out = check_dataStructure__list_ofListOrArray_ofDtype(
+        lolod=ucids_out,
+        dtype=np.int64,
+        fix=True,
+        verbose=False,
+    )
+    
+    n_sesh = len(ucids)
+    n_sesh_thresh = n_sesh if n_sesh_thresh == 'all' else n_sesh_thresh
+    assert isinstance(n_sesh_thresh, int)
+    
+    ucids_inAllSesh = [u for u in np.unique(ucids_out[0]) if np.array([np.isin(u, u_sesh) for u_sesh in ucids_out]).sum() >= n_sesh_thresh]
+    if verbose:
+        fraction = (np.unique(ucids_inAllSesh) >= 0).sum() / (np.unique(ucids_out[0]) >= 0).sum()
+        print(f'INFO: {fraction*100:.2f}% of UCIDs in first session appear in at least {n_sesh_thresh} sessions.')
+    ucids_out = [[val * np.isin(val, ucids_inAllSesh) - np.logical_not(np.isin(val, ucids_inAllSesh)) for val in u] for u in ucids_out]
+    
+    return ucids_out
+    
+
+def squeeze_UCID_labels(ucids):
+    """
+    Squeezes the UCID labels.
+    Finds all the unique UCIDs across all sessions, then removes spaces in the
+     UCID labels by mapping the unique UCIDs to new values. Output UCIDs are
+     contiguous integers starting at 0, and maintains elements with UCID=-1.
+
+    Args:
+        ucids (list of [list or array] of int):
+            List of lists of UCIDs for each session.
+
+    Returns:
+        ucids_out (list of [list or array] of int):
+            List of lists of UCIDs with UCIDs that do not appear in at least
+             n_sesh_thresh sessions set to -1.
+    """
+    ucids_out = copy.deepcopy(ucids)
+    ucids_out = check_dataStructure__list_ofListOrArray_ofDtype(
+        lolod=ucids_out,
+        dtype=np.int64,
+        fix=True,
+        verbose=False,
+    )
+
+    uniques_all = np.unique(np.concatenate(ucids_out, axis=0))
+    uniques_all = np.sort(uniques_all[uniques_all >= 0])
+    ## make a mapping of the unique values to new values
+    mapping = {old: new for old, new in zip(uniques_all, helpers.squeeze_integers(uniques_all))}
+    mapping.update({-1: -1})
+    ## apply the mapping to the data
+    n_sesh = len(ucids_out)
+    for i_sesh in range(n_sesh):
+        ucids_out[i_sesh] = [mapping[val] for val in ucids_out[i_sesh]]
+
+    return ucids_out
+
+
+def match_arrays_with_ucids(arrays, ucids):
+    """
+    Matches the indices of the arrays using the UCIDs.
+    Array indices with UCIDs corresponding to -1 are set to np.nan.
+    Useful for aligning Fluorescence and Spiking data across sessions
+     using UCIDs.
+    
+    Args:
+        arrays (list of np.array):
+            List of of numpy arrays for each session.
+            Matching is done along the first dimension.
+        ucids (list of [list or array] of int):
+            List of lists of UCIDs for each session.
+
+    Returns:
+        arrays_out (list of np.array):
+            List of of arrays for each session.
+            Array indices with UCIDs corresponding to -1 are set to np.nan.
+    """
+    import scipy.sparse
+
+    arrays = [arrays] if not isinstance(arrays, list) else arrays
+
+    ucids_tu = squeeze_UCID_labels(ucids)
+    n_ucids = (np.unique(np.concatenate(ucids_tu, axis=0)) >= 0).sum()
+
+    dicts_ucids = [{u: i for i, u in enumerate(u_sesh)} for u_sesh in ucids_tu]
+    
+    ## make ndarrays filled with np.nan for each session
+    if isinstance(arrays[0], np.ndarray):
+        arrays_out = [np.full((n_ucids, *a.shape[1:]), np.nan) for a in arrays]
+    elif scipy.sparse.issparse(arrays[0]):
+        arrays_out = [scipy.sparse.lil_matrix((n_ucids, *a.shape[1:])) for a in arrays]
+    ## fill in the arrays with the data
+    n_sesh = len(arrays)
+    for i_sesh in range(n_sesh):
+        for u, idx in dicts_ucids[i_sesh].items():
+            if u >= 0:
+                arrays_out[i_sesh][u] = arrays[i_sesh][idx]
+
+    return arrays_out
