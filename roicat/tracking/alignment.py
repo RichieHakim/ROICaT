@@ -164,23 +164,23 @@ class Alinger:
             rois_toUse = ROIs[ii].toarray().astype(np.float32).reshape(ROIs[ii].shape[0], FOVs[ii].shape[0], FOVs[ii].shape[1]) if type(ROIs[ii]) is scipy.sparse.csr_matrix else ROIs[ii].astype(np.float32)
             
             
-            ROI_aligned = np.stack([safe_ROI_remap(
+            ROIs_aligned = np.stack([safe_ROI_remap(
                 img, 
                 x_remap - shifts[ii][1], 
                 y_remap - shifts[ii][0],
             ) for img in rois_toUse], axis=0)
-    #         ROI_aligned = np.stack([img.astype(np.float32) for img in ROIs[ii]], axis=0)
-            FOV_aligned = cv2.remap(FOVs_norm[ii], x_remap, y_remap, cv2.INTER_NEAREST)
+    #         ROIs_aligned = np.stack([img.astype(np.float32) for img in ROIs[ii]], axis=0)
+            FOV_aligned = cv2.remap(FOVs_norm[ii], x_remap, y_remap, cv2.INTER_LINEAR)
 
             if normalize:
-                ROI_aligned = ROI_aligned / np.sum(ROI_aligned, axis=(1,2), keepdims=True)
+                ROIs_aligned = ROIs_aligned / np.sum(ROIs_aligned, axis=(1,2), keepdims=True)
             
             if return_sparse:
-                self.ROIs_aligned.append(scipy.sparse.csr_matrix(ROI_aligned.reshape(ROI_aligned.shape[0], -1)))
-                self.FOVs_aligned.append(FOV_aligned)
+                self.ROIs_aligned.append(scipy.sparse.csr_matrix(ROIs_aligned.reshape(ROIs_aligned.shape[0], -1)))
             else:
-                self.ROIs_aligned.append(ROI_aligned)
-                self.FOVs_aligned.append(FOV_aligned)
+                self.ROIs_aligned.append(ROIs_aligned)
+
+            self.FOVs_aligned.append(FOV_aligned)
 
             ## remove NaNs from ROIs
             for ii in range(len(self.ROIs_aligned)):
@@ -235,12 +235,12 @@ class PhaseCorrelation_registration:
             template_method (str):
                 The method used to register the images.
                 Either 'image' or 'sequential'.
-                If 'image':      ims_registered must be a single image.
-                If 'sequential': ims_registered must be an integer corresponding 
+                If 'image':      template must be a single image.
+                If 'sequential': template must be an integer corresponding 
                  to the index of the image to set as 'zero' offset.
         
         Returns:
-            ims_registered (np.ndarray):
+            template (np.ndarray):
                 Registered images
             shifts (np.ndarray):
                 Pixel shift values (y, x).
