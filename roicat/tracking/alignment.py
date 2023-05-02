@@ -1,4 +1,6 @@
 import copy
+import typing
+import warnings
 
 import numpy as np
 import cv2
@@ -6,193 +8,470 @@ import scipy.sparse
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
-class Alinger:
+from .. import helpers
+
+class Aligner:
     """
     A class for registering ROIs to a template FOV.
     Currently relies on available OpenCV methods for 
      non-rigid registration.
-    RH 2022
+    RH 2023
     """
     def __init__(
         self,
-        method='createOptFlow_DeepFlow',
-        kwargs_method=None,
         verbose=True,
     ):
         """
         Initialize the class.
 
         Args:
-            method (str):
-                The method to use for optical flow calculation.
-                The following are currently supported:
-                    'calcOpticalFlowFarneback',
-                    'createOptFlow_DeepFlow',
-            kwargs_method (dict):
-                The keyword arguments to pass to the method.
-                See the documentation for the method for the
-                 required arguments.
-                If None, hard-coded defaults will be used.
             verbose (bool):
                 Whether to print progress updates.
         """
         self._verbose = verbose
-        self._method = method
-        self._kwargs_method = kwargs_method
+        
+        self.remapingIdx_geo = None
+        self.warp_matrices = None
 
-    def register_ROIs(
+        self.remappingIdx_nonrigid = None
+
+        self._HW = None
+
+    def fit_geometric(
         self,
-        template,
-        FOVs,
-        ROIs,
-        template_method='image',
-        shifts=None,
-        return_sparse=True,
-        normalize=True
-    ):
+        template: typing.Union[int, np.ndarray],
+        ims_moving: typing.List[np.ndarray],
+        template_method: str = 'sequential',
+        mode_transform: str = 'affine',
+        gaussFiltSize: int = 11,
+        mask_borders: typing.Tuple[int, int, int, int] = (0, 0, 0, 0),
+        n_iter: int = 1000,
+        termination_eps: float = 1e-9,
+        auto_fix_gaussFilt_step: int = 10,
+    ) -> np.ndarray:
         """
-        Perform non-rigid registration of ROIs to a template FOV.
-        Currently relies on available OpenCV methods for
-         non-rigid registration.
-        RH 2022
+        Perform geometric registration of ims_moving to a template.
+        Currently relies on cv2.findTransformECC.
+        RH 2023
 
         Args:
-            template (numpy.ndarray):
-                The template FOV to align to.
-            FOVs (list of numpy.ndarray):
-                The FOVs to register.
-            ROIs (list of numpy.ndarray):
-                The ROIs to register.
-            template_method (str):
-                The method used to register the images.
-                Either 'image' or 'sequential'.
-                If 'image':      template must be a single image.
-                If 'sequential': template must be an integer corresponding 
-                 to the index of the image to set as 'zero' offset.
-            shifts (list of numpy.ndarray):
-                The shifts to apply to the ROIs.
-                If None, no shifts will be applied.
-                The shifts describe the relative shift between the 
-                 FOVs and the ROIs. This will be non-zero if the 
-                 input FOVs have been shifted using the phase-
-                 correlation shifter. 
-            return_sparse (bool):
-                If True, return sparse spatial footprints.
-                If False, return dense spatial footprint FOVs.
-            normalize (bool):
-                If True, normalize the spatial footprints to have
-                 a sum of 1.
-                If False, do not normalize.
-        
+            template (int or np.ndarray):
+                If 'template_method' == 'image', then template is the image
+                 to use as the template. Often this is another image in
+                 ims_moving.
+                If 'template_method' == 'sequential', then template is the
+                 integer index of the image to use as the template.
+            ims_moving (list of np.ndarray):
+                A list of images to be aligned.
+            template_method (str, optional):
+                The method to use for template selection.
+                'image': use the image specified by 'template'. Note that
+                    template must be an image in this case.
+                'sequential': register each image to the previous or next image
+                    (will be next for images before the template and previous for
+                    images after the template)
+            mode_transform (str, optional):
+                The mode of geometric transformation.
+                Can be 'translation', 'euclidean', 'affine', or 'homography'.
+                See cv2.findTransformECC for more details.
+            gaussFiltSize (int, optional):
+                The size of the Gaussian filter, default is 11.
+            mask_borders (tuple of int, int, optional):
+                The border mask for the image, default is (0, 0, 0, 0).
+            n_iter (int, optional):
+                The number of iterations for cv2.findTransformECC, default is 1000.
+            termination_eps (float, optional):
+                The termination criteria for cv2.findTransformECC, default is 1e-9.
+            auto_fix_gaussFilt_step (bool, int):
+                Whether to automatically fix convergence issues by increasing the
+                 gaussFiltSize.
+                If False, then no automatic fixing is performed.
+                If True, then the gaussFiltSize is increased by 2 until convergence.
+                If int, then the gaussFiltSize is increased by this amount until
+                 convergence.
+
         Returns:
-            self.ROIs_aligned (numpy.ndarray or scipy.sparse.csr_matrix):
-                The aligned ROIs.
-            self.FOVs_aligned (numpy.ndarray):
-                The aligned FOVs.
-            self.flows (list of numpy.ndarray):
-                The optical flows between the FOVs and the ROIs.
-                DOES NOT INCLUDE THE INPUT SHIFTS.
+            remapIdx_geo (np.ndarray): 
+                An array of shape (N, H, W, 2) representing the remap field for N images.
         """
-    
-        dims = FOVs[0].shape
-        x_grid, y_grid = np.meshgrid(np.arange(0., dims[1]).astype(np.float32), np.arange(0., dims[0]).astype(np.float32))
+        # Check if ims_moving is a non-empty list
+        assert len(ims_moving) > 0, "ims_moving must be a non-empty list of images."
+        # Check if all images in ims_moving have the same shape
+        shape = ims_moving[0].shape
+        for im in ims_moving:
+            assert im.shape == shape, "All images in ims_moving must have the same shape."
+        # Check if template_method is valid
+        valid_template_methods = {'sequential', 'image'}
+        assert template_method in valid_template_methods, f"template_method must be one of {valid_template_methods}"
+        # Check if mode_transform is valid
+        valid_mode_transforms = {'translation', 'euclidean', 'affine', 'homography'}
+        assert mode_transform in valid_mode_transforms, f"mode_transform must be one of {valid_mode_transforms}"
+        # Check if gaussFiltSize is a number (float or int)
+        assert isinstance(gaussFiltSize, (float, int)), "gaussFiltSize must be a number."
+        # Convert gaussFiltSize to an odd integer
+        gaussFiltSize = int(np.round(gaussFiltSize))
 
-        template_norm = np.array(template * (template > 0) * (1/template.max()) * 255, dtype=np.uint8) if template_method == 'image' else None
-        FOVs_norm    = [np.array(FOVs[ii] * (FOVs[ii] > 0) * (1/FOVs[ii].max()) * 255, dtype=np.uint8) for ii in range(len(FOVs))]
+        H, W = ims_moving[0].shape
+        self._HW = (H,W) if self._HW is None else self._HW
 
-        def safe_ROI_remap(img_ROI, x_remap, y_remap):
-            img_ROI_remap = cv2.remap(
-                img_ROI.astype(np.float32),
-                x_remap,
-                y_remap, 
-                cv2.INTER_LINEAR
-            )
-            if img_ROI_remap.sum() == 0:
-                img_ROI_remap = img_ROI
-            return img_ROI_remap
+        ims_moving, template = self._fix_input_images(ims_moving=ims_moving, template=template, template_method=template_method)
 
-        if shifts is None:
-            shifts = [(0,0)] * len(FOVs)
-        
-        print(f'Finding optical flow fields between FOVs using {template_method} template...') if self._verbose else None
-        self.ROIs_aligned, self.FOVs_aligned, self.flows = [], [], []
-        flow_old = np.zeros((dims[0], dims[1], 2))
-        flows_all = []
-        for ii in tqdm(range(len(FOVs)), mininterval=1):
+        self.mask_geo = helpers.mask_image_border(
+            im=np.ones((H, W), dtype=np.uint8),
+            border_outer=mask_borders,
+            mask_value=0,
+        )
+
+        print(f'Finding geometric registration warps with mode: {mode_transform}, template_method: {template_method}, mask_borders: {mask_borders is not None}') if self._verbose else None
+        warp_matrices_raw = []
+        for ii, im_moving in tqdm(enumerate(ims_moving), desc='Finding geometric registration warps', total=len(ims_moving), disable=not self._verbose):
             if template_method == 'sequential':
-                template_norm = FOVs_norm[ii-1] if ii > 0 else FOVs_norm[ii]
+                ## warp images before template forward (t1->t2->t3->t4)
+                if ii < template:
+                    im_template = ims_moving[ii+1]
+                ## warp template to itself
+                elif ii == template:
+                    im_template = ims_moving[ii]
+                ## warp images after template backward (t4->t3->t2->t1)
+                elif ii > template:
+                    im_template = ims_moving[ii-1]
+            elif template_method == 'image':
+                im_template = template
+            
+            def _safe_find_geometric_transformation(gaussFiltSize):
+                try:
+                    warp_matrix = helpers.find_geometric_transformation(
+                        im_template=im_template,
+                        im_moving=im_moving,
+                        warp_mode=mode_transform,
+                        n_iter=n_iter,
+                        mask=self.mask_geo,
+                        termination_eps=termination_eps,
+                        gaussFiltSize=gaussFiltSize,
+                    )
+                except Exception as e:
+                    if auto_fix_gaussFilt_step:
+                        print(f'Error finding geometric registration warp for image {ii}: {e}') if self._verbose else None
+                        print(f'Increasing gaussFiltSize by {auto_fix_gaussFilt_step} to {gaussFiltSize + auto_fix_gaussFilt_step}') if self._verbose else None
+                        return _safe_find_geometric_transformation(gaussFiltSize + auto_fix_gaussFilt_step)
 
-            if self._method == 'calcOpticalFlowFarneback':
-                if self._kwargs_method is None:
-                    self._kwargs_method = {
-                        'pyr_scale': 0.3, 
-                        'levels': 3,
-                        'winsize': 128, 
-                        'iterations': 7,
-                        'poly_n': 7, 
-                        'poly_sigma': 1.5,
-                        'flags': cv2.OPTFLOW_FARNEBACK_GAUSSIAN
-                    }
+                    print(f'Error finding geometric registration warp for image {ii}: {e}')
+                    print(f'Defaulting to identity matrix warp.')
+                    print(f'Consider doing one of the following:')
+                    print(f'  - Make better images to input. You can add the spatialFootprints images to the FOV images to make them better.')
+                    print(f'  - Increase the gaussFiltSize parameter. This will make the images blurrier, but may help with registration.')
+                    print(f'  - Decrease the termination_eps parameter. This will make the registration less accurate, but may help with registration.')
+                    print(f'  - Increase the mask_borders parameter. This will make the images smaller, but may help with registration.')
+                    warp_matrix = np.eye(3)[:2,:]
+                return warp_matrix
+            
+            warp_matrix = _safe_find_geometric_transformation(gaussFiltSize=gaussFiltSize)
+            warp_matrices_raw.append(warp_matrix)
+
+        
+        # compose warp transforms
+        print('Composing geometric warp matrices...') if self._verbose else None
+        self.warp_matrices = []
+        if template_method == 'sequential':
+            ## compose warps before template forward (t1->t2->t3->t4)
+            for ii in np.arange(0, template):
+                warp_composed = self._compose_warps(
+                    warp_0=warp_matrices_raw[ii], 
+                    warps_to_add=warp_matrices_raw[ii+1:template+1],
+                    warpMat_or_remapIdx='warpMat',
+                )
+                self.warp_matrices.append(warp_composed)
+            ## compose template to itself
+            self.warp_matrices.append(warp_matrices_raw[template])
+            ## compose warps after template backward (t4->t3->t2->t1)
+            for ii in np.arange(template+1, len(ims_moving)):
+                warp_composed = self._compose_warps(
+                    warp_0=warp_matrices_raw[ii], 
+                    warps_to_add=warp_matrices_raw[template:ii][::-1],
+                    warpMat_or_remapIdx='warpMat',
+                )
+                self.warp_matrices.append(warp_composed)
+        ## no composition when template_method == 'image'
+        elif template_method == 'image':
+            self.warp_matrices = warp_matrices_raw
+
+        self.warp_matrices = np.stack(self.warp_matrices, axis=0)
+
+        # convert warp matrices to remap indices
+        self.remappingIdx_geo = np.stack([helpers.warp_matrix_to_remappingIdx(warp_matrix=warp_matrix, x=W, y=H) for warp_matrix in self.warp_matrices], axis=0)
+
+        return self.remappingIdx_geo
+        
+
+    def fit_nonrigid(
+        self,
+        template: typing.Union[int, np.ndarray],
+        ims_moving: typing.List[np.ndarray],
+        remappingIdx_init: np.ndarray = None,
+        template_method: str = 'sequential',
+        mode_transform: str = 'createOptFlow_DeepFlow',
+        kwargs_mode_transform: dict = None,
+    ) -> np.ndarray:
+        """
+        Perform geometric registration of ims_moving to a template.
+        Currently relies on cv2.findTransformECC.
+        RH 2023
+
+        Args:
+            template (int or np.ndarray):
+                If 'template_method' == 'image', then template is the image
+                 to use as the template. Often this is another image in
+                 ims_moving.
+                If 'template_method' == 'sequential', then template is the
+                 integer index of the image to use as the template.
+            ims_moving (list of np.ndarray):
+                A list of images to be aligned.
+            remappingIdx_init (np.ndarray, optional):
+                An array of shape (N, H, W, 2) representing any initial
+                 remap field to apply to the images in ims_moving.
+                The output of this method will be added/composed with remappingIdx_init.
+            template_method (str, optional):
+                The method to use for template selection.
+                'image': use the image specified by 'template'. Note that
+                    template must be an image in this case.
+                'sequential': register each image to the previous or next image
+                    (will be next for images before the template and previous for
+                    images after the template)
+            mode_transform (str, optional):
+                The type of transformation to use for registration.
+                Either 'createOptFlow_DeepFlow' or 'calcOpticalFlowFarneback'.
+            kwargs_mode_transform (dict, optional):
+                Keyword arguments to pass to the mode_transform function.
+                See cv2 functions for more details.
+
+        Returns:
+            remapIdx_nonrigid (np.ndarray): 
+                An array of shape (N, H, W, 2) representing the remap field for N images.
+        """
+        # Check if ims_moving is a non-empty list
+        assert len(ims_moving) > 0, "ims_moving must be a non-empty list of images."
+        # Check if all images in ims_moving have the same shape
+        shape = ims_moving[0].shape
+        for im in ims_moving:
+            assert im.shape == shape, "All images in ims_moving must have the same shape."
+        # Check if template_method is valid
+        valid_template_methods = {'sequential', 'image'}
+        assert template_method in valid_template_methods, f"template_method must be one of {valid_template_methods}"
+        # Check if mode_transform is valid
+        valid_mode_transforms = {'createOptFlow_DeepFlow', 'calcOpticalFlowFarneback'}
+        assert mode_transform in valid_mode_transforms, f"mode_transform must be one of {valid_mode_transforms}"
+
+        # Warn if any images have values below 0 or NaN
+        found_0 = np.any([np.any(im < 0) for im in ims_moving])
+        found_nan = np.any([np.any(np.isnan(im)) for im in ims_moving])
+        warnings.warn(f"Found images with values below 0: {found_0}. Found images with NaN values: {found_nan}") if found_0 or found_nan else None
+
+        H, W = ims_moving[0].shape
+        self._HW = (H,W) if self._HW is None else self._HW
+        x_grid, y_grid = np.meshgrid(np.arange(0., W).astype(np.float32), np.arange(0., H).astype(np.float32))
+
+        norm_factor = np.nanmax([np.nanmax(im) for im in ims_moving])
+        template_norm   = np.array(template * (template > 0) * (1/norm_factor) * 255, dtype=np.uint8) if template_method == 'image' else None
+        ims_moving_norm = [np.array(im * (im > 0) * (1/np.nanmax(im)) * 255, dtype=np.uint8) for im in ims_moving]
+
+        ims_moving, template = self._fix_input_images(ims_moving=ims_moving, template=template, template_method=template_method)
+
+        print(f'Finding nonrigid registration warps with mode: {mode_transform}, template_method: {template_method}') if self._verbose else None
+        remappingIdx_raw = []
+        for ii, im_moving in tqdm(enumerate(ims_moving_norm), desc='Finding nonrigid registration warps', total=len(ims_moving_norm), unit='image', disable=not self._verbose):
+            if template_method == 'sequential':
+                ## warp images before template forward (t1->t2->t3->t4)
+                if ii < template:
+                    im_template = ims_moving_norm[ii+1]
+                ## warp template to itself
+                elif ii == template:
+                    im_template = ims_moving_norm[ii]
+                ## warp images after template backward (t4->t3->t2->t1)
+                elif ii > template:
+                    im_template = ims_moving_norm[ii-1]
+            elif template_method == 'image':
+                im_template = template_norm
+
+            if mode_transform == 'calcOpticalFlowFarneback':
+                self._kwargs_method = {
+                    'pyr_scale': 0.3, 
+                    'levels': 3,
+                    'winsize': 128, 
+                    'iterations': 7,
+                    'poly_n': 7, 
+                    'poly_sigma': 1.5,
+                    'flags': cv2.OPTFLOW_FARNEBACK_GAUSSIAN
+                } if kwargs_mode_transform is None else kwargs_mode_transform
                 flow_tmp = cv2.calcOpticalFlowFarneback(
-                    prev=template_norm,
-                    next=FOVs_norm[ii], 
+                    prev=im_template,
+                    next=im_moving, 
                     flow=None, 
                     **self._kwargs_method,
                 )
         
-            elif self._method == 'createOptFlow_DeepFlow':
+            elif mode_transform == 'createOptFlow_DeepFlow':
                 flow_tmp = cv2.optflow.createOptFlow_DeepFlow().calc(
-                    template_norm,
-                    FOVs_norm[ii],
+                    im_template,
+                    im_moving,
                     None
                 )
 
-            flow = flow_tmp + flow_old if template_method == 'sequential' else flow_tmp
-            flow_old = flow.copy() if template_method == 'sequential' else flow_old
-            flows_all.append(flow)
+            remappingIdx_raw.append(flow_tmp + np.stack([x_grid, y_grid], axis=-1))
+
+        # compose warp transforms
+        print('Composing nonrigid warp matrices...') if self._verbose else None
         
-        self.flows = [f - flows_all[template] for f in flows_all] if template_method == 'sequential' else flows_all
+        self.remappingIdx_nonrigid = []
+        if template_method == 'sequential':
+            ## compose warps before template forward (t1->t2->t3->t4)
+            for ii in np.arange(0, template):
+                warp_composed = self._compose_warps(
+                    warp_0=remappingIdx_raw[ii], 
+                    warps_to_add=remappingIdx_raw[ii+1:template+1],
+                    warpMat_or_remapIdx='remapIdx',
+                )
+                self.remappingIdx_nonrigid.append(warp_composed)
+            ## compose template to itself
+            self.remappingIdx_nonrigid.append(remappingIdx_raw[template])
+            ## compose warps after template backward (t4->t3->t2->t1)
+            for ii in np.arange(template+1, len(ims_moving)):
+                warp_composed = self._compose_warps(
+                    warp_0=remappingIdx_raw[ii], 
+                    warps_to_add=remappingIdx_raw[template:ii][::-1],
+                    warpMat_or_remapIdx='remapIdx',
+                    )
+                self.remappingIdx_nonrigid.append(warp_composed)
+        ## no composition when template_method == 'image'
+        elif template_method == 'image':
+            self.remappingIdx_nonrigid = remappingIdx_raw
+
+        if remappingIdx_init is not None:
+            self.remappingIdx_nonrigid = [self._compose_warps(warp_0=remappingIdx_init[ii], warps_to_add=[warp], warpMat_or_remapIdx='remapIdx') for ii, warp in enumerate(self.remappingIdx_nonrigid)]
+
+        self.remappingIdx_nonrigid = np.stack(self.remappingIdx_nonrigid, axis=0)
+
+        return self.remappingIdx_nonrigid
+        
+    def transform_images_geometric(self, ims_moving, remappingIdx=None):
+        remappingIdx = self.remappingIdx_geo if remappingIdx is None else remappingIdx
+        print('Applying geometric registration warps to images...') if self._verbose else None
+        self.ims_registered_geo = self._transform_images(ims_moving=ims_moving, remappingIdx=remappingIdx)
+        return self.ims_registered_geo
+    def transform_images_nonrigid(self, ims_moving, remappingIdx=None):
+        remappingIdx = self.remappingIdx_nonrigid if remappingIdx is None else remappingIdx
+        print('Applying nonrigid registration warps to images...') if self._verbose else None
+        self.ims_registered_nonrigid = self._transform_images(ims_moving=ims_moving, remappingIdx=remappingIdx)
+        return self.ims_registered_nonrigid
+    
+    def _transform_images(self, ims_moving, remappingIdx):
+        ims_registered = []
+        for ii, (im_moving, remapIdx) in tqdm(enumerate(zip(ims_moving, remappingIdx)), total=len(ims_moving), desc='Applying registration warps', unit='image', disable=not self._verbose):
+            im_registered = helpers.remap_images(
+                images=im_moving,
+                remappingIdx=remapIdx,
+                backend='cv2',
+                interpolation_method='linear',
+                border_mode='constant',
+                border_value=float(im_moving.mean()),
+            )
+            ims_registered.append(im_registered)
+        return ims_registered
+    
+
+    def _compose_warps(self, warp_0, warps_to_add, warpMat_or_remapIdx='remapIdx'):
+        """
+        Compose a series of warps into a single warp.
+        RH 2023
+        """
+        if warpMat_or_remapIdx == 'warpMat':
+            fn_compose = helpers.compose_transform_matrices
+        elif warpMat_or_remapIdx == 'remapIdx':
+            fn_compose = helpers.compose_remappingIdx
+        else:
+            raise ValueError(f'warpMat_or_remapIdx must be one of ["warpMat", "remapIdx"]')
+        
+        if len(warps_to_add) == 0:
+            return warp_0
+        else:
+            warp_out = warp_0.copy()
+            for warp_to_add in warps_to_add:
+                warp_out = fn_compose(warp_out, warp_to_add)
+            return warp_out
+
+
+    def transform_ROIs(
+        self, 
+        ROIs, 
+        remappingIdx=None,
+        normalize=True,
+    ):
+        if remappingIdx is None:
+            assert (self.remappingIdx_geo is not None) or (self.remappingIdx_nonrigid is not None), 'If remappingIdx is not provided, then geometric or nonrigid registration must be performed first.'
+            remappingIdx = self.remappingIdx_nonrigid if self.remappingIdx_nonrigid is not None else self.remappingIdx_geo
+
+        H, W = remappingIdx[0].shape[:2]
 
         print('Registering ROIs...') if self._verbose else None
-        for ii, flow in tqdm(enumerate(self.flows), total=len(self.flows), mininterval=1):
-            x_remap = (flow[:, :, 0] + x_grid).astype(np.float32)
-            y_remap = (flow[:, :, 1] + y_grid).astype(np.float32)
-            
-            if type(ROIs[ii]) is scipy.sparse.coo_matrix:
-                ROIs[ii] = ROIs[ii].tocsr()
-            
-            rois_toUse = ROIs[ii].toarray().astype(np.float32).reshape(ROIs[ii].shape[0], FOVs[ii].shape[0], FOVs[ii].shape[1]) if type(ROIs[ii]) is scipy.sparse.csr_matrix else ROIs[ii].astype(np.float32)
-            
-            
-            ROIs_aligned = np.stack([safe_ROI_remap(
-                img, 
-                x_remap - shifts[ii][1], 
-                y_remap - shifts[ii][0],
-            ) for img in rois_toUse], axis=0)
-    #         ROIs_aligned = np.stack([img.astype(np.float32) for img in ROIs[ii]], axis=0)
-            FOV_aligned = cv2.remap(FOVs_norm[ii], x_remap, y_remap, cv2.INTER_LINEAR)
+        self.ROIs_aligned = []
+        for ii, (remap, rois) in tqdm(enumerate(zip(remappingIdx, ROIs)), total=len(remappingIdx), mininterval=1, disable=not self._verbose, desc='Registering ROIs', position=1):
+            rois_aligned = helpers.remap_sparse_images(
+                ims_sparse=[roi.reshape((H, W)) for roi in rois],
+                remappingIdx=remap,
+                method='cubic',
+                fill_value=0,
+                dtype=np.float32,
+                safe=True,
+            )
+            rois_aligned = scipy.sparse.vstack([roi.reshape(1, -1) for roi in rois_aligned])
 
             if normalize:
-                ROIs_aligned = ROIs_aligned / np.sum(ROIs_aligned, axis=(1,2), keepdims=True)
+                rois_aligned = rois_aligned.multiply(1/rois_aligned.sum(1))
             
-            if return_sparse:
-                self.ROIs_aligned.append(scipy.sparse.csr_matrix(ROIs_aligned.reshape(ROIs_aligned.shape[0], -1)))
-            else:
-                self.ROIs_aligned.append(ROIs_aligned)
-
-            self.FOVs_aligned.append(FOV_aligned)
-
             ## remove NaNs from ROIs
-            for ii in range(len(self.ROIs_aligned)):
-                self.ROIs_aligned[ii].data[np.isnan(self.ROIs_aligned[ii].data)] = 0
-                
-        return self.ROIs_aligned, self.FOVs_aligned, self.flows
+            rois_aligned = rois_aligned.tocsr()
+            rois_aligned.data[np.isnan(rois_aligned.data)] = 0
 
-    def get_ROIsAligned_maxIntensityProjection(self):
+            self.ROIs_aligned.append(rois_aligned)
+
+        return self.ROIs_aligned
+
+    def get_ROIsAligned_maxIntensityProjection(self, H=None, W=None):
         """
         Returns the max intensity projection of the ROIs aligned to the template FOV.
         """
-        return [rois.max(0).toarray().reshape(self.FOVs_aligned[0].shape[0], self.FOVs_aligned[0].shape[1]) for rois in self.ROIs_aligned]
+        if H is None:
+            assert self._HW is not None, 'H and W must be provided if not already set.'
+            H, W = self._HW
+        return [rois.max(0).toarray().reshape(H, W) for rois in self.ROIs_aligned]
+    
+    def get_flowFields(self, remappingIdx=None):
+        if remappingIdx is None:
+            assert (self.remappingIdx_geo is not None) or (self.remappingIdx_nonrigid is not None), 'If remappingIdx is not provided, then geometric or nonrigid registration must be performed first.'
+            remappingIdx = self.remappingIdx_nonrigid if self.remappingIdx_nonrigid is not None else self.remappingIdx_geo
+        return [helpers.remappingIdx_to_flowField(remap) for remap in remappingIdx]
+    
+    def _fix_input_images(
+        self,
+        ims_moving: typing.List[np.ndarray],
+        template: typing.Union[int, np.ndarray],
+        template_method: str
+    ) -> typing.Tuple[int, typing.List[np.ndarray]]:
+        ## convert images to float32 and warn if they are not
+        if template_method == 'image':
+            assert isinstance(template, (np.ndarray, int)), f'template must be np.ndarray or int, not {type(template)}'
+            if isinstance(template, int):
+                print(f'WARNING: template image is not dtype: np.float32, found {ims_moving[template].dtype}, converting...') if ims_moving[template].dtype != np.float32 else None
+                template = ims_moving[template].astype(np.float32)
+            else:
+                assert template.ndim == 2, f'template must be 2D, not {template.ndim}'
+                print(f'WARNING: template image is not dtype: np.float32, found {template.dtype}, converting...') if template.dtype != np.float32 else None
+                template = template.astype(np.float32)
+        elif template_method == 'sequential':
+            assert isinstance(template, int), f'template must be int, not {type(template)}'
+            assert 0 <= template < len(ims_moving), f'template must be between 0 and {len(ims_moving)-1}, not {template}'
+        print(f'WARNING: ims_moving are not all dtype: np.float32, found {np.unique([im.dtype for im in ims_moving])}, converting...') if any(im.dtype != np.float32 for im in ims_moving) else None
+        ims_moving = [im.astype(np.float32) for im in ims_moving]    
+        return ims_moving, template
 
 
 class PhaseCorrelation_registration:
@@ -224,11 +503,11 @@ class PhaseCorrelation_registration:
         template_method='sequential',
     ):
         """
-        Register two images using phase correlation.
+        Register set of images using phase correlation.
         RH 2022
         
         Args:
-            im_template (np.ndarray):
+            template (np.ndarray or int):
                 Template image
             ims_moving (np.ndarray):
                 Images to align to the template.
@@ -412,8 +691,8 @@ def clahe(im, grid_size=50, clipLimit=0, normalize=True):
         im_out (np.ndarray):
             Output image
     """
-    im_tu = (im / im.max())*(2**16) if normalize else im
-    im_tu = im_tu/10
+    im_tu = (im / im.max())*(2**8) if normalize else im
+    im_tu = (im_tu/10).astype(np.uint8)
     clahe = cv2.createCLAHE(clipLimit=clipLimit, tileGridSize=(grid_size, grid_size))
     im_c = clahe.apply(im_tu.astype(np.uint16))
     return im_c
