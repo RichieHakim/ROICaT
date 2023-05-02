@@ -12,10 +12,9 @@ import multiprocessing as mp
 # import time
 # import copy
 
-from .. import helpers
+from .. import helpers, util
 
-
-class ROI_graph:
+class ROI_graph(util.ROICaT_Module):
     """
     Class for:
      1. Building similarity and distance graphs between ROIs
@@ -62,6 +61,9 @@ class ROI_graph:
                 Optional.
                 See sklearn.neighbors.NearestNeighbors for more information.
         """
+        ## Imports
+        super().__init__()
+
         self._algo_sf = algorithm_nearestNeigbors_spatialFootprints
         self._kwargs_sf = kwargs_nearestNeigbors_spatialFootprints
 

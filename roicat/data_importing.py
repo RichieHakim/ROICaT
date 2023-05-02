@@ -7,7 +7,7 @@ from tqdm import tqdm
 import scipy.sparse
 import sparse
 
-from . import helpers
+from . import helpers, util
 
 
 """
@@ -43,7 +43,7 @@ Conventions:
 ####################################### SUPER CLASS FOR ALL DATA OBJECTS ###################################################
 ############################################################################################################################
 
-class Data_roicat:
+class Data_roicat(util.ROICaT_Module):
     """
     Super class for all data objects.
     Incase you want to make a custom data object,
@@ -55,6 +55,9 @@ class Data_roicat:
         self,
         verbose=True,
     ):       
+        ## Imports
+        super().__init__()
+
         self._verbose = verbose
     
     #########################################################

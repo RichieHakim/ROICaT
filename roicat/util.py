@@ -271,6 +271,33 @@ def download_data_test_zip(dir_data_test):
     return path_save
 
 
+class ROICaT_Module:
+    """
+    Super class for ROICaT modules.
+    RH 2023
+    """
+    def __init__(self):
+        pass
+
+    @property
+    def serializable_dict(self):
+        """
+        Return a serializable dict that can be saved to disk.
+        """
+        ## Go through all items in self.__dict__ and check if they are serializable.
+        ### If they are, add them to a dictionary to be returned.
+        import pickle
+        serializable_dict = {}
+        for key, val in self.__dict__.items():
+            try:
+                pickle.dumps(val)
+                serializable_dict[key] = val
+            except:
+                pass
+
+        return serializable_dict
+
+
 ##########################################################################################################################
 ############################################### UCID handling ############################################################
 ##########################################################################################################################

@@ -5,9 +5,9 @@ import scipy.sparse
 import numpy as np
 from tqdm import tqdm
 
-from .. import helpers
+from .. import helpers, util
     
-class ROI_Blurrer:
+class ROI_Blurrer(util.ROICaT_Module):
     """
     Class for blurring ROIs.
     RH 2022
@@ -34,6 +34,9 @@ class ROI_Blurrer:
             plot_kernel (bool):
                 Whether to plot an image of the kernel.
         """
+        ## Imports
+        super().__init__()
+
         self._frame_shape = frame_shape
         self._verbose = verbose
 

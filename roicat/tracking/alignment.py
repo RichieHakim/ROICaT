@@ -8,9 +8,9 @@ import scipy.sparse
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
-from .. import helpers
+from .. import helpers, util
 
-class Aligner:
+class Aligner(util.ROICaT_Module):
     """
     A class for registering ROIs to a template FOV.
     Currently relies on available OpenCV methods for 
@@ -94,6 +94,9 @@ class Aligner:
             remapIdx_geo (np.ndarray): 
                 An array of shape (N, H, W, 2) representing the remap field for N images.
         """
+        ## Imports
+        super().__init__()
+        
         # Check if ims_moving is a non-empty list
         assert len(ims_moving) > 0, "ims_moving must be a non-empty list of images."
         # Check if all images in ims_moving have the same shape

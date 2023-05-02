@@ -6,9 +6,9 @@ import scipy.sparse
 import numpy as np
 import matplotlib.pyplot as plt
 
-from .. import helpers
+from .. import helpers, util
 
-class Cluster_Assigner:
+class Cluster_Assigner(util.ROICaT):
     """
     Class to perform constrained cluster assignment.
     This method takes in putative clusters, a cluster similarity matrix,
@@ -149,6 +149,8 @@ class Cluster_Assigner:
             self.m (torch.Tensor):
                 The cluster inclusion vector.
         """
+        ## Imports
+        super().__init__()
 
         ## c.shape[0] == c.shape[1] == h.shape[1]
         assert c.shape[0] == c.shape[1] == h.shape[1], 'RH ERROR: the following must be true:  c.shape[0] == c.shape[1] == h.shape[1], they should all be n_clusters'

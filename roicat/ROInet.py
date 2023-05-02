@@ -42,8 +42,9 @@ import matplotlib.pyplot as plt
 import scipy.signal
 import warnings
 
+from . import util
 
-class ROInet_embedder:
+class ROInet_embedder(util.ROICaT_Module):
     """
     Class for loading the ROInet model, preparing data for it,
      and running it.
@@ -145,6 +146,9 @@ class ROInet_embedder:
             verbose (bool):
                 Whether to print out extra information.
         """
+        ## Imports
+        super().__init__()
+
         self._device = device
         self._verbose = verbose
 
@@ -467,7 +471,7 @@ class ROInet_embedder:
         for ir,roi in enumerate(augmented[:(rows*cols)]):
             ax[ir//cols,ir%cols].imshow(roi[0])
             ax[ir//cols,ir%cols].axis('off')
-    
+
 
 def resize_affine(img, scale, clamp_range=False):
     """
