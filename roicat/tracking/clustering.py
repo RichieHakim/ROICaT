@@ -12,9 +12,9 @@ from tqdm import tqdm
 import optuna
 import hdbscan
 
-from .. import helpers
+from .. import helpers, util
 
-class Clusterer:
+class Clusterer(util.ROICaT_Module):
     """
     Base class for clustering algorithms.
 
@@ -58,6 +58,8 @@ class Clusterer:
                 Whether to print out information about the
                  clustering process.
         """
+        ## Imports
+        super().__init__()
 
         self.s_sf = s_sf
         self.s_NN_z = s_NN_z

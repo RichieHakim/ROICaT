@@ -3,9 +3,9 @@ import numpy as np
 from kymatio.torch import Scattering2D
 from tqdm import tqdm
 
-from .. import helpers
+from .. import helpers, util
 
-class SWT:
+class SWT(util.ROICaT_Module):
     """
     Class for performing scattering wavelet transform
      using the kymatio library.
@@ -30,6 +30,9 @@ class SWT:
             device (str):
                 The device to use for the transformation.
         """
+        ## Imports
+        super().__init__()
+
         self._verbose = verbose
         self._device = device
         self.swt = Scattering2D(shape=image_shape, **kwargs_Scattering2D).to(device)
