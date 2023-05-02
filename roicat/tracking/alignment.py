@@ -260,6 +260,8 @@ class Aligner:
         # Check if mode_transform is valid
         valid_mode_transforms = {'createOptFlow_DeepFlow', 'calcOpticalFlowFarneback'}
         assert mode_transform in valid_mode_transforms, f"mode_transform must be one of {valid_mode_transforms}"
+        if template_method == 'image':
+            assert isinstance(template, np.ndarray), "template must be an image when template_method == 'image'"
 
         # Warn if any images have values below 0 or NaN
         found_0 = np.any([np.any(im < 0) for im in ims_moving])
@@ -365,7 +367,7 @@ class Aligner:
     
     def _transform_images(self, ims_moving, remappingIdx):
         ims_registered = []
-        for ii, (im_moving, remapIdx) in tqdm(enumerate(zip(ims_moving, remappingIdx)), total=len(ims_moving), desc='Applying registration warps', unit='image', disable=not self._verbose):
+        for ii, (im_moving, remapIdx) in enumerate(zip(ims_moving, remappingIdx)):
             im_registered = helpers.remap_images(
                 images=im_moving,
                 remappingIdx=remapIdx,
@@ -425,7 +427,10 @@ class Aligner:
             rois_aligned = scipy.sparse.vstack([roi.reshape(1, -1) for roi in rois_aligned])
 
             if normalize:
+                rois_aligned.data[rois_aligned.data < 0] = 0
                 rois_aligned = rois_aligned.multiply(1/rois_aligned.sum(1))
+                rois_aligned.data[np.isnan(rois_aligned.data)] = 0
+                rois_aligned.eliminate_zeros()
             
             ## remove NaNs from ROIs
             rois_aligned = rois_aligned.tocsr()

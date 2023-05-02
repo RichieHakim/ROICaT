@@ -5,7 +5,7 @@ import sklearn
 import sklearn.neighbors
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-# import sparse
+import sparse
 
 # import gc
 import multiprocessing as mp
@@ -183,8 +183,9 @@ class ROI_graph:
             
             s_flat = scipy.sparse.vstack([
                 csr_to_coo_idxd(s, idx, shift_val, shape).reshape(1,-1).tocsr() for s, idx in zip(s_list, idx_list)
-            ]).tocsr()
-            s_flat = scipy.sparse.vstack([s.max(1) for s in tqdm(helpers.make_batches(helpers.scipy_sparse_csr_with_length(s_flat.T), batch_size=100000), total=s_flat.shape[0]/100000)]).T
+            ]).tocsr()  ## for each block, expand the shape of the sparse similarity matrix to be (n_roi, n_roi) and then stack them all together
+            
+            s_flat = sparse.COO(s_flat).max(0)[None,:].to_scipy_sparse().tocsr()  ## It is MUCH faster to do this with sparse.COO than with scipy.sparse
             
             s_merged = s_flat.reshape(shape)
             s_merged.data = s_merged.data - shift_val
