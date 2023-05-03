@@ -1931,7 +1931,8 @@ def remap_sparse_images(
 
         # Account for 1d images by convolving image with tiny gaussian kernel to increase image width
         if safe:
-            if (np.unique(rows).size == 1) or (np.unique(cols).size == 1):
+            ## append if there are < 3 nonzero pixels
+            if (np.unique(rows).size == 1) or (np.unique(cols).size == 1) or (rows.size < 3):
                 return warp_sparse_image(im_sparse=conv2d(im_sparse, batching=False), remappingIdx=remappingIdx)
 
         # Get values at the grid points
