@@ -200,7 +200,11 @@ class Clusterer(util.ROICaT_Module):
         # snn.data[snn.data == 0] = 1e-10
         # sswt.data[sswt.data == 0] = 1e-10
 
-        self.d_cutoff = d_crossover * stringency if d_cutoff is None else d_cutoff
+        min_d = np.nanmin(dConj.data)
+        range_d = d_crossover - min_d
+        self.d_cutoff = min_d + range_d * stringency if d_cutoff is None else d_cutoff
+        print(f'Pruning similarity graphs with d_cutoff = {self.d_cutoff}...') if self._verbose else None
+
         self.graph_pruned = dConj.copy()
         self.graph_pruned.data = self.graph_pruned.data < self.d_cutoff
         self.graph_pruned.eliminate_zeros()
@@ -311,6 +315,12 @@ class Clusterer(util.ROICaT_Module):
             )
 
         d = d_conj.copy()
+
+        if d.nnz == 0:
+            print('No edges in graph. Returning all -1 labels.') if self._verbose else None
+            self.labels = np.ones(d.shape[0], dtype=int) * -1
+            return self.labels
+            
 
         print('Fitting with HDBSCAN and splitting clusters with multiple ROIs per session') if self._verbose else None
         for ii in tqdm(range(n_iter_violationCorrection)):

@@ -1184,7 +1184,7 @@ class Data_caiman(Data_roicat):
             spatialFootprints (scipy.sparse.csr_matrix):
                 Spatial footprints.
         """
-        data = helpers.h5_lazy_load(path_resultsFile)
+        data = helpers.h5_load(path_resultsFile, return_dict=False)
         FOV_height, FOV_width = data['estimates']['dims']
         
         ## initialize the estimates.A matrix, which is a 'Fortran' indexed version of sf. Note the flipped dimensions for shape.
@@ -1220,7 +1220,7 @@ class Data_caiman(Data_roicat):
         """
 
 
-        data = helpers.h5_lazy_load(path_resultsFile)
+        data = helpers.h5_load(path_resultsFile, return_dict=False)
         labels_included = np.ones(data['estimates']['A']['indptr'].shape[0] - 1)
         if include_discarded:
             discarded = data['estimates']['discarded_components']
@@ -1244,7 +1244,7 @@ class Data_caiman(Data_roicat):
             preds (np.ndarray):
                 CNN-based CaImAn prediction probabilities
         """
-        data = helpers.h5_lazy_load(path_resultsFile)
+        data = helpers.h5_load(path_resultsFile, return_dict=False)
         preds_included = data['estimates']['cnn_preds']
         if include_discarded:
             discarded = data['estimates']['discarded_components']
@@ -1316,7 +1316,7 @@ class Data_caiman(Data_roicat):
                 List of FOV images (np.ndarray).
         """
         def _import_FOV_image(path_resultsFile):
-            data = helpers.h5_lazy_load(path_resultsFile)
+            data = helpers.h5_load(path_resultsFile, return_dict=False)
             FOV_height, FOV_width = data['estimates']['dims']
             FOV_image = data['estimates']['b'][:,0].reshape(FOV_height, FOV_width, order='F')
             return FOV_image.astype(np.float32)
