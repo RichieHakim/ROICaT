@@ -18,7 +18,7 @@ deps_core = [
     "matplotlib==3.5.2",
     "numpy==1.23.2",
     "opencv_contrib_python==4.6.0.66",
-    "pandas==2.0.1",
+    # "pandas==2.0.1",
     "Pillow==9.2.0",
     "scikit_learn==1.1.2",
     "scipy==1.8.1",
