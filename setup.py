@@ -29,7 +29,7 @@ deps_core = [
     "jupyter",
     "paramiko==2.12.0",
     # "pyyaml==5.4.1",
-    "hdfdict==0.3.1",
+    # "hdfdict==0.3.1",
     "optuna==3.0.1",
     # "joblib==1.2.0",
     # "Cython==0.29.32",

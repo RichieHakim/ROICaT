@@ -14,7 +14,6 @@ import numpy as np
 import torch
 import scipy.sparse
 import sparse
-import hdfdict
 from tqdm import tqdm
 import cv2
 
@@ -846,28 +845,6 @@ def get_keep_nonnan_entries(original_features):
     return np.array([_ for _ in range(original_features.shape[0]) if _ not in has_nan])
 
 
-def h5_lazy_load(path=None):
-    """
-    Returns a lazy dictionary object (specific
-    to hdfdict package) containing the groups
-    as keys and the datasets as values from
-    given hdf file.
-    RH 2021
-
-    Args:
-        path (string or Path): 
-            Full path name of file to read.
-    
-    Returns:
-        h5_dict (LazyHdfDict):
-            LazyHdfDict object containing the groups
-    """
-    
-    h5Obj = hdfdict.load(str(path), **{'mode': 'r'})
-    
-    return h5Obj
-
-
 def find_paths(
     dir_outer, 
     reMatch='filename', 
@@ -1207,6 +1184,39 @@ def extract_zip(
 
     return paths_extracted
 
+
+######################################################################################################################################
+######################################################## H5 HANDLING #################################################################
+######################################################################################################################################
+
+## below is actually 'simple_load' from h5_handling
+def h5_load(filepath, return_dict=False):
+    """
+    Returns a dictionary object containing the groups
+    as keys and the datasets as values from
+    given hdf file.
+    RH 2023
+
+    Args:
+        filepath (string or Path): 
+            Full path name of file to read.
+        return_dict (bool):
+            Whether or not to return a dict object (True)
+            or an h5py object (False)
+    """
+    import h5py
+    with h5py.File(filepath, 'r') as h5_file:
+        if return_dict:
+            data = {}
+            def h5_to_dict(name, obj):
+                if isinstance(obj, h5py.Dataset):
+                    data[name] = obj[()]
+
+            h5_file.visititems(h5_to_dict)  ## Converts h5 file to dict in-place
+            return data
+        else:
+            return h5_file
+        
 
 ######################################################################################################################################
 ####################################################### DECOMPOSITION ################################################################
