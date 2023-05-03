@@ -200,8 +200,9 @@ class Clusterer(util.ROICaT_Module):
         # snn.data[snn.data == 0] = 1e-10
         # sswt.data[sswt.data == 0] = 1e-10
 
-        range_d = d_crossover - np.nanmin(dConj.data)
-        self.d_cutoff = d_crossover - (range_d * (1-stringency)) if d_cutoff is None else d_cutoff
+        min_d = np.nanmin(dConj.data)
+        range_d = d_crossover - min_d
+        self.d_cutoff = min_d + range_d * stringency if d_cutoff is None else d_cutoff
         print(f'Pruning similarity graphs with d_cutoff = {self.d_cutoff}...') if self._verbose else None
 
         self.graph_pruned = dConj.copy()
