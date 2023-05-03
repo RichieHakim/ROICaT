@@ -70,6 +70,7 @@ setup(
         'roicat',
         'roicat.tracking',
         'roicat.classification'
+        'roicat.model_training'
     ],
     
     install_requires=[],
