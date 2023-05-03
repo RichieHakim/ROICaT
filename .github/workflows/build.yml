@@ -20,26 +20,26 @@ jobs:
       matrix:
         platform: [
           # ubuntu-latest,
-          # ubuntu-22.04,
+          ubuntu-22.04,
           ubuntu-20.04,
           # ubuntu-18.04,
           # # windows-latest,
-          # windows-2022,
+          windows-2022,
           windows-2019,
           # windows-2016,
           # # macos-latest,
-          # macos-12.0,
+          macos-12.0,
           macos-11.0,
           # macos-10.15,
         ]
         python-version: [ 
           # "3.8",
           "3.9",
-          # "3.10",
+          "3.10",
         ]
         extra: [
           core,
-          core_latest,
+          # core_latest,
         ]
 
     steps:
@@ -93,12 +93,11 @@ jobs:
       run: |
         pip install torch==1.12.1+cpu torchvision==0.13.1+cpu torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cpu
         pip install --user -v -e .[core]
-
-    - name: Install ROICaT with pip dependencies - Windows AND core_latest
-      if: runner.os == 'Windows' && matrix.extra == 'core_latest'
-      run: |
-        pip3 install torch torchvision torchaudio
-        pip install --user -v -e .[core_latest]
+    # - name: Install ROICaT with pip dependencies - Windows AND core_latest
+    #   if: runner.os == 'Windows' && matrix.extra == 'core_latest'
+    #   run: |
+    #     pip3 install torch torchvision torchaudio
+    #     pip install --user -v -e .[core_latest]
 
 
     - name: Install ROICaT with pip dependencies - Ubuntu AND core
@@ -106,12 +105,11 @@ jobs:
       run: |
         pip install torch==1.12.1+cpu torchvision==0.13.1+cpu torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cpu
         pip install --user -v -e .[core]
-      
-    - name: Install ROICaT with pip dependencies - Ubuntu AND core_latest
-      if: runner.os == 'Linux' && matrix.extra == 'core_latest'
-      run: |
-        pip3 install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
-        pip install --user -v -e .[core_latest]
+    # - name: Install ROICaT with pip dependencies - Ubuntu AND core_latest
+    #   if: runner.os == 'Linux' && matrix.extra == 'core_latest'
+    #   run: |
+    #     pip3 install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
+    #     pip install --user -v -e .[core_latest]
 
 
     - name: Install ROICaT with pip dependencies - macOS AND core
@@ -119,12 +117,11 @@ jobs:
       run: |
         pip install torch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1
         pip install --user -v -e .[core]
-
-    - name: Install ROICaT with pip dependencies - macOS AND core_latest
-      if: runner.os == 'macOS' && matrix.extra == 'core_latest'
-      run: |
-        pip3 install torch torchvision torchaudio
-        pip install --user -v -e .[core_latest]
+    # - name: Install ROICaT with pip dependencies - macOS AND core_latest
+    #   if: runner.os == 'macOS' && matrix.extra == 'core_latest'
+    #   run: |
+    #     pip3 install torch torchvision torchaudio
+    #     pip install --user -v -e .[core_latest]
 
 
 
