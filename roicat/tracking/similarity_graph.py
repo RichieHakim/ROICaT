@@ -142,7 +142,6 @@ class ROI_graph(util.ROICaT_Module):
         s_sf_all, s_NN_all, s_SWT_all, s_sesh_all, idxROI_block_all = [], [], [], [], []
 
         self.s_SWT = scipy.sparse.csr_matrix((n_roi, n_roi))
-        self.d = scipy.sparse.csr_matrix((n_roi, n_roi))
 
         print('Computing pairwise similarity between ROIs...') if self._verbose else None
         for ii, block in tqdm(enumerate(self.blocks), total=len(self.blocks), mininterval=10):
@@ -409,7 +408,7 @@ class ROI_graph(util.ROICaT_Module):
         )
 
         ## calculate similarity scores for each ROI against the 
-        ##  'different' ROIs
+        ##  'different' ROIs. Note that symmetry is lost here.
         print('Normalizing Neural Network similarity scores...') if verbose else None
         if features_NN is not None:
             s_NN_diff = cosine_similarity_customIdx(features_NN.to(device), idx_diff)
