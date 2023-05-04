@@ -74,8 +74,8 @@ class ROInet_embedder(util.ROICaT_Module):
     """
     def __init__(
         self,
+        dir_networkFiles,
         device='cpu',
-        dir_networkFiles=None,
         download_method='check_local_first',
         download_url='https://osf.io/x3fd2/download',
         download_hash=None,
@@ -91,11 +91,11 @@ class ROInet_embedder(util.ROICaT_Module):
         There is some hash checking to make sure the files are the same.
 
         Args:
-            device (str):
-                The device to use for the model and data.
             dir_networkFiles (str):
                 The directory to find an existing ROInet.zip file
                  or download and extract a new one into.
+            device (str):
+                The device to use for the model and data.
             download_method (str):
                 Approach to downloading the network files.
                 'check_local_first':
