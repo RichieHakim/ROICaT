@@ -354,7 +354,8 @@ class Clusterer(util.ROICaT_Module):
 
             self.hdbs.fit(attach_fully_connected_node(
                 d, 
-                dist_fullyConnectedNode=max_dist
+                dist_fullyConnectedNode=max_dist,
+                n_nodes=1,
             ))
             labels = self.hdbs.labels_[:-1]
             self.labels = labels
@@ -633,6 +634,8 @@ class Clusterer(util.ROICaT_Module):
         # dConj.eliminate_zeros()
         dConj.data = 1 - dConj.data
 
+        self.dConj = dConj  ## store the distance matrix
+
         return dConj, sSF_data, sNN_data, sSWT_data, sConj_data
 
     def _activation_function(self, s, sig_kwargs={'mu':0.0, 'b':1.0}, power=1):
@@ -889,7 +892,7 @@ class Clusterer(util.ROICaT_Module):
         return loss  # Output must be a scalar. Used to update the hyperparameters
         
 
-def attach_fully_connected_node(d, dist_fullyConnectedNode=None):
+def attach_fully_connected_node(d, dist_fullyConnectedNode=None, n_nodes=1):
     """
     This function takes in a sparse distance graph (csr_matrix) that has
      more than one component (multiple unconnected subgraphs) and appends
@@ -903,6 +906,10 @@ def attach_fully_connected_node(d, dist_fullyConnectedNode=None):
             Value to use for the connection strengh to all other nodes.
             Value will be appended as elements in a new row and column at
              the ends of the 'd' matrix.
+            If None, then the value will be set to 1000 times the difference
+             between the maximum and minimum values in 'd'.
+        n_nodes (int):
+            Number of nodes to append to the graph.
              
      Returns:
          d2 (scipy.sparse.csr_matrix):
@@ -912,8 +919,8 @@ def attach_fully_connected_node(d, dist_fullyConnectedNode=None):
         dist_fullyConnectedNode = (d.max() - d.min()) * 1000
     
     d2 = d.copy()
-    d2 = scipy.sparse.vstack((d2, np.ones((1,d2.shape[1]))*dist_fullyConnectedNode))
-    d2 = scipy.sparse.hstack((d2, np.ones((d2.shape[0],1))*dist_fullyConnectedNode))
+    d2 = scipy.sparse.vstack((d2, np.ones((n_nodes,d2.shape[1]), dtype=d.dtype)*dist_fullyConnectedNode))
+    d2 = scipy.sparse.hstack((d2, np.ones((d2.shape[0],n_nodes), dtype=d.dtype)*dist_fullyConnectedNode))
 
     return d2.tocsr()
 
