@@ -23,7 +23,7 @@ deps_core = [
     "scikit_learn==1.1.2",
     "scipy==1.8.1",
     "seaborn==0.11.2",
-    "sparse==0.13.0",
+    "sparse==0.14.0",
     "tqdm==4.64.0",
     "natsort==8.2.0",
     "jupyter",
