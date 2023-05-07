@@ -78,7 +78,7 @@ def compute_colored_FOV(
     labels,
     cmap='random',
     boolSessionID=None,
-    confidence=None,
+    alphas=None,
 ):
     """
     Computes a set of images of FOVs of spatial footprints, colored
@@ -106,17 +106,13 @@ def compute_colored_FOV(
             Boolean array indicating which session each spatial footprint belongs to.
             Only required if spatialFootprints and labels are not lists.
             shape: (n_roi_total, n_sessions)
-        confidence (np.ndarray):
-            Confidence for each spatial footprint
-            If None, all confidence values are set to 1.
-            Spatial fooprints with confidence < threshold_confidence
-             have a color set to cmap(-1), which is typically black.
-        threshold_confidence (float):
-            Threshold for the confidence values.
+        alphas (np.ndarray):
+            Alpha value for each label.
+            shape (n_labels,)
     """
     labels_cat = np.concatenate(labels) if (isinstance(labels, list) and (isinstance(labels[0], list) or isinstance(labels[0], np.ndarray))) else labels.copy()
-    if confidence is None:
-        confidence = np.ones(len(labels_cat))
+    if alphas is None:
+        alphas = np.ones(len(labels_cat))
     
     h, w = FOV_height, FOV_width
 
@@ -141,6 +137,9 @@ def compute_colored_FOV(
 
     rois_c = scipy.sparse.hstack([rois.multiply(colors[labels_squeezed, ii][:,None]) for ii in range(4)]).tocsr()
     rois_c.data = np.minimum(rois_c.data, 1)
+
+    ## apply alpha
+    rois_c = rois_c.multiply(alphas[labels_squeezed][:,None]).tocsr()
 
     boolSessionID = np.concatenate([[np.arange(len(labels))==ii]*len(labels[ii]) for ii in range(len(labels))] , axis=0) if boolSessionID is None else boolSessionID
     rois_c_bySessions = [rois_c[idx] for idx in boolSessionID.T]

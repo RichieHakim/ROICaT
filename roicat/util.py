@@ -287,14 +287,68 @@ class ROICaT_Module:
         ## Go through all items in self.__dict__ and check if they are serializable.
         ### If they are, add them to a dictionary to be returned.
         import pickle
-        serializable_dict = {}
-        for key, val in self.__dict__.items():
-            try:
-                pickle.dumps(val)
-                serializable_dict[key] = val
-            except:
-                pass
 
+        ## Define a list of libraries and classes that are allowed to be serialized.
+        allowed_libraries = [
+            'builtins',
+            'collections',
+            'datetime',
+            'itertools',
+            'math',
+            'numbers',
+            'os',
+            'pathlib',
+            'string',
+            'time',
+            'numpy',
+            'scipy',
+        ]
+        def is_library_allowed(obj):
+            try:
+                try:
+                    module_name = obj.__module__.split('.')[0]
+                except:
+                    success = False
+                try:
+                    module_name = obj.__class__.__module__.split('.')[0]
+                except:
+                    success = False
+            except:
+                success = False
+            else:
+                ## Check if the module_name is in the allowed_libraries list.
+                if module_name in allowed_libraries:
+                    success = True
+                else:
+                    success = False
+            return success
+        
+        def make_serializable_dict(obj, depth=0, max_depth=100):
+            """
+            Recursively go through all items in self.__dict__ and check if they are serializable.
+            """
+            if depth > max_depth:
+                raise Exception(f'RH ERROR: max_depth of {max_depth} reached with object: {obj}')
+            serializable_dict = {}
+            for key, val in obj.__dict__.items():
+                try:
+                    ## Check if the value is in the allowed_libraries list.
+                    if is_library_allowed(val):
+                        pass
+                    else:
+                        continue
+                    ## Check if the value is serializable.
+                    pickle.dumps(val)
+                    ## If it is, check to see if it has it's own serializable_dict property.
+                    try:
+                        serializable_dict[key] = make_serializable_dict(val, depth=depth+1, max_depth=max_depth)
+                    except:
+                        serializable_dict[key] = val
+                except:
+                    pass
+            return serializable_dict
+        
+        serializable_dict = make_serializable_dict(self, depth=0, max_depth=100)
         return serializable_dict
 
 

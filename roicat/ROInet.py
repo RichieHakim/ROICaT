@@ -31,7 +31,7 @@ import multiprocessing as mp
 from functools import partial
 
 import numpy as np
-import gdown
+# import gdown
 import torch
 import torchvision
 from torch.nn import Module
@@ -74,8 +74,8 @@ class ROInet_embedder(util.ROICaT_Module):
     """
     def __init__(
         self,
+        dir_networkFiles,
         device='cpu',
-        dir_networkFiles=None,
         download_method='check_local_first',
         download_url='https://osf.io/x3fd2/download',
         download_hash=None,
@@ -91,11 +91,11 @@ class ROInet_embedder(util.ROICaT_Module):
         There is some hash checking to make sure the files are the same.
 
         Args:
-            device (str):
-                The device to use for the model and data.
             dir_networkFiles (str):
                 The directory to find an existing ROInet.zip file
                  or download and extract a new one into.
+            device (str):
+                The device to use for the model and data.
             download_method (str):
                 Approach to downloading the network files.
                 'check_local_first':
@@ -417,27 +417,27 @@ class ROInet_embedder(util.ROICaT_Module):
             augmented_latents = (torch.cat(augmented_lst, dim=0)).detach()
             dump = np.save(Path(latent_folder_out) / f'{file_prefix}-{icopy}.npy', augmented_latents.numpy())
 
-    def _download_network_files(self):
-        if self._download_url is None or self._dir_networkFiles is None:
-            raise ValueError('download_url and dir_networkFiles must be specified if download_method is True')
+    # def _download_network_files(self):
+    #     if self._download_url is None or self._dir_networkFiles is None:
+    #         raise ValueError('download_url and dir_networkFiles must be specified if download_method is True')
 
-        print(f'Downloading network files from Google Drive to {self._dir_networkFiles}') if self._verbose else None
-        download_file(
-            url=self._download_url,
-            path_save=self._dir_networkFiles,
-            check_local_first=True,
-            check_hash=True,
-            hash_type='MD5',
-            hash_hex='1e62893d8e944819516e793656afc31d',
-            mkdir=True,
-            allow_overwrite=True,
-            write_mode='wb',
-            verbose=True,
-            chunk_size=1024,
-        )
-        paths_files = gdown.download_folder(id=self._download_url, output=self._dir_networkFiles, quiet=False, use_cookies=False)
-        print('Downloaded network files') if self._verbose else None
-        return paths_files
+    #     print(f'Downloading network files from Google Drive to {self._dir_networkFiles}') if self._verbose else None
+    #     download_file(
+    #         url=self._download_url,
+    #         path_save=self._dir_networkFiles,
+    #         check_local_first=True,
+    #         check_hash=True,
+    #         hash_type='MD5',
+    #         hash_hex='1e62893d8e944819516e793656afc31d',
+    #         mkdir=True,
+    #         allow_overwrite=True,
+    #         write_mode='wb',
+    #         verbose=True,
+    #         chunk_size=1024,
+    #     )
+    #     paths_files = gdown.download_folder(id=self._download_url, output=self._dir_networkFiles, quiet=False, use_cookies=False)
+    #     print('Downloaded network files') if self._verbose else None
+    #     return paths_files
 
     def show_rescaled_rois(self, rows=10, cols=10, figsize=(7,7)):
         """

@@ -2469,6 +2469,132 @@ def simple_multiprocessing(func, args, workers):
         res = ex.map(func, *args)
     return list(res)
 
+
+######################################################################################################################################
+######################################################### CLUSTERING #################################################################
+######################################################################################################################################
+
+
+def cluster_similarity_matrices(
+    s, 
+    l, 
+    verbose=True
+):
+    """
+    Compute the similarity matrices for each cluster in l.
+    This algorithm works best on large and sparse matrices. 
+    RH 2023
+
+    Args:
+        s (scipy.sparse.csr_matrix or np.ndarray or sparse.COO):
+            Similarity matrix.
+            Entries should be non-negative floats.
+        l (np.ndarray):
+            Labels for each row of s.
+            Labels should be integers ideally.
+        verbose (bool):
+            Whether to print warnings.
+
+    Returns:
+        cs_mean (np.ndarray):
+            Similarity matrix for each cluster.
+            Each element is the mean similarity between all the pairs
+             of samples in each cluster.
+            Note that the diagonal here only considers non-self similarity,
+             which excludes the diagonals of s.
+        cs_max (np.ndarray):
+            Similarity matrix for each cluster.
+            Each element is the maximum similarity between all the pairs
+             of samples in each cluster.
+            Note that the diagonal here only considers non-self similarity,
+             which excludes the diagonals of s.
+        cs_min (np.ndarray):
+            Similarity matrix for each cluster.
+            Each element is the minimum similarity between all the pairs
+             of samples in each cluster. Will be 0 if there are any sparse
+             elements between the two clusters.
+    """
+    import sparse
+    import scipy.sparse
+
+    l_arr = np.array(l)
+    ss = scipy.sparse.csr_matrix(s.astype(np.float32))
+
+    ## assert that all labels have at least two samples
+    l_u ,l_c = np.unique(l_arr, return_counts=True)
+    # assert np.all(l_c >= 2), "All labels must have at least two samples."
+    ## assert that s is a square matrix
+    assert ss.shape[0] == ss.shape[1], "Similarity matrix must be square."
+    ## assert that s is non-negative
+    assert (ss < 0).sum() == 0, "Similarity matrix must be non-negative."
+    ## assert that l is a 1-D array
+    assert len(l.shape) == 1, "Labels must be a 1-D array."
+    ## assert that l is the same length as s
+    assert len(l) == ss.shape[0], "Labels must be the same length as the similarity matrix."
+    if verbose:
+        ## Warn if s is not symmetric
+        if not (ss - ss.T).sum() == 0:
+            print("Warning: Similarity matrix is not symmetric.") if verbose else None
+        ## Warn if s is not sparse
+        if not isinstance(ss, (np.ndarray, sparse.COO, scipy.sparse.csr_matrix)):
+            print("Warning: Similarity matrix is not a recognized sparse type or np.ndarray. Will attempt to convert to sparse.COO") if verbose else None
+        ## Warn if diagonal is not all ones. It will be converted
+        if not np.allclose(np.array(ss[range(ss.shape[0]), range(ss.shape[0])]), 1):
+            print("Warning: Similarity matrix diagonal is not all ones. Will set diagonal to all ones.") if verbose else None
+        ## Warn if there are any values greater than 1
+        if (ss > 1).sum() > 0:
+            print("Warning: Similarity matrix has values greater than 1.") if verbose else None
+        ## Warn if there are NaNs. Set to 0.
+        if (np.isnan(ss.data)).sum() > 0:
+            print("Warning: Similarity matrix has NaNs. Will set to 0.") if verbose else None
+            ss.data[np.isnan(ss.data)] = 0
+
+    ## Make a boolean matrix for labels
+    l_bool = sparse.COO(np.stack([l_arr == u for u in l_u], axis=0))
+    samp_per_clust = l_bool.sum(1).todense()
+    n_clusters = len(samp_per_clust)
+    n_samples = ss.shape[0]
+    
+    ## Force diagonal to be 1s
+    ss = ss.tolil()
+    ss[range(n_samples), range(n_samples)] = 1
+    ss = sparse.COO(ss)
+
+    ## Compute the similarity matrix for each pair of clusters
+    s_big_conj = ss[None,None,:,:] * l_bool[None,:,:,None] * l_bool[:,None,None,:]  ## shape: (n_clusters, n_clusters, n_samples, n_samples)
+    s_big_diag = sparse.eye(n_samples) * l_bool[None,:,:,None] * l_bool[:,None,None,:]
+
+    ## Compute the mean similarity matrix for each cluster
+    samp_per_clust_crossGrid = samp_per_clust[:,None] * samp_per_clust[None,:]  ## shape: (n_clusters, n_clusters). This is the product of the number of samples in each cluster. Will be used to divide by the sum of similarities.
+    norm_mat = samp_per_clust_crossGrid.copy()  ## above variable will be used again and this one will be mutated.
+    fixed_diag = samp_per_clust * (samp_per_clust - 1)  ## shape: (n_clusters,). For the diagonal, we need to subtract 1 from the number of samples in each cluster because samples have only 1 similarity with themselves along the diagonal.
+    norm_mat[range(n_clusters), range(n_clusters)] = fixed_diag  ## Correcting the diagonal
+    s_big_sum_raw = s_big_conj.sum(axis=(2,3)).todense()
+    s_big_sum_raw[range(n_clusters), range(n_clusters)] = s_big_sum_raw[range(n_clusters), range(n_clusters)] - samp_per_clust  ## subtract off the number of samples in each cluster from the diagonal
+    cs_mean = s_big_sum_raw / norm_mat  ## shape: (n_clusters, n_clusters). Compute mean by finding the sum of the similarities and dividing by the norm_mat.
+
+    ## Compute the min similarity matrix for each cluster
+    ### This is done in two steps:
+    #### 1. Compute the minimum similarity between each pair of clusters by inverting the similarity matrix and finding the maximum similarity between each pair of clusters.
+    #### 2. Since the first step doesn't invert any values that happen to be 0 (since they are sparse), we need to find out if there are any 0 values there are in each cluster pair, and if there then the minimum similarity between the two clusters is 0.
+    val_max = s_big_conj.max() + 1
+    cs_min = s_big_conj.copy()
+    cs_min.data = val_max - cs_min.data  ## Invert the values
+    cs_min = cs_min.max(axis=(2,3))  ## Find the max similarity
+    cs_min.data = val_max - cs_min.data  ## Invert the values back
+    cs_min.fill_value = 0.0  ## Set the fill value to 0.0 since it gets messed up by these subtraction operations
+    
+    n_missing_values = (samp_per_clust_crossGrid - (s_big_conj > 0).sum(axis=(2,3)).todense())  ## shape: (n_clusters, n_clusters). Compute the number of missing values by subtracting the number of non-zero values from the number of samples in each cluster.
+    # n_missing_values[range(len(samp_per_clust)), range(len(samp_per_clust))] = (samp_per_clust**2 - samp_per_clust) - ((s_big_conj[range(len(samp_per_clust)), range(len(samp_per_clust))] > 0).sum(axis=(1,2))).todense()  ## Correct the diagonal by subtracting the number of non-zero values from the number of samples in each cluster. This is because the diagonal is the number of samples in each cluster squared minus the number of samples in each cluster.
+    bool_nonMissing_values = (n_missing_values == 0)  ## shape: (n_clusters, n_clusters). Make a boolean matrix for where there are no missing values.
+    cs_min = cs_min.todense() * bool_nonMissing_values  ## Set the minimum similarity to 0 where there are missing values.
+
+    ## Compute the max similarity matrix for each cluster
+    cs_max = (s_big_conj - s_big_diag).max(axis=(2,3))
+
+    return cs_mean, cs_max.todense(), cs_min
+
+
 ######################################################################################################################################
 ###################################################### OTHER FUNCTIONS ###############################################################
 ######################################################################################################################################

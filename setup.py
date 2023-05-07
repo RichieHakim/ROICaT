@@ -12,7 +12,7 @@ import os
 deps_core = [
     "umap-learn==0.5.3",
     "hdbscan==0.8.29",
-    "gdown==4.5.1",
+    # "gdown==4.5.1",
     "ipywidgets==7.7.1",
     "kymatio==0.2.1",
     "matplotlib==3.5.2",
@@ -23,7 +23,7 @@ deps_core = [
     "scikit_learn==1.1.2",
     "scipy==1.8.1",
     "seaborn==0.11.2",
-    "sparse==0.13.0",
+    "sparse==0.14.0",
     "tqdm==4.64.0",
     "natsort==8.2.0",
     "jupyter",
