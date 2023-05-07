@@ -186,26 +186,36 @@ class Clusterer(util.ROICaT_Module):
         },
         stringency=1.0,
     ):
-        dConj, sConj, sSF_data, sNN_data, sSWT_data, sConj_data = self.make_conjunctive_distance_matrix(
+        self.dConj, self.sConj, sSF_data, sNN_data, sSWT_data, sConj_data = self.make_conjunctive_distance_matrix(
             s_sf=self.s_sf,
             s_NN=self.s_NN_z,
             s_SWT=self.s_SWT_z,
             s_sesh=None,
             **kwargs_makeConjunctiveDistanceMatrix
         )
-        dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(dConj)
+        dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(self.dConj)
+
+        self.distributions_mixing = {
+            'kwargs_makeConjunctiveDistanceMatrix': kwargs_makeConjunctiveDistanceMatrix,
+            'dens_same_crop': dens_same_crop,
+            'dens_same': dens_same,
+            'dens_diff': dens_diff,
+            'dens_all': dens_all,
+            'edges': edges,
+            'd_crossover': d_crossover,
+        }
 
         ssf, snn, sswt, ssesh = self.s_sf.copy(), self.s_NN_z.copy(), self.s_SWT_z.copy(), self.s_sesh.copy()
         # ssf.data[ssf.data == 0] = 1e-10
         # snn.data[snn.data == 0] = 1e-10
         # sswt.data[sswt.data == 0] = 1e-10
 
-        min_d = np.nanmin(dConj.data)
+        min_d = np.nanmin(self.dConj.data)
         range_d = d_crossover - min_d
         self.d_cutoff = min_d + range_d * stringency if d_cutoff is None else d_cutoff
         print(f'Pruning similarity graphs with d_cutoff = {self.d_cutoff}...') if self._verbose else None
 
-        self.graph_pruned = dConj.copy()
+        self.graph_pruned = self.dConj.copy()
         self.graph_pruned.data = self.graph_pruned.data < self.d_cutoff
         self.graph_pruned.eliminate_zeros()
         
@@ -219,6 +229,13 @@ class Clusterer(util.ROICaT_Module):
             return s_pruned
 
         self.s_sf_pruned, self.s_NN_pruned, self.s_SWT_pruned, self.s_sesh_pruned = tuple([prune(s, self.graph_pruned) for s in [ssf, snn, sswt, ssesh]])
+        self.dConj_pruned, self.sConj_pruned, _, _, _, _ = self.make_conjunctive_distance_matrix(
+            s_sf=self.s_sf_pruned,
+            s_NN=self.s_NN_pruned,
+            s_SWT=self.s_SWT_pruned,
+            s_sesh=self.s_sesh_pruned,
+            **kwargs_makeConjunctiveDistanceMatrix,
+        )
 
     def fit(self,
         session_bool,
@@ -559,9 +576,9 @@ class Clusterer(util.ROICaT_Module):
         self.labels = labels
         return self.labels
             
-
+    @classmethod
     def make_conjunctive_distance_matrix(
-        self,
+        cls,
         s_sf=None,
         s_NN=None,
         s_SWT=None,
@@ -617,35 +634,36 @@ class Clusterer(util.ROICaT_Module):
         
         p_norm = 1e-9 if p_norm == 0 else p_norm
 
-        sSF_data = self._activation_function(s_sf.data, sig_SF_kwargs, power_SF)
-        sNN_data = self._activation_function(s_NN.data, sig_NN_kwargs, power_NN)
-        sSWT_data = self._activation_function(s_SWT.data, sig_SWT_kwargs, power_SWT)
+        sSF_data = cls._activation_function(s_sf.data, sig_SF_kwargs, power_SF) if s_sf is not None else None
+        sNN_data = cls._activation_function(s_NN.data, sig_NN_kwargs, power_NN) if s_NN is not None else None
+        sSWT_data = cls._activation_function(s_SWT.data, sig_SWT_kwargs, power_SWT) if s_SWT is not None else None
+
+        s_list = [s for s in [sSF_data, sNN_data, sSWT_data] if s is not None]
         
-        sConj_data = self._pNorm(
-            s_list=[sSF_data, sNN_data, sSWT_data],
+        sConj_data = cls._pNorm(
+            s_list=s_list,
             p=p_norm,
         )
         # sConj_data = sConj_data * s_sesh.data if s_sesh is not None else sConj_data
         # sConj_data = sConj_data * np.logical_not(s_sesh.data) if s_sesh is not None else sConj_data
 
-        ## make self.dConj
-        dConj = s_sf.copy()
+        ## make dConj
+        dConj = s_sf.copy() if s_sf is not None else s_NN.copy() if s_NN is not None else s_SWT.copy()
         dConj.data = sConj_data.numpy()
         dConj = dConj.multiply(s_sesh) if s_sesh is not None else dConj
         # dConj.eliminate_zeros()
         dConj.data = 1 - dConj.data
-        self.dConj = dConj  ## store the distance matrix
 
-        ## make self.sConj
-        sConj = s_sf.copy()
-        sConj.data = sConj_data.numpy()
+        ## make sConj
+        sConj = s_sf.copy() if s_sf is not None else s_NN.copy() if s_NN is not None else s_SWT.copy()
+        sConj.data = sConj_data.numpy() 
         sConj = sConj.multiply(s_sesh) if s_sesh is not None else sConj
         # sConj.eliminate_zeros()
-        self.sConj = sConj  ## store the similarity matrix
 
-        return self.dConj, self.sConj, sSF_data, sNN_data, sSWT_data, sConj_data
+        return dConj, sConj, sSF_data, sNN_data, sSWT_data, sConj_data
 
-    def _activation_function(self, s, sig_kwargs={'mu':0.0, 'b':1.0}, power=1):
+    @classmethod
+    def _activation_function(cls, s, sig_kwargs={'mu':0.0, 'b':1.0}, power=1):
         if s is None:
             return None
         if (sig_kwargs is not None) and (power is not None):
@@ -656,7 +674,8 @@ class Clusterer(util.ROICaT_Module):
         elif (sig_kwargs is not None) and (power is None):
             return helpers.generalised_logistic_function(torch.as_tensor(s, dtype=torch.float32), **sig_kwargs)
 
-    def _pNorm(self, s_list, p):
+    @classmethod
+    def _pNorm(cls, s_list, p):
         """
         Calculate the p-norm of a list of similarity matrices.
         """
@@ -897,6 +916,54 @@ class Clusterer(util.ROICaT_Module):
         loss = dens_same_crop.sum().item()
         
         return loss  # Output must be a scalar. Used to update the hyperparameters
+    
+
+    def compute_cluster_quality_metrics(
+        self,
+        sim_mat=None,
+        labels=None,
+    ):
+        """
+        Compute cluster quality metrics.
+        Calls the cluster_quality_metrics function.
+        RH 2023
+
+        Args:
+            sim_mat (np.ndarray):
+                Similarity matrix of shape (n_samples, n_samples).
+                If None then sConj will be generated using the
+                 make_conjunctive_distance_matrix function and
+                 self.kwargs_makeConjunctiveDistanceMatrix_best.
+            labels (np.ndarray):
+                Cluster labels of shape (n_samples,).
+                If None, then self.labels will be used.
+        """
+        if sim_mat is None:
+            assert hasattr(self, 'kwargs_makeConjunctiveDistanceMatrix_best'), "self.kwargs_makeConjunctiveDistanceMatrix_best does not exist. Run self.find_optimal_parameters_for_pruning() first or specify sim_mat."
+            ## assert that there exists s_sf, s_NN_z, s_SWT_z, s_sesh
+            assert all([hasattr(self, s) for s in ['s_sf', 's_NN_z', 's_SWT_z', 's_sesh']]), "self.s_sf, self.s_NN_z, self.s_SWT_z, and/or self.s_sesh do not exist. Make those first or specify sim_mat."
+            sim_mat = self.make_conjunctive_distance_matrix(
+                s_sf=self.s_sf_pruned,
+                s_NN=self.s_NN_pruned,
+                s_SWT=self.s_SWT_pruned,
+                s_sesh=self.s_sesh_pruned,
+                **self.kwargs_makeConjunctiveDistanceMatrix_best,
+            )[1]
+        if labels is None:
+            assert hasattr(self, 'labels'), "self.labels does not exist. Run self.find_optimal_parameters_for_pruning() first or specify labels."
+            labels = self.labels
+            
+        cs_intra_means, cs_intra_mins, cs_intra_maxs, cs_sil = cluster_quality_metrics(
+            sim=sim_mat,
+            labels=labels,
+        )
+        self.cluster_quality_metrics = {
+            'cs_intra_means': cs_intra_means,
+            'cs_intra_mins': cs_intra_mins,
+            'cs_intra_maxs': cs_intra_maxs,
+            'cs_sil': cs_sil,
+        }
+        return self.cluster_quality_metrics
         
 
 def attach_fully_connected_node(d, dist_fullyConnectedNode=None, n_nodes=1):
@@ -920,7 +987,7 @@ def attach_fully_connected_node(d, dist_fullyConnectedNode=None, n_nodes=1):
              
      Returns:
          d2 (scipy.sparse.csr_matrix):
-             Sparse graph with only one component.
+             Sparse graph with only one component.cluster_quality_metrics
     """
     if dist_fullyConnectedNode is None:
         dist_fullyConnectedNode = (d.max() - d.min()) * 1000
@@ -1101,148 +1168,179 @@ def score_labels(labels_test, labels_true, ignore_negOne=False, thresh_perfect=0
     return out
 
 
-def compute_cluster_similarity_graph(
-    labels,
-    s,
-    sf_cat,
-    idxPixels_block,
-    blocks,
-    locality=1,
-    cluster_similarity_reduction_intra='mean',
-    cluster_similarity_reduction_inter='max',
-    n_workers=None,
-):
-    """
-    Computers the similarity graph between clusters.
-    Similarly to 'compute_similarity_blockwise', this function 
-        operates over blocks, but computes the similarity between
-        clusters as opposed to ROIs.
+# def compute_cluster_similarity_graph(
+#     labels,
+#     s,
+#     sf_cat,
+#     idxPixels_block,
+#     blocks,
+#     locality=1,
+#     cluster_similarity_reduction_intra='mean',
+#     cluster_similarity_reduction_inter='max',
+#     n_workers=None,
+# ):
+#     """
+#     Computers the similarity graph between clusters.
+#     Similarly to 'compute_similarity_blockwise', this function 
+#         operates over blocks, but computes the similarity between
+#         clusters as opposed to ROIs.
     
+#     Args:
+#         cluster_similarity_reduction_intra (str):
+#             The method to use for reducing the intra-cluster similarity.
+#         cluster_similarity_reduction_inter (str):
+#             The method to use for reducing the inter-cluster similarity.
+#         cluster_silhouette_reduction_intra (str):
+#             The method to use for reducing the intra-cluster silhouette.
+#         cluster_silhouette_reduction_inter (str):
+#             The method to use for reducing the inter-cluster silhouette.
+#     Attributes set:
+#         self.n_clusters (int):
+#             The number of clusters.
+#         self.sf_clusters (scipy.sparse.csr_matrix):
+#             The spatial fooprints of the sum of the rois in each cluster
+#                 (summed over ROIs).
+#         self.c_sim (scipy.sparse.csr_matrix):
+#             The similarity matrix between clusters.
+#         self.c_sil (np.ndarray):
+#             The silhouette score for each cluster
+#         self.s_local (scipy.sparse.csr_matrix):
+#             The 'local' version of self.s, where s_local = s**locality.
+#     """
+#     import sparse
+#     import multiprocessing as mp
+
+#     # self._cluster_similarity_reduction_intra_method = cluster_similarity_reduction_intra
+#     # self._cluster_similarity_reduction_inter_method = cluster_similarity_reduction_inter
+
+#     # self._cluster_silhouette_reduction_intra_method = cluster_silhouette_reduction_intra
+#     # self._cluster_silhouette_reduction_inter_method = cluster_silhouette_reduction_inter
+
+#     if n_workers is None:
+#         n_workers = mp.cpu_count()
+
+#     # self.n_clusters = len(self.cluster_idx)
+#     n_clusters = len(np.unique(labels))
+
+#     ## make a sparse matrix of the spatial footprints of the sum of each cluster
+#     # print('Starting: Making cluster spatial footprints') if self._verbose else None
+#     spatialFootprints_coo = sparse.COO(sf_cat)
+#     # self.clusterBool_coo = sparse.COO(self.cluster_bool)
+#     clusterBool = np.stack([labels==l for l in np.unique(labels)], axis=0)
+#     clusterBool_coo = sparse.COO(clusterBool)
+#     batch_size = int(max(1e8 // spatialFootprints_coo.shape[0], 1000))
+
+#     def helper_make_sfClusters(
+#             cb_s_batch
+#         ):
+#         """
+#         Helper function to make a cluster spatial footprint
+#          using all the roi spatial footprints. and a boolean array
+#          of which rois belong to which cluster.
+#         """
+#         return (spatialFootprints_coo[None,:,:] * cb_s_batch).sum(axis=1)
+
+#     def reduction_inter(x, sizes_clusters, method='max'):
+#         if method == 'max':
+#             return x.max(axis=(2,3))
+#         elif method == 'mean':
+#             return x.sum(axis=(2,3)) / (sizes_clusters[:,None] * sizes_clusters[None,:])
+
+#     def reduction_intra(x, sizes_clusters, method='min'):
+#         if method == 'min':
+#             x.fill_value = np.inf
+#             return x.min(axis=(1,2))
+#         elif method == 'mean':
+#             return x.sum(axis=(1,2)) / (sizes_clusters * (sizes_clusters-1))
+#     def helper_compute_cluster_similarity_batch(
+#         i_block, 
+#         ):
+#         """
+#         Helper function to compute the similarity between clusters within
+#          a single block.
+        
+#         Updates attribute: self.c_sim
+#         """
+#         cBool = sparse.COO(clusterBool[idxClusters_block[i_block]])
+#         sizes_clusters = cBool.sum(1)
+
+#         cs_inter = (s_local[None,None,:,:] * cBool[:, None, :, None]) * cBool[None, :, None, :]  ## arranges similarities between every roi ACROSS every pair of clusters. shape (n_clusters, n_clusters, n_ROI, n_ROI)
+#         c_block = reduction_inter(
+#             x=cs_inter, 
+#             sizes_clusters=sizes_clusters, 
+#             method=cluster_similarity_reduction_inter,
+#         ).todense()  ## compute the reduction of the cs_inter array along the ROI dimensions
+
+#         cs_intra = (s_local[None,:,:] * cBool[:, :, None]) * cBool[:, None, :]  ## arranges similarities between every roi WITHIN each cluster. shape (n_clusters, n_ROI, n_ROI)
+#         c_block[range(c_block.shape[0]), range(c_block.shape[0])] = reduction_intra(
+#             cs_intra, 
+#             sizes_clusters=sizes_clusters,
+#             method=cluster_similarity_reduction_intra,
+#         ).todense()  ## compute the reduction of the cs_intra array along the ROI dimensions
+
+#         c_block = np.maximum(c_block, c_block.T)  # force symmetry
+
+#         idx = np.meshgrid(idxClusters_block[i_block], idxClusters_block[i_block])
+#         c_sim[idx[0], idx[1]] = c_block
+#         return c_block
+
+
+#     ## make images of each cluster (so that we can determine which ones are in which block)
+#     sf_clusters = sparse.concatenate(
+#         helpers.simple_multithreading(
+#             helper_make_sfClusters,
+#             [helpers.make_batches(clusterBool_coo[:,:,None], batch_size=batch_size)],
+#             workers=n_workers
+#         )
+#     ).tocsr()
+#     # print('Completed: Making cluster spatial footprints') if self._verbose else None
+
+
+#     # print('Starting: Computing cluster similarities') if self._verbose else None
+#     c_sim = scipy.sparse.lil_matrix((n_clusters, n_clusters)) # preallocate a sparse matrix for the cluster similarity matrix
+#     s_local = sparse.COO(s.power(locality))
+#     idxClusters_block = [np.where(sf_clusters[:, idx_pixels].sum(1) > 0)[0] for idx_pixels in idxPixels_block]  ## find indices of the clusters that have at least one non-zero pixel in the block
+
+#     ## compute the similarity between clusters. self.c_sim is updated from within the helper function
+#     c = helpers.simple_multithreading(
+#             helper_compute_cluster_similarity_batch,
+#             [np.arange(len(blocks))],
+#             workers=n_workers
+#         )
+#         # [self._helper_compute_cluster_similarity_batch(i_block) for i_block in np.arange(len(self.blocks))]
+#         # print('Completed: Computing cluster similarities') if self._verbose else None
+#     for i_block in np.arange(len(blocks)):
+#         idx = np.meshgrid(idxClusters_block[i_block], idxClusters_block[i_block])
+#         c_sim[idx[0], idx[1]] = c[i_block]
+
+#     return c_sim.tocsr()
+
+
+
+def cluster_quality_metrics(sim, labels):
+    """
+    Computes the cluster quality metrics for a clustering solution.
+    Computes the intra_means, intra_mins, intra_maxs, and cluster silhouette score
+    RH 2023
+
     Args:
-        cluster_similarity_reduction_intra (str):
-            The method to use for reducing the intra-cluster similarity.
-        cluster_similarity_reduction_inter (str):
-            The method to use for reducing the inter-cluster similarity.
-        cluster_silhouette_reduction_intra (str):
-            The method to use for reducing the intra-cluster silhouette.
-        cluster_silhouette_reduction_inter (str):
-            The method to use for reducing the inter-cluster silhouette.
-    Attributes set:
-        self.n_clusters (int):
-            The number of clusters.
-        self.sf_clusters (scipy.sparse.csr_matrix):
-            The spatial fooprints of the sum of the rois in each cluster
-                (summed over ROIs).
-        self.c_sim (scipy.sparse.csr_matrix):
-            The similarity matrix between clusters.
-        self.c_sil (np.ndarray):
-            The silhouette score for each cluster
-        self.s_local (scipy.sparse.csr_matrix):
-            The 'local' version of self.s, where s_local = s**locality.
+        sim (np.array or scipy.sparse.csr_matrix):
+            Similarity matrix of shape (n_roi, n_roi).
+            Can be obtained using _, sConj, _,_,_,_ = clusterer.make_conjunctive_similarity_matrix().
+        labels (np.array):
+            Cluster labels of shape (n_roi,).
     """
     import sparse
+    
+    cs_mean, cs_max, cs_min = helpers.cluster_similarity_matrices(sim, labels, verbose=True)
+    fn_sil_score = lambda intra, inter: (intra - inter) / np.maximum(intra, inter)
 
-    # self._cluster_similarity_reduction_intra_method = cluster_similarity_reduction_intra
-    # self._cluster_similarity_reduction_inter_method = cluster_similarity_reduction_inter
+    eye_inv = 1 - sparse.eye(cs_max.shape[0])
 
-    # self._cluster_silhouette_reduction_intra_method = cluster_silhouette_reduction_intra
-    # self._cluster_silhouette_reduction_inter_method = cluster_silhouette_reduction_inter
-
-    if n_workers is None:
-        n_workers = mp.cpu_count()
-
-    # self.n_clusters = len(self.cluster_idx)
-    n_clusters = len(np.unique(labels))
-
-    ## make a sparse matrix of the spatial footprints of the sum of each cluster
-    # print('Starting: Making cluster spatial footprints') if self._verbose else None
-    spatialFootprints_coo = sparse.COO(sf_cat)
-    # self.clusterBool_coo = sparse.COO(self.cluster_bool)
-    clusterBool = np.stack([labels==l for l in np.unique(labels)], axis=0)
-    clusterBool_coo = sparse.COO(clusterBool)
-    batch_size = int(max(1e8 // spatialFootprints_coo.shape[0], 1000))
-
-    def helper_make_sfClusters(
-            cb_s_batch
-        ):
-        """
-        Helper function to make a cluster spatial footprint
-         using all the roi spatial footprints. and a boolean array
-         of which rois belong to which cluster.
-        """
-        return (spatialFootprints_coo[None,:,:] * cb_s_batch).sum(axis=1)
-
-    def reduction_inter(x, sizes_clusters, method='max'):
-        if method == 'max':
-            return x.max(axis=(2,3))
-        elif method == 'mean':
-            return x.sum(axis=(2,3)) / (sizes_clusters[:,None] * sizes_clusters[None,:])
-
-    def reduction_intra(x, sizes_clusters, method='min'):
-        if method == 'min':
-            x.fill_value = np.inf
-            return x.min(axis=(1,2))
-        elif method == 'mean':
-            return x.sum(axis=(1,2)) / (sizes_clusters * (sizes_clusters-1))
-    def helper_compute_cluster_similarity_batch(
-        i_block, 
-        ):
-        """
-        Helper function to compute the similarity between clusters within
-         a single block.
-        
-        Updates attribute: self.c_sim
-        """
-        cBool = sparse.COO(clusterBool[idxClusters_block[i_block]])
-        sizes_clusters = cBool.sum(1)
-
-        cs_inter = (s_local[None,None,:,:] * cBool[:, None, :, None]) * cBool[None, :, None, :]  ## arranges similarities between every roi ACROSS every pair of clusters. shape (n_clusters, n_clusters, n_ROI, n_ROI)
-        c_block = reduction_inter(
-            x=cs_inter, 
-            sizes_clusters=sizes_clusters, 
-            method=cluster_similarity_reduction_inter,
-        ).todense()  ## compute the reduction of the cs_inter array along the ROI dimensions
-
-        cs_intra = (s_local[None,:,:] * cBool[:, :, None]) * cBool[:, None, :]  ## arranges similarities between every roi WITHIN each cluster. shape (n_clusters, n_ROI, n_ROI)
-        c_block[range(c_block.shape[0]), range(c_block.shape[0])] = reduction_intra(
-            cs_intra, 
-            sizes_clusters=sizes_clusters,
-            method=cluster_similarity_reduction_intra,
-        ).todense()  ## compute the reduction of the cs_intra array along the ROI dimensions
-
-        c_block = np.maximum(c_block, c_block.T)  # force symmetry
-
-        idx = np.meshgrid(idxClusters_block[i_block], idxClusters_block[i_block])
-        c_sim[idx[0], idx[1]] = c_block
-        return c_block
-
-
-    ## make images of each cluster (so that we can determine which ones are in which block)
-    sf_clusters = sparse.concatenate(
-        helpers.simple_multithreading(
-            helper_make_sfClusters,
-            [helpers.make_batches(clusterBool_coo[:,:,None], batch_size=batch_size)],
-            workers=n_workers
-        )
-    ).tocsr()
-    # print('Completed: Making cluster spatial footprints') if self._verbose else None
-
-
-    # print('Starting: Computing cluster similarities') if self._verbose else None
-    c_sim = scipy.sparse.lil_matrix((n_clusters, n_clusters)) # preallocate a sparse matrix for the cluster similarity matrix
-    s_local = sparse.COO(s.power(locality))
-    idxClusters_block = [np.where(sf_clusters[:, idx_pixels].sum(1) > 0)[0] for idx_pixels in idxPixels_block]  ## find indices of the clusters that have at least one non-zero pixel in the block
-
-    ## compute the similarity between clusters. self.c_sim is updated from within the helper function
-    c = helpers.simple_multithreading(
-            helper_compute_cluster_similarity_batch,
-            [np.arange(len(blocks))],
-            workers=n_workers
-        )
-        # [self._helper_compute_cluster_similarity_batch(i_block) for i_block in np.arange(len(self.blocks))]
-        # print('Completed: Computing cluster similarities') if self._verbose else None
-    for i_block in np.arange(len(blocks)):
-        idx = np.meshgrid(idxClusters_block[i_block], idxClusters_block[i_block])
-        c_sim[idx[0], idx[1]] = c[i_block]
-
-    return c_sim.tocsr()
+    cs_intra_means = cs_mean.diagonal()
+    cs_inter_maxOfMaxs = (eye_inv * cs_max).max(0)
+    cs_sil = fn_sil_score(cs_intra_means, cs_inter_maxOfMaxs)
+    cs_intra_mins = cs_min.diagonal()
+    cs_intra_maxs = cs_max.diagonal()
+    
+    return cs_intra_means, cs_intra_mins, cs_intra_maxs, cs_sil
