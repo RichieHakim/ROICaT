@@ -331,7 +331,6 @@ class ROICaT_Module:
                 raise Exception(f'RH ERROR: max_depth of {max_depth} reached with object: {obj}')
             serializable_dict = {}
             for key, val in obj.__dict__.items():
-                print(key)
                 try:
                     ## Check if the value is in the allowed_libraries list.
                     if is_library_allowed(val):
