@@ -3,8 +3,9 @@ name: build
 on:
   push:
     branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+    # branches: [ "main", "dev" ]
+  # pull_request:
+  #   branches: [ "main" ]
 
 permissions:
   contents: read
@@ -28,14 +29,14 @@ jobs:
           windows-2019,
           # windows-2016,
           # # macos-latest,
-          # macos-12.0,  ## RH: not working 20230507
+          macos-12.0,  ## RH: not working 20230507
           macos-11.0,
           # macos-10.15,
         ]
         python-version: [ 
           # "3.8",
           "3.9",
-          # "3.10",  ## RH: not working 20230507
+          "3.10",  ## RH: possibly not working on Windows 2019 only. 20230507
         ]
         extra: [
           core,
