@@ -108,7 +108,7 @@ def compute_colored_FOV(
             shape: (n_roi_total, n_sessions)
         alphas (np.ndarray):
             Alpha value for each label.
-            shape (n_labels,)
+            shape (n_labels,) which is the same as the number of unique labels len(np.unique(labels))
     """
     labels_cat = np.concatenate(labels) if (isinstance(labels, list) and (isinstance(labels[0], list) or isinstance(labels[0], np.ndarray))) else labels.copy()
     if alphas is None:
