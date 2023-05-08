@@ -2,8 +2,8 @@ name: build
 
 on:
   push:
-    branches: [ "main" ]
-    # branches: [ "main", "dev" ]
+    # branches: [ "main" ]
+    branches: [ "main", "dev" ]
   # pull_request:
   #   branches: [ "main" ]
 
@@ -91,8 +91,10 @@ jobs:
 
     - name: Install ROICaT with pip dependencies - Windows AND core
       if: runner.os == 'Windows' && matrix.extra == 'core'
+      # run: |
+      #   pip install torch==1.12.1+cpu torchvision==0.13.1+cpu torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cpu
+      #   pip install --user -v -e .[core]
       run: |
-        pip install torch==1.12.1+cpu torchvision==0.13.1+cpu torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cpu
         pip install --user -v -e .[core]
     # - name: Install ROICaT with pip dependencies - Windows AND core_latest
     #   if: runner.os == 'Windows' && matrix.extra == 'core_latest'
@@ -103,8 +105,10 @@ jobs:
 
     - name: Install ROICaT with pip dependencies - Ubuntu AND core
       if: runner.os == 'Linux' && matrix.extra == 'core'
+      # run: |
+      #   pip install torch==1.12.1+cpu torchvision==0.13.1+cpu torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cpu
+      #   pip install --user -v -e .[core]
       run: |
-        pip install torch==1.12.1+cpu torchvision==0.13.1+cpu torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cpu
         pip install --user -v -e .[core]
     # - name: Install ROICaT with pip dependencies - Ubuntu AND core_latest
     #   if: runner.os == 'Linux' && matrix.extra == 'core_latest'
@@ -115,8 +119,10 @@ jobs:
 
     - name: Install ROICaT with pip dependencies - macOS AND core
       if: runner.os == 'macOS' && matrix.extra == 'core'
+      # run: |
+      #   pip install torch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1
+      #   pip install --user -v -e .[core]
       run: |
-        pip install torch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1
         pip install --user -v -e .[core]
     # - name: Install ROICaT with pip dependencies - macOS AND core_latest
     #   if: runner.os == 'macOS' && matrix.extra == 'core_latest'

@@ -36,6 +36,10 @@ deps_core = [
     "einops==0.6.0",
     "xxhash==3.1.0",
     "pytest==7.2.0",
+    
+    "torch",
+    "torchvision",
+    "torchaudio",
 ]
 ## Dependencies: latest versions of core requirements
 ### remove everything starting and after the first =,>,<,! sign
