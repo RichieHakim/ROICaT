@@ -41,7 +41,7 @@ jobs:
         ]
         extra: [
           core,
-          # core_latest,
+          core_latest,
         ]
 
     steps:
