@@ -87,21 +87,6 @@ jobs:
         python -m pip install --upgrade pip setuptools wheel pytest
 
 
-    # - name: Install ROICaT with pip dependencies - Windows
-    #   if: runner.os == 'Windows'
-    #   run: |
-    #     pip install --user -v -e .[${{ matrix.extra }}]
-
-    # - name: Install ROICaT with pip dependencies - Ubuntu
-    #   if: runner.os == 'Linux'
-    #   run: |
-    #     pip install --user -v -e .[${{ matrix.extra }}]
-
-    # - name: Install ROICaT with pip dependencies - macOS
-    #   if: runner.os == 'macOS'
-    #   run: |
-    #     pip install --user -v -e .[${{ matrix.extra }}]
-
     - name: Install ROICaT with pip dependencies
       run: |
         pip install --user -v -e .[${{ matrix.extra }}]
