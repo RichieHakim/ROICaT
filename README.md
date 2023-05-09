@@ -66,11 +66,11 @@ If you are on OSX or the above fails, try:\
 > If you'd like to give a custom name to the environment: `conda env create -n my_env_name --file environment_chooseGPUorCPUfile_.yml`<br>
 > If you'd like to install environment into a different directory: ` conda env create --file environment_chooseGPUorCPUfile.yml --prefix /path/to/virtual/environment`<br> -->
 
-### 3. Install PyTorch: <br>
+<!-- ### 3. Install PyTorch: <br>
 - PyTorch is required for ROICaT and is well tested on torch versions `1.12.0` to `1.13.1`
-- **Follow steps to install:** Follow the instructions here: https://pytorch.org/get-started/locally/. Read closely if you wish to install a GPU/CUDA version of PyTorch. The key takeaways are that you need a [CUDA compatible NVIDIA GPU](https://developer.nvidia.com/cuda-gpus) and [drivers](https://developer.nvidia.com/cuda-toolkit-archive) that match the same version as the PyTorch CUDA version you choose. All CUDA 11.x versions are intercompatible, so if you have CUDA 11.8 drivers, you can install `torch==1.13.1+cu116`.
+- **Follow steps to install:** Follow the instructions here: https://pytorch.org/get-started/locally/. Read closely if you wish to install a GPU/CUDA version of PyTorch. The key takeaways are that you need a [CUDA compatible NVIDIA GPU](https://developer.nvidia.com/cuda-gpus) and [drivers](https://developer.nvidia.com/cuda-toolkit-archive) that match the same version as the PyTorch CUDA version you choose. All CUDA 11.x versions are intercompatible, so if you have CUDA 11.8 drivers, you can install `torch==1.13.1+cu116`. -->
 
-### 4. Install ROICaT
+### 3. Install ROICaT
 ```
 pip install --user -v -e .[core]
 ```
@@ -85,7 +85,7 @@ vs_buildtools.exe --norestart --passive --downloadThenInstall --includeRecommend
 Then, try proceeding with the installation by rerunning the pip install commands above.
 ([Source](https://stackoverflow.com/questions/64261546/how-to-solve-error-microsoft-visual-c-14-0-or-greater-is-required-when-inst))
 
-### 5. Use ROICaT<br>
+### 4. Use ROICaT<br>
 - Beginner: Run a Jupyter Notebook: [Notebooks](https://github.com/RichieHakim/ROICaT/tree/main/notebooks)<br>
 - Advanced: Make a parameter file and run in command line: `python -m ROICaT`. See [TODO: link to how-to] for details.<br>
 
@@ -104,13 +104,8 @@ Then, try proceeding with the installation by rerunning the pip install commands
 - Alternatively, classification can be done by projecting the feature vectors into a lower-dimensional space using UMAP and then simply circling the region of space to classify the ROIs.
 -  **Tracking**: The feature vectors can be combined with information about the position of the ROIs to track the ROIs across imaging sessions/planes.
 
--------------
 # <a name="FAQs"></a>Frequently asked questions:
-- Getting the error `OSError: [Errno 12] Cannot allocate memory` during `data.import_ROI_spatialFootprints()`
-- There's something weird about the data you're using. I haven't figured out why this happens sometimes (albeit rarely).
-- Solution: set `data.import_ROI_spatialFootprints(workers=1)` and `roinet.generate_dataloader(..., numWorkers_dataloader=0, persistentWorkers_dataloader=False)`
 
--------------
 # TODO:
 - unify and refactor backend
 - integration tests
