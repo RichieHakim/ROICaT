@@ -82,53 +82,52 @@ jobs:
       if: startsWith(matrix.platform, 'ubuntu')
       run: |
         ## check cpu, memory, disk, etc.
-        lsb_release -a
-        uname -a
-        cat /proc/cpuinfo
-        cat /proc/meminfo
-        df -h
-        free -h
-        nproc
+        ## print the command inputs to the workflow
+        echo "CPU info (lscpu):"
         lscpu
-        ## check if CUDA is available
+        echo "Memory info (free -h):"
+        free -h
+        echo "Disk info (df -h):"
+        df -h
+        echo "Network info (ip a):"
+        ip a
+        echo "OS info (uname -a):"
+        uname -a
+        echo "NVidia GPU info (nvidia-smi):"
         nvidia-smi
-        ## check if OpenCL is available
-        clinfo
     - name: Check specs of the machine -- Windows
-    ## if it is any version of windows
       if: startsWith(matrix.platform, 'windows')
       run: |
         ## check cpu, memory, disk, etc.
-        systeminfo
-        ## check if CUDA is available
+        ## print the command inputs to the workflow
+        echo "CPU info (Get-WmiObject Win32_Processor):"
+        Get-WmiObject Win32_Processor
+        echo "Memory info (Get-WmiObject Win32_OperatingSystem):"
+        Get-WmiObject Win32_OperatingSystem
+        echo "Disk info (Get-WmiObject Win32_LogicalDisk):"
+        Get-WmiObject Win32_LogicalDisk
+        echo "Network info (Get-WmiObject Win32_NetworkAdapterConfiguration):"
+        Get-WmiObject Win32_NetworkAdapterConfiguration
+        echo "OS info (Get-WmiObject Win32_OperatingSystem):"
+        Get-WmiObject Win32_OperatingSystem
+        echo "NVidia GPU info (nvidia-smi):"
         nvidia-smi
-        ## check if OpenCL is available
-        clinfo
     - name: Check specs of the machine -- MacOS
-    ## if it is any version of MacOS
       if: startsWith(matrix.platform, 'macos')
       run: |
         ## check cpu, memory, disk, etc.
-        system_profiler SPHardwareDataType
-        ## check if CUDA is available
-        nvidia-smi
-        ## check if OpenCL is available
-        clinfo
+        ## print the command inputs to the workflow
+        echo "CPU info (sysctl -n machdep.cpu.brand_string):"
+        sysctl -n machdep.cpu.brand_string
+        echo "Memory info (sysctl -n hw.memsize):"
+        sysctl -n hw.memsize
+        echo "Disk info (df -h):"
+        df -h
+        echo "Network info (ip a):"
+        ip a
+        echo "OS info (uname -a):"
+        uname -a
     
-    - name: Prepare path, environment, and basic pip packages
-      run: |
-        ## cd to github workspace
-        # cd $GITHUB_WORKSPACE
-        
-        ## check current directory (pwd)
-        pwd
-
-        ## activate conda environment        
-        conda activate ROICaT || true
-
-        ## install pip, wheel, setuptools
-        python -m pip install --upgrade pip setuptools wheel pytest
-
 
     - name: Install ROICaT with pip dependencies -- system-level
       if: matrix.install-level == 'system'
