@@ -66,8 +66,8 @@ class Clusterer(util.ROICaT_Module):
         self.s_SWT_z = s_SWT_z
         self.s_sesh = s_sesh
 
-        self.s_sesh_inv = (self.s_sf != 0).astype(np.bool8)
-        self.s_sesh_inv[self.s_sesh.astype(np.bool8)] = False
+        self.s_sesh_inv = (self.s_sf != 0).astype(np.bool_)
+        self.s_sesh_inv[self.s_sesh.astype(np.bool_)] = False
         self.s_sesh_inv.eliminate_zeros()
 
         self.s_sesh = self.s_sesh.tolil()
