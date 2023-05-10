@@ -82,12 +82,26 @@ jobs:
         ## check current directory (pwd)
         pwd
 
-        ## check specs of the machine
+        ## check specs of the machine for different platforms
+        if [[ "$RUNNER_OS" == "Linux" ]]; then
         uname -a
         lscpu
         nproc
         free -h
         df -h
+        
+        elif [[ "$RUNNER_OS" == "macOS" ]]; then
+        uname -a
+        sysctl -a | grep machdep.cpu
+        sysctl -a | grep memsize
+        df -h
+
+        elif [[ "$RUNNER_OS" == "Windows" ]]; then
+        systeminfo
+        wmic cpu get caption, deviceid, name, numberofcores, maxclockspeed, status
+        wmic memorychip get capacity, devicelocator, partnumber, speed
+        wmic logicaldisk get caption, description, filesystem, freespace, size, volumename
+        fi
     
     - name: Prepare path, environment, and basic pip packages
       run: |
