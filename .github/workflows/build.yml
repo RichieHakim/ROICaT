@@ -41,7 +41,7 @@ jobs:
           # "3.12",
         ]
         ## install either system level or user level:
-        install_: [
+        install_user: [
           system,
           user,
         ]
