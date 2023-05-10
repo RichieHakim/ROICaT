@@ -40,9 +40,10 @@ jobs:
           "3.11",
           # "3.12",
         ]
-        install_user: [
-          'user',
-          'system',
+        ## install either system level or user level:
+        install_: [
+          system,
+          user,
         ]
         extra: [
           core,
