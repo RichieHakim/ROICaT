@@ -3,17 +3,17 @@ name: build
 on:
   push:
     # branches: [ "main" ]
-    branches: [ "dev" ]
+    # branches: [ "dev" ]
     # branches: [ "main", "dev" ]
-  # pull_request:
-  #   branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
 permissions:
   contents: read
 
 jobs:
 
-  build_CPU:
+  build:
 
     name: ${{ matrix.platform }}, py${{ matrix.python-version }}, ${{ matrix.extra }}, ${{ matrix.install-level }}
     runs-on: ${{ matrix.platform }}
@@ -22,15 +22,13 @@ jobs:
       matrix:
         platform: [
           # ubuntu-latest,
-          # ubuntu-22.04,
+          ubuntu-22.04,
           ubuntu-20.04,
-          # ubuntu-18.04,
           # # windows-latest,
-          # windows-2022,
+          windows-2022,
           windows-2019,
-          # windows-2016,
           # # macos-latest,
-          # macos-12.0,  ## RH: not working 20230507
+          # macos-12.0,  ## RH: not available yet 20230507
           macos-11.0,
           # macos-10.15,
         ]
@@ -42,10 +40,10 @@ jobs:
         ]
         extra: [
           core,
-          # core_latest,
+          core_latest,
         ]
         install-level: [
-          # system,
+          system,
           user,
         ]
 
@@ -78,7 +76,6 @@ jobs:
           conda list
 
     - name: Check specs of the machine -- Linux
-    ## if it is any version of linux
       if: startsWith(matrix.platform, 'ubuntu')
       run: |
         ## check cpu, memory, disk, etc.

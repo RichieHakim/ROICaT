@@ -1,6 +1,5 @@
 # ROICaT <img src="logo.png"  width="300"  title="ROICaT"  alt="ROICaT"  align="right"  vspace = "60">
 
-<!-- badges -->
 [![build](https://github.com/RichieHakim/ROICaT/actions/workflows/.github/workflows/build.yml/badge.svg)](https://github.com/RichieHakim/ROICaT/actions/workflows/build.yml) 
 
 
@@ -47,30 +46,8 @@ git clone https://github.com/RichieHakim/ROICaT
 cd path/to/ROICaT/directory
 ```
 
-<!-- ### 2. (Optional) Update base conda environment
-**`conda update -n base -c defaults conda python=3.9`**<br>
-If you are on OSX or the above fails, try:\
-**`conda update -n base conda python=3.9`**<br>
-
-### 3. Install dependencies (choose either 3A or 3B)
->Make sure current directory is the ROICaT repo directory (`cd path/to/ROICaT/directory`)<br>
->Note: If you are on a server and wish to install the GPU version, it might be necessary to load CUDA modules first using something like `module load gcc/9.2.0 cuda/11.2`.<br>
->If you get errors about GCC version, make sure you have version >=5.4.0. Check with `gcc --version`. On some Linux servers (like Harvard's O2 server), you may need to run `module load gcc/9.2.0` or similar.<br>
-
-#### 3A. Install dependencies with GPU support (recommended)<br>
-**`conda env create --file environment_GPU.yml`**<br>
-
-#### 3B. Install dependencies with only CPU support<br>
-**`conda env create --file environment_CPU_only.yml`**<br>
-
-> If you'd like to give a custom name to the environment: `conda env create -n my_env_name --file environment_chooseGPUorCPUfile_.yml`<br>
-> If you'd like to install environment into a different directory: ` conda env create --file environment_chooseGPUorCPUfile.yml --prefix /path/to/virtual/environment`<br> -->
-
-<!-- ### 3. Install PyTorch: <br>
-- PyTorch is required for ROICaT and is well tested on torch versions `1.12.0` to `1.13.1`
-- **Follow steps to install:** Follow the instructions here: https://pytorch.org/get-started/locally/. Read closely if you wish to install a GPU/CUDA version of PyTorch. The key takeaways are that you need a [CUDA compatible NVIDIA GPU](https://developer.nvidia.com/cuda-gpus) and [drivers](https://developer.nvidia.com/cuda-toolkit-archive) that match the same version as the PyTorch CUDA version you choose. All CUDA 11.x versions are intercompatible, so if you have CUDA 11.8 drivers, you can install `torch==1.13.1+cu116`. -->
-
 ### 3. Install ROICaT
+Optional: `pip install --upgrade pip`<br>
 ```
 pip install --user -v -e .[core]
 ```
@@ -86,8 +63,9 @@ Then, try proceeding with the installation by rerunning the pip install commands
 ([Source](https://stackoverflow.com/questions/64261546/how-to-solve-error-microsoft-visual-c-14-0-or-greater-is-required-when-inst))
 
 #### Troubleshooting (GPU support)
-GPU support is not required, but can increase ROICaT speeds ~5-50x.
-If you are using a GPU, make sure you have installed the correct version of PyTorch. This is frequently an issue on Windows computers. Use the following command to check your PyTorch version and if it is GPU enabled:
+GPU support is not required. Windows users will often need to manually install a CUDA version of pytorch (see below). Note that you can check your nvidia driver version using the shell command: `nvidia-smi` if you have drivers installed. 
+
+Use the following command to check your PyTorch version and if it is GPU enabled:
 ```
 python -c "import torch, torchvision; print(f'Using versions: torch=={torch.__version__}, torchvision=={torchvision.__version__}');  print(f'torch.cuda.is_available() = {torch.cuda.is_available()}')"
 ```
@@ -137,10 +115,10 @@ If a CUDA version of PyTorch is installed but GPU is not available, make sure yo
 # <a name="FAQs"></a>Frequently asked questions:
 
 # TODO:
-- unify and refactor backend
-- integration tests
-- make demo notebooks
-- port demo notebooks to CoLab
+- Unify model training into this repo
+- Improve classification notebooks
+- Try Bokeh for interactive plots
+- Integration tests
+- Port demo notebooks to CoLab
 - make reference API
-- make nice README.md
-- version testing
+- make nice README.md with gifs
