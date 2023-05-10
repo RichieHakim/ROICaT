@@ -319,7 +319,8 @@ class ROInet_embedder(util.ROICaT_Module):
                 ScaleDynamicRange(scaler_bounds=(0,1)),
                 torchvision.transforms.Resize(
                     size=img_size_out,
-                    interpolation=torchvision.transforms.InterpolationMode.BILINEAR
+                    interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
+                    antialias=True,
                 ),
                 TileChannels(dim=0, n_channels=3),
             )

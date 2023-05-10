@@ -180,7 +180,7 @@ class Data_roicat(util.ROICaT_Module):
             class_labels = [np.load(lbls) for lbls in class_labels]
             assert all([isinstance(lbls, np.ndarray) for lbls in class_labels]), f"Class labels should be a list of 1-D numpy arrays. First element of list is of type {type(class_labels[0])}"
             assert all([lbls.ndim==1 for lbls in class_labels]), f"Class labels should be a list of 1-D numpy arrays. First element of list is of shape {class_labels[0].shape}"
-            class_labels = [lbls.astype(np.int) for lbls in class_labels]
+            class_labels = [lbls.astype(int) for lbls in class_labels]
             
         ## Check the validity of the input
         if isinstance(class_labels, np.ndarray):
@@ -189,7 +189,7 @@ class Data_roicat(util.ROICaT_Module):
         assert isinstance(class_labels, list), f"class_labels should be a list. It is a {type(class_labels)}"
         assert all([isinstance(lbls, np.ndarray) for lbls in class_labels]), f"class_labels should be a list of 1-Dnumpy arrays. First element of list is of type {type(class_labels[0])}"
         assert all([lbls.ndim==1 for lbls in class_labels]), f"class_labels should be a list of 1-D numpy arrays. First element of list is of shape {class_labels[0].shape}"
-        assert all([lbls.dtype==np.int for lbls in class_labels]), f"class_labels should be a list of 1-D numpy arrays of dtype np.int. First element of list is of dtype {class_labels[0].dtype}"
+        assert all([lbls.dtype==int for lbls in class_labels]), f"class_labels should be a list of 1-D numpy arrays of dtype np.int. First element of list is of dtype {class_labels[0].dtype}"
         assert all([np.all(lbls>=0) for lbls in class_labels]), f"All class labels should be non-negative. Found negative values."
 
         ## Define some variables

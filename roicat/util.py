@@ -2,7 +2,7 @@ from pathlib import Path
 import warnings
 import copy
 
-import importlib_metadata
+import importlib
 
 import numpy as np
 
@@ -12,7 +12,7 @@ def get_roicat_version():
     """
     Get the version of the roicat package.
     """
-    return importlib_metadata.version('roicat')
+    return importlib.metadata.version('roicat')
 
 
 def make_params_default_tracking(
