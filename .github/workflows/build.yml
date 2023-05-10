@@ -77,31 +77,43 @@ jobs:
           conda info
           conda list
 
-    - name: Check specs of the machine
+    - name: Check specs of the machine -- Linux
+    ## if it is any version of linux
+      if: startsWith(matrix.platform, 'ubuntu')
       run: |
-        ## check current directory (pwd)
-        pwd
-
-        ## check specs of the machine for different platforms
-        if [[ "$RUNNER_OS" == "Linux" ]]; then
+        ## check cpu, memory, disk, etc.
+        lsb_release -a
         uname -a
-        lscpu
-        nproc
+        cat /proc/cpuinfo
+        cat /proc/meminfo
+        df -h
         free -h
-        df -h
-        
-        elif [[ "$RUNNER_OS" == "macOS" ]]; then
-        uname -a
-        sysctl -a | grep machdep.cpu
-        sysctl -a | grep memsize
-        df -h
-
-        elif [[ "$RUNNER_OS" == "Windows" ]]; then
+        nproc
+        lscpu
+        ## check if CUDA is available
+        nvidia-smi
+        ## check if OpenCL is available
+        clinfo
+    - name: Check specs of the machine -- Windows
+    ## if it is any version of windows
+      if: startsWith(matrix.platform, 'windows')
+      run: |
+        ## check cpu, memory, disk, etc.
         systeminfo
-        wmic cpu get caption, deviceid, name, numberofcores, maxclockspeed, status
-        wmic memorychip get capacity, devicelocator, partnumber, speed
-        wmic logicaldisk get caption, description, filesystem, freespace, size, volumename
-        fi
+        ## check if CUDA is available
+        nvidia-smi
+        ## check if OpenCL is available
+        clinfo
+    - name: Check specs of the machine -- MacOS
+    ## if it is any version of MacOS
+      if: startsWith(matrix.platform, 'macos')
+      run: |
+        ## check cpu, memory, disk, etc.
+        system_profiler SPHardwareDataType
+        ## check if CUDA is available
+        nvidia-smi
+        ## check if OpenCL is available
+        clinfo
     
     - name: Prepare path, environment, and basic pip packages
       run: |
