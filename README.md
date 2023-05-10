@@ -37,7 +37,7 @@ ROICaT works on Windows, MacOS, and Linux. If you have any issues during the ins
 
 ### 1. (Recommended) Create a new conda environment
 ```
-conda create -n ROICaT python=3.9
+conda create -n ROICaT python=3.11
 conda activate ROICaT
 ```
 
