@@ -41,8 +41,8 @@ jobs:
           # "3.12",
         ]
         install_user: [
-          true,
-          false,
+          'user',
+          'system',
         ]
         extra: [
           core,
@@ -105,11 +105,11 @@ jobs:
 
 
     - name: Install ROICaT with pip dependencies (user-level)
-      if: matrix.install_user == true
+      if: matrix.install_user == 'user'
       run: |
         pip install --user -v -e .[${{ matrix.extra }}]
     - name: Install ROICaT with pip dependencies (system-level)
-      if: matrix.install_user == false
+      if: matrix.install_user == 'system'
       run: |
         pip install -v -e .[${{ matrix.extra }}]
 
