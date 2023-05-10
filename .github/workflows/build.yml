@@ -104,10 +104,11 @@ jobs:
         python -m pip install --upgrade pip setuptools wheel pytest
 
 
-    - name: Install ROICaT with pip dependencies
+    - name: Install ROICaT with pip dependencies (user-level)
       if: matrix.install_user == true
       run: |
         pip install --user -v -e .[${{ matrix.extra }}]
+    - name: Install ROICaT with pip dependencies (system-level)
       if: matrix.install_user == false
       run: |
         pip install -v -e .[${{ matrix.extra }}]
