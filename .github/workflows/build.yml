@@ -1,7 +1,7 @@
 name: build
 
 on:
-  push:
+  # push:
     # branches: [ "main" ]
     # branches: [ "dev" ]
     # branches: [ "main", "dev" ]
