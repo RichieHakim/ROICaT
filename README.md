@@ -22,7 +22,7 @@ We have found that ROICaT is capable of classifying cells with accuracy comparab
 - [TODO](#TODO)<br>
 
 ## Announcements
-- **TRACKING:** Try it out in the demo notebook [here](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/tracking_interactive_notebook.ipynb) or the demo script [here](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/tracking_scripted_notebook.ipynb).
+- **TRACKING:** Try it out in the demo notebook [here](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/tracking/tracking_interactive_notebook.ipynb) or the demo script [here](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/tracking_scripted_notebook.ipynb).
 - **CLASSIFICATION:** still in Alpha. Contact me if you want to help test it.
 - To help with development or beta test releases, please contact: rhakim@g.harvard.edu
 
