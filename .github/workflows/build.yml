@@ -15,7 +15,7 @@ jobs:
 
   build_CPU:
 
-    name: ${{ matrix.platform }}, py${{ matrix.python-version }}, ${{ matrix.extra }}, ${{ matrix.install-level }}
+    name: ${{ matrix.platform }}, py${{ matrix.python-version }}, ${{ matrix.extra }}
     runs-on: ${{ matrix.platform }}
     strategy:
       fail-fast: false
