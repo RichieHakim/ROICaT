@@ -33,7 +33,7 @@ ROICaT works on Windows, MacOS, and Linux. If you have any issues during the ins
 - [Anaconda](https://www.anaconda.com/distribution/) or [Miniconda](https://docs.conda.io/en/latest/miniconda.html)<br>
 - GCC >= 5.4.0, ideally == 9.2.0. Google how to do this on your operating system. For unix/linux: check with `gcc --version`.<br>
 - On some Linux servers (like Harvard's O2 server), you may need to load modules instead of installing. To load conda, gcc, try: `module load conda3/latest gcc/9.2.0` or similar.<br>
-- **Optional:** [CUDA compatible NVIDIA GPU](https://developer.nvidia.com/cuda-gpus) and [drivers](https://developer.nvidia.com/cuda-toolkit-archive). Using a GPU can increase ROICaT speeds 2-20x.
+- **Optional:** [CUDA compatible NVIDIA GPU](https://developer.nvidia.com/cuda-gpus) and [drivers](https://developer.nvidia.com/cuda-toolkit-archive). Using a GPU can increase ROICaT speeds ~5-50x, though without it, ROICaT will still run reasonably quick. GPU support is not available for Macs.<br>
 
 ### 1. (Recommended) Create a new conda environment
 ```
@@ -84,6 +84,36 @@ vs_buildtools.exe --norestart --passive --downloadThenInstall --includeRecommend
 ```
 Then, try proceeding with the installation by rerunning the pip install commands above.
 ([Source](https://stackoverflow.com/questions/64261546/how-to-solve-error-microsoft-visual-c-14-0-or-greater-is-required-when-inst))
+
+#### Troubleshooting (GPU support)
+GPU support is not required, but can increase ROICaT speeds ~5-50x.
+If you are using a GPU, make sure you have installed the correct version of PyTorch. This is frequently an issue on Windows computers. Use the following command to check your PyTorch version and if it is GPU enabled:
+```
+python -c "import torch, torchvision; print(f'Using versions: torch=={torch.__version__}, torchvision=={torchvision.__version__}');  print(f'torch.cuda.is_available() = {torch.cuda.is_available()}')"
+```
+**Outcome 1:** Output expected if GPU is enabled:
+```
+Using versions: torch==X.X.X+cuXXX, torchvision==X.X.X+cuXXX
+torch.cuda.is_available() = True
+```
+This is the ideal outcome. You are using a <u>CUDA</u> version of PyTorch and your GPU is enabled.
+
+**Outcome 2:** Output expected if <u>non-CUDA</u> version of PyTorch is installed:
+```
+Using versions: torch==X.X.X, torchvision==X.X.X
+OR
+Using versions: torch==X.X.X+cpu, torchvision==X.X.X+cpu
+torch.cuda.is_available() = False
+```
+If a <u>non-CUDA</u> version of PyTorch is installed, please follow the instructions here: https://pytorch.org/get-started/locally/ to install a CUDA version. If you are using a GPU, make sure you have a [CUDA compatible NVIDIA GPU](https://developer.nvidia.com/cuda-gpus) and [drivers](https://developer.nvidia.com/cuda-toolkit-archive) that match the same version as the PyTorch CUDA version you choose. All CUDA 11.x versions are intercompatible, so if you have CUDA 11.8 drivers, you can install `torch==2.0.1+cu117`.
+
+**Outcome 3:** Output expected if GPU is not available:
+```
+Using versions: torch==X.X.X+cuXXX, torchvision==X.X.X+cuXXX
+torch.cuda.is_available() = False
+```
+If a CUDA version of PyTorch is installed but GPU is not available, make sure you have a [CUDA compatible NVIDIA GPU](https://developer.nvidia.com/cuda-gpus) and [drivers](https://developer.nvidia.com/cuda-toolkit-archive) that match the same version as the PyTorch CUDA version you choose. All CUDA 11.x versions are intercompatible, so if you have CUDA 11.8 drivers, you can install `torch==2.0.1+cu117`.
+
 
 ### 4. Use ROICaT<br>
 - Beginner: Run a Jupyter Notebook: [Notebooks](https://github.com/RichieHakim/ROICaT/tree/main/notebooks)<br>

@@ -90,6 +90,9 @@ jobs:
     - name: Install ROICaT with pip dependencies
       run: |
         pip install --user -v -e .[${{ matrix.extra }}]
+        pip list
+        ## Below, check which versions of torch and torchvision are installed; and whether CUDA is available
+        python -c "import torch, torchvision; print(f'Using versions: torch=={torch.__version__}, torchvision=={torchvision.__version__}');  print('torch.cuda.is_available() = ', torch.cuda.is_available())"
 
 
     - name: Run pytest on ROICaT and some key dependencies
