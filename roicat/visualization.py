@@ -1,5 +1,4 @@
 import matplotlib.pyplot as plt
-from ipywidgets import interact, widgets
 import seaborn as sns
 
 
