@@ -40,14 +40,13 @@ jobs:
           "3.11",
           # "3.12",
         ]
-        ## install either system level or user level:
-        install_user: [
-          system,
-          user,
-        ]
         extra: [
           core,
           # core_latest,
+        ]
+        install-level: [
+          system,
+          user,
         ]
 
     steps:
@@ -105,14 +104,13 @@ jobs:
         python -m pip install --upgrade pip setuptools wheel pytest
 
 
-    - name: Install ROICaT with pip dependencies (user-level)
-      if: matrix.install_user == 'user'
+    - name: Install ROICaT with pip dependencies
       run: |
-        pip install --user -v -e .[${{ matrix.extra }}]
-    - name: Install ROICaT with pip dependencies (system-level)
-      if: matrix.install_user == 'system'
-      run: |
-        pip install -v -e .[${{ matrix.extra }}]
+        if [ "${{ matrix.install-level }}" == "user" ]; then
+          pip install --user -v -e .[${{ matrix.extra }}]
+        else
+          pip install -v -e .[${{ matrix.extra }}]
+        fi
 
 
     - name: Check installed packages
