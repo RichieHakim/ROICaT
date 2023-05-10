@@ -15,7 +15,7 @@ jobs:
 
   build_CPU:
 
-    name: ${{ matrix.platform }}, py${{ matrix.python-version }}, ${{ matrix.extra }}
+    name: ${{ matrix.platform }}, py${{ matrix.python-version }}, ${{ matrix.extra }}, ${{ matrix.install-level }}
     runs-on: ${{ matrix.platform }}
     strategy:
       fail-fast: false
@@ -104,13 +104,14 @@ jobs:
         python -m pip install --upgrade pip setuptools wheel pytest
 
 
-    - name: Install ROICaT with pip dependencies
+    - name: Install ROICaT with pip dependencies -- system-level
+      if: matrix.install-level == 'system'
       run: |
-        if [ "${{ matrix.install-level }}" == "user" ]; then
-          pip install --user -v -e .[${{ matrix.extra }}]
-        else
-          pip install -v -e .[${{ matrix.extra }}]
-        fi
+        pip install -v -e .[core]
+    - name: Install ROICaT with pip dependencies -- user-level
+      if: matrix.install-level == 'user'
+      run: |
+        pip install -v -e .[core] --user
 
 
     - name: Check installed packages
