@@ -3,6 +3,7 @@ name: build
 on:
   push:
     # branches: [ "main" ]
+    branches: [ "dev" ]
     # branches: [ "main", "dev" ]
   # pull_request:
   #   branches: [ "main" ]
@@ -35,9 +36,13 @@ jobs:
         ]
         python-version: [ 
           # "3.9",
-          "3.10",
+          # "3.10",
           "3.11",
           # "3.12",
+        ]
+        install_user: [
+          true,
+          false,
         ]
         extra: [
           core,
@@ -66,11 +71,23 @@ jobs:
     - name: Check out repository code
       uses: actions/checkout@v3
         
-    - name: PowerShell Core
+    - name: Prepare PowerShell
       shell: pwsh
       run: |
           conda info
           conda list
+
+    - name: Check specs of the machine
+      run: |
+        ## check current directory (pwd)
+        pwd
+
+        ## check specs of the machine
+        uname -a
+        lscpu
+        nproc
+        free -h
+        df -h
     
     - name: Prepare path, environment, and basic pip packages
       run: |
@@ -88,12 +105,19 @@ jobs:
 
 
     - name: Install ROICaT with pip dependencies
+      if: matrix.install_user == true
       run: |
         pip install --user -v -e .[${{ matrix.extra }}]
+      if: matrix.install_user == false
+      run: |
+        pip install -v -e .[${{ matrix.extra }}]
+
+
+    - name: Check installed packages
+      run: |
         pip list
         ## Below, check which versions of torch and torchvision are installed; and whether CUDA is available
         python -c "import torch, torchvision; print(f'Using versions: torch=={torch.__version__}, torchvision=={torchvision.__version__}');  print('torch.cuda.is_available() = ', torch.cuda.is_available())"
-
 
     - name: Run pytest on ROICaT and some key dependencies
       run: |
