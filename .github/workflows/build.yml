@@ -45,8 +45,8 @@ jobs:
           # core_latest,
         ]
         install-level: [
-          "system",
-          "user",
+          system,
+          user,
         ]
 
     steps:
