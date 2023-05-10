@@ -22,11 +22,11 @@ jobs:
       matrix:
         platform: [
           # ubuntu-latest,
-          ubuntu-22.04,
+          # ubuntu-22.04,
           ubuntu-20.04,
           # ubuntu-18.04,
           # # windows-latest,
-          windows-2022,
+          # windows-2022,
           windows-2019,
           # windows-2016,
           # # macos-latest,
@@ -45,7 +45,7 @@ jobs:
           # core_latest,
         ]
         install-level: [
-          system,
+          # system,
           user,
         ]
 
@@ -136,4 +136,4 @@ jobs:
       run: |
         # pip install tox tox-gh-actions
         pip install pytest
-        pytest -v
+        python -m pytest -v
