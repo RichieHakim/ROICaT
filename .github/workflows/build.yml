@@ -97,17 +97,10 @@ jobs:
       if: startsWith(matrix.platform, 'windows')
       run: |
         ## check cpu, memory, disk, etc.
+        ## just do a generic check on system info
         ## print the command inputs to the workflow
-        echo "CPU info (Get-WmiObject Win32_Processor):"
-        Get-WmiObject Win32_Processor
-        echo "Memory info (Get-WmiObject Win32_OperatingSystem):"
-        Get-WmiObject Win32_OperatingSystem
-        echo "Disk info (Get-WmiObject Win32_LogicalDisk):"
-        Get-WmiObject Win32_LogicalDisk
-        echo "Network info (Get-WmiObject Win32_NetworkAdapterConfiguration):"
-        Get-WmiObject Win32_NetworkAdapterConfiguration
-        echo "OS info (Get-WmiObject Win32_OperatingSystem):"
-        Get-WmiObject Win32_OperatingSystem
+        echo "System info (systeminfo):"
+        systeminfo
     - name: Check specs of the machine -- MacOS
       if: startsWith(matrix.platform, 'macos')
       run: |
@@ -119,8 +112,6 @@ jobs:
         sysctl -n hw.memsize
         echo "Disk info (df -h):"
         df -h
-        echo "Network info (ip a):"
-        ip a
         echo "OS info (uname -a):"
         uname -a
     
