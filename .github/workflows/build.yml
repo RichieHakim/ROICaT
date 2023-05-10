@@ -93,8 +93,6 @@ jobs:
         ip a
         echo "OS info (uname -a):"
         uname -a
-        echo "NVidia GPU info (nvidia-smi):"
-        nvidia-smi
     - name: Check specs of the machine -- Windows
       if: startsWith(matrix.platform, 'windows')
       run: |
@@ -110,8 +108,6 @@ jobs:
         Get-WmiObject Win32_NetworkAdapterConfiguration
         echo "OS info (Get-WmiObject Win32_OperatingSystem):"
         Get-WmiObject Win32_OperatingSystem
-        echo "NVidia GPU info (nvidia-smi):"
-        nvidia-smi
     - name: Check specs of the machine -- MacOS
       if: startsWith(matrix.platform, 'macos')
       run: |
