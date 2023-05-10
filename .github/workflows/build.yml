@@ -1,20 +1,21 @@
 name: build
 
 on:
-  push:
-    branches: [ "main" ]
+  # push:
+    # branches: [ "main" ]
+    # branches: [ "dev" ]
     # branches: [ "main", "dev" ]
-  # pull_request:
-  #   branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
 permissions:
   contents: read
 
 jobs:
 
-  build_CPU:
+  build:
 
-    name: ${{ matrix.platform }}, py${{ matrix.python-version }}, ${{ matrix.extra }}
+    name: ${{ matrix.platform }}, py${{ matrix.python-version }}, ${{ matrix.extra }}, ${{ matrix.install-level }}
     runs-on: ${{ matrix.platform }}
     strategy:
       fail-fast: false
@@ -23,25 +24,27 @@ jobs:
           # ubuntu-latest,
           ubuntu-22.04,
           ubuntu-20.04,
-          # ubuntu-18.04,
           # # windows-latest,
           windows-2022,
           windows-2019,
-          # windows-2016,
           # # macos-latest,
-          # macos-12.0,  ## RH: not working 20230507
+          # macos-12.0,  ## RH: not available yet 20230507
           macos-11.0,
           # macos-10.15,
         ]
         python-version: [ 
           # "3.9",
-          "3.10",
+          # "3.10",
           "3.11",
           # "3.12",
         ]
         extra: [
           core,
-          # core_latest,
+          core_latest,
+        ]
+        install-level: [
+          system,
+          user,
         ]
 
     steps:
@@ -66,34 +69,68 @@ jobs:
     - name: Check out repository code
       uses: actions/checkout@v3
         
-    - name: PowerShell Core
+    - name: Prepare PowerShell
       shell: pwsh
       run: |
           conda info
           conda list
+
+    - name: Check specs of the machine -- Linux
+      if: startsWith(matrix.platform, 'ubuntu')
+      run: |
+        ## check cpu, memory, disk, etc.
+        ## print the command inputs to the workflow
+        echo "CPU info (lscpu):"
+        lscpu
+        echo "Memory info (free -h):"
+        free -h
+        echo "Disk info (df -h):"
+        df -h
+        echo "Network info (ip a):"
+        ip a
+        echo "OS info (uname -a):"
+        uname -a
+    - name: Check specs of the machine -- Windows
+      if: startsWith(matrix.platform, 'windows')
+      run: |
+        ## check cpu, memory, disk, etc.
+        ## just do a generic check on system info
+        ## print the command inputs to the workflow
+        echo "System info (systeminfo):"
+        systeminfo
+    - name: Check specs of the machine -- MacOS
+      if: startsWith(matrix.platform, 'macos')
+      run: |
+        ## check cpu, memory, disk, etc.
+        ## print the command inputs to the workflow
+        echo "CPU info (sysctl -n machdep.cpu.brand_string):"
+        sysctl -n machdep.cpu.brand_string
+        echo "Memory info (sysctl -n hw.memsize):"
+        sysctl -n hw.memsize
+        echo "Disk info (df -h):"
+        df -h
+        echo "OS info (uname -a):"
+        uname -a
     
-    - name: Prepare path, environment, and basic pip packages
+
+    - name: Install ROICaT with pip dependencies -- system-level
+      if: matrix.install-level == 'system'
       run: |
-        ## cd to github workspace
-        # cd $GITHUB_WORKSPACE
-        
-        ## check current directory (pwd)
-        pwd
-
-        ## activate conda environment        
-        conda activate ROICaT || true
-
-        ## install pip, wheel, setuptools
-        python -m pip install --upgrade pip setuptools wheel pytest
-
-
-    - name: Install ROICaT with pip dependencies
+        pip install -v -e .[core]
+    - name: Install ROICaT with pip dependencies -- user-level
+      if: matrix.install-level == 'user'
       run: |
-        pip install --user -v -e .[${{ matrix.extra }}]
+        pip install -v -e .[core] --user
 
+
+    - name: Check installed packages
+      run: |
+        pip list
+        ## Below, check which versions of torch and torchvision are installed; and whether CUDA is available
+        python -c "import torch, torchvision; print(f'Using versions: torch=={torch.__version__}, torchvision=={torchvision.__version__}');  print('torch.cuda.is_available() = ', torch.cuda.is_available())"
 
     - name: Run pytest on ROICaT and some key dependencies
       run: |
         # pip install tox tox-gh-actions
         pip install pytest
-        pytest -v
+        python -m pytest -v

@@ -548,7 +548,7 @@ class Data_roicat(util.ROICaT_Module):
             assert np.all(coords_diff < 1.01) and np.all(coords_diff > -0.01), \
                 "RH ERROR: sparse.COO object has strange .coords attribute. sf_rs.coords[0] should all be 0 or 1. An ROI is possibly all zeros."
             
-            idx_split = (sf_rs>0).astype(np.bool8).sum((1,2)).todense().cumsum()[:-1]
+            idx_split = (sf_rs>0).astype(np.bool_).sum((1,2)).todense().cumsum()[:-1]
             coords_split = [np.split(sf_rs.coords[ii], idx_split) for ii in [0,1,2]]
             coords_split[1] = [coords - centroids[0][ii] + half_widths[0] for ii,coords in enumerate(coords_split[1])]
             coords_split[2] = [coords - centroids[1][ii] + half_widths[1] for ii,coords in enumerate(coords_split[2])]
@@ -1281,7 +1281,7 @@ class Data_caiman(Data_roicat):
             assert np.all(coords_diff < 1.01) and np.all(coords_diff > -0.01), \
                 "RH ERROR: sparse.COO object has strange .coords attribute. sf_rs.coords[0] should all be 0 or 1. An ROI is possibly all zeros."
             
-            idx_split = (sf_rs>0).astype(np.bool8).sum((1,2)).todense().cumsum()[:-1]
+            idx_split = (sf_rs>0).astype(np.bool_).sum((1,2)).todense().cumsum()[:-1]
             coords_split = [np.split(sf_rs.coords[ii], idx_split) for ii in [0,1,2]]
             coords_split[1] = [coords - centroids[0][ii] + half_widths[0] for ii,coords in enumerate(coords_split[1])]
             coords_split[2] = [coords - centroids[1][ii] + half_widths[1] for ii,coords in enumerate(coords_split[2])]
