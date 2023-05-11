@@ -1332,7 +1332,7 @@ def cluster_quality_metrics(sim, labels):
     """
     import sparse
     
-    cs_mean, cs_max, cs_min = helpers.cluster_similarity_matrices(sim, labels, verbose=True)
+    cs_mean, cs_max, cs_min = helpers.compute_cluster_similarity_matrices(sim, labels, verbose=True)
     fn_sil_score = lambda intra, inter: (intra - inter) / np.maximum(intra, inter)
 
     eye_inv = 1 - sparse.eye(cs_max.shape[0])

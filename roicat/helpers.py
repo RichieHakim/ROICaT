@@ -2475,7 +2475,7 @@ def simple_multiprocessing(func, args, workers):
 ######################################################################################################################################
 
 
-def cluster_similarity_matrices(
+def compute_cluster_similarity_matrices(
     s, 
     l, 
     verbose=True
