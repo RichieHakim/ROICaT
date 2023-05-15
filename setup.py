@@ -34,6 +34,11 @@ def read_requirements():
         content = req.read()  ## read the file
         requirements = content.split("\n") ## make a list of requirements split by (\n) which is the new line character
 
+    ## Filter out any empty strings from the list
+    requirements = [req for req in requirements if req]
+    ## Filter out any lines starting with #
+    requirements = [req for req in requirements if not req.startswith("#")]
+
     return requirements
 
 deps_core = read_requirements()
