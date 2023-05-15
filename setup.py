@@ -38,6 +38,8 @@ def read_requirements():
     requirements = [req for req in requirements if req]
     ## Filter out any lines starting with #
     requirements = [req for req in requirements if not req.startswith("#")]
+    ## Remove any commas, quotation marks, and spaces from each requirement
+    requirements = [req.replace(",", "").replace("\"", "").replace("\'", "").strip() for req in requirements]
 
     return requirements
 
@@ -47,6 +49,10 @@ deps_core = read_requirements()
 ### remove everything starting and after the first =,>,<,! sign
 deps_core_latest = [req.split('=')[0].split('>')[0].split('<')[0].split('!')[0] for req in deps_core]
 
+print({
+        'core': deps_core,
+        'core_latest': deps_core_latest,
+    })
 
 ## Get README.md
 with open("README.md", "r") as f:
