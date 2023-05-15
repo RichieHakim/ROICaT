@@ -367,6 +367,11 @@ def check_dataStructure__list_ofListOrArray_ofDtype(lolod, dtype=np.int64, fix=T
         fix (bool):
             Whether to attempt to fix the data structure if it is incorrect.
             If fix=False, then raises an error if it is not correct.
+            
+            If lolod is array, then will be cast to [lolod]
+            If lolod is np.object_, then will be cast to [np.array(lolod, dtype=dtype)]
+            If lolod is list of lists of numbers (int or float), then will be cast to [np.array(lod, dtype=dtype) for lod in lolod]
+            If lolod is list of arrays of wrong dtype, then will be cast to [np.array(lod, dtype=dtype) for lod in lolod]
 
     Returns:
         lolod (list):
@@ -380,7 +385,7 @@ def check_dataStructure__list_ofListOrArray_ofDtype(lolod, dtype=np.int64, fix=T
             ## switch case for if the elements are numbers (int or float) or dtype or other
             if all([all([isinstance(l, (int, float)) for l in lod]) for lod in lolod]):
                 if fix:
-                    print(f'ROICaT WARNING: lolod is a list of lists of numbers (int or float). Converting to np.ndarray.')
+                    print(f'ROICaT WARNING: lolod is a list of lists of numbers (int or float). Converting to np.ndarray.') if verbose else None
                     lolod = [np.array(lod, dtype=dtype) for lod in lolod]
                 else:
                     raise ValueError(f'ROICaT ERROR: lolod is a list of lists of numbers (int or float).')
@@ -394,7 +399,7 @@ def check_dataStructure__list_ofListOrArray_ofDtype(lolod, dtype=np.int64, fix=T
                 pass
             if all([all([not np.issubdtype(lod.dtype, np.object_) for lod in lolod])]):
                 if fix:
-                    print(f'ROICaT WARNING: lolod is a list of np.ndarray of numbers (int or float). Converting to np.ndarray.')
+                    print(f'ROICaT WARNING: lolod is a list of np.ndarray of numbers (int or float). Converting to np.ndarray.') if verbose else None
                     lolod = [np.array(lod, dtype=dtype) for lod in lolod]
                 else:
                     raise ValueError(f'ROICaT ERROR: lolod is a list of np.ndarray of numbers (int or float).')
@@ -402,13 +407,13 @@ def check_dataStructure__list_ofListOrArray_ofDtype(lolod, dtype=np.int64, fix=T
                 raise ValueError(f'ROICaT ERROR: lolod is a list of np.ndarray, but the elements are not all numbers (int or float) or dtype.')
         elif all([isinstance(lod, (int, float)) for lod in lolod]):
             if fix:
-                print(f'ROICaT WARNING: lolod is a list of numbers (int or float). Converting to np.ndarray.')
+                print(f'ROICaT WARNING: lolod is a list of numbers (int or float). Converting to np.ndarray.') if verbose else None
                 lolod = [np.array(lod, dtype=dtype) for lod in lolod]
             else:
                 raise ValueError(f'ROICaT ERROR: lolod is a list of numbers (int or float).')
         elif all([isinstance(lod, dtype) for lod in lolod]):
             if fix:
-                print(f'ROICaT WARNING: lolod is a list of dtype. Converting to np.ndarray.')
+                print(f'ROICaT WARNING: lolod is a list of dtype. Converting to np.ndarray.') if verbose else None
                 lolod = [np.array(lolod, dtype=dtype)]
             else:
                 raise ValueError(f'ROICaT ERROR: lolod is a list of dtype.')
@@ -418,11 +423,11 @@ def check_dataStructure__list_ofListOrArray_ofDtype(lolod, dtype=np.int64, fix=T
         ## switch case for if the elements are numbers (any non-object numpy dtype) or dtype or other
         if np.issubdtype(lolod.dtype, dtype):
             if fix:
-                print(f'ROICaT WARNING: lolod is a np.ndarray of dtype. Converting to list of np.ndarray of dtype.')
+                print(f'ROICaT WARNING: lolod is a np.ndarray of dtype. Converting to list of np.ndarray of dtype.') if verbose else None
                 lolod = [lolod]
         elif not np.issubdtype(lolod.dtype, np.object_):
             if fix:
-                print(f'ROICaT WARNING: lolod is a np.ndarray of numbers (int or float). Converting to list of np.ndarray of dtype.')
+                print(f'ROICaT WARNING: lolod is a np.ndarray of numbers (int or float). Converting to list of np.ndarray of dtype.') if verbose else None
                 lolod = [np.array(lolod, dtype=dtype)]
             else:
                 raise ValueError(f'ROICaT ERROR: lolod is a np.ndarray of numbers (int or float).')

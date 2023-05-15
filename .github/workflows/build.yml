@@ -1,12 +1,12 @@
 name: build
 
 on:
-  # push:
+  push:
     # branches: [ "main" ]
-    # branches: [ "dev" ]
+    branches: [ "dev" ]
     # branches: [ "main", "dev" ]
-  pull_request:
-    branches: [ "main" ]
+  # pull_request:
+    # branches: [ "main" ]
 
 permissions:
   contents: read
@@ -22,14 +22,14 @@ jobs:
       matrix:
         platform: [
           # ubuntu-latest,
-          ubuntu-22.04,
+          # ubuntu-22.04,
           ubuntu-20.04,
           # # windows-latest,
-          windows-2022,
-          windows-2019,
+          # windows-2022,
+          # windows-2019,
           # # macos-latest,
           # macos-12.0,  ## RH: not available yet 20230507
-          macos-11.0,
+          # macos-11.0,
           # macos-10.15,
         ]
         python-version: [ 
@@ -40,10 +40,10 @@ jobs:
         ]
         extra: [
           core,
-          core_latest,
+          # core_latest,
         ]
         install-level: [
-          system,
+          # system,
           user,
         ]
 
@@ -129,8 +129,16 @@ jobs:
         ## Below, check which versions of torch and torchvision are installed; and whether CUDA is available
         python -c "import torch, torchvision; print(f'Using versions: torch=={torch.__version__}, torchvision=={torchvision.__version__}');  print('torch.cuda.is_available() = ', torch.cuda.is_available())"
 
-    - name: Run pytest on ROICaT and some key dependencies
+    - name: Run pytest and generate coverage report
       run: |
         # pip install tox tox-gh-actions
-        pip install pytest
-        python -m pytest -v
+        pip install pytest pytest-cov
+        pytest -v --cov=roicat --cov-report=xml:coverage.xml --color=yes
+
+    - name: Upload coverage reports to Codecov
+      uses: codecov/codecov-action@v3  ## this is a public action recognized by GitHub Actions
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}  ## this is a secret variable
+        file: coverage.xml  ## this is the default name of the coverage report file
+        fail_ci_if_error: false
+        verbose: true

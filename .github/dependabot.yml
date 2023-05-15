@@ -1,0 +1,18 @@
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/" # This denotes the directory where Dependabot will look for dependency files.
+    schedule:
+      interval: "daily" # This will tell Dependabot to check for updates once a day.
+    target-branch: "dev" # This will ensure Dependabot PRs target the "dev" branch.
+    commit-message:
+      prefix: "chore" # This is the prefix for commit messages.
+      include: "scope" # This includes the scope of updates in commit messages.
+    reviewers:
+      - "richiehakim" # The GitHub username of the person who will be requested for review on PRs.
+      # - "dependabot-preview[bot]" # This is the username of the Dependabot bot account.
+    assignees:
+      - "richiehakim" # The GitHub username of the person who will be assigned to PRs.
+    labels:
+      - "dependencies" # This label will be added to the PRs.
+      # - "automerge" # This will tell Dependabot to merge PRs immediately if they pass all checks.
