@@ -86,7 +86,7 @@ class ROI_graph(util.ROICaT_Module):
 
         self.idxPixels_block = []
         for block in self.blocks:
-            idx_tmp = np.zeros((self._frame_height, self._frame_width), dtype=np.bool8)
+            idx_tmp = np.zeros((self._frame_height, self._frame_width), dtype=np.bool_)
             idx_tmp[block[0][0]:block[0][1], block[1][0]:block[1][1]] = True
             idx_tmp = np.where(idx_tmp.reshape(-1))[0]
             self.idxPixels_block.append(idx_tmp)

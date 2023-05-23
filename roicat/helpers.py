@@ -227,7 +227,7 @@ def idx2bool(idx, length=None):
     '''
     if length is None:
         length = np.uint64(np.max(idx) + 1)
-    out = np.zeros(length, dtype=np.bool8)
+    out = np.zeros(length, dtype=np.bool_)
     out[idx] = True
     return out
 
@@ -348,7 +348,7 @@ def idx_to_oneHot(arr, n_classes=None, dtype=None):
         max = np.max
         zeros = np.zeros
         arange = np.arange
-        dtype = np.bool8 if dtype is None else dtype
+        dtype = np.bool_ if dtype is None else dtype
     elif type(arr) is torch.Tensor:
         max = torch.max
         zeros = torch.zeros
@@ -2374,7 +2374,7 @@ class Toeplitz_convolution2d:
             p_r = self.x_shape[1]+1 if p_r==0 else p_r
         
         if batching:
-            idx_crop = np.zeros((self.so), dtype=np.bool8)
+            idx_crop = np.zeros((self.so), dtype=np.bool_)
             idx_crop[p_t:p_b, p_l:p_r] = True
             idx_crop = idx_crop.reshape(-1)
             out = out_v[idx_crop,:].T
@@ -2475,7 +2475,7 @@ def simple_multiprocessing(func, args, workers):
 ######################################################################################################################################
 
 
-def cluster_similarity_matrices(
+def compute_cluster_similarity_matrices(
     s, 
     l, 
     verbose=True

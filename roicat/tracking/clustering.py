@@ -66,8 +66,8 @@ class Clusterer(util.ROICaT_Module):
         self.s_SWT_z = s_SWT_z
         self.s_sesh = s_sesh
 
-        self.s_sesh_inv = (self.s_sf != 0).astype(np.bool8)
-        self.s_sesh_inv[self.s_sesh.astype(np.bool8)] = False
+        self.s_sesh_inv = (self.s_sf != 0).astype(np.bool_)
+        self.s_sesh_inv[self.s_sesh.astype(np.bool_)] = False
         self.s_sesh_inv.eliminate_zeros()
 
         self.s_sesh = self.s_sesh.tolil()
@@ -1332,7 +1332,7 @@ def cluster_quality_metrics(sim, labels):
     """
     import sparse
     
-    cs_mean, cs_max, cs_min = helpers.cluster_similarity_matrices(sim, labels, verbose=True)
+    cs_mean, cs_max, cs_min = helpers.compute_cluster_similarity_matrices(sim, labels, verbose=True)
     fn_sil_score = lambda intra, inter: (intra - inter) / np.maximum(intra, inter)
 
     eye_inv = 1 - sparse.eye(cs_max.shape[0])
