@@ -10,6 +10,7 @@ Welcome to ROICaT's documentation!
    About ROICaT
    Installation
    How to use ROICaT
+   Data Importing
    FAQ
    Troubleshooting
 
