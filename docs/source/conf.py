@@ -24,6 +24,7 @@ extensions = ['sphinx.ext.autodoc',  # allows automatic parsing of docstrings
 templates_path = ['_templates']
 
 # The suffix of source filenames.
+master_doc = 'index'
 source_suffix = '.rst'
 
 exclude_patterns = ['_build']
