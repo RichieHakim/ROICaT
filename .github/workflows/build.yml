@@ -39,8 +39,8 @@ jobs:
           # "3.12",
         ]
         extra: [
-          core,
-          core_latest,
+          all,
+          all_latest,
         ]
         install-level: [
           system,
