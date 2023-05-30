@@ -49,9 +49,9 @@ cd path/to/ROICaT/directory
 ### 3. Install ROICaT
 Optional: `pip install --upgrade pip`<br>
 ```
-pip install --user -v -e .[core]
+pip install --user -v -e .[all]
 ```
-Note: if you are using a zsh terminal, change command to: `pip3 install --user -v -e '.[core]'`
+Note: if you are using a zsh terminal, change command to: `pip3 install --user -v -e '.[all]'`
 
 #### Troubleshooting (Windows)
 If you receive the error: `ERROR: Could not build wheels for hdbscan, which is required to install pyproject.toml-based projects` on Windows, make sure that you have installed Microsoft C++ Build Tools. If not, download from [here](https://visualstudio.microsoft.com/visual-cpp-build-tools/) and run the commands:

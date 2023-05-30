@@ -1,6 +1,7 @@
 ## setup.py file for roicat
 
 from distutils.core import setup
+import copy
 
 ## Dependencies: core requirements
 # deps_core = [
@@ -43,16 +44,56 @@ def read_requirements():
 
     return requirements
 
-deps_core = read_requirements()
+deps_all = read_requirements()
 
-## Dependencies: latest versions of core requirements
+## Dependencies: latest versions of requirements
 ### remove everything starting and after the first =,>,<,! sign
-deps_core_latest = [req.split('=')[0].split('>')[0].split('<')[0].split('!')[0] for req in deps_core]
+deps_names = [req.split('=')[0].split('>')[0].split('<')[0].split('!')[0] for req in deps_all]
+deps_all_dict = dict(zip(deps_names, deps_all))
+
+deps_all_latest = copy.deepcopy(deps_names)
+
+## Make different versions of dependencies
+### Also pull out the version number from the requirements (specified in deps_all_dict values).
+deps_core = [deps_all_dict[dep] for dep in [
+    'einops',
+    'jupyter',
+    'matplotlib',
+    'natsort',
+    'numpy',
+    'paramiko',
+    'Pillow',
+    'pytest',
+    'scikit_learn',
+    'scipy',
+    'seaborn',
+    'sparse',
+    'tqdm',
+    'xxhash',
+    'torch',
+    'torchvision',
+    'torchaudio',
+]]
+
+deps_classification = [deps_all_dict[dep] for dep in [
+    'opencv_contrib_python',
+    'umap-learn',
+]] + deps_core
+
+deps_tracking = [deps_all_dict[dep] for dep in [
+    'opencv_contrib_python',
+    'hdbscan',
+    'kymatio',
+    'optuna',
+]] + deps_core
 
 print({
-        'core': deps_core,
-        'core_latest': deps_core_latest,
-    })
+    'deps_all': deps_all,
+    'deps_all_latest': deps_all_latest,
+    'deps_core': deps_core,
+    'deps_classification': deps_classification,
+    'deps_tracking': deps_tracking,
+})
 
 ## Get README.md
 with open("README.md", "r") as f:
@@ -77,7 +118,10 @@ setup(
     
     install_requires=[],
     extras_require={
+        'all': deps_all,
+        'all_latest': deps_all_latest,
         'core': deps_core,
-        'core_latest': deps_core_latest,
+        'classification': deps_classification,
+        'tracking': deps_tracking,
     },
 )
