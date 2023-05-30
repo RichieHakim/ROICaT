@@ -42,7 +42,7 @@ How to install
    
     .. code-block:: python
 
-     pip install -v -e .[core]
+     pip install -v -e .[all]
     
   Optional: upgrade pip by running `pip install --upgrade pip`
 
@@ -50,7 +50,7 @@ How to install
 
     .. code-block:: python
 
-     pip3 install -v -e '.[core]'
+     pip3 install -v -e '.[all]'
 
 4. **Use ROICaT**
    Beginner: Run a provided jupyter notebook
