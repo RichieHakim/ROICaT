@@ -56,17 +56,18 @@ class Aligner(util.ROICaT_Module):
 
         Args:
             template (int or np.ndarray):
-                If 'template_method' == 'image', then template is the image
-                 to use as the template. Often this is another image in
-                 ims_moving.
+                If 'template_method' == 'image', this is either a 2D np.ndarray
+                 image, an integer index of the image to use as the template, or
+                 a float between 0 and 1 representing the fractional index of the
+                 image to use as the template.
                 If 'template_method' == 'sequential', then template is the
-                 integer index of the image to use as the template.
+                 integer index or fractional index of the image to use as the
+                 template.
             ims_moving (list of np.ndarray):
                 A list of images to be aligned.
             template_method (str, optional):
                 The method to use for template selection.
-                'image': use the image specified by 'template'. Note that
-                    template must be an image in this case.
+                'image': use the image specified by 'template'.
                 'sequential': register each image to the previous or next image
                     (will be next for images before the template and previous for
                     images after the template)
@@ -222,9 +223,9 @@ class Aligner(util.ROICaT_Module):
 
         Args:
             template (int or np.ndarray):
-                If 'template_method' == 'image', then template is the image
-                 to use as the template. Often this is another image in
-                 ims_moving.
+                If 'template_method' == 'image', then template is either
+                 an image or an integer index or a float fractional index
+                 of the image to use as the template.
                 If 'template_method' == 'sequential', then template is the
                  integer index of the image to use as the template.
             ims_moving (list of np.ndarray):
@@ -235,8 +236,7 @@ class Aligner(util.ROICaT_Module):
                 The output of this method will be added/composed with remappingIdx_init.
             template_method (str, optional):
                 The method to use for template selection.
-                'image': use the image specified by 'template'. Note that
-                    template must be an image in this case.
+                'image': use the image specified by 'template'.
                 'sequential': register each image to the previous or next image
                     (will be next for images before the template and previous for
                     images after the template)
@@ -263,8 +263,6 @@ class Aligner(util.ROICaT_Module):
         # Check if mode_transform is valid
         valid_mode_transforms = {'createOptFlow_DeepFlow', 'calcOpticalFlowFarneback'}
         assert mode_transform in valid_mode_transforms, f"mode_transform must be one of {valid_mode_transforms}"
-        if template_method == 'image':
-            assert isinstance(template, np.ndarray), "template must be an image when template_method == 'image'"
 
         # Warn if any images have values below 0 or NaN
         found_0 = np.any([np.any(im < 0) for im in ims_moving])
@@ -275,11 +273,10 @@ class Aligner(util.ROICaT_Module):
         self._HW = (H,W) if self._HW is None else self._HW
         x_grid, y_grid = np.meshgrid(np.arange(0., W).astype(np.float32), np.arange(0., H).astype(np.float32))
 
+        ims_moving, template = self._fix_input_images(ims_moving=ims_moving, template=template, template_method=template_method)
         norm_factor = np.nanmax([np.nanmax(im) for im in ims_moving])
         template_norm   = np.array(template * (template > 0) * (1/norm_factor) * 255, dtype=np.uint8) if template_method == 'image' else None
         ims_moving_norm = [np.array(im * (im > 0) * (1/np.nanmax(im)) * 255, dtype=np.uint8) for im in ims_moving]
-
-        ims_moving, template = self._fix_input_images(ims_moving=ims_moving, template=template, template_method=template_method)
 
         print(f'Finding nonrigid registration warps with mode: {mode_transform}, template_method: {template_method}') if self._verbose else None
         remappingIdx_raw = []
@@ -465,20 +462,36 @@ class Aligner(util.ROICaT_Module):
         template_method: str
     ) -> typing.Tuple[int, typing.List[np.ndarray]]:
         ## convert images to float32 and warn if they are not
-        if template_method == 'image':
-            assert isinstance(template, (np.ndarray, int)), f'template must be np.ndarray or int, not {type(template)}'
-            if isinstance(template, int):
-                print(f'WARNING: template image is not dtype: np.float32, found {ims_moving[template].dtype}, converting...') if ims_moving[template].dtype != np.float32 else None
-                template = ims_moving[template].astype(np.float32)
-            else:
-                assert template.ndim == 2, f'template must be 2D, not {template.ndim}'
-                print(f'WARNING: template image is not dtype: np.float32, found {template.dtype}, converting...') if template.dtype != np.float32 else None
-                template = template.astype(np.float32)
-        elif template_method == 'sequential':
-            assert isinstance(template, int), f'template must be int, not {type(template)}'
-            assert 0 <= template < len(ims_moving), f'template must be between 0 and {len(ims_moving)-1}, not {template}'
         print(f'WARNING: ims_moving are not all dtype: np.float32, found {np.unique([im.dtype for im in ims_moving])}, converting...') if any(im.dtype != np.float32 for im in ims_moving) else None
         ims_moving = [im.astype(np.float32) for im in ims_moving]    
+
+        if template_method == 'image':
+            if isinstance(template, int):
+                assert 0 <= template < len(ims_moving), f'template must be between 0 and {len(ims_moving)-1}, not {template}'
+                print(f'WARNING: template image is not dtype: np.float32, found {ims_moving[template].dtype}, converting...') if ims_moving[template].dtype != np.float32 else None
+                template = ims_moving[template]
+            elif isinstance(template, float):
+                assert 0.0 <= template <= 1.0, f'template must be between 0.0 and 1.0, not {template}'
+                idx = int(len(ims_moving) * template)
+                print(f'Converting float fractional index to integer index: {template} -> {idx}')
+                template = ims_moving[idx] # take the image at the specified fractional index
+            elif isinstance(template, np.ndarray):
+                assert template.ndim == 2, f'template must be 2D, not {template.ndim}'
+            else:
+                raise ValueError(f'template must be np.ndarray or int or float between 0.0-1.0, not {type(template)}')
+            if template.dtype != np.float32:
+                print(f'WARNING: template image is not dtype: np.float32, found {template.dtype}, converting...')
+                template = template.astype(np.float32)        
+
+        elif template_method == 'sequential':
+            assert isinstance(template, (int, float)), f'template must be int or float between 0.0-1.0, not {type(template)}'
+            if isinstance(template, float):
+                assert 0.0 <= template <= 1.0, f'template must be between 0.0 and 1.0, not {template}'
+                idx = int(len(ims_moving) * template)
+                print(f'Converting float fractional index to integer index: {template} -> {idx}')
+                template = idx
+            assert 0 <= template < len(ims_moving), f'template must be between 0 and {len(ims_moving)-1}, not {template}'
+
         return ims_moving, template
 
 
