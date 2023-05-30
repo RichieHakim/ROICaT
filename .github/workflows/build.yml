@@ -1,12 +1,12 @@
 name: build
 
 on:
-  push:
-    # branches: [ "main" ]
-    branches: [ "dev" ]
+  # push:
+  #   # branches: [ "main" ]
+  #   branches: [ "dev" ]
     # branches: [ "main", "dev" ]
-  # pull_request:
-    # branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
 permissions:
   contents: read
