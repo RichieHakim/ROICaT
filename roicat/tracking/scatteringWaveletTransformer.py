@@ -63,7 +63,7 @@ class SWT(util.ROICaT_Module):
             if out.ndim == 3:  ## if there is only one ROI in the batch, append a dimension to the front
                 out = out[None,...]
             return out
-        self.latents = torch.cat([helper_swt(ims_batch) for ims_batch in tqdm(helpers.make_batches(ROI_images, batch_size=batch_size), total=ROI_images.shape[0] / batch_size, mininterval=60)], dim=0)
+        self.latents = torch.cat([helper_swt(ims_batch) for ims_batch in tqdm(helpers.make_batches(ROI_images, batch_size=batch_size), total=ROI_images.shape[0] / batch_size, mininterval=5)], dim=0)
         self.latents = self.latents.reshape(self.latents.shape[0], -1)
         print('Completed: SWT transform on ROIs') if self._verbose else None
         return self.latents
