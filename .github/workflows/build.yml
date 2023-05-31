@@ -6,7 +6,9 @@ on:
   #   branches: [ "dev" ]
     # branches: [ "main", "dev" ]
   pull_request:
-    branches: [ "main" ]
+    # branches: [ "main" ]
+    branches: [ "dev" ]    
+    # branches: [ "main", "dev" ]        
 
 permissions:
   contents: read
