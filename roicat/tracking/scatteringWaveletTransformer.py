@@ -2,7 +2,6 @@ import gc
 
 import torch
 import numpy as np
-from kymatio.torch import Scattering2D
 from tqdm import tqdm
 
 from .. import helpers, util
@@ -34,6 +33,8 @@ class SWT(util.ROICaT_Module):
         """
         ## Imports
         super().__init__()
+
+        from kymatio.torch import Scattering2D
 
         self._verbose = verbose
         self._device = device

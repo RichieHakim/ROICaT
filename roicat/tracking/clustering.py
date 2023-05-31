@@ -10,9 +10,6 @@ import matplotlib.pyplot as plt
 import torch
 from tqdm import tqdm
 
-import optuna
-import hdbscan
-
 from .. import helpers, util
 
 class Clusterer(util.ROICaT_Module):
@@ -158,7 +155,7 @@ class Clusterer(util.ROICaT_Module):
                 The optimal (for pruning) keyword arguments using the
                  self.make_conjunctive_distance_matrix function.
         """
-
+        import optuna
         self.bounds_findParameters = bounds_findParameters
 
         self.n_bins = max(min(self.s_sf.nnz // 30000, 1000), 30) if n_bins is None else n_bins
@@ -378,6 +375,7 @@ class Clusterer(util.ROICaT_Module):
                 Cluster labels for each ROI.
                 shape: (n_rois_total)
         """
+        import hdbscan
         d = d_conj.copy().multiply(self.s_sesh)
 
         if d.nnz == 0:
