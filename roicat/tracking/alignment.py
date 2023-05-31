@@ -37,6 +37,57 @@ class Aligner(util.ROICaT_Module):
 
         self._HW = None
 
+    @classmethod
+    def augment_FOV_images(
+        self,
+        ims: typing.List[np.ndarray],
+        spatialFootprints: typing.List[scipy.sparse.csr_matrix]=None,
+        roi_FOV_mixing_factor: float=0.5,
+        use_CLAHE: bool=True,
+        CLAHE_grid_size: int=1,
+        CLAHE_clipLimit: int=1,
+        CLAHE_normalize: bool=True,
+    ):
+        """
+        Augment the FOV images by mixing the FOV with the ROI images
+         and optionally applying CLAHE.
+
+        Args:
+            ims (list of np.ndarray):
+                A list of FOV images.
+            spatialFootprints (list of scipy.sparse.csr_matrix, optional):
+                A list of spatial footprints for each ROI.
+                If None, then no mixing will be performed.
+            roi_FOV_mixing_factor (float, optional):
+                The factor by which to mix the ROI images into the FOV images.
+                If 0, then no mixing will be performed.
+            use_CLAHE (bool, optional):
+                Whether to apply CLAHE to the images.
+            CLAHE_grid_size (int, optional):
+                The grid size for CLAHE.
+                See alignment.clahe for more details.
+            CLAHE_clipLimit (int, optional):
+                The clip limit for CLAHE.
+                See alignment.clahe for more details.
+            CLAHE_normalize (bool, optional):
+                Whether to normalize the CLAHE output.
+                See alignment.clahe for more details.
+        """
+        ## Warn if roi_FOV_mixing_factor = 0 but spatialFootprints is not None
+        if (roi_FOV_mixing_factor == 0) and (spatialFootprints is not None):
+            warnings.warn("roi_FOV_mixing_factor = 0 but spatialFootprints is not None. The ROI images will not be used.")
+        ## Warn if roi_FOV_mixing_factor != 0 but spatialFootprints is None
+        if (roi_FOV_mixing_factor != 0) and (spatialFootprints is None):
+            warnings.warn("roi_FOV_mixing_factor != 0 but spatialFootprints is None. No mixing will be performed.")
+        
+        h,w = ims[0].shape
+        sf = spatialFootprints
+        FOV_images = [f + np.array(roi_FOV_mixing_factor*(sf.multiply(1/sf.max(1).A)).sum(0).reshape(h, w)) for f, sf in zip(ims, sf)] if spatialFootprints is not None else ims
+        FOV_images = [clahe(im, grid_size=CLAHE_grid_size, clipLimit=CLAHE_clipLimit, normalize=CLAHE_normalize) for im in FOV_images] if use_CLAHE else FOV_images
+
+        self.FOV_images_augmented = FOV_images
+        return self.FOV_images_augmented
+
     def fit_geometric(
         self,
         template: typing.Union[int, np.ndarray],
