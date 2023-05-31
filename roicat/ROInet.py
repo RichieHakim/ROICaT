@@ -29,6 +29,7 @@ import hashlib
 import PIL
 import multiprocessing as mp
 from functools import partial
+import gc
 
 import numpy as np
 # import gdown
@@ -400,6 +401,12 @@ class ROInet_embedder(util.ROICaT_Module):
         print(f'starting: running data through network')
         self.latents = torch.cat([self.net(data[0][0].to(self._device)).detach() for data in tqdm(self.dataloader, mininterval=5)], dim=0).cpu()
         print(f'completed: running data through network')
+
+        gc.collect()
+        torch.cuda.empty_cache()
+        gc.collect()
+        torch.cuda.empty_cache()
+        
         return self.latents
     
     def dump_latents(self, latent_folder_out, file_prefix='latent_dump', num_copies=1, start_copy_num=0):

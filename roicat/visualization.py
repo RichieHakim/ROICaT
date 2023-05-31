@@ -145,8 +145,9 @@ def compute_colored_FOV(
     FOV_width,
     labels,
     cmap='random',
-    boolSessionID=None,
-    alphas=None,
+    session_bool=None,
+    alphas_labels=None,
+    alphas_sf=None,
 ):
     """
     Computes a set of images of FOVs of spatial footprints, colored
@@ -156,7 +157,7 @@ def compute_colored_FOV(
         spatialFootprints (list of scipy.sparse.csr_matrix or scipy.sparse.csr_matrix):
             If list, then each element is all the spatial footprints for a given session.
             If scipy.sparse.csr_matrix, then this is all the spatial footprints for all 
-             sessions, and boolSessionID must be provided.
+             sessions, and session_bool must be provided.
         FOV_height (int):
             Height of the field of view
         FOV_width (int):
@@ -165,31 +166,45 @@ def compute_colored_FOV(
             Label (will be a unique color) for each spatial footprint.
             If list, then each element is all the labels for a given session.
             If array, then this is all the labels for all sessions, and 
-             boolSessionID must be provided.
+             session_bool must be provided.
         cmap (str or matplotlib.colors.ListedColormap):
             Colormap to use for the labels.
             If 'random', then a random colormap is generated.
             Else, this is passed to matplotlib.colors.ListedColormap.
-        boolSessionID (np.ndarray of bool):
+        session_bool (np.ndarray of bool):
             Boolean array indicating which session each spatial footprint belongs to.
             Only required if spatialFootprints and labels are not lists.
+            Can be obtained from data.session_bool
             shape: (n_roi_total, n_sessions)
-        alphas (np.ndarray):
+        alphas_labels (np.ndarray):
             Alpha value for each label.
             shape (n_labels,) which is the same as the number of unique labels len(np.unique(labels))
+        alphas_sf (list of np.ndarray or np.ndarray):
+            Alpha value for each spatial footprint.
+            If list, then each element is all the alphas for a given session.
+            If np.ndarray, then this is all the alphas for all sessions, and
+             session_bool must be provided.
     """
     labels_cat = np.concatenate(labels) if (isinstance(labels, list) and (isinstance(labels[0], list) or isinstance(labels[0], np.ndarray))) else labels.copy()
-    if alphas is None:
-        alphas = np.ones(len(labels_cat))
+    u = np.unique(labels_cat)
+    n_c = len(u)
+
+    if alphas_labels is None:
+        alphas_labels = np.ones(len(np.unique(labels_cat)))
+    alphas_labels = np.clip(alphas_labels, a_min=0, a_max=1)
+    assert len(alphas_labels) == n_c, f"len(alphas_labels)={len(alphas_labels)} != n_c={n_c}"
+
+    if alphas_sf is None:
+        alphas_sf = np.ones(len(labels_cat))
+    if isinstance(alphas_sf, list):
+        alphas_sf = np.concatenate(alphas_sf)
+    alphas_sf = np.clip(alphas_sf, a_min=0, a_max=1)
+    assert len(alphas_sf) == len(labels_cat), f"len(alphas_sf)={len(alphas_sf)} != len(labels_cat)={len(labels_cat)}"
     
     h, w = FOV_height, FOV_width
 
     rois = scipy.sparse.vstack(spatialFootprints)
     rois = rois.multiply(1.2/rois.max(1).A).power(1)
-
-    u = np.unique(labels_cat)
-
-    n_c = len(u)
 
     if n_c > 1:
         colors = helpers.rand_cmap(nlabels=n_c, verbose=False)(np.linspace(0.,1.,n_c, endpoint=True)) if cmap=='random' else cmap(np.linspace(0.,1.,n_c, endpoint=True))
@@ -207,10 +222,11 @@ def compute_colored_FOV(
     rois_c.data = np.minimum(rois_c.data, 1)
 
     ## apply alpha
-    rois_c = rois_c.multiply(alphas[labels_squeezed][:,None]).tocsr()
+    rois_c = rois_c.multiply(alphas_labels[labels_squeezed][:,None]).tocsr()
+    rois_c = rois_c.multiply(alphas_sf[:,None]).tocsr()
 
-    boolSessionID = np.concatenate([[np.arange(len(labels))==ii]*len(labels[ii]) for ii in range(len(labels))] , axis=0) if boolSessionID is None else boolSessionID
-    rois_c_bySessions = [rois_c[idx] for idx in boolSessionID.T]
+    session_bool = np.concatenate([[np.arange(len(labels))==ii]*len(labels[ii]) for ii in range(len(labels))] , axis=0) if session_bool is None else session_bool
+    rois_c_bySessions = [rois_c[idx] for idx in session_bool.T]
 
     rois_c_bySessions_FOV = [r.max(0).toarray().reshape(4, h, w).transpose(1,2,0)[:,:,:3] for r in rois_c_bySessions]
 

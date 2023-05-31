@@ -1857,6 +1857,7 @@ def remap_sparse_images(
     dtype: typing.Union[str, np.dtype] = None,
     safe: bool = True,
     n_workers: int = -1,
+    verbose=True,
 ) -> typing.List[scipy.sparse.csr_matrix]:
     """
     Remaps a list of sparse images using the given remap field.
@@ -1883,6 +1884,8 @@ def remap_sparse_images(
         n_workers (int): 
             Number of parallel workers to use. 
             Default is -1, which uses all available CPU cores.
+        verbose (bool):
+            Whether or not to use a tqdm progress bar.
 
     Returns:
         ims_sparse_out (List[scipy.sparse.csr_matrix]): 
@@ -1951,7 +1954,7 @@ def remap_sparse_images(
         return warped_sparse_image
     
     wsi_partial = partial(warp_sparse_image, remappingIdx=remappingIdx)
-    ims_sparse_out = map_parallel(func=wsi_partial, args=(ims_sparse,), method='multithreading', workers=n_workers)
+    ims_sparse_out = map_parallel(func=wsi_partial, args=(ims_sparse,), method='multithreading', workers=n_workers, prog_bar=verbose)
     return ims_sparse_out
 
 
@@ -2224,6 +2227,102 @@ def cv2RemappingIdx_to_pytorchFlowField(ri):
     ## note also that pytorch's grid_sample expects align_corners=True to correspond to cv2's default behavior.
     return normgrid
 
+
+######################################################################################################################################
+######################################################## TIME SERIES #################################################################
+######################################################################################################################################
+
+class Convolver_1d():
+    """
+    Class for 1D convolution.
+    Uses torch.nn.functional.conv1d.
+    Stores the convolution and edge correction kernels
+     for repeated use.
+    RH 2023
+    """
+    def __init__(
+        self,
+        kernel,
+        length_x: int=None,
+        dtype=torch.float32,
+        pad_mode: str='same',
+        correct_edge_effects: bool=True,
+        device='cpu',
+    ):
+        """
+        Args:
+            kernel (np.ndarray or torch.Tensor):
+                1D array to convolve with.
+            length_x (int):
+                Length of the array to be convolved.
+                Must not be None if pad_mode is not 'valid'.
+            pad_mode (str):
+                Mode for padding.
+                See torch.nn.functional.conv1d for details.
+            correct_edge_effects (bool):
+                Whether or not to correct for edge effects.
+            device (str):
+                Device to use.
+        """
+        self.pad_mode = pad_mode
+        self.dtype = dtype
+
+        ## convert kernel to torch tensor
+        self.kernel = torch.as_tensor(kernel, dtype=dtype, device=device)[None,None,:]
+
+        ## compute edge correction kernel
+        if pad_mode != 'valid':
+            assert length_x is not None, "Must provide length_x if pad_mode is not 'valid'"
+            assert length_x >= kernel.shape[0], "length_x must be >= kernel.shape[0]"
+            
+            self.trace_correction = torch.conv1d(
+                input=torch.ones((1,1,length_x), dtype=dtype, device=device),
+                weight=self.kernel,
+                padding=pad_mode,
+            )[0,0,:] if correct_edge_effects else None
+        else:
+            self.trace_correction = None
+            
+    def convolve(self, arr) -> torch.Tensor:
+        """
+        Convolve array with kernel.
+        Args:
+            arr (np.ndarray or torch.Tensor):
+                Array to convolve.
+                Convolution performed along the last axis.
+                ndim must be 1 or 2 or 3.
+        """
+        ## make array 3D by adding singleton dimensions if necessary
+        ndim = arr.ndim
+        if ndim == 1:
+            arr = arr[None,None,:]
+        elif ndim == 2:
+            arr = arr[None,:,:]
+        assert arr.ndim == 3, "Array must be 1D or 2D or 3D"
+
+        ## convolve along last axis
+        out = torch.conv1d(
+            input=torch.as_tensor(arr, dtype=self.dtype, device=self.kernel.device),
+            weight=self.kernel,
+            padding=self.pad_mode,
+        )
+
+        ## correct for edge effects
+        if self.trace_correction is not None:
+            out = out / self.trace_correction[None,None,:]
+            
+        ## remove singleton dimensions if necessary
+        if ndim == 1:
+            out = out[0,0,:]
+        elif ndim == 2:
+            out = out[0,:,:]
+        return out
+    
+    def __call__(self, arr):
+        return self.convolve(arr)
+    def __repr__(self) -> str:
+        return f"Convolver_1d(kernel shape={self.kernel.shape}, pad_mode={self.pad_mode})"
+        
 
 ######################################################################################################################################
 ####################################################### FEATURIZATION ################################################################
