@@ -1857,6 +1857,7 @@ def remap_sparse_images(
     dtype: typing.Union[str, np.dtype] = None,
     safe: bool = True,
     n_workers: int = -1,
+    verbose=True,
 ) -> typing.List[scipy.sparse.csr_matrix]:
     """
     Remaps a list of sparse images using the given remap field.
@@ -1883,6 +1884,8 @@ def remap_sparse_images(
         n_workers (int): 
             Number of parallel workers to use. 
             Default is -1, which uses all available CPU cores.
+        verbose (bool):
+            Whether or not to use a tqdm progress bar.
 
     Returns:
         ims_sparse_out (List[scipy.sparse.csr_matrix]): 
@@ -1951,7 +1954,7 @@ def remap_sparse_images(
         return warped_sparse_image
     
     wsi_partial = partial(warp_sparse_image, remappingIdx=remappingIdx)
-    ims_sparse_out = map_parallel(func=wsi_partial, args=(ims_sparse,), method='multithreading', workers=n_workers)
+    ims_sparse_out = map_parallel(func=wsi_partial, args=(ims_sparse,), method='multithreading', workers=n_workers, prog_bar=verbose)
     return ims_sparse_out
 
 
