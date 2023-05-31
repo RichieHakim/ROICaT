@@ -434,7 +434,7 @@ class Data_roicat(util.ROICaT_Module):
         return completeness
 
 
-    def _make_sessionID_concat(self):
+    def _make_session_bool(self):
         """
         Creates a boolean array of shape (n_roi_total, n_sessions) 
          where each row is a boolean vector indicating which session(s) 
@@ -443,14 +443,14 @@ class Data_roicat(util.ROICaT_Module):
          which session.
         """
         ## Check that n_roi is set
-        assert hasattr(self, 'n_roi'), f"RH ERROR: n_roi must be set before sessionID_concat can be created."
+        assert hasattr(self, 'n_roi'), f"RH ERROR: n_roi must be set before session_bool can be created."
         ## Check that n_roi is the correct length
         assert len(self.n_roi) == self.n_sessions, f"RH ERROR: n_roi must be the same length as n_sessions."
         ## Check that n_roi_total is correct
         assert sum(self.n_roi) == self.n_roi_total, f"RH ERROR: n_roi must sum to n_roi_total."
-        ## Create sessionID_concat
-        self.sessionID_concat = np.vstack([np.array([helpers.idx2bool(i_sesh, length=self.n_sessions)]*n) for i_sesh, n in enumerate(self.n_roi)])
-        print(f"Completed: Created sessionID_concat.") if self._verbose else None
+        ## Create session_bool
+        self.session_bool = np.vstack([np.array([helpers.idx2bool(i_sesh, length=self.n_sessions)]*n) for i_sesh, n in enumerate(self.n_roi)])
+        print(f"Completed: Created session_bool.") if self._verbose else None
 
 
     def _make_spatialFootprintCentroids(self, method='centerOfMass'):
@@ -736,8 +736,8 @@ class Data_suite2p(Data_roicat):
         spatialFootprints = self.import_spatialFootprints()
         self.set_spatialFootprints(spatialFootprints=spatialFootprints, um_per_pixel=um_per_pixel)
 
-        ## Make sessionID
-        self._make_sessionID_concat()
+        ## Make session_bool
+        self._make_session_bool()
 
         ## Make spatial footprint centroids
         self._make_spatialFootprintCentroids(method=centroid_method)
@@ -803,7 +803,7 @@ class Data_suite2p(Data_roicat):
          in the stat files into images in sparse arrays.
         Output will be a list of arrays of shape 
          (n_roi, frame height, frame width).
-        Also generates self.sessionID_concat which is a bool np.ndarray
+        Also generates self.session_bool which is a bool np.ndarray
          of shape(n_roi, n_sessions) indicating which session each ROI
          belongs to.
         
@@ -1006,7 +1006,7 @@ class Data_caiman(Data_roicat):
                  the flattened (order='C', C-memory order) spatial footprint masks for
                  each ROI in a given session. Each element is a session,
                  and each element has shape (n_roi, frame_height_width[0]*frame_height_width[1]).
-            self.sessionID_concat (np.ndarray):
+            self.session_bool (np.ndarray):
                 a bool np.ndarray of shape(n_roi, n_sessions) indicating
                  which session each ROI belongs to.
             self.n_sessions (int):
@@ -1071,7 +1071,7 @@ class Data_caiman(Data_roicat):
 
         # 3. helpers.idx2Bool
         # # self.session_ID_concat = 
-        self._make_sessionID_concat()
+        self._make_session_bool()
         
         # 4. self.import_ROI_centered_images
         # # self.ROI_images =
@@ -1110,8 +1110,8 @@ class Data_caiman(Data_roicat):
         # spatialFootprints = self.import_spatialFootprints()
         # self.set_spatialFootprints(spatialFootprints=spatialFootprints, um_per_pixel=um_per_pixel)
 
-        # ## Make sessionID
-        # self._make_sessionID_concat()
+        # ## Make session_bool
+        # self._make_session_bool()
 
         # ## Make spatial footprint centroids
         # self._make_spatialFootprintCentroids(method=centroid_method)
