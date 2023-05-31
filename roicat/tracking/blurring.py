@@ -88,7 +88,8 @@ class ROI_Blurrer(util.ROICaT_Module):
         """
         Returns the max intensity projection of the ROIs.
         """
-        return [rois.max(0).toarray().reshape(self._frame_shape[0], self._frame_shape[1]) for rois in self.ROIs_blurred]
+        ims = [(rois.multiply(rois.max(1).power(-1))).max(0).toarray().reshape(self._frame_shape[0], self._frame_shape[1]) for rois in self.ROIs_blurred]
+        return ims
 
 
 

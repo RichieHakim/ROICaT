@@ -350,7 +350,7 @@ sim.compute_similarity_blockwise(
     spatialFootprints=aligner.ROIs_aligned,
     features_NN=roinet.latents,
     features_SWT=swt.latents,
-    ROI_session_bool=data.sessionID_concat,
+    ROI_session_bool=data.session_bool,
     linkage_methods=params['similarity_compute']['linkage_methods'],
     linkage_distances=helpers.bounded_logspace(*params['similarity_compute']['bounded_logspace_args']),
     min_cluster_size=params['similarity_compute']['min_cluster_size'],
@@ -455,14 +455,14 @@ print(f'## Completed: Optimizing ROI clusters')
 
 
 print(f'## Starting: Saving results')
-preds_by_session = [preds[idx].numpy() for idx in data.sessionID_concat.T]
+preds_by_session = [preds[idx].numpy() for idx in data.session_bool.T]
 
 ROIs = {
     "ROIs_aligned": aligner.ROIs_aligned,
     "ROIs_raw": data.spatialFootprints,
     "frame_height": data.FOV_height,
     "frame_width": data.FOV_width,
-    "idx_roi_session": [np.where(idx)[0] for idx in data.sessionID_concat.T]
+    "idx_roi_session": [np.where(idx)[0] for idx in data.session_bool.T]
 }
 
 name_save = os.path.split(dir_allOuterFolders)[-1]
