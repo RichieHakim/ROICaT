@@ -1,3 +1,5 @@
+import gc
+
 import torch
 import numpy as np
 from kymatio.torch import Scattering2D
@@ -66,4 +68,10 @@ class SWT(util.ROICaT_Module):
         self.latents = torch.cat([helper_swt(ims_batch) for ims_batch in tqdm(helpers.make_batches(ROI_images, batch_size=batch_size), total=ROI_images.shape[0] / batch_size, mininterval=5)], dim=0)
         self.latents = self.latents.reshape(self.latents.shape[0], -1)
         print('Completed: SWT transform on ROIs') if self._verbose else None
+
+        gc.collect()
+        torch.cuda.empty_cache()
+        gc.collect()
+        torch.cuda.empty_cache()
+
         return self.latents
