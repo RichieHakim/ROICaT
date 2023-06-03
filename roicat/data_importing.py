@@ -1,6 +1,6 @@
 import pathlib
 from pathlib import Path
-import multiprocessing as mp
+import warnings
 
 import numpy as np
 from tqdm import tqdm
@@ -1056,7 +1056,7 @@ class Data_caiman(Data_roicat):
         self.set_caimanLabels(overall_caimanLabels=overall_caimanLabels)
 
         cnn_caimanPreds = [self.import_cnn_caiman_preds(path, include_discarded=include_discarded) for path in self.paths_resultsFiles]
-        self.set_caimanPreds(cnn_caimanPreds=cnn_caimanPreds)
+        self.set_caimanPreds(cnn_caimanPreds=cnn_caimanPreds) if cnn_caimanPreds[0] is not None else None
 
         # 1.A. self.import_FOV_images
         # # self.FOV_images
@@ -1162,8 +1162,8 @@ class Data_caiman(Data_roicat):
                 List of lists of CNN-CaImAn predictions.
                 The outer list is over sessions, and the inner list is over ROIs.
         """
-        assert len(cnn_caimanPreds) == self.n_sessions
-        assert all([len(cnn_caimanPreds[i]) == self.n_roi[i] for i in range(self.n_sessions)])
+        assert len(cnn_caimanPreds) == self.n_sessions, f"{len(cnn_caimanPreds)} != {self.n_sessions}"
+        assert all([len(cnn_caimanPreds[i]) == self.n_roi[i] for i in range(self.n_sessions)]), f"{[len(cnn_caimanPreds[i]) for i in range(self.n_sessions)]} != {[self.n_roi[i] for i in range(self.n_sessions)]}"
         self.cnn_caimanPreds = cnn_caimanPreds
 
     def import_spatialFootprints(self, path_resultsFile, include_discarded=True):
@@ -1184,24 +1184,27 @@ class Data_caiman(Data_roicat):
             spatialFootprints (scipy.sparse.csr_matrix):
                 Spatial footprints.
         """
-        data = helpers.h5_load(path_resultsFile, return_dict=False)
-        FOV_height, FOV_width = data['estimates']['dims']
-        
-        ## initialize the estimates.A matrix, which is a 'Fortran' indexed version of sf. Note the flipped dimensions for shape.
-        sf_included = scipy.sparse.csr_matrix((data['estimates']['A']['data'], data['estimates']['A']['indices'], data['estimates']['A']['indptr']), shape=data['estimates']['A']['shape'][::-1])
-        print('kept ROIs',sf_included.shape)
-        if include_discarded:
-            discarded = data['estimates']['discarded_components']
-            sf_discarded = scipy.sparse.csr_matrix((discarded['A']['data'], discarded['A']['indices'], discarded['A']['indptr']), shape=discarded['A']['shape'][::-1])
-            print('dropped ROIs',sf_discarded.shape)
-            sf_F = scipy.sparse.vstack([sf_included, sf_discarded])
-        else:
-            sf_F = sf_included
+        with helpers.h5_load(path_resultsFile, return_dict=False) as data:
+            FOV_height, FOV_width = data['estimates']['dims'][()]
+            
+            ## initialize the estimates.A matrix, which is a 'Fortran' indexed version of sf. Note the flipped dimensions for shape.
+            sf_included = scipy.sparse.csr_matrix((data['estimates']['A']['data'][()], data['estimates']['A']['indices'], data['estimates']['A']['indptr'][()]), shape=data['estimates']['A']['shape'][()][::-1])
+            print('kept ROIs',sf_included.shape)
+            if include_discarded:
+                try:
+                    discarded = data['estimates']['discarded_components'][()]
+                    sf_discarded = scipy.sparse.csr_matrix((discarded['A']['data'], discarded['A']['indices'], discarded['A']['indptr']), shape=discarded['A']['shape'][::-1])
+                    print('dropped ROIs',sf_discarded.shape)
+                    sf_F = scipy.sparse.vstack([sf_included, sf_discarded])
+                except:
+                    sf_F = sf_included
+            else:
+                sf_F = sf_included
 
-        ## reshape sf_F (which is in Fortran flattened format) into C flattened format
-        sf = sparse.COO(sf_F).reshape((sf_F.shape[0], FOV_width, FOV_height)).transpose((0,2,1)).reshape((sf_F.shape[0], FOV_width*FOV_height)).tocsr()
-        
-        return sf
+            ## reshape sf_F (which is in Fortran flattened format) into C flattened format
+            sf = sparse.COO(sf_F).reshape((sf_F.shape[0], FOV_width, FOV_height)).transpose((0,2,1)).reshape((sf_F.shape[0], FOV_width*FOV_height)).tocsr()
+            
+            return sf
 
 
     def import_overall_caiman_labels(self, path_resultsFile, include_discarded=True):
@@ -1220,16 +1223,20 @@ class Data_caiman(Data_roicat):
         """
 
 
-        data = helpers.h5_load(path_resultsFile, return_dict=False)
-        labels_included = np.ones(data['estimates']['A']['indptr'].shape[0] - 1)
-        if include_discarded:
-            discarded = data['estimates']['discarded_components']
-            labels_discarded = np.zeros(discarded['A']['indptr'].shape[0] - 1)
-            labels = np.hstack([labels_included, labels_discarded])
-        else:
-            labels = labels_included
+        with helpers.h5_load(path_resultsFile, return_dict=False) as data:
+            labels_included = np.ones(data['estimates']['A']['indptr'][()].shape[0] - 1)
+            if include_discarded:
+                try:
+                    discarded = data['estimates']['discarded_components'][()]
+                    labels_discarded = np.zeros(discarded['A']['indptr'].shape[0] - 1)
+                    labels = np.hstack([labels_included, labels_discarded])
+                except:
+                    print('no discarded components for labels')
+                    labels = labels_included
+            else:
+                labels = labels_included
 
-        return labels
+            return labels
 
     def import_cnn_caiman_preds(self, path_resultsFile, include_discarded=True):
         """
@@ -1244,16 +1251,24 @@ class Data_caiman(Data_roicat):
             preds (np.ndarray):
                 CNN-based CaImAn prediction probabilities
         """
-        data = helpers.h5_load(path_resultsFile, return_dict=False)
-        preds_included = data['estimates']['cnn_preds']
-        if include_discarded:
-            discarded = data['estimates']['discarded_components']
-            preds_discarded = discarded['cnn_preds']
-            preds = np.hstack([preds_included, preds_discarded])
-        else:
-            preds = preds_included
-        
-        return preds
+        with helpers.h5_load(path_resultsFile, return_dict=False) as data:
+            preds_included = data['estimates']['cnn_preds'][()]
+            if preds_included == b'NoneType':
+                warnings.warn('No CNN preds found in results file')
+                return None
+            
+            if include_discarded:
+                try:
+                    discarded = data['estimates']['discarded_components'][()]
+                    preds_discarded = discarded['cnn_preds']
+                    preds = np.hstack([preds_included, preds_discarded])
+                except:
+                    print('no discarded components for cnn_preds')
+                    preds = preds_included
+            else:
+                preds = preds_included
+            
+            return preds
 
     def import_ROI_centeredImages(
         self,
@@ -1316,10 +1331,10 @@ class Data_caiman(Data_roicat):
                 List of FOV images (np.ndarray).
         """
         def _import_FOV_image(path_resultsFile):
-            data = helpers.h5_load(path_resultsFile, return_dict=False)
-            FOV_height, FOV_width = data['estimates']['dims']
-            FOV_image = data['estimates']['b'][:,0].reshape(FOV_height, FOV_width, order='F')
-            return FOV_image.astype(np.float32)
+            with helpers.h5_load(path_resultsFile, return_dict=False) as data:
+                FOV_height, FOV_width = data['estimates']['dims'][()]
+                FOV_image = data['estimates']['b'][()][:,0].reshape(FOV_height, FOV_width, order='F')
+                return FOV_image.astype(np.float32)
 
         if images is not None:
             if self._verbose:
