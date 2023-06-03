@@ -1190,7 +1190,7 @@ def extract_zip(
 ######################################################################################################################################
 
 ## below is actually 'simple_load' from h5_handling
-def h5_load(filepath, return_dict=False):
+def h5_load(filepath, return_dict=True, verbose=False):
     """
     Returns a dictionary object containing the groups
     as keys and the datasets as values from
@@ -1205,17 +1205,88 @@ def h5_load(filepath, return_dict=False):
             or an h5py object (False)
     """
     import h5py
-    with h5py.File(filepath, 'r') as h5_file:
-        if return_dict:
-            data = {}
-            def h5_to_dict(name, obj):
-                if isinstance(obj, h5py.Dataset):
-                    data[name] = obj[()]
+    if return_dict:
+        with h5py.File(filepath, 'r') as h5_file:
+            if verbose:
+                print(f'==== Loading h5 file with hierarchy: ====')
+                show_item_tree(h5_file)
+            result = {}
+            def visitor_func(name, node):
+                # Split name by '/' and reduce to nested dict
+                keys = name.split('/')
+                sub_dict = result
+                for key in keys[:-1]:
+                    sub_dict = sub_dict.setdefault(key, {})
 
-            h5_file.visititems(h5_to_dict)  ## Converts h5 file to dict in-place
-            return data
-        else:
-            return h5_file
+                if isinstance(node, h5py.Dataset):
+                    sub_dict[keys[-1]] = node[...]
+                elif isinstance(node, h5py.Group):
+                    sub_dict.setdefault(keys[-1], {})
+
+            h5_file.visititems(visitor_func)            
+            return result
+    else:
+        return h5py.File(filepath, 'r')
+    
+def show_item_tree(hObj=None , path=None, depth=None, show_metadata=True, print_metadata=False, indent_level=0):
+    '''
+    Recursive function that displays all the items 
+     and groups in an h5 object or python dict
+    RH 2021
+
+    Args:
+        hObj:
+            'hierarchical Object'. hdf5 object OR python dictionary
+        path (Path or string):
+            If not None, then path to h5 object is used instead of hObj
+        depth (int):
+            how many levels deep to show the tree
+        show_metadata (bool): 
+            whether or not to list metadata with items
+        print_metadata (bool): 
+            whether or not to show values of metadata items
+        indent_level: 
+            used internally to function. User should leave blank
+
+    ##############
+    
+    example usage:
+        with h5py.File(path , 'r') as f:
+            h5_handling.show_item_tree(f)
+    '''
+    import h5py
+    if depth is None:
+        depth = int(10000000000000000000)
+    else:
+        depth = int(depth)
+
+    if depth < 0:
+        return
+
+    if path is not None:
+        with h5py.File(path , 'r') as f:
+            show_item_tree(hObj=f, path=None, depth=depth-1, show_metadata=show_metadata, print_metadata=print_metadata, indent_level=indent_level)
+    else:
+        indent = f'  '*indent_level
+        if hasattr(hObj, 'attrs') and show_metadata:
+            for ii,val in enumerate(list(hObj.attrs.keys()) ):
+                if print_metadata:
+                    print(f'{indent}METADATA: {val}: {hObj.attrs[val]}')
+                else:
+                    print(f'{indent}METADATA: {val}: shape={hObj.attrs[val].shape} , dtype={hObj.attrs[val].dtype}')
+        
+        for ii,val in enumerate(list(iter(hObj))):
+            if isinstance(hObj[val], h5py.Group):
+                print(f'{indent}{ii+1}. {val}:----------------')
+                show_item_tree(hObj[val], depth=depth-1, show_metadata=show_metadata, print_metadata=print_metadata , indent_level=indent_level+1)
+            elif isinstance(hObj[val], dict):
+                print(f'{indent}{ii+1}. {val}:----------------')
+                show_item_tree(hObj[val], depth=depth-1, show_metadata=show_metadata, print_metadata=print_metadata , indent_level=indent_level+1)
+            else:
+                if hasattr(hObj[val], 'shape') and hasattr(hObj[val], 'dtype'):
+                    print(f'{indent}{ii+1}. {val}:    '.ljust(20) + f'shape={hObj[val].shape} ,'.ljust(20) + f'dtype={hObj[val].dtype}')
+                else:
+                    print(f'{indent}{ii+1}. {val}:    '.ljust(20) + f'type={type(hObj[val])}')
         
 
 ######################################################################################################################################
