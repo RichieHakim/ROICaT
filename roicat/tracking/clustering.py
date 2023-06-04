@@ -620,6 +620,7 @@ class Clusterer(util.ROICaT_Module):
         labels = np.concatenate(matchings)
         u, c = np.unique(labels, return_counts=True)
         labels[np.isin(labels, u[c == 1])] = -1
+        labels = helpers.squeeze_integers(labels)
         self.labels = labels
         return self.labels
             
@@ -998,15 +999,14 @@ class Clusterer(util.ROICaT_Module):
         return loss  # Output must be a scalar. Used to update the hyperparameters
     
 
-    def compute_cluster_quality_metrics(
+    def compute_quality_metrics(
         self,
         sim_mat=None,
         dist_mat=None,
         labels=None,
     ):
         """
-        Compute cluster quality metrics.
-        Calls the cluster_quality_metrics function.
+        Compute quality metrics.
         RH 2023
 
         Args:
@@ -1042,21 +1042,23 @@ class Clusterer(util.ROICaT_Module):
         # if sklearn.__version__ < '1.3':
         ## Warn that current version is memory intensive and will be improved when sklearn 1.3 is released
         warnings.warn("Current version of silhouette samples calculation is memory intensive and will be improved when sklearn 1.3 is released.")
-        d_dense = dist_mat.copy().tocsr()
-        d_dense.eliminate_zeros()
-        d_dense = d_dense.astype(np.float32).toarray()
-        d_dense[d_dense==0] = (d_dense.max() - d_dense.min()) * 1000
-        np.fill_diagonal(d_dense, 0)  ## in-place fill diagonal with zeros
+        import sparse
+        d_dense = sparse.COO(dist_mat.copy().tocsr())
+        d_dense.fill_value = (d_dense.max() - d_dense.min()) * 1000
+        d_dense = d_dense.todense()
+        np.fill_diagonal(d_dense, 0)
         rs_sil = sklearn.metrics.silhouette_samples(X=d_dense, labels=labels, metric='precomputed')
 
-        self.cluster_quality_metrics = {
+        self.quality_metrics = {
             'cs_intra_means': cs_intra_means,
             'cs_intra_mins': cs_intra_mins,
             'cs_intra_maxs': cs_intra_maxs,
             'cs_sil': cs_sil,
             'rs_sil': rs_sil,
+            'rs_hdbscan_outlierScores': self.hdbs.outlier_scores_[:-1] if hasattr(self, 'hdbs') else None,  ## Remove last element which is the outlier score for the new fully connected node
+            'rs_hdbscan_probabilities': self.hdbs.probabilities_[:-1] if hasattr(self, 'hdbs') else None,  ## Remove last element which is the outlier score for the new fully connected node
         }
-        return self.cluster_quality_metrics
+        return self.quality_metrics
         
 
 def attach_fully_connected_node(d, dist_fullyConnectedNode=None, n_nodes=1):
@@ -1288,3 +1290,60 @@ def cluster_quality_metrics(sim, labels):
     cs_intra_maxs = cs_max.diagonal()
     
     return cs_intra_means, cs_intra_mins, cs_intra_maxs, cs_sil
+
+def make_label_variants(labels, n_roi_bySession):
+    """
+    Makes convenient variants of labels.
+    RH 2023
+
+    Args:
+        labels (np.array):
+            Cluster integer labels of shape (n_roi,).
+        n_roi_bySession (np.array):
+            Number of ROIs in each session.
+
+    Returns:
+        labels_squeezed (np.array):
+    """
+    import scipy.sparse
+
+    ## assert that labels is a 1D np.array or list of numbers
+    if isinstance(labels, list):
+        labels = np.array(labels, dtype=np.int64)
+    elif isinstance(labels, np.ndarray):
+        labels = labels.astype(np.int64)
+    else:
+        raise TypeError('RH ERROR: labels must be a 1D np.array or list of numbers.')
+    assert labels.ndim == 1, 'RH ERROR: labels must be a 1D np.array or list of numbers.'
+
+    ## assert that n_roi_bySession is a 1D np.array or list of numbers
+    if isinstance(n_roi_bySession, list):
+        n_roi_bySession = np.array(n_roi_bySession, dtype=np.int64)
+    elif isinstance(n_roi_bySession, np.ndarray):
+        n_roi_bySession = n_roi_bySession.astype(np.int64)
+    else:
+        raise TypeError('RH ERROR: n_roi_bySession must be a 1D np.array or list of numbers.')
+    assert n_roi_bySession.ndim == 1, 'RH ERROR: n_roi_bySession must be a 1D np.array or list of numbers.'
+    
+    ## assert that the number of labels adds up to the number of ROIs
+    n_roi_total = n_roi_bySession.sum()
+    n_roi_cumsum = np.concatenate([[0], n_roi_bySession.cumsum()])
+    assert labels.shape[0] == n_roi_bySession.sum(), 'RH ERROR: the number of labels must add up to the number of ROIs.'
+
+    ## make session_bool
+    r = np.arange(n_roi_total, dtype=np.int64)
+    session_bool = np.vstack([(b_lower <= r) * (r < b_upper) for b_lower, b_upper in zip(n_roi_cumsum[:-1], n_roi_cumsum[1:])]).T
+
+    ## make variants
+    labels_squeezed = helpers.squeeze_integers(labels)
+    labels_bySession = [labels[idx] for idx in session_bool.T]
+    labels_bool = scipy.sparse.vstack([scipy.sparse.csr_matrix(labels_squeezed==u) for u in np.sort(np.unique(labels_squeezed))]).T.tocsr()
+    labels_bool_bySession = [labels_bool[idx] for idx in session_bool.T]
+    labels_dict = {u: np.where(labels_squeezed==u)[0] for u in np.unique(labels_squeezed)}
+
+    ## testing
+    assert np.allclose(np.concatenate(labels_bySession), labels_squeezed)
+    assert np.allclose(labels_bool.nonzero()[1] - 1, labels_squeezed)
+    assert np.alltrue([np.allclose(np.where(labels_squeezed==u)[0], ldu) for u, ldu in labels_dict.items()])
+
+    return labels_squeezed, labels_bySession, labels_bool, labels_bool_bySession, labels_dict
