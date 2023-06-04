@@ -449,7 +449,8 @@ class Data_roicat(util.ROICaT_Module):
         ## Check that n_roi_total is correct
         assert sum(self.n_roi) == self.n_roi_total, f"RH ERROR: n_roi must sum to n_roi_total."
         ## Create session_bool
-        self.session_bool = np.vstack([np.array([helpers.idx2bool(i_sesh, length=self.n_sessions)]*n) for i_sesh, n in enumerate(self.n_roi)])
+        self.session_bool = util.make_session_bool(self.n_roi)
+
         print(f"Completed: Created session_bool.") if self._verbose else None
 
 

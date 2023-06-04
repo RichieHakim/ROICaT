@@ -356,6 +356,30 @@ class ROICaT_Module:
 ############################################### UCID handling ############################################################
 ##########################################################################################################################
 
+def make_session_bool(n_roi):
+    """
+    Makes a session_bool array from an n_roi array.
+
+    Args:
+        n_roi (np.ndarray):
+            Array of number of ROIs per session
+
+    Returns:
+        session_bool (np.ndarray):
+            Boolean array of shape (n_roi_total, n_session) where
+             each column is a session and each row is a ROI.
+    """
+    n_roi_total = np.sum(n_roi)
+    r = np.arange(n_roi_total, dtype=np.int64)
+    n_roi_cumsum = np.concatenate([[0], np.cumsum(n_roi)])
+    session_bool = np.vstack([(b_lower <= r) * (r < b_upper) for b_lower, b_upper in zip(n_roi_cumsum[:-1], n_roi_cumsum[1:])]).T
+    return session_bool
+
+
+##########################################################################################################################
+############################################### UCID handling ############################################################
+##########################################################################################################################
+
 def check_dataStructure__list_ofListOrArray_ofDtype(lolod, dtype=np.int64, fix=True, verbose=True):
     """
     Checks 'lolod' (list of list of dtype) data structure.
@@ -640,3 +664,4 @@ def match_arrays_with_ucids_inverse(arrays, ucids):
                 arrays_out[i_sesh][idx] = arrays[i_sesh][u]
 
     return arrays_out
+    
