@@ -305,11 +305,11 @@ def pydata_sparse_to_torch_coo(sp_array):
 def squeeze_integers(intVec):
     """
     Make integers in an array consecutive numbers
-     starting from 0. ie. [7,2,7,4,1] -> [3,2,3,1,0].
-    Useful for removing unused class IDs from y_true
-     and outputting something appropriate for softmax.
-    This is v2. The old version is busted.
-    RH 2021
+     starting from the smallest value. 
+    ie. [7,2,7,4,-1,0] -> [3,2,3,1,-1,0].
+    Useful for removing unused class IDs.
+    This is v3.
+    RH 2023
     
     Args:
         intVec (np.ndarray):
@@ -319,10 +319,17 @@ def squeeze_integers(intVec):
         intVec_squeezed (np.ndarray):
             1-D array of integers with consecutive numbers
     """
-    uniques = np.unique(intVec)
-    # unique_positions = np.arange(len(uniques))
-    unique_positions = np.arange(uniques.min(), uniques.max()+1)
-    return unique_positions[np.array([np.where(intVec[ii]==uniques)[0] for ii in range(len(intVec))]).squeeze()]
+    if isinstance(intVec, list):
+        intVec = np.array(intVec, dtype=np.int64)
+    if isinstance(intVec, np.ndarray):
+        unique, arange = np.unique, np.arange
+    elif isinstance(intVec, torch.Tensor):
+        unique, arange = torch.unique, torch.arange
+        
+    u, inv = unique(intVec, return_inverse=True)  ## get unique values and their indices
+    u_min = u.min()  ## get the smallest value
+    u_s = arange(u_min, u_min + u.shape[0], dtype=u.dtype)  ## make consecutive numbers starting from the smallest value
+    return u_s[inv]  ## return the indexed consecutive unique values
 
 
 def idx_to_oneHot(arr, n_classes=None, dtype=None):
@@ -914,6 +921,22 @@ def find_paths(
     if natsorted:
         paths = natsort.natsorted(paths, alg=alg_ns)
     return paths
+
+
+######################################################################################################################################
+########################################################## INDEXING ##################################################################
+######################################################################################################################################
+
+def sparse_to_dense_fill(arr_s, fill_val=0.):
+    """
+    Converts a sparse array to a dense array and fills
+     in sparse entries with a fill value.
+    """
+    import sparse
+    s = sparse.COO(arr_s)
+    s.fill_value = fill_val
+    return s.todense()
+
 
 ######################################################################################################################################
 ######################################################## FILE HELPERS ################################################################
