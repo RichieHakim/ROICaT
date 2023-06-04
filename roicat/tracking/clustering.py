@@ -615,7 +615,7 @@ class Clusterer(util.ROICaT_Module):
             new_match[nm_sess] = range(A2_len, len(idx_union))
             matchings.append(new_match.tolist())
 
-        self.performance = performance
+        self.seqHung_performance = performance
 
         labels = np.concatenate(matchings)
         u, c = np.unique(labels, return_counts=True)
@@ -1050,13 +1050,21 @@ class Clusterer(util.ROICaT_Module):
         rs_sil = sklearn.metrics.silhouette_samples(X=d_dense, labels=labels, metric='precomputed')
 
         self.quality_metrics = {
-            'cs_intra_means': cs_intra_means,
-            'cs_intra_mins': cs_intra_mins,
-            'cs_intra_maxs': cs_intra_maxs,
-            'cs_sil': cs_sil,
-            'rs_sil': rs_sil,
-            'rs_hdbscan_outlierScores': self.hdbs.outlier_scores_[:-1] if hasattr(self, 'hdbs') else None,  ## Remove last element which is the outlier score for the new fully connected node
-            'rs_hdbscan_probabilities': self.hdbs.probabilities_[:-1] if hasattr(self, 'hdbs') else None,  ## Remove last element which is the outlier score for the new fully connected node
+            'cluster_intra_means': cs_intra_means,
+            'cluster_intra_mins': cs_intra_mins,
+            'cluster_intra_maxs': cs_intra_maxs,
+            'cluster_silhouette': cs_sil,
+            'sample_silhouette': rs_sil,
+            'hdbscan': {
+                'sample_outlierScores': self.hdbs.outlier_scores_[:-1],  ## Remove last element which is the outlier score for the new fully connected node
+                'sample_probabilities': self.hdbs.probabilities_[:-1],  ## Remove last element which is the outlier score for the new fully connected node
+            }  if hasattr(self, 'hdbs') else None,
+            'sequentialHungarian': {
+                'performance_recall': self.seqHung_performance['performance_recall'],
+                'performance_precision': self.seqHung_performance['performance_precision'],
+                'performance_f1': self.seqHung_performance['performance_f1'],
+                'performance_accuracy': self.seqHung_performance['performance_accuracy'],
+            } if hasattr(self, 'seqHung_performance') else None,
         }
         return self.quality_metrics
         
@@ -1275,6 +1283,16 @@ def cluster_quality_metrics(sim, labels):
             Can be obtained using _, sConj, _,_,_,_ = clusterer.make_conjunctive_similarity_matrix().
         labels (np.array):
             Cluster labels of shape (n_roi,).
+
+    Returns:
+        cs_intra_means (np.array):
+            Intra-cluster mean similarity of shape (n_clusters,).
+        cs_intra_mins (np.array):
+            Intra-cluster min similarity of shape (n_clusters,).
+        cs_intra_maxs (np.array):
+            Intra-cluster max similarity of shape (n_clusters,).
+        cs_sil (np.array):
+            Cluster silhouette score of shape (n_clusters,).
     """
     import sparse
     
@@ -1331,12 +1349,11 @@ def make_label_variants(labels, n_roi_bySession):
     assert labels.shape[0] == n_roi_bySession.sum(), 'RH ERROR: the number of labels must add up to the number of ROIs.'
 
     ## make session_bool
-    r = np.arange(n_roi_total, dtype=np.int64)
-    session_bool = np.vstack([(b_lower <= r) * (r < b_upper) for b_lower, b_upper in zip(n_roi_cumsum[:-1], n_roi_cumsum[1:])]).T
+    session_bool = util.make_session_bool(n_roi_bySession)
 
     ## make variants
     labels_squeezed = helpers.squeeze_integers(labels)
-    labels_bySession = [labels[idx] for idx in session_bool.T]
+    labels_bySession = [labels_squeezed[idx] for idx in session_bool.T]
     labels_bool = scipy.sparse.vstack([scipy.sparse.csr_matrix(labels_squeezed==u) for u in np.sort(np.unique(labels_squeezed))]).T.tocsr()
     labels_bool_bySession = [labels_bool[idx] for idx in session_bool.T]
     labels_dict = {u: np.where(labels_squeezed==u)[0] for u in np.unique(labels_squeezed)}
