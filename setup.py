@@ -1,4 +1,5 @@
 ## setup.py file for roicat
+from pathlib import Path
 
 from distutils.core import setup
 import copy
@@ -30,8 +31,10 @@ import copy
 #     "torchaudio==2.0.2",
 # ]
 
+dir_parent = Path(__file__).parent
+
 def read_requirements():
-    with open('requirements.txt', 'r') as req:
+    with open(str(dir_parent / "requirements.txt"), "r") as req:
         content = req.read()  ## read the file
         requirements = content.split("\n") ## make a list of requirements split by (\n) which is the new line character
 
@@ -96,12 +99,19 @@ print({
 })
 
 ## Get README.md
-with open("README.md", "r") as f:
+with open(str(dir_parent / "README.md"), "r") as f:
     readme = f.read()
+
+## Get version number
+with open(str(dir_parent / "roicat" / "__init__.py"), "r") as f:
+    for line in f:
+        if line.startswith("__version__"):
+            version = line.split("=")[1].strip().replace("\"", "").replace("\'", "")
+            break
 
 setup(
     name='roicat',
-    version='0.1.0',
+    version=version,
     author='Richard Hakim',
     keywords=['neuroscience', 'neuroimaging', 'machine learning', 'deep learning'],
     license='LICENSE',
