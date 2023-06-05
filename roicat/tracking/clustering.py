@@ -138,10 +138,6 @@ class Clusterer(util.ROICaT_Module):
                  a small number of bins makes finding the separation point more
                  noisy, and only slightly more accurate. Aim for 5-10% of the
                  number of bins.
-            find_parameters_automatically (bool):
-                Whether to find the optimal parameters automatically using
-                 optuna. If False, the parameters are set to the 
-                 kwargs_makeConjunctiveDistanceMatrix input.
             kwargs_findParameters (dict):
                 Keyword arguments for the Convergence_checker class __init__.
             bounds_findParameters (dict):
@@ -162,42 +158,39 @@ class Clusterer(util.ROICaT_Module):
         self.smooth_window = self.n_bins // 10 if smoothing_window_bins is None else smoothing_window_bins
         # print(f'Pruning similarity graphs with {self.n_bins} bins and smoothing window {smoothing_window}...') if self._verbose else None
 
-        if find_parameters_automatically:
-            print('Finding mixing parameters using automated hyperparameter tuning...') if self._verbose else None
-            optuna.logging.set_verbosity(optuna.logging.WARNING)
-            self.checker = Convergence_checker(**kwargs_findParameters)
-            self.study = optuna.create_study(direction='minimize', sampler=optuna.samplers.TPESampler(n_startup_trials=kwargs_findParameters['n_patience']//2))
-            self.study.optimize(self._objectiveFn_distSameMagnitude, n_jobs=n_jobs_findParameters, callbacks=[self.checker.check])
+        print('Finding mixing parameters using automated hyperparameter tuning...') if self._verbose else None
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+        self.checker = Convergence_checker(**kwargs_findParameters)
+        self.study = optuna.create_study(direction='minimize', sampler=optuna.samplers.TPESampler(n_startup_trials=kwargs_findParameters['n_patience']//2))
+        self.study.optimize(self._objectiveFn_distSameMagnitude, n_jobs=n_jobs_findParameters, callbacks=[self.checker.check])
 
-            self.best_params = self.study.best_params.copy()
-            [self.best_params.pop(p) for p in [
-                # 'sig_SF_kwargs_mu',
-                # 'sig_SF_kwargs_b',
-                'sig_NN_kwargs_mu',
-                'sig_NN_kwargs_b',
-                'sig_SWT_kwargs_mu',
-                'sig_SWT_kwargs_b'] if p in self.best_params.keys()]
-            # # self.best_params['sig_SF_kwargs'] = {'mu': self.study.best_params['sig_SF_kwargs_mu'],
-            # #                                 'b': self.study.best_params['sig_SF_kwargs_b'],}
-            # self.best_params['sig_SF_kwargs'] = None
-            self.best_params['sig_NN_kwargs'] = {'mu': self.study.best_params['sig_NN_kwargs_mu'],
-                                            'b': self.study.best_params['sig_NN_kwargs_b'],}
-            self.best_params['sig_SWT_kwargs'] = {'mu': self.study.best_params['sig_SWT_kwargs_mu'],
-                                             'b': self.study.best_params['sig_SWT_kwargs_b'],}
+        self.best_params = self.study.best_params.copy()
+        [self.best_params.pop(p) for p in [
+            # 'sig_SF_kwargs_mu',
+            # 'sig_SF_kwargs_b',
+            'sig_NN_kwargs_mu',
+            'sig_NN_kwargs_b',
+            'sig_SWT_kwargs_mu',
+            'sig_SWT_kwargs_b'] if p in self.best_params.keys()]
+        # # self.best_params['sig_SF_kwargs'] = {'mu': self.study.best_params['sig_SF_kwargs_mu'],
+        # #                                 'b': self.study.best_params['sig_SF_kwargs_b'],}
+        # self.best_params['sig_SF_kwargs'] = None
+        self.best_params['sig_NN_kwargs'] = {'mu': self.study.best_params['sig_NN_kwargs_mu'],
+                                        'b': self.study.best_params['sig_NN_kwargs_b'],}
+        self.best_params['sig_SWT_kwargs'] = {'mu': self.study.best_params['sig_SWT_kwargs_mu'],
+                                            'b': self.study.best_params['sig_SWT_kwargs_b'],}
 
-            self.kwargs_makeConjunctiveDistanceMatrix_best={
-                'power_SF': None,
-                'power_NN': None,
-                'power_SWT': None,
-                'p_norm': None,
-                'sig_SF_kwargs': None,
-                'sig_NN_kwargs': None,
-                'sig_SWT_kwargs': None,
-            }
-            self.kwargs_makeConjunctiveDistanceMatrix_best.update(self.best_params)
-            print(f'Best value found: {self.study.best_value} with parameters {self.best_params}') if self._verbose else None
-        else:
-            self.kwargs_makeConjunctiveDistanceMatrix_best = self.best_params
+        self.kwargs_makeConjunctiveDistanceMatrix_best={
+            'power_SF': None,
+            'power_NN': None,
+            'power_SWT': None,
+            'p_norm': None,
+            'sig_SF_kwargs': None,
+            'sig_NN_kwargs': None,
+            'sig_SWT_kwargs': None,
+        }
+        self.kwargs_makeConjunctiveDistanceMatrix_best.update(self.best_params)
+        print(f'Best value found: {self.study.best_value} with parameters {self.best_params}') if self._verbose else None
         return self.kwargs_makeConjunctiveDistanceMatrix_best
 
     def make_pruned_similarity_graphs(
@@ -505,18 +498,9 @@ class Clusterer(util.ROICaT_Module):
 
     def fit_sequentialHungarian(
         self,
+        d_conj,
         session_bool,
         thresh_cost=0.95,
-        d_conj=None,
-        kwargs_makeConjunctiveDistanceMatrix={
-            'power_SF': 1.0,
-            'power_NN': 1.0,
-            'power_SWT': 0.1,
-            'p_norm': -2,
-            'sig_SF_kwargs': None,
-            'sig_NN_kwargs':  {'mu':0, 'b':0.2},
-            'sig_SWT_kwargs': {'mu':0, 'b':0.2},
-        },
     ):
         """
         Use CaImAn's method for clustering.
@@ -524,6 +508,15 @@ class Clusterer(util.ROICaT_Module):
             https://elifesciences.org/articles/38173#s4
             https://github.com/flatironinstitute/CaImAn
             https://github.com/flatironinstitute/CaImAn/blob/master/caiman/base/rois.py
+
+        Args:
+            d_conj (scipy.sparse.csr_matrix):
+                Distance matrix. Shape (n_rois, n_rois)
+            session_bool (np.ndarray): 
+                Ahape (n_rois, n_sessions) boolean array indicating which ROIs
+                 are in which sessions
+            thresh_cost (float, optional):
+                Threshold below which ROI pairs are considered potential matches.
         """
         print(f"Clustering with CaImAn's sequential Hungarian algorithm method...") if self._verbose else None
         def find_matches(D_s):
@@ -549,15 +542,6 @@ class Clusterer(util.ROICaT_Module):
                 costs.append(total)
                 # send back the results in the format we want
             return matches, costs
-
-        if d_conj is None:
-            d_conj, _, _, _, _, _ = self.make_conjunctive_distance_matrix(
-                s_sf=self.s_sf_pruned,
-                s_NN=self.s_NN_pruned,
-                s_SWT=self.s_SWT_pruned,
-                s_sesh=self.s_sesh_pruned,
-                **kwargs_makeConjunctiveDistanceMatrix
-            )
 
         n_roi = session_bool.sum(0)
         n_roi_cum = np.concatenate(([0], np.cumsum(n_roi)))
