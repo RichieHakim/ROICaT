@@ -342,7 +342,7 @@ class ROI_graph(util.ROICaT_Module):
         Normalizes the similarity matrices (s_NN, s_SWT, but not s_sf)
          by z-scoring using the mean and std from the distributions of
          pairwise similarities between ROIs assumed to be 'different'.
-         'Different' here is defined as ROIs that are spatiall distant
+         'Different' here is defined as ROIs that are spatial distant
          from each other.
 
         Args:
@@ -418,6 +418,7 @@ class ROI_graph(util.ROICaT_Module):
             self.s_NN_z = self.s_NN.copy().tocoo()
             self.s_NN_z.data = ((self.s_NN_z.data - mus_NN_diff[self.s_NN_z.row]) / stds_NN_diff[self.s_NN_z.row])
             self.s_NN_z = self.s_NN_z.tocsr()
+            self.s_NN_z.data[np.isnan(self.s_NN_z.data)] = 0
         
         print('Normalizing SWT similarity scores...') if verbose else None
         if features_SWT is not None:
@@ -428,6 +429,7 @@ class ROI_graph(util.ROICaT_Module):
             self.s_SWT_z = self.s_SWT.copy().tocoo()
             self.s_SWT_z.data = ((self.s_SWT_z.data - mus_SWT_diff[self.s_SWT_z.row]) / stds_SWT_diff[self.s_SWT_z.row])
             self.s_SWT_z = self.s_SWT_z.tocsr()
+            self.s_SWT_z.data[np.isnan(self.s_SWT_z.data)] = 0
             
 
 ###########################
