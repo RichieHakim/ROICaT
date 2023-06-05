@@ -477,6 +477,60 @@ def pickle_load(
             return pickle.load(f)
 
 
+def matlab_save(
+    obj,
+    filepath,
+    mkdir=False, 
+    allow_overwrite=True,
+    clean_string=True,
+    list_to_objArray=True,
+    none_to_nan=True,
+    kwargs_scipy_savemat={
+        'appendmat': True,
+        'format': '5',
+        'long_field_names': False,
+        'do_compression': False,
+        'oned_as': 'row',
+    }
+):
+    """
+    Saves data to a matlab file.
+    Uses scipy.io.savemat.
+    Provides additional functionality by cleaning strings,
+     converting lists to object arrays, and converting None to
+     np.nan.
+    RH 2023
+
+    Args:
+        obj (dict):
+            Data to save.
+        filepath (str):
+            Path to save file to.
+        clean_string (bool):
+            If True, converts strings to bytes.
+        list_to_objArray (bool):
+            If True, converts lists to object arrays.
+        none_to_nan (bool):
+            If True, converts None to np.nan.
+        kwargs_scipy_savemat (dict):
+            Keyword arguments to pass to scipy.io.savemat.
+    """
+    import numpy as np
+
+    prepare_filepath_for_saving(filepath, mkdir=mkdir, allow_overwrite=allow_overwrite)
+
+    def walk(d, fn):
+        return {key: fn(val) if isinstance(val, dict)==False else walk(val, fn) for key, val in d.items()}
+    
+    fn_clean_string = (lambda x: x.encode('utf-8') if isinstance(x, str) and clean_string else x) if clean_string else (lambda x: x)
+    fn_list_to_objArray = (lambda x: np.array(x, dtype=object) if isinstance(x, list) and list_to_objArray else x) if list_to_objArray else (lambda x: x)
+    fn_none_to_nan = (lambda x: np.nan if x is None and none_to_nan else x) if none_to_nan else (lambda x: x)
+
+    data_cleaned = walk(walk(walk(obj, fn_clean_string), fn_list_to_objArray), fn_none_to_nan)
+
+    import scipy.io
+    scipy.io.savemat(filepath, data_cleaned, **kwargs_scipy_savemat)
+
 
 def deep_update_dict(dictionary, key, val, in_place=False):
     """
