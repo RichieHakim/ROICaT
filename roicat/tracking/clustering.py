@@ -26,7 +26,36 @@ class Clusterer(util.ROICaT_Module):
         - Quality control:
             - self.compute_cluster_quality_metrics()
 
+    Initialization ingests and stores similarity matrices.
+
     RH 2022-2023
+
+    Args:
+        s_sf (scipy.sparse.csr_matrix):
+            Similarity matrix for spatial footprints.
+            Shape: (n_rois, n_rois). Symmetric.
+            Expecting input to be manhattan distance of
+                spatial footprints normalized between 0 and 1.
+        s_NN_z (scipy.sparse.csr_matrix):
+            Z-scored similarity matrix for neural network
+                output similaries.
+            Shape: (n_rois, n_rois). Non-symmetric.
+            Expecting input to be the cosine similarity 
+                matrix, z-scored row-wise.
+        s_SWT_z (scipy.sparse.csr_matrix):
+            Z-scored similarity matrix for scattering 
+                transform output similarities.
+            Shape: (n_rois, n_rois). Non-symmetric.
+            Expecting input to be the cosine similarity
+                matrix, z-scored row-wise.
+        s_sesh (scipy.sparse.csr_matrix, boolean):
+            Similarity matrix for session similarity.
+            Shape: (n_rois, n_rois). Symmetric.
+            Expecting input to be boolean, with 1s where
+                the two ROIs are from DIFFERENT sessions.
+        verbose (bool):
+            Whether to print out information about the
+                clustering process.
     """
     def __init__(
         self,
@@ -37,35 +66,6 @@ class Clusterer(util.ROICaT_Module):
         verbose=True,
     ):
         """
-        Initialise the clusterer object.
-        Ingests and stores similarity matrices.
-
-        Args:
-            s_sf (scipy.sparse.csr_matrix):
-                Similarity matrix for spatial footprints.
-                Shape: (n_rois, n_rois). Symmetric.
-                Expecting input to be manhattan distance of
-                 spatial footprints normalized between 0 and 1.
-            s_NN_z (scipy.sparse.csr_matrix):
-                Z-scored similarity matrix for neural network
-                 output similaries.
-                Shape: (n_rois, n_rois). Non-symmetric.
-                Expecting input to be the cosine similarity 
-                 matrix, z-scored row-wise.
-            s_SWT_z (scipy.sparse.csr_matrix):
-                Z-scored similarity matrix for scattering 
-                 transform output similarities.
-                Shape: (n_rois, n_rois). Non-symmetric.
-                Expecting input to be the cosine similarity
-                 matrix, z-scored row-wise.
-            s_sesh (scipy.sparse.csr_matrix, boolean):
-                Similarity matrix for session similarity.
-                Shape: (n_rois, n_rois). Symmetric.
-                Expecting input to be boolean, with 1s where
-                 the two ROIs are from DIFFERENT sessions.
-            verbose (bool):
-                Whether to print out information about the
-                 clustering process.
         """
         ## Imports
         super().__init__()

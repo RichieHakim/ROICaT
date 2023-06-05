@@ -27,8 +27,25 @@ class ROI_graph(util.ROICaT_Module):
     To accelerate computation and reduce memory usage, some of the
      computations are performed on 'blocks' of the full field of
      view.
+
+    Makes blocks of the field of view so that subsequent 
+     computations can be done blockwise.
     
     RH 2022
+
+    Args:
+        n_workers (int):
+            The number of workers to use for the computations.
+            Set to -1 to use all available cpu cores.
+            Used for spatial footprint manahattan distance computation,
+                computing hashes of cluster idx, and computing linkages.
+        algorithm_nearestNeigbors_spatialFootprints (str):
+            The algorithm to use for the nearest neighbors computation.
+            See sklearn.neighbors.NearestNeighbors for more information.
+        **kwargs_nearestNeigbors_spatialFootprints (dict):
+            The keyword arguments to use for the nearest neighbors.
+            Optional.
+            See sklearn.neighbors.NearestNeighbors for more information.
     """
     def __init__(
         self,
@@ -44,22 +61,6 @@ class ROI_graph(util.ROICaT_Module):
     ):
         """
         Initialize the class.
-        Makes blocks of the field of view so that subsequent 
-         computations can be done blockwise.
-
-        Args:
-            n_workers (int):
-                The number of workers to use for the computations.
-                Set to -1 to use all available cpu cores.
-                Used for spatial footprint manahattan distance computation,
-                 computing hashes of cluster idx, and computing linkages.
-            algorithm_nearestNeigbors_spatialFootprints (str):
-                The algorithm to use for the nearest neighbors computation.
-                See sklearn.neighbors.NearestNeighbors for more information.
-            **kwargs_nearestNeigbors_spatialFootprints (dict):
-                The keyword arguments to use for the nearest neighbors.
-                Optional.
-                See sklearn.neighbors.NearestNeighbors for more information.
         """
         ## Imports
         super().__init__()

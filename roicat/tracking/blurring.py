@@ -11,6 +11,18 @@ class ROI_Blurrer(util.ROICaT_Module):
     """
     Class for blurring ROIs.
     RH 2022
+
+    Args:
+        frame_shape (tuple):
+            The shape of the frame/FOV.
+            frame_shape[0] * frame_shape[1]
+                must equal the length of a single flattened/
+                sparse spatialFootprint.
+        kernel_halfWidth (int):
+            The half-width of the cosine kernel to use
+                for convolutional blurring.
+        plot_kernel (bool):
+            Whether to plot an image of the kernel.
     """
     def __init__(
         self,
@@ -19,21 +31,6 @@ class ROI_Blurrer(util.ROICaT_Module):
         plot_kernel=False,
         verbose=True,
     ):
-        """
-        Initialize the class.
-
-        Args:
-            frame_shape (tuple):
-                The shape of the frame/FOV.
-                frame_shape[0] * frame_shape[1]
-                 must equal the length of a single flattened/
-                 sparse spatialFootprint.
-            kernel_halfWidth (int):
-                The half-width of the cosine kernel to use
-                 for convolutional blurring.
-            plot_kernel (bool):
-                Whether to plot an image of the kernel.
-        """
         ## Imports
         super().__init__()
 

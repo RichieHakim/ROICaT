@@ -643,7 +643,49 @@ class Data_suite2p(Data_roicat):
     """
     Class for handling suite2p output files and data.
     In particular stat.npy and ops.npy files.
-    RH, JZ 2022
+    Imports FOV images and spatial footprints,
+     and prepares ROI images.
+    RH 2022
+
+    Args:
+        paths_statFiles (list of str or pathlib.Path):
+            List of paths to the stat.npy files.
+            Elements should be one of: str, pathlib.Path,
+                list of str or list of pathlib.Path
+        paths_opsFiles (list of str or pathlib.Path):
+            List of paths to the ops.npy files.
+            Elements should be one of: str, pathlib.Path,
+                list of str or list of pathlib.Path
+            Optional. 
+            Used to get FOV_images, FOV_height,
+                FOV_width, and shifts (if old matlab ops file).
+        um_per_pixel (float):
+            Resolution. 'micrometers per pixel' of the imaging
+             field of view.
+        new_or_old_suite2p (str):
+            Type of suite2p output files. Matlab=old, Python=new.
+            Should be: 'new' or 'old'.
+        out_height_width (tuple of int):
+            Height and width of output ROI images.
+            Should be: (int, int) (y, x).                
+        class_labels ((list of np.ndarray) or (list of str to paths) or None):
+            Optional. 
+            If None, class labels are not set.
+            If list of np.ndarray, each element should be
+                1D integer array of length n_roi specifying
+                the class label for each ROI.
+            If list of str, each element should be a path
+                to a .npy file containing 
+                of length n_roi specifying the class label 
+                for each ROI.
+        centroid_method (str):
+            Method for calculating centroid of ROI.
+            Should be: 'centerOfMass' or 'median'.
+        FOV_height_width (tuple of int):
+            Optional. If None, paths_opsFiles must be
+                provided to get FOV height and width.
+        verbose (bool):
+            If True, prints results from each function.
     """
     def __init__(
         self,
@@ -664,50 +706,6 @@ class Data_suite2p(Data_roicat):
         verbose=True,
     ):
         super().__init__()
-        """
-        Initializes the class for importing FOV images,
-         spatial footprints and prepareing ROI images.
-        Args:
-            paths_statFiles (list of str or pathlib.Path):
-                List of paths to the stat.npy files.
-                Elements should be one of: str, pathlib.Path,
-                 list of str or list of pathlib.Path
-            paths_opsFiles (list of str or pathlib.Path):
-                List of paths to the ops.npy files.
-                Elements should be one of: str, pathlib.Path,
-                 list of str or list of pathlib.Path
-                Optional. 
-                Used to get FOV_images, FOV_height,
-                 FOV_width, and shifts (if old matlab ops file).
-            um_per_pixel (float):
-                Resolution of imaging field of view.
-                'micrometers per pixel' of the imaging field
-                  of view.
-            new_or_old_suite2p (str):
-                Type of suite2p output files. Matlab=old, Python=new.
-                Should be: 'new' or 'old'.
-            out_height_width (tuple of int):
-                Height and width of output ROI images.
-                Should be: (int, int) (y, x).                
-            class_labels ((list of np.ndarray) or (list of str to paths) or None):
-                Optional. 
-                If None, class labels are not set.
-                If list of np.ndarray, each element should be
-                 1D integer array of length n_roi specifying
-                 the class label for each ROI.
-                If list of str, each element should be a path
-                 to a .npy file containing 
-                 of length n_roi specifying the class label 
-                 for each ROI.
-            centroid_method (str):
-                Method for calculating centroid of ROI.
-                Should be: 'centerOfMass' or 'median'.
-            FOV_height_width (tuple of int):
-                Optional. If None, paths_opsFiles must be
-                 provided to get FOV height and width.
-            verbose (bool):
-                If True, prints results from each function.
-        """
 
         self.paths_stat = fix_paths(paths_statFiles)
         self.paths_ops = fix_paths(paths_opsFiles) if paths_opsFiles is not None else None

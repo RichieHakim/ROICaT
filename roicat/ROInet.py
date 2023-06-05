@@ -71,7 +71,69 @@ class ROInet_embedder(util.ROICaT_Module):
             357a8d9b630ec79f3e015d0056a4c2d5
 
 
-    RH/JZ 2022
+    RH, JZ 2022
+
+    Initialization of the class.
+    This will look for a local copy of the network files, and
+        if they don't exist, it will download them from Google Drive
+        using a user specified download_url.
+    There is some hash checking to make sure the files are the same.
+
+    Args:
+        dir_networkFiles (str):
+            The directory to find an existing ROInet.zip file
+                or download and extract a new one into.
+        device (str):
+            The device to use for the model and data.
+        download_method (str):
+            Approach to downloading the network files.
+            'check_local_first':
+                Check if the network files are already in
+                    dir_networkFiles. If so, use them.
+            'force_download':
+                Download an ROInet.zip file from download_url.
+            'force_local':
+                Use an existing local copy of an ROInet.zip file.
+                If they don't exist, raise an error.
+                Hash checking is done and download_hash must be
+                    specified.
+        download_url (str):
+            The url to download the ROInet.zip file from.
+        download_hash (dict):
+            MD5 hash of the ROInet.zip file. This can be obtained
+                from ROICaT documentation. If you don't have one,
+                use download_method='force_download' and determine
+                the hash using helpers.hash_file().
+        names_networkFiles (dict):
+            Optional. The names of the files in the ROInet.zip
+                file.
+            If uncertain, leave as None.
+            Should be of form (example):
+            {
+                'params': 'params.json',
+                'model': 'model.py',
+                'state_dict': 'ConvNext_tiny__1_0_unfrozen__simCLR.pth'
+            }
+            'params':
+                The parameters used to train the network.
+                    Usually a .json file.
+            'model':
+                The model definition. Usually a .py file.
+            'state_dict':
+                The weights of the network. Usually a .pth
+                    file.
+        forward_pass_version (str):
+            The version of the forward pass to use.
+            'latent':
+                Return the post-head output latents.
+                Use this for tracking.
+            'head':
+                Return the output of the head layers.
+                Use this for classification.
+            'base':
+                Return the output of the base model.
+        verbose (bool):
+            Whether to print out extra information.
     """
     def __init__(
         self,
@@ -84,69 +146,6 @@ class ROInet_embedder(util.ROICaT_Module):
         forward_pass_version='latent',
         verbose=True,
     ):
-        """
-        Initialize the class.
-        This will look for a local copy of the network files, and
-         if they don't exist, it will download them from Google Drive
-         using a user specified download_url.
-        There is some hash checking to make sure the files are the same.
-
-        Args:
-            dir_networkFiles (str):
-                The directory to find an existing ROInet.zip file
-                 or download and extract a new one into.
-            device (str):
-                The device to use for the model and data.
-            download_method (str):
-                Approach to downloading the network files.
-                'check_local_first':
-                    Check if the network files are already in
-                     dir_networkFiles. If so, use them.
-                'force_download':
-                    Download an ROInet.zip file from download_url.
-                'force_local':
-                    Use an existing local copy of an ROInet.zip file.
-                    If they don't exist, raise an error.
-                    Hash checking is done and download_hash must be
-                     specified.
-            download_url (str):
-                The url to download the ROInet.zip file from.
-            download_hash (dict):
-                MD5 hash of the ROInet.zip file. This can be obtained
-                 from ROICaT documentation. If you don't have one,
-                 use download_method='force_download' and determine
-                 the hash using helpers.hash_file().
-            names_networkFiles (dict):
-                Optional. The names of the files in the ROInet.zip
-                 file.
-                If uncertain, leave as None.
-                Should be of form (example):
-                {
-                    'params': 'params.json',
-                    'model': 'model.py',
-                    'state_dict': 'ConvNext_tiny__1_0_unfrozen__simCLR.pth'
-                }
-                'params':
-                    The parameters used to train the network.
-                     Usually a .json file.
-                'model':
-                    The model definition. Usually a .py file.
-                'state_dict':
-                    The weights of the network. Usually a .pth
-                     file.
-            forward_pass_version (str):
-                The version of the forward pass to use.
-                'latent':
-                    Return the post-head output latents.
-                    Use this for tracking.
-                'head':
-                    Return the output of the head layers.
-                    Use this for classification.
-                'base':
-                    Return the output of the base model.
-            verbose (bool):
-                Whether to print out extra information.
-        """
         ## Imports
         super().__init__()
 
