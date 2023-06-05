@@ -200,42 +200,35 @@ def get_system_versions(verbose=False):
     ## CUDA
     if torch.cuda.is_available():
         cuda_version = torch.version.cuda
-        print(f"\
-CUDA Version: {cuda_version}, \
-CUDNN Version: {torch.backends.cudnn.version()}, \
-Number of Devices: {torch.cuda.device_count()}, \
-Devices: {[f'device {i}: Name={torch.cuda.get_device_name(i)}, Memory={torch.cuda.get_device_properties(i).total_memory / 1e9} GB' for i in range(torch.cuda.device_count())]}, \
-") if verbose else None
+        cudnn_version = torch.backends.cudnn.version()
+        devices = [f'device {i}: Name={torch.cuda.get_device_name(i)}, Memory={torch.cuda.get_device_properties(i).total_memory / 1e9} GB' for i in range(torch.cuda.device_count())]
+        print(f"CUDA Version: {cuda_version}, CUDNN Version: {cudnn_version}, Number of Devices: {torch.cuda.device_count()}, Devices: {devices}, ") if verbose else None
     else:
         cuda_version = None
+        cudnn_version = None
+        devices = None
         print('CUDA is not available') if verbose else None
-
-    ## Numpy
-    import numpy
-    numpy_version = numpy.__version__
-    print(f'Numpy Version: {numpy_version}') if verbose else None
-
-    ## OpenCV
-    import cv2
-    opencv_version = cv2.__version__
-    print(f'OpenCV Version: {opencv_version}') if verbose else None
-    # print(cv2.getBuildInformation())
 
     ## roicat
     import roicat
     roicat_version = roicat.__version__
     print(f'roicat Version: {roicat_version}') if verbose else None
 
+    ## all packages in environment
+    import pkg_resources
+    pkgs_dict = {i.key: i.version for i in pkg_resources.working_set}
+
     versions = {
-        'roicat_version': roicat_version,
+        'roicat': roicat_version,
         'operating_system': operating_system,
         'conda_env': conda_env,
-        'python_version': python_version,
-        'gcc_version': gcc_version,
-        'torch_version': torch_version,
-        'cuda_version': cuda_version,
-        'numpy_version': numpy_version,
-        'opencv_version': opencv_version,
+        'python': python_version,
+        'gcc': gcc_version,
+        'torch': torch_version,
+        'cuda': cuda_version,
+        'cudnn': cudnn_version,
+        'devices': devices,
+        'pkgs': pkgs_dict,
     }
 
     return versions
