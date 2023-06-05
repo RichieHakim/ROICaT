@@ -292,9 +292,7 @@ class ROInet_embedder(util.ROICaT_Module):
 
         print('Starting: resizing ROIs') if self._verbose else None
         
-        
         sf_rs = [self.resize_ROIs(rois, um_per_pixel) for rois in ROI_images]
-        
         
         ROI_images_cat = np.concatenate(ROI_images, axis=0)
         ROI_images_rs = np.concatenate(sf_rs, axis=0)
