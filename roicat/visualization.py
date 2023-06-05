@@ -193,7 +193,7 @@ def compute_colored_FOV(
         return v
     
     labels = _fix_list_of_arrays(labels)
-    alphas_sf = _fix_list_of_arrays(alphas_sf)
+    alphas_sf = _fix_list_of_arrays(alphas_sf) if alphas_sf is not None else None
 
     labels_cat = np.concatenate(labels)
     u = np.unique(labels_cat)
@@ -232,8 +232,7 @@ def compute_colored_FOV(
     rois_c.data = np.minimum(rois_c.data, 1)
 
     ## apply alpha
-    rois_c = rois_c.multiply(alphas_labels[labels_squeezed][:,None]).tocsr()
-    rois_c = rois_c.multiply(alphas_sf[:,None]).tocsr()
+    rois_c = rois_c.multiply(alphas_labels[labels_squeezed][:,None] * alphas_sf[:,None]).tocsr()
 
     ## make session_bool
     session_bool = util.make_session_bool(n_roi)
@@ -272,15 +271,46 @@ def crop_cluster_ims(ims):
     im_out[:,:,(0,-1)] = 1
     return im_out
 
+def display_cropped_cluster_ims(
+    spatialFootprints, 
+    labels, 
+    FOV_height=512, 
+    FOV_width=1024,
+    n_labels_to_display=100,
+):
+    """
+    Displays the cropped cluster images.
+    RH 2023
 
-def confusion_matrix(cm, **params):
-    default_params = dict(
-        annot=True,
-        annot_kws={"size": 16},
-        vmin=0.,
-        vmax=1.,
-        cmap=plt.get_cmap('gray')
-    )
-    for key in params:
-        default_params[key] = params[key]
-    sns.heatmap(cm, **default_params)
+    Args:
+        spatialFootprints (list):
+            List of spatial footprints.
+        labels (np.ndarray):
+            Labels for each ROI.
+        FOV_height (int, optional):
+            Height of the field of view.
+        FOV_width (int, optional):
+            Width of the field of view.
+        n_labels_to_display (int, optional):
+            Number of labels to display.
+    """
+    import scipy.sparse
+
+    labels_unique = np.unique(labels[labels>-1])
+
+    ROI_ims_sparse = scipy.sparse.vstack(spatialFootprints)
+    ROI_ims_sparse = ROI_ims_sparse.multiply( ROI_ims_sparse.max(1).power(-1) ).tocsr()
+
+    labels_bool_t = scipy.sparse.vstack([scipy.sparse.csr_matrix(labels==u) for u in np.sort(np.unique(labels_unique))]).tocsr()
+    labels_bool_t = labels_bool_t[:n_labels_to_display]
+
+    def helper_crop_cluster_ims(ii):
+        idx = labels_bool_t[ii].indices
+        return np.concatenate(list(crop_cluster_ims(ROI_ims_sparse[idx].toarray().reshape(len(idx), FOV_height, FOV_width))), axis=1)
+
+    labels_sfCat = [helper_crop_cluster_ims(ii) for ii in range(labels_bool_t.shape[0])]
+
+    for sf in labels_sfCat[:n_labels_to_display]:
+        plt.figure(figsize=(40,1))
+        plt.imshow(sf, cmap='gray')
+        plt.axis('off')
