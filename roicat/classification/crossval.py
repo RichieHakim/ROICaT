@@ -113,6 +113,18 @@ def view_cv_dict(cv_dct):
          Dictionary of tuples associated with c-value classifier performance metrics
          consisting of averaged (train CM, val CM, train acc, val acc)
     """
+    def confusion_matrix(cm, **params):
+        default_params = dict(
+            annot=True,
+            annot_kws={"size": 16},
+            vmin=0.,
+            vmax=1.,
+            cmap=plt.get_cmap('gray')
+        )
+        for key in params:
+            default_params[key] = params[key]
+        sns.heatmap(cm, **default_params)
+
     for k in cv_dct:
         c = k.replace('cm_','')
         fig, ax = plt.subplots(1, 2, figsize=(10,3))
@@ -122,8 +134,8 @@ def view_cv_dict(cv_dct):
 #         sns.heatmap(cv_dct[k][0], annot=True, annot_kws={"size": 16}, vmax=1., cmap=plt.get_cmap('gray'), ax=ax[0])
 #         sns.heatmap(cv_dct[k][1], annot=True, annot_kws={"size": 16}, vmax=1., cmap=plt.get_cmap('gray'), ax=ax[1])
         
-        cviz.confusion_matrix(np.round(cv_dct[k][0],4), ax=ax[0])
-        cviz.confusion_matrix(np.round(cv_dct[k][1],4), ax=ax[1])
+        confusion_matrix(np.round(cv_dct[k][0],4), ax=ax[0])
+        confusion_matrix(np.round(cv_dct[k][1],4), ax=ax[1])
         
         ax[0].set_title(f'Train — Acc: {cv_dct[k][2]}')
         ax[1].set_title(f'Val — Acc: {cv_dct[k][3]}')
