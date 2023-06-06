@@ -12,7 +12,6 @@ from collections import defaultdict
 from sklearn.metrics import accuracy_score
 import pandas as pd
 from tqdm import tqdm, trange
-import roicat
 from roicat import ROInet, data_importing
 import warnings
 import h5py
@@ -24,123 +23,6 @@ activation_lookup = {
                'selu': nn.SELU,
                'sigmoid': nn.Sigmoid,
     }
-
-def import_data(
-        list_dict_data=[]
-
-        # list_dict_data_suite2p=[],
-        # list_dict_data_caiman=[],
-        # list_dict_data_raw=[],
-        # list_dict_data_raw_sparse=[],
-
-        # um_per_pixel,
-        # new_or_old_suite2p,
-        # out_height_width,
-        # type_meanImg,
-        # FOV_images,
-        # verbose,
-):
-    print(f"JZ: Number of sessions to be imported from suite2p = {len(list_dict_data_suite2p)}")
-    print(f"JZ: Number of sessions to be imported from caiman = {len(list_dict_data_caiman)}")
-    print(f"JZ: Number of sessions to be imported from raw = {len(list_dict_data_raw)}")
-    print(f"JZ: Number of sessions to be imported from raw_sparse = {len(list_dict_data_raw_sparse)}")
-
-    if len(list_dict_data) > 0:
-        # Check that all suite2p imports have the same parameters (except for filepath_stat and filepath_ops)
-        params_import = {}
-        for dict_data in list_dict_data:
-            if dict_data['datatype'] == 'suite2p': assert 'filepath_stat' in dict_data and 'filepath_ops' in dict_data, 'JZ: suite2p imports must include filepath_stat and filepath_ops'
-            if dict_data['datatype'] == 'raw_ROIs': assert 'filename_rawImages' in dict_data, 'JZ: raw_ROIs imports must include filepath_stat and filepath_ops'
-            if dict_data['datatype'] == 'raw_ROIs_sparse': assert 'filename_rawImages_sparse' in dict_data, 'JZ: raw_ROIs_sparse imports must include filepath_stat and filepath_ops'
-            if dict_data['datatype'] == 'caiman': assert False
-            
-            for key, value in dict_data.items():
-                if key == 'datatype':
-                    continue
-                elif 'filepath' in key:
-                    params_import_suite2p[key] = params_import_suite2p.get(key, []) + [value]
-                    continue
-                elif key in params_import:
-                    assert params_import[key] == dict_data[key], f'JZ: All suite2p imports must have the same {key}'
-                else:
-                    params_import[key] = dict_data[key]
-
-        # Create data importing object to import suite2p data
-        data = roicat.data_importing.Data_suite2p(**params_import_suite2p)
-
-        # paths_statFiles=params_import_suite2p['filepath_stat'],
-        # paths_opsFiles=params_import_suite2p['filepath_ops'],
-        # class_labels=params_import_suite2p['filepath_labels'],
-        # um_per_pixel=params['hyperparameters_data']['um_per_pixel'],
-        # new_or_old_suite2p=params['hyperparameters_data']['new_or_old_suite2p'],
-        # out_height_width=params['hyperparameters_data']['out_height_width'],
-        # type_meanImg=params['hyperparameters_data']['type_meanImg'],
-        # FOV_images=params['hyperparameters_data']['FOV_images'],
-        # verbose=params['hyperparameters_data']['verbose'],
-    
-
-    if len(list_dict_data_caiman) > 0:
-        # Check that all suite2p imports have the same parameters (except for filepath_stat and filepath_ops)
-        params_import_suite2p = {}
-        for dict_data_suite2p in list_dict_data_suite2p:
-            assert 'filepath_stat' in dict_data_suite2p and 'filepath_ops' in dict_data_suite2p, 'JZ: suite2p imports must include filepath_stat and filepath_ops'
-            for key, value in dict_data_suite2p.items():
-                if 'filepath' in key:
-                    params_import_suite2p[key] = params_import_suite2p.get(key, []) + [value]
-                    continue
-                elif key in params_import_suite2p:
-                    assert params_import_suite2p[key] == dict_data_suite2p[key], f'JZ: All suite2p imports must have the same {key}'
-                else:
-                    params_import_suite2p[key] = dict_data_suite2p[key]
-
-        # Create data importing object to import suite2p data
-        data = roicat.data_importing.Data_suite2p(**params_import_suite2p)
-
-        # paths_statFiles=params_import_suite2p['filepath_stat'],
-        # paths_opsFiles=params_import_suite2p['filepath_ops'],
-        # class_labels=params_import_suite2p['filepath_labels'],
-        # um_per_pixel=params['hyperparameters_data']['um_per_pixel'],
-        # new_or_old_suite2p=params['hyperparameters_data']['new_or_old_suite2p'],
-        # out_height_width=params['hyperparameters_data']['out_height_width'],
-        # type_meanImg=params['hyperparameters_data']['type_meanImg'],
-        # FOV_images=params['hyperparameters_data']['FOV_images'],
-        # verbose=params['hyperparameters_data']['verbose'],
-    
-
-    elif params['datatype'] == "caiman":
-        
-        # TODO: Add Caiman data importing
-        # # assert 'filename_stat' in params['paths'] and 'filename_ops' in params['paths'], 'JZ: The caiman params.json file must include paths.filename_stat and paths.filename_ops for stat_s2p datatype'
-        # filepath_data_stat = str((Path(params['paths']['directory_data']) / params['paths']['filename_stat']).resolve())
-        # filepath_data_ops = str((Path(params['paths']['directory_data']) / params['paths']['filename_ops']).resolve())
-
-        # # # Create data importing object to import suite2p data
-        # # data = roicat.data_importing.Data_caiman(
-        # #     paths_statFiles=[filepath_data_stat],
-        # #     paths_opsFiles=[filepath_data_ops],
-        # #     class_labels=[filepath_data_labels],
-        #     # um_per_pixel=params['hyperparameters_data']['um_per_pixel'],
-        #     # new_or_old_suite2p=params['hyperparameters_data']['new_or_old_suite2p'],
-        #     # out_height_width=params['hyperparameters_data']['out_height_width'],
-        #     # type_meanImg=params['hyperparameters_data']['type_meanImg'],
-        #     # FOV_images=params['hyperparameters_data']['FOV_images'],
-        #     # verbose=params['hyperparameters_data']['verbose'],
-        # # )
-        pass
-    elif params['datatype'] == "raw_images":
-        assert 'filename_rawImages' in params['paths'], 'JZ: The suite2p params.json file must include paths.filename_rawImages for raw_images datatype'
-        filepath_data_rawImages = str((Path(params['paths']['directory_data']) / params['paths']['filename_rawImages']).resolve())
-
-        sf = scipy.sparse.load_npz(filepath_data_rawImages)
-        labels = np.load(filepath_data_labels)
-
-        data = roicat.data_importing.Data_roicat(verbose=True)
-        data.set_ROI_images(ROI_images=[sf.A.reshape(sf.shape[0], 36, 36)], um_per_pixel=params['hyperparameters_data']['um_per_pixel'])
-        data.set_class_labels(class_labels=[labels.astype(int)])
-    else:
-        raise ValueError(f"Invalid datatype for simclr: {params['datatype']}")
-
-    return
 
 class Datasplit():
     """
