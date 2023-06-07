@@ -592,7 +592,7 @@ class Data_roicat(util.ROICaT_Module):
             'n_roi_total',
             'FOV_height',
             'FOV_width',
-            ]}
+        ]}
         return f"Data_roicat object: {attr_to_print}."
 
     def import_from_dict(self, dict_load):
