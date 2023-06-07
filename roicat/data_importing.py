@@ -273,10 +273,16 @@ class Data_roicat(util.ROICaT_Module):
 
         Args:
             spatialFootprints (list):
-                List of scipy.sparse.csr_matrix objects, one for
-                 each session. Each matrix should have shape
-                 (n_ROIs, FOV_height * FOV_width). Reshaping should
-                 be done with 'C' indexing (standard).
+                One of the following:
+                - List of scipy.sparse.csr_matrix objects, one for
+                   each session. Each matrix should have shape
+                   (n_ROIs, FOV_height * FOV_width). Reshaping should
+                   be done with 'C' indexing (standard).
+                - List of dictionaries, one for each session. This 
+                  dictionary should be a serialized scipy.sparse.csr_matrix
+                  object. It should contains keys: 'data', 'indices',
+                  'indptr', 'shape'. See scipy.sparse.csr_matrix for
+                  more information.
             um_per_pixel (float):
                 The number of microns per pixel. This is used to
                  resize the images to a common size.
@@ -288,6 +294,11 @@ class Data_roicat(util.ROICaT_Module):
                 um_per_pixel = self.um_per_pixel
             print("RH WARNING: No um_per_pixel provided. We recommend making an educated guess. Assuming 1.0 um per pixel. This will affect the embedding results.")
             um_per_pixel = 1.0
+
+        ## If the input are dictionaries, assume that it is a serialized scipy.sparse.csr_matrix object and convert it
+        if all([isinstance(s, dict) for s in spatialFootprints]):
+            print("RH WARNING: spatialFootprints are dictionaries, assuming that they are serialized scipy.sparse.csr_matrix objects and converting them.") if self._verbose else None
+            spatialFootprints = [scipy.sparse.csr_matrix((sf['data'], sf['indices'], sf['indptr']), shape=sf['_shape']) for sf in spatialFootprints]
 
         ## Check inputs
         assert isinstance(spatialFootprints, list), f"RH ERROR: spatialFootprints must be a list."
@@ -404,26 +415,30 @@ class Data_roicat(util.ROICaT_Module):
          given the attributes that have been set.
         """
         completeness = {}
+        keys_classification_inference = ['ROI_images', 'um_per_pixel']
+        keys_classification_training = ['ROI_images', 'um_per_pixel', 'class_labels']
+        keys_tracking = ['ROI_images', 'um_per_pixel', 'spatialFootprints', 'FOV_images']
+        
         ## Check classification inference:
         ### ROI_images, um_per_pixel
-        if hasattr(self, 'ROI_images') and hasattr(self, 'um_per_pixel'):
+        if all([hasattr(self, key) for key in keys_classification_inference]):
             completeness['classification_inference'] = True
         else:
-            print(f"RH WARNING: Classification-Inference incomplete because following attributes are missing: {[key for key in ['ROI_images', 'um_per_pixel'] if not hasattr(self, key)]}") if verbose else None
+            print(f"RH WARNING: Classification-Inference incomplete because following attributes are missing: {[key for key in keys_classification_inference if not hasattr(self, key)]}") if verbose else None
             completeness['classification_inference'] = False
         ## Check classification training:
         ### ROI_images, um_per_pixel, class_labels
-        if hasattr(self, 'ROI_images') and hasattr(self, 'um_per_pixel') and hasattr(self, 'class_labels'):
+        if all([hasattr(self, key) for key in keys_classification_training]):
             completeness['classification_training'] = True
         else:
-            print(f"RH WARNING: Classification-Training incomplete because following attributes are missing: {[key for key in ['ROI_images', 'um_per_pixel', 'class_labels'] if not hasattr(self, key)]}") if verbose else None
+            print(f"RH WARNING: Classification-Training incomplete because the following attributes are missing: {[key for key in keys_tracking if not hasattr(self, key)]}") if verbose else None
             completeness['classification_training'] = False
         ## Check tracking:
         ### um_per_pixel, spatialFootprints, FOV_images
-        if hasattr(self, 'ROI_images') and hasattr(self, 'um_per_pixel') and hasattr(self, 'spatialFootprints') and hasattr(self, 'FOV_images'):
+        if all([hasattr(self, key) for key in keys_tracking]):
             completeness['tracking'] = True
         else:
-            print(f"RH WARNING: Tracking incomplete because following attributes are missing: {[key for key in ['ROI_images', 'um_per_pixel', 'spatialFootprints', 'FOV_images'] if not hasattr(self, key)]}") if verbose else None
+            print(f"RH WARNING: Tracking incomplete because the following attributes are missing: {[key for key in keys_tracking if not hasattr(self, key)]}") if verbose else None
             completeness['tracking'] = False
 
         self._checkValidity_classLabels_vs_ROIImages(verbose=verbose)
@@ -579,57 +594,34 @@ class Data_roicat(util.ROICaT_Module):
             'FOV_width',
             ]}
         return f"Data_roicat object: {attr_to_print}."
-    
-    def save(
-        self, 
-        path_save,
-        compress=False,
-        allow_overwrite=False,
-    ):
+
+    def load_from_dict(self, dict_load):
         """
-        Save Data_roicat object to pickle file.
-        
-        Args:
-            save_path (str or pathlib.Path):
-                Path to save pickle file.
+        Load attributes from a dictionary. This is useful if a serializable
+         dictionary was saved.
         """
-        from pathlib import Path
-        ## Check if file already exists
-        if not allow_overwrite:
-            assert not Path(path_save).exists(), f"RH ERROR: File already exists: {path_save}. Set allow_overwrite=True to overwrite."
+        ## Go through each important attribute in Data_roicat and look for it in dict_load
+        methods = {
+            self.set_ROI_images: ['ROI_images', 'um_per_pixel'],
+            self.set_spatialFootprints: ['spatialFootprints', 'um_per_pixel'],
+            self.set_FOV_images: ['FOV_images'],
+            self.set_class_labels: ['class_labels'],
+        }
 
-        helpers.pickle_save(
-            obj=self,
-            path_save=path_save,
-            zipCompress=compress,
-            allow_overwrite=allow_overwrite,
-        )
-        print(f"Saved Data_roicat as a pickled object to {path_save}.") if self._verbose else None
-
-    def load(self, path_load):
-        """
-        Load attributes from Data_roicat object from pickle file.
+        methodKeys_all = list(set(sum(list(methods.values()), [])))
         
-        Args:
-            path_load (str or pathlib.Path):
-                Path to pickle file.
+        ## Set other attributes
+        for key, val in dict_load.items():
+            if key not in methodKeys_all:
+                setattr(self, key, val)
+
+        ## Set attributes using methods
+        for method, methodKeys in methods.items():
+            if all([key in dict_load for key in methodKeys]):
+                method(**{key: dict_load[key] for key in methodKeys})
+            else:
+                print(f"RH WARNING: Could not load attribute using method {method.__name__}. Keys {methodKeys} not found in dict_load.") if self._verbose else None
         
-        Returns:
-            Data_roicat object.
-        """
-        from pathlib import Path
-        assert Path(path_load).exists(), f"RH ERROR: File does not exist: {path_load}."
-        obj = helpers.pickle_load(path_load)
-        assert isinstance(obj, type(self)), f"RH ERROR: Loaded object is not a Data_roicat object. Loaded object is of type {type(obj)}."
-
-        ## Set attributes
-        for key, val in obj.__dict__.items():
-            setattr(self, key, val)
-        
-
-        print(f"Loaded Data_roicat object from {path_load}.") if obj._verbose else None
-
-
 
 ############################################################################################################################
 ############################## CUSTOM CLASSES FOR SUITE2P AND CAIMAN OUTPUT FILES ##########################################

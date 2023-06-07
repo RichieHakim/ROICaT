@@ -408,6 +408,65 @@ class ROICaT_Module:
         serializable_dict = make_serializable_dict(self, depth=0, max_depth=100, name='self')
         return serializable_dict
 
+    def save(
+        self, 
+        path_save,
+        save_as_serializable_dict=False,
+        compress=False,
+        allow_overwrite=False,
+    ):
+        """
+        Save Data_roicat object to pickle file.
+        
+        Args:
+            save_path (str or pathlib.Path):
+                Path to save pickle file.
+        """
+        from pathlib import Path
+        ## Check if file already exists
+        if not allow_overwrite:
+            assert not Path(path_save).exists(), f"RH ERROR: File already exists: {path_save}. Set allow_overwrite=True to overwrite."
+
+        helpers.pickle_save(
+            obj=self.serializable_dict if save_as_serializable_dict else self,
+            path_save=path_save,
+            zipCompress=compress,
+            mkdir=True,
+            allow_overwrite=allow_overwrite,
+        )
+        print(f"Saved Data_roicat as a pickled object to {path_save}.") if self._verbose else None
+
+    def load(self, path_load):
+        """
+        Load attributes from Data_roicat object from pickle file.
+        
+        Args:
+            path_load (str or pathlib.Path):
+                Path to pickle file.
+        
+        Returns:
+            Data_roicat object.
+        """
+        from pathlib import Path
+        assert Path(path_load).exists(), f"RH ERROR: File does not exist: {path_load}."
+        obj = helpers.pickle_load(path_load)
+        assert isinstance(obj, (type(self), dict)), f"RH ERROR: Loaded object is not a Data_roicat object or dictionary. Loaded object is of type {type(obj)}."
+
+        if isinstance(obj, dict):
+            ## Set attributes from dict
+            ### If the object has a load_from_dict method, use that.
+            if hasattr(self, 'load_from_dict'):
+                self.load_from_dict(obj)
+            else:
+                for key, val in obj.items():
+                    setattr(self, key, val)
+        else:
+            ## Set attributes from object
+            for key, val in obj.__dict__.items():
+                setattr(self, key, val)
+
+        print(f"Loaded Data_roicat object from {path_load}.") if self._verbose else None
+
 
 ##########################################################################################################################
 ############################################### UCID handling ############################################################
