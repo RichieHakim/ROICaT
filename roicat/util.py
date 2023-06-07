@@ -175,7 +175,7 @@ def system_info(verbose=False):
             return None
     fns = {key: val for key, val in platform.__dict__.items() if (callable(val) and key[0] != '_')}
     operating_system = {key: try_fns(val) for key, val in fns.items() if (callable(val) and key[0] != '_')}
-    print(f'Operating System: {operating_system}') if verbose else None
+    print(f'== Operating System ==: {operating_system}') if verbose else None
 
     ## CPU info
     try:
@@ -190,12 +190,12 @@ def system_info(verbose=False):
     except Exception as e:
         warnings.warn(f'RH WARNING: unable to get cpu info. Got error: {e}')
         cpu_info = 'ROICaT Error: Failed to get'
-    print(f'CPU Info: {cpu_info}') if verbose else None
+    print(f'== CPU Info ==: {cpu_info}') if verbose else None
 
     ## RAM
     import psutil
     ram = psutil.virtual_memory()
-    print(f'RAM: {ram}') if verbose else None
+    print(f'== RAM ==: {ram}') if verbose else None
 
     ## User
     import getpass
@@ -209,7 +209,7 @@ def system_info(verbose=False):
     except Exception as e:
         warnings.warn(f'RH WARNING: unable to get gpu info. Got error: {e}')
         gpu_info = 'ROICaT Error: Failed to get'
-    print(f'GPU Info: {gpu_info}') if verbose else None
+    print(f'== GPU Info ==: {gpu_info}') if verbose else None
     
     ## Conda Environment
     import os
@@ -217,12 +217,12 @@ def system_info(verbose=False):
         conda_env = 'None'
     else:
         conda_env = os.environ['CONDA_DEFAULT_ENV']
-    print(f'Conda Environment: {conda_env}') if verbose else None
+    print(f'== Conda Environment ==: {conda_env}') if verbose else None
 
     ## Python
     import sys
     python_version = sys.version.split(' ')[0]
-    print(f'Python Version: {python_version}') if verbose else None
+    print(f'== Python Version ==: {python_version}') if verbose else None
 
     ## GCC
     import subprocess
@@ -231,23 +231,23 @@ def system_info(verbose=False):
     except Exception as e:
         warnings.warn(f'RH WARNING: unable to get gcc version. Got error: {e}')
         gcc_version = 'Faled to get'
-    print(f'GCC Version: {gcc_version}') if verbose else None
+    print(f'== GCC Version ==: {gcc_version}') if verbose else None
     
     ## PyTorch
     import torch
     torch_version = str(torch.__version__)
-    print(f'PyTorch Version: {torch_version}') if verbose else None
+    print(f'== PyTorch Version ==: {torch_version}') if verbose else None
     ## CUDA
     if torch.cuda.is_available():
         cuda_version = torch.version.cuda
         cudnn_version = torch.backends.cudnn.version()
         torch_devices = [f'device {i}: Name={torch.cuda.get_device_name(i)}, Memory={torch.cuda.get_device_properties(i).total_memory / 1e9} GB' for i in range(torch.cuda.device_count())]
-        print(f"CUDA Version: {cuda_version}, CUDNN Version: {cudnn_version}, Number of Devices: {torch.cuda.device_count()}, Devices: {torch_devices}, ") if verbose else None
+        print(f"== CUDA Version ==: {cuda_version}, CUDNN Version: {cudnn_version}, Number of Devices: {torch.cuda.device_count()}, Devices: {torch_devices}, ") if verbose else None
     else:
         cuda_version = None
         cudnn_version = None
         torch_devices = None
-        print('CUDA is not available') if verbose else None
+        print('== CUDA is not available ==') if verbose else None
 
     ## all packages in environment
     import pkg_resources
@@ -260,8 +260,8 @@ def system_info(verbose=False):
     roicat_version = roicat.__version__
     roicat_fileDate = time.ctime(os.path.getctime(pkg_resources.get_distribution("roicat").location))
     roicat_stuff = {'version': roicat_version, 'date_installed': roicat_fileDate}
-    print(f'roicat Version: {roicat_version}') if verbose else None
-    print(f'roicat date installed: {roicat_fileDate}') if verbose else None
+    print(f'== ROICaT Version ==: {roicat_version}') if verbose else None
+    print(f'== ROICaT date installed ==: {roicat_fileDate}') if verbose else None
 
     ## get datetime
     from datetime import datetime
