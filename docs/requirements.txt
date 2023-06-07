@@ -1,4 +1,25 @@
-# Defining the exact version will make sure things don't break
-sphinx==4.5.0
-sphinx_rtd_theme==1.1.1
-readthedocs-sphinx-search==0.1.1
+sphinx==7.0.1
+# sphinx-rtd-theme==1.2.1
+readthedocs-sphinx-search
+einops
+hdbscan
+jupyter
+kymatio
+matplotlib
+natsort
+numpy
+opencv_contrib_python
+optuna
+paramiko
+Pillow
+pytest
+scikit_learn
+scipy
+seaborn
+sparse
+tqdm
+umap
+xxhash
+torch
+torchvision
+torchaudio

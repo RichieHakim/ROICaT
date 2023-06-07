@@ -27,8 +27,25 @@ class ROI_graph(util.ROICaT_Module):
     To accelerate computation and reduce memory usage, some of the
      computations are performed on 'blocks' of the full field of
      view.
+
+    Makes blocks of the field of view so that subsequent 
+     computations can be done blockwise.
     
     RH 2022
+
+    Args:
+        n_workers (int):
+            The number of workers to use for the computations.
+            Set to -1 to use all available cpu cores.
+            Used for spatial footprint manahattan distance computation,
+                computing hashes of cluster idx, and computing linkages.
+        algorithm_nearestNeigbors_spatialFootprints (str):
+            The algorithm to use for the nearest neighbors computation.
+            See sklearn.neighbors.NearestNeighbors for more information.
+        **kwargs_nearestNeigbors_spatialFootprints (dict):
+            The keyword arguments to use for the nearest neighbors.
+            Optional.
+            See sklearn.neighbors.NearestNeighbors for more information.
     """
     def __init__(
         self,
@@ -44,22 +61,6 @@ class ROI_graph(util.ROICaT_Module):
     ):
         """
         Initialize the class.
-        Makes blocks of the field of view so that subsequent 
-         computations can be done blockwise.
-
-        Args:
-            n_workers (int):
-                The number of workers to use for the computations.
-                Set to -1 to use all available cpu cores.
-                Used for spatial footprint manahattan distance computation,
-                 computing hashes of cluster idx, and computing linkages.
-            algorithm_nearestNeigbors_spatialFootprints (str):
-                The algorithm to use for the nearest neighbors computation.
-                See sklearn.neighbors.NearestNeighbors for more information.
-            **kwargs_nearestNeigbors_spatialFootprints (dict):
-                The keyword arguments to use for the nearest neighbors.
-                Optional.
-                See sklearn.neighbors.NearestNeighbors for more information.
         """
         ## Imports
         super().__init__()
@@ -342,7 +343,7 @@ class ROI_graph(util.ROICaT_Module):
         Normalizes the similarity matrices (s_NN, s_SWT, but not s_sf)
          by z-scoring using the mean and std from the distributions of
          pairwise similarities between ROIs assumed to be 'different'.
-         'Different' here is defined as ROIs that are spatiall distant
+         'Different' here is defined as ROIs that are spatial distant
          from each other.
 
         Args:
@@ -418,6 +419,7 @@ class ROI_graph(util.ROICaT_Module):
             self.s_NN_z = self.s_NN.copy().tocoo()
             self.s_NN_z.data = ((self.s_NN_z.data - mus_NN_diff[self.s_NN_z.row]) / stds_NN_diff[self.s_NN_z.row])
             self.s_NN_z = self.s_NN_z.tocsr()
+            self.s_NN_z.data[np.isnan(self.s_NN_z.data)] = 0
         
         print('Normalizing SWT similarity scores...') if verbose else None
         if features_SWT is not None:
@@ -428,6 +430,7 @@ class ROI_graph(util.ROICaT_Module):
             self.s_SWT_z = self.s_SWT.copy().tocoo()
             self.s_SWT_z.data = ((self.s_SWT_z.data - mus_SWT_diff[self.s_SWT_z.row]) / stds_SWT_diff[self.s_SWT_z.row])
             self.s_SWT_z = self.s_SWT_z.tocsr()
+            self.s_SWT_z.data[np.isnan(self.s_SWT_z.data)] = 0
             
 
 ###########################

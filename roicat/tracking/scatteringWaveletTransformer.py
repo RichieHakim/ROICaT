@@ -1,6 +1,7 @@
+import gc
+
 import torch
 import numpy as np
-from kymatio.torch import Scattering2D
 from tqdm import tqdm
 
 from .. import helpers, util
@@ -9,6 +10,17 @@ class SWT(util.ROICaT_Module):
     """
     Class for performing scattering wavelet transform
      using the kymatio library.
+    RH 2022
+
+    Args:
+        kwargs_Scattering2D (dict):
+            The keyword arguments to pass to the Scattering2D class.
+            See the documentation for the kymatio's 
+                Scattering2D class for details.
+        image_shape (tuple):
+            The shape of the images to be transformed.
+        device (str):
+            The device to use for the transformation.
     """
     def __init__(
         self, 
@@ -17,21 +29,10 @@ class SWT(util.ROICaT_Module):
         device='cpu',
         verbose=True,
     ):
-        """
-        Initialize the class.
-        
-        Args:
-            kwargs_Scattering2D (dict):
-                The keyword arguments to pass to the Scattering2D class.
-                See the documentation for the kymatio's 
-                 Scattering2D class for details.
-            image_shape (tuple):
-                The shape of the images to be transformed.
-            device (str):
-                The device to use for the transformation.
-        """
         ## Imports
         super().__init__()
+
+        from kymatio.torch import Scattering2D
 
         self._verbose = verbose
         self._device = device
@@ -63,7 +64,13 @@ class SWT(util.ROICaT_Module):
             if out.ndim == 3:  ## if there is only one ROI in the batch, append a dimension to the front
                 out = out[None,...]
             return out
-        self.latents = torch.cat([helper_swt(ims_batch) for ims_batch in tqdm(helpers.make_batches(ROI_images, batch_size=batch_size), total=ROI_images.shape[0] / batch_size, mininterval=60)], dim=0)
+        self.latents = torch.cat([helper_swt(ims_batch) for ims_batch in tqdm(helpers.make_batches(ROI_images, batch_size=batch_size), total=ROI_images.shape[0] / batch_size, mininterval=5)], dim=0)
         self.latents = self.latents.reshape(self.latents.shape[0], -1)
         print('Completed: SWT transform on ROIs') if self._verbose else None
+
+        gc.collect()
+        torch.cuda.empty_cache()
+        gc.collect()
+        torch.cuda.empty_cache()
+
         return self.latents

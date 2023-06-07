@@ -1,12 +1,14 @@
 name: build
 
 on:
-  push:
-    # branches: [ "main" ]
-    branches: [ "dev" ]
+  # push:
+  #   # branches: [ "main" ]
+  #   branches: [ "dev" ]
     # branches: [ "main", "dev" ]
-  # pull_request:
+  pull_request:
     # branches: [ "main" ]
+    branches: [ "dev" ]    
+    # branches: [ "main", "dev" ]        
 
 permissions:
   contents: read
@@ -25,11 +27,11 @@ jobs:
           # ubuntu-22.04,
           ubuntu-20.04,
           # # windows-latest,
-          # windows-2022,
+          windows-2022,
           # windows-2019,
           # # macos-latest,
           # macos-12.0,  ## RH: not available yet 20230507
-          # macos-11.0,
+          macos-11.0,
           # macos-10.15,
         ]
         python-version: [ 
@@ -39,11 +41,11 @@ jobs:
           # "3.12",
         ]
         extra: [
-          core,
-          # core_latest,
+          all,
+          all_latest,
         ]
         install-level: [
-          # system,
+          system,
           user,
         ]
 
@@ -116,11 +118,12 @@ jobs:
     - name: Install ROICaT with pip dependencies -- system-level
       if: matrix.install-level == 'system'
       run: |
-        pip install -v -e .[core]
+        ## install dependencies with optional extras
+        pip install -v -e .[${{ matrix.extra }}]
     - name: Install ROICaT with pip dependencies -- user-level
       if: matrix.install-level == 'user'
       run: |
-        pip install -v -e .[core] --user
+        pip install -v -e .[${{ matrix.extra }}] --user
 
 
     - name: Check installed packages
@@ -133,7 +136,7 @@ jobs:
       run: |
         # pip install tox tox-gh-actions
         pip install pytest pytest-cov
-        pytest -v --cov=roicat --cov-report=xml:coverage.xml --color=yes
+        python -m pytest -v --cov=roicat --cov-report=xml:coverage.xml --color=yes
 
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@v3  ## this is a public action recognized by GitHub Actions
