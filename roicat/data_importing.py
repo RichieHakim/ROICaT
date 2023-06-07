@@ -595,9 +595,9 @@ class Data_roicat(util.ROICaT_Module):
             ]}
         return f"Data_roicat object: {attr_to_print}."
 
-    def load_from_dict(self, dict_load):
+    def import_from_dict(self, dict_load):
         """
-        Load attributes from a dictionary. This is useful if a serializable
+        Import attributes from a dictionary. This is useful if a serializable
          dictionary was saved.
         """
         ## Go through each important attribute in Data_roicat and look for it in dict_load

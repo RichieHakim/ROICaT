@@ -175,7 +175,7 @@ def system_info(verbose=False):
             return None
     fns = {key: val for key, val in platform.__dict__.items() if (callable(val) and key[0] != '_')}
     operating_system = {key: try_fns(val) for key, val in fns.items() if (callable(val) and key[0] != '_')}
-    print(f'== Operating System ==: {operating_system}') if verbose else None
+    print(f'== Operating System ==: {operating_system["uname"]}') if verbose else None
 
     ## CPU info
     try:
@@ -421,6 +421,16 @@ class ROICaT_Module:
         Args:
             save_path (str or pathlib.Path):
                 Path to save pickle file.
+            save_as_serializable_dict (bool):
+                A serializable dict is an archival-type format
+                 that is easy to load data from, but typically cannot
+                 be used to re-instantiate the object.
+                If True, save the object as a serializable dict.
+                If False, save the object as a Data_roicat object.
+            compress (bool):
+                If True, compress the pickle file.
+            allow_overwrite (bool):
+                If True, allow overwriting of existing file.
         """
         from pathlib import Path
         ## Check if file already exists
@@ -455,8 +465,8 @@ class ROICaT_Module:
         if isinstance(obj, dict):
             ## Set attributes from dict
             ### If the object has a load_from_dict method, use that.
-            if hasattr(self, 'load_from_dict'):
-                self.load_from_dict(obj)
+            if hasattr(self, 'import_from_dict'):
+                self.import_from_dict(obj)
             else:
                 for key, val in obj.items():
                     setattr(self, key, val)
