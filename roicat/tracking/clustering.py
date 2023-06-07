@@ -1044,10 +1044,10 @@ class Clusterer(util.ROICaT_Module):
                 'sample_probabilities': self.hdbs.probabilities_[:-1],  ## Remove last element which is the outlier score for the new fully connected node
             }  if hasattr(self, 'hdbs') else None,
             'sequentialHungarian': {
-                'performance_recall': self.seqHung_performance['performance_recall'],
-                'performance_precision': self.seqHung_performance['performance_precision'],
-                'performance_f1': self.seqHung_performance['performance_f1'],
-                'performance_accuracy': self.seqHung_performance['performance_accuracy'],
+                'performance_recall': self.seqHung_performance['recall'],
+                'performance_precision': self.seqHung_performance['precision'],
+                'performance_f1': self.seqHung_performance['f1_score'],
+                'performance_accuracy': self.seqHung_performance['accuracy'],
             } if hasattr(self, 'seqHung_performance') else None,
         }
         return self.quality_metrics
