@@ -241,7 +241,7 @@ class ROInet_embedder(util.ROICaT_Module):
         prefetchFactor_dataloader=2,
         transforms=None,
         img_size_out=(224, 224),
-        jit_script_transforms=True,
+        jit_script_transforms=False,
     ):
         """
         Generate a dataloader for the given ROI_images.
