@@ -28,7 +28,7 @@ def test_system_versions():
     Test system versions.
     """
     from roicat import util
-    util.get_system_versions(verbose=True)
+    util.system_info(verbose=True)
     
 
 ######################################################################################################################################
