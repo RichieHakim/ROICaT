@@ -314,3 +314,104 @@ def display_cropped_cluster_ims(
         plt.figure(figsize=(40,1))
         plt.imshow(sf, cmap='gray')
         plt.axis('off')
+
+
+def select_region_scatterPlot(
+    data, 
+    path=None, 
+    images_overlay=None, 
+    idx_images_overlay=None, 
+    size_images_overlay=None,
+    figsize=(300,300),
+):
+    """
+    Select a region of a scatter plot and return the indices 
+     of the points in that region via a function call.
+    """
+    import holoviews as hv
+    import numpy as np
+    import pandas as pd
+
+    import tempfile
+    try:
+        from IPython.display import display
+    except:
+        print('Warning: Could not import IPython.display. Cannot display plot.')
+        return None, None
+
+    hv.extension('bokeh')
+
+    assert isinstance(data, np.ndarray), 'data must be a numpy array'
+    assert data.ndim == 2, 'data must have 2 dimensions'
+    assert data.shape[1] == 2, 'data must have 2 columns'
+
+    ## Ingest inputs
+    if images_overlay is not None:
+        assert isinstance(images_overlay, np.ndarray), 'images_overlay must be a numpy array'
+        assert (images_overlay.ndim == 2) or (images_overlay.ndim == 3), 'images_overlay must have 2 or 3 dimensions'
+        assert images_overlay.shape[1] == idx_images_overlay.shape[0], 'images_overlay must have the same number of images as idx_images_overlay'
+
+    if size_images_overlay is None:
+        size_images_overlay = (data.max() - data.min()) / 30
+
+    # Declare some points
+    points = hv.Points(data)
+
+    # Declare points as source of selection stream
+    selection = hv.streams.Selection1D(source=points)
+
+    path_tempFile = tempfile.gettempdir() + '/indices.csv' if path is None else path
+
+    # Write function that uses the selection indices to slice points and compute stats
+    def callback(index):
+        ## Save the indices to a temporary file.
+        ## First delete the file if it already exists.
+        if os.path.exists(path_tempFile):
+            os.remove(path_tempFile)
+        ## Then save the indices to the file. Open in a protected way that blocks other threads from opening it
+        with open(path_tempFile, 'w') as f:
+            f.write(','.join([str(i) for i in index]))
+
+        return points
+        
+    selection.param.watch_values(callback, 'index')
+    layout = points.opts(
+        tools=['lasso_select', 'box_select'],
+        width=figsize[0],
+        height=figsize[1],
+    )
+
+    # If images are provided, overlay them on the points
+    imo = hv.RGB([])
+    if images_overlay is not None and idx_images_overlay is not None:
+        for image, idx in zip(images_overlay, idx_images_overlay):
+            image_rgb = np.stack([image, image, image], axis=-1) if image.ndim == 2 else image
+            image_rgb = hv.RGB(
+                image_rgb, 
+                bounds=(data[idx,0] - size_images_overlay/2, data[idx,1] - size_images_overlay/2, data[idx,0] + size_images_overlay/2, data[idx,1] + size_images_overlay/2)
+            )
+            imo *= image_rgb
+
+    layout *= imo
+
+    ## start layout with lasso tool active
+    layout = layout.opts(
+        active_tools=[
+            'lasso_select', 
+            'wheel_zoom',
+        ]
+    )
+
+    # Display plot
+    display(layout)
+
+    def fn_get_indices():
+        if os.path.exists(path_tempFile):
+            with open(path_tempFile, 'r') as f:
+                indices = f.read().split(',')
+            indices = [int(i) for i in indices if i != ''] if len(indices) > 0 else None
+            return indices
+        else:
+            return None
+
+    return layout, path_tempFile, fn_get_indices
