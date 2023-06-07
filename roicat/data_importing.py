@@ -599,6 +599,10 @@ class Data_roicat(util.ROICaT_Module):
         """
         Import attributes from a dictionary. This is useful if a serializable
          dictionary was saved.
+
+        Args:
+            dict_load (dict):
+                Dictionary containing attributes to load.
         """
         ## Go through each important attribute in Data_roicat and look for it in dict_load
         methods = {
