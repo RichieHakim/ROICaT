@@ -30,7 +30,7 @@ We have found that ROICaT is capable of classifying cells with accuracy comparab
 ROICaT works on Windows, MacOS, and Linux. If you have any issues during the installation process, please make a [github issue](https://github.com/RichieHakim/ROICaT/issues) with the error.
 
 ### 0. Requirements
-- Currently, ROICaT designed to be used with **Suite2p** output data (stat.npy and ops.npy files) and **CaImAn** output data (results.h5 files), but any image data can be used (see this [demo notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/other/demo_custom_data_importing.ipynb) for details on using non-standard data).
+- **Suite2p** output data (stat.npy and ops.npy files) or **CaImAn** output data (results.h5 files), or any image data using this [custom data importing notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/other/demo_custom_data_importing.ipynb).
 - [Anaconda](https://www.anaconda.com/distribution/) or [Miniconda](https://docs.conda.io/en/latest/miniconda.html)<br>
 - GCC >= 5.4.0, ideally == 9.2.0. Google how to do this on your operating system. For unix/linux: check with `gcc --version`.<br>
 - On some Linux servers (like Harvard's O2 server), you may need to load modules instead of installing. To load conda, gcc, try: `module load conda3/latest gcc/9.2.0` or similar.<br>
