@@ -23,4 +23,5 @@ dependencies:
   - pip
   - ipython
   - pip:
-    - "roicat"
+    - -r../requirements.txt
+    - roicat 
