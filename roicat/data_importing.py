@@ -192,6 +192,14 @@ class Data_roicat(util.ROICaT_Module):
         assert all([lbls.dtype==int for lbls in class_labels]), f"class_labels should be a list of 1-D numpy arrays of dtype np.int. First element of list is of dtype {class_labels[0].dtype}"
         assert all([np.all(lbls>=0) for lbls in class_labels]), f"All class labels should be non-negative. Found negative values."
 
+        ## Warn if there are any labels that are NaN, None, or inf
+        if any([np.any(np.isnan(lbls)) for lbls in class_labels]):
+            warnings.warn("RH WARNING: There are NaN values in the class labels.")
+        if any([np.any(lbls==None) for lbls in class_labels]):
+            warnings.warn("RH WARNING: There are None values in the class labels.")
+        if any([np.any(np.isinf(lbls)) for lbls in class_labels]):
+            warnings.warn("RH WARNING: There are inf values in the class labels.")
+
         ## Define some variables
         n_sessions = len(class_labels)
         class_labels_cat = np.concatenate(class_labels)
