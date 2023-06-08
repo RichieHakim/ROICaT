@@ -233,6 +233,8 @@ class ROInet_embedder(util.ROICaT_Module):
         ROI_images,
         # goal_frac=0.1929,
         um_per_pixel=1.0,
+        nan_to_num=True,
+        nan_to_num_val=0.0,
         pref_plot=False,
         batchSize_dataloader=8,
         pinMemory_dataloader=True,
@@ -256,6 +258,10 @@ class ROInet_embedder(util.ROICaT_Module):
             um_per_pixel (float):
                 The number of microns per pixel. Used to rescale the
                  ROI images to the same size as the network input.
+            nan_to_num (bool):
+                Whether to replace NaNs with a value.
+            nan_to_num_val (float):
+                The value to replace NaNs with.
             pref_plot (bool):
                 Whether to plot the sizes of the ROI images before
                  and after normalization.
@@ -286,6 +292,18 @@ class ROInet_embedder(util.ROICaT_Module):
                 TorchScript pipeline. (Should improve calculation speed but can cause
                 problems with multiprocessing.)
         """
+        ## Remove NaNs
+        ### Check if any NaNs
+        if np.any(np.isnan(ROI_images)):
+            warnings.warn('ROICaT WARNING: NaNs detected. You should consider removing remove these before passing to the network. Using nan_to_num arguments.')
+        if np.any(np.isinf(ROI_images)):
+            warnings.warn('ROICaT WARNING: Infs detected. You should consider removing these before passing to the network.')
+        ## Check if any images are all zeros
+        if np.any(np.all(ROI_images == 0, axis=(1,2))):
+            warnings.warn('ROICaT WARNING: Image(s) with all zeros detected. These can pass through the network, but may give weird results.')
+        if nan_to_num:
+            ROI_images = np.nan_to_num(ROI_images, nan=nan_to_num_val)
+
         if numWorkers_dataloader == -1:
             numWorkers_dataloader = mp.cpu_count()
 
