@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-
+import os
 import numpy as np
 import sparse
 import scipy.sparse
@@ -324,9 +324,24 @@ def select_region_scatterPlot(
     size_images_overlay=None,
     figsize=(300,300),
 ):
-    """
-    Select a region of a scatter plot and return the indices 
+    """Select a region of a scatter plot and return the indices 
      of the points in that region via a function call.
+
+    Args:
+        data (np.ndarray):
+            Input data to draw a scatterplot.
+        path (str, optional):
+            Temporary file path that saves selected indices. Defaults to None.
+        images_overlay (A 3D or 4D array, optional):
+            A 3D array of grayscale images or a 4D array of RGB images,
+            where the first dimension is the number of images. Defaults to None.
+        idx_images_overlay (np.ndarray, optional):
+            A vector of the data indices correspond to each images in images_overlay.
+            Therefore, images_overlay must have the same number of images as idx_images_overlay. Defaults to None.
+        size_images_overlay (tuple, optional):
+            Size of each overlaid images. Defaults to None.
+        figsize (tuple, optional):
+            Size of the figure. Defaults to (300,300).
     """
     import holoviews as hv
     import numpy as np
@@ -348,8 +363,8 @@ def select_region_scatterPlot(
     ## Ingest inputs
     if images_overlay is not None:
         assert isinstance(images_overlay, np.ndarray), 'images_overlay must be a numpy array'
-        assert (images_overlay.ndim == 2) or (images_overlay.ndim == 3), 'images_overlay must have 2 or 3 dimensions'
-        assert images_overlay.shape[1] == idx_images_overlay.shape[0], 'images_overlay must have the same number of images as idx_images_overlay'
+        assert (images_overlay.ndim == 3) or (images_overlay.ndim == 4), 'images_overlay must have 3 or 4 dimensions'
+        assert images_overlay.shape[0] == idx_images_overlay.shape[0], 'images_overlay must have the same number of images as idx_images_overlay'
 
     if size_images_overlay is None:
         size_images_overlay = (data.max() - data.min()) / 30
@@ -382,10 +397,17 @@ def select_region_scatterPlot(
     )
 
     # If images are provided, overlay them on the points
+    def norm_img(image):
+        """
+        Normalize 2D grayscale image
+        """        
+        normalized_image = (image - np.min(image)) / np.max(image)
+        return normalized_image
+
     imo = hv.RGB([])
     if images_overlay is not None and idx_images_overlay is not None:
         for image, idx in zip(images_overlay, idx_images_overlay):
-            image_rgb = np.stack([image, image, image], axis=-1) if image.ndim == 2 else image
+            image_rgb = np.stack([norm_img(image), norm_img(image), norm_img(image)], axis=-1) if image.ndim == 2 else image
             image_rgb = hv.RGB(
                 image_rgb, 
                 bounds=(data[idx,0] - size_images_overlay/2, data[idx,1] - size_images_overlay/2, data[idx,0] + size_images_overlay/2, data[idx,1] + size_images_overlay/2)
