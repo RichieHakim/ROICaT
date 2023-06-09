@@ -302,7 +302,7 @@ class ROInet_embedder(util.ROICaT_Module):
         if np.any([np.any(np.all(rois==0, axis=(1,2))) for rois in ROI_images]):
             warnings.warn('ROICaT WARNING: Image(s) with all zeros detected. These can pass through the network, but may give weird results.')
         if nan_to_num:
-            ROI_images =  [np.nan_to_num(rois, nan=nan_to_num_val) for rois in ROI_images]
+            ROI_images = [np.nan_to_num(rois, nan=nan_to_num_val) for rois in ROI_images]
 
         if numWorkers_dataloader == -1:
             numWorkers_dataloader = mp.cpu_count()
