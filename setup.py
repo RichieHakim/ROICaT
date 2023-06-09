@@ -117,6 +117,7 @@ setup(
     license='LICENSE',
     description='A library for classifying and tracking ROIs.',
     long_description=readme,
+    long_description_content_type="text/markdown",
     url='https://github.com/RichieHakim/ROICaT',
 
     packages=[
