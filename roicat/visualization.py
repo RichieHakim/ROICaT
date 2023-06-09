@@ -1,12 +1,11 @@
+import copy
+import os
+
 import matplotlib.pyplot as plt
 import seaborn as sns
-
-import os
 import numpy as np
 import sparse
 import scipy.sparse
-
-import copy
 
 from . import util, helpers
 
