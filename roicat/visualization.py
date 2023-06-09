@@ -338,10 +338,10 @@ def select_region_scatterPlot(
         idx_images_overlay (np.ndarray, optional):
             A vector of the data indices correspond to each images in images_overlay.
             Therefore, images_overlay must have the same number of images as idx_images_overlay. Defaults to None.
-        size_images_overlay (tuple, optional):
-            Size of each overlaid images. Defaults to None.
+        size_images_overlay (float, optional):
+            Size of each overlay images. Unit is relative to each axis. Defaults to None.
         figsize (tuple, optional):
-            Size of the figure. Defaults to (300,300).
+            Size of the figure. Unit in pixel. Defaults to (300,300).
     """
     import holoviews as hv
     import numpy as np
