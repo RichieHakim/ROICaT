@@ -299,7 +299,7 @@ class ROInet_embedder(util.ROICaT_Module):
         if np.any([np.any(np.isinf(roi)) for roi in ROI_images]):
             warnings.warn('ROICaT WARNING: Infs detected. You should consider removing these before passing to the network.')
         ## Check if any images in any of the sessions are all zeros
-        if np.any([np.all(rois==0, axis=(1,2)) for rois in ROI_images]):
+        if np.any([np.any(np.all(rois==0, axis=(1,2))) for rois in ROI_images]):
             warnings.warn('ROICaT WARNING: Image(s) with all zeros detected. These can pass through the network, but may give weird results.')
         if nan_to_num:
             ROI_images = np.nan_to_num(ROI_images, nan=nan_to_num_val)
