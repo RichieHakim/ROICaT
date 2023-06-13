@@ -38,23 +38,34 @@ ROICaT works on Windows, MacOS, and Linux. If you have any issues during the ins
 
 ### 1. (Recommended) Create a new conda environment
 ```
-conda create -n ROICaT python=3.11
-conda activate ROICaT
+conda create -n roicat python=3.11
+conda activate roicat
 ```
 
-### 2. Clone the repo
+### 2. Install ROICaT
+- **Basic users**:
+```
+pip install --upgrade pip
+pip install --user roicat[all]
+```
+Note: if you are using a zsh terminal, change command to: `pip3 install --user -v -e '.[all]'`
+
+- **For the latest development version**:
+```
+pip install --upgrade pip
+git clone https://github.com/RichieHakim/ROICaT
+cd path/to/ROICaT/directory
+pip install --user -v -e .[all]
+```
+Note: if you are using a zsh terminal, change command to: `pip3 install --user -v -e '.[all]'`
+
+### 3. Clone the repo to get the scripts and notebooks
 ```
 git clone https://github.com/RichieHakim/ROICaT
 cd path/to/ROICaT/directory
 ```
 
-### 3. Install ROICaT
-Optional: `pip install --upgrade pip`<br>
-```
-pip install --user -v -e .[all]
-```
-Note: if you are using a zsh terminal, change command to: `pip3 install --user -v -e '.[all]'`
-
+## Troubleshooting Installation
 #### Troubleshooting (Windows)
 If you receive the error: `ERROR: Could not build wheels for hdbscan, which is required to install pyproject.toml-based projects` on Windows, make sure that you have installed Microsoft C++ Build Tools. If not, download from [here](https://visualstudio.microsoft.com/visual-cpp-build-tools/) and run the commands:
 ```
@@ -118,9 +129,7 @@ If a CUDA version of PyTorch is installed but GPU is not available, make sure yo
 
 # TODO:
 - Unify model training into this repo
-- Improve classification notebooks
-- Try Bokeh for interactive plots
+- Improve classification notebooks, port to colab, make scripts
 - Integration tests
-- Port demo notebooks to CoLab
-- make reference API
+- make better reference API
 - make nice README.md with gifs
