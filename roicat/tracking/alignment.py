@@ -16,18 +16,15 @@ class Aligner(util.ROICaT_Module):
     Currently relies on available OpenCV methods for 
      non-rigid registration.
     RH 2023
+
+    Args:
+    verbose (bool):
+        Whether to print progress updates.
     """
     def __init__(
         self,
         verbose=True,
     ):
-        """
-        Initialize the class.
-
-        Args:
-            verbose (bool):
-                Whether to print progress updates.
-        """
         self._verbose = verbose
         
         self.remapingIdx_geo = None
@@ -130,6 +127,7 @@ class Aligner(util.ROICaT_Module):
                 The size of the Gaussian filter, default is 11.
             mask_borders (tuple of int, int, optional):
                 The border mask for the image, default is (0, 0, 0, 0).
+                (top, bottom, left, right)
             n_iter (int, optional):
                 The number of iterations for cv2.findTransformECC, default is 1000.
             termination_eps (float, optional):

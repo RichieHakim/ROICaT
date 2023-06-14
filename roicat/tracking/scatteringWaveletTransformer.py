@@ -10,6 +10,17 @@ class SWT(util.ROICaT_Module):
     """
     Class for performing scattering wavelet transform
      using the kymatio library.
+    RH 2022
+
+    Args:
+        kwargs_Scattering2D (dict):
+            The keyword arguments to pass to the Scattering2D class.
+            See the documentation for the kymatio's 
+                Scattering2D class for details.
+        image_shape (tuple):
+            The shape of the images to be transformed.
+        device (str):
+            The device to use for the transformation.
     """
     def __init__(
         self, 
@@ -18,19 +29,6 @@ class SWT(util.ROICaT_Module):
         device='cpu',
         verbose=True,
     ):
-        """
-        Initialize the class.
-        
-        Args:
-            kwargs_Scattering2D (dict):
-                The keyword arguments to pass to the Scattering2D class.
-                See the documentation for the kymatio's 
-                 Scattering2D class for details.
-            image_shape (tuple):
-                The shape of the images to be transformed.
-            device (str):
-                The device to use for the transformation.
-        """
         ## Imports
         super().__init__()
 

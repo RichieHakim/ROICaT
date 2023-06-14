@@ -26,7 +26,36 @@ class Clusterer(util.ROICaT_Module):
         - Quality control:
             - self.compute_cluster_quality_metrics()
 
+    Initialization ingests and stores similarity matrices.
+
     RH 2022-2023
+
+    Args:
+        s_sf (scipy.sparse.csr_matrix):
+            Similarity matrix for spatial footprints.
+            Shape: (n_rois, n_rois). Symmetric.
+            Expecting input to be manhattan distance of
+                spatial footprints normalized between 0 and 1.
+        s_NN_z (scipy.sparse.csr_matrix):
+            Z-scored similarity matrix for neural network
+                output similaries.
+            Shape: (n_rois, n_rois). Non-symmetric.
+            Expecting input to be the cosine similarity 
+                matrix, z-scored row-wise.
+        s_SWT_z (scipy.sparse.csr_matrix):
+            Z-scored similarity matrix for scattering 
+                transform output similarities.
+            Shape: (n_rois, n_rois). Non-symmetric.
+            Expecting input to be the cosine similarity
+                matrix, z-scored row-wise.
+        s_sesh (scipy.sparse.csr_matrix, boolean):
+            Similarity matrix for session similarity.
+            Shape: (n_rois, n_rois). Symmetric.
+            Expecting input to be boolean, with 1s where
+                the two ROIs are from DIFFERENT sessions.
+        verbose (bool):
+            Whether to print out information about the
+                clustering process.
     """
     def __init__(
         self,
@@ -37,35 +66,6 @@ class Clusterer(util.ROICaT_Module):
         verbose=True,
     ):
         """
-        Initialise the clusterer object.
-        Ingests and stores similarity matrices.
-
-        Args:
-            s_sf (scipy.sparse.csr_matrix):
-                Similarity matrix for spatial footprints.
-                Shape: (n_rois, n_rois). Symmetric.
-                Expecting input to be manhattan distance of
-                 spatial footprints normalized between 0 and 1.
-            s_NN_z (scipy.sparse.csr_matrix):
-                Z-scored similarity matrix for neural network
-                 output similaries.
-                Shape: (n_rois, n_rois). Non-symmetric.
-                Expecting input to be the cosine similarity 
-                 matrix, z-scored row-wise.
-            s_SWT_z (scipy.sparse.csr_matrix):
-                Z-scored similarity matrix for scattering 
-                 transform output similarities.
-                Shape: (n_rois, n_rois). Non-symmetric.
-                Expecting input to be the cosine similarity
-                 matrix, z-scored row-wise.
-            s_sesh (scipy.sparse.csr_matrix, boolean):
-                Similarity matrix for session similarity.
-                Shape: (n_rois, n_rois). Symmetric.
-                Expecting input to be boolean, with 1s where
-                 the two ROIs are from DIFFERENT sessions.
-            verbose (bool):
-                Whether to print out information about the
-                 clustering process.
         """
         ## Imports
         super().__init__()
@@ -138,10 +138,6 @@ class Clusterer(util.ROICaT_Module):
                  a small number of bins makes finding the separation point more
                  noisy, and only slightly more accurate. Aim for 5-10% of the
                  number of bins.
-            find_parameters_automatically (bool):
-                Whether to find the optimal parameters automatically using
-                 optuna. If False, the parameters are set to the 
-                 kwargs_makeConjunctiveDistanceMatrix input.
             kwargs_findParameters (dict):
                 Keyword arguments for the Convergence_checker class __init__.
             bounds_findParameters (dict):
@@ -162,42 +158,39 @@ class Clusterer(util.ROICaT_Module):
         self.smooth_window = self.n_bins // 10 if smoothing_window_bins is None else smoothing_window_bins
         # print(f'Pruning similarity graphs with {self.n_bins} bins and smoothing window {smoothing_window}...') if self._verbose else None
 
-        if find_parameters_automatically:
-            print('Finding mixing parameters using automated hyperparameter tuning...') if self._verbose else None
-            optuna.logging.set_verbosity(optuna.logging.WARNING)
-            self.checker = Convergence_checker(**kwargs_findParameters)
-            self.study = optuna.create_study(direction='minimize', sampler=optuna.samplers.TPESampler(n_startup_trials=kwargs_findParameters['n_patience']//2))
-            self.study.optimize(self._objectiveFn_distSameMagnitude, n_jobs=n_jobs_findParameters, callbacks=[self.checker.check])
+        print('Finding mixing parameters using automated hyperparameter tuning...') if self._verbose else None
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+        self.checker = Convergence_checker(**kwargs_findParameters)
+        self.study = optuna.create_study(direction='minimize', sampler=optuna.samplers.TPESampler(n_startup_trials=kwargs_findParameters['n_patience']//2))
+        self.study.optimize(self._objectiveFn_distSameMagnitude, n_jobs=n_jobs_findParameters, callbacks=[self.checker.check])
 
-            self.best_params = self.study.best_params.copy()
-            [self.best_params.pop(p) for p in [
-                # 'sig_SF_kwargs_mu',
-                # 'sig_SF_kwargs_b',
-                'sig_NN_kwargs_mu',
-                'sig_NN_kwargs_b',
-                'sig_SWT_kwargs_mu',
-                'sig_SWT_kwargs_b'] if p in self.best_params.keys()]
-            # # self.best_params['sig_SF_kwargs'] = {'mu': self.study.best_params['sig_SF_kwargs_mu'],
-            # #                                 'b': self.study.best_params['sig_SF_kwargs_b'],}
-            # self.best_params['sig_SF_kwargs'] = None
-            self.best_params['sig_NN_kwargs'] = {'mu': self.study.best_params['sig_NN_kwargs_mu'],
-                                            'b': self.study.best_params['sig_NN_kwargs_b'],}
-            self.best_params['sig_SWT_kwargs'] = {'mu': self.study.best_params['sig_SWT_kwargs_mu'],
-                                             'b': self.study.best_params['sig_SWT_kwargs_b'],}
+        self.best_params = self.study.best_params.copy()
+        [self.best_params.pop(p) for p in [
+            # 'sig_SF_kwargs_mu',
+            # 'sig_SF_kwargs_b',
+            'sig_NN_kwargs_mu',
+            'sig_NN_kwargs_b',
+            'sig_SWT_kwargs_mu',
+            'sig_SWT_kwargs_b'] if p in self.best_params.keys()]
+        # # self.best_params['sig_SF_kwargs'] = {'mu': self.study.best_params['sig_SF_kwargs_mu'],
+        # #                                 'b': self.study.best_params['sig_SF_kwargs_b'],}
+        # self.best_params['sig_SF_kwargs'] = None
+        self.best_params['sig_NN_kwargs'] = {'mu': self.study.best_params['sig_NN_kwargs_mu'],
+                                        'b': self.study.best_params['sig_NN_kwargs_b'],}
+        self.best_params['sig_SWT_kwargs'] = {'mu': self.study.best_params['sig_SWT_kwargs_mu'],
+                                            'b': self.study.best_params['sig_SWT_kwargs_b'],}
 
-            self.kwargs_makeConjunctiveDistanceMatrix_best={
-                'power_SF': None,
-                'power_NN': None,
-                'power_SWT': None,
-                'p_norm': None,
-                'sig_SF_kwargs': None,
-                'sig_NN_kwargs': None,
-                'sig_SWT_kwargs': None,
-            }
-            self.kwargs_makeConjunctiveDistanceMatrix_best.update(self.best_params)
-            print(f'Best value found: {self.study.best_value} with parameters {self.best_params}') if self._verbose else None
-        else:
-            self.kwargs_makeConjunctiveDistanceMatrix_best = self.best_params
+        self.kwargs_makeConjunctiveDistanceMatrix_best={
+            'power_SF': None,
+            'power_NN': None,
+            'power_SWT': None,
+            'p_norm': None,
+            'sig_SF_kwargs': None,
+            'sig_NN_kwargs': None,
+            'sig_SWT_kwargs': None,
+        }
+        self.kwargs_makeConjunctiveDistanceMatrix_best.update(self.best_params)
+        print(f'Best value found: {self.study.best_value} with parameters {self.best_params}') if self._verbose else None
         return self.kwargs_makeConjunctiveDistanceMatrix_best
 
     def make_pruned_similarity_graphs(
@@ -505,18 +498,9 @@ class Clusterer(util.ROICaT_Module):
 
     def fit_sequentialHungarian(
         self,
+        d_conj,
         session_bool,
         thresh_cost=0.95,
-        d_conj=None,
-        kwargs_makeConjunctiveDistanceMatrix={
-            'power_SF': 1.0,
-            'power_NN': 1.0,
-            'power_SWT': 0.1,
-            'p_norm': -2,
-            'sig_SF_kwargs': None,
-            'sig_NN_kwargs':  {'mu':0, 'b':0.2},
-            'sig_SWT_kwargs': {'mu':0, 'b':0.2},
-        },
     ):
         """
         Use CaImAn's method for clustering.
@@ -524,6 +508,15 @@ class Clusterer(util.ROICaT_Module):
             https://elifesciences.org/articles/38173#s4
             https://github.com/flatironinstitute/CaImAn
             https://github.com/flatironinstitute/CaImAn/blob/master/caiman/base/rois.py
+
+        Args:
+            d_conj (scipy.sparse.csr_matrix):
+                Distance matrix. Shape (n_rois, n_rois)
+            session_bool (np.ndarray): 
+                Ahape (n_rois, n_sessions) boolean array indicating which ROIs
+                 are in which sessions
+            thresh_cost (float, optional):
+                Threshold below which ROI pairs are considered potential matches.
         """
         print(f"Clustering with CaImAn's sequential Hungarian algorithm method...") if self._verbose else None
         def find_matches(D_s):
@@ -549,15 +542,6 @@ class Clusterer(util.ROICaT_Module):
                 costs.append(total)
                 # send back the results in the format we want
             return matches, costs
-
-        if d_conj is None:
-            d_conj, _, _, _, _, _ = self.make_conjunctive_distance_matrix(
-                s_sf=self.s_sf_pruned,
-                s_NN=self.s_NN_pruned,
-                s_SWT=self.s_SWT_pruned,
-                s_sesh=self.s_sesh_pruned,
-                **kwargs_makeConjunctiveDistanceMatrix
-            )
 
         n_roi = session_bool.sum(0)
         n_roi_cum = np.concatenate(([0], np.cumsum(n_roi)))
@@ -615,11 +599,12 @@ class Clusterer(util.ROICaT_Module):
             new_match[nm_sess] = range(A2_len, len(idx_union))
             matchings.append(new_match.tolist())
 
-        self.performance = performance
+        self.seqHung_performance = performance
 
         labels = np.concatenate(matchings)
         u, c = np.unique(labels, return_counts=True)
         labels[np.isin(labels, u[c == 1])] = -1
+        labels = helpers.squeeze_integers(labels)
         self.labels = labels
         return self.labels
             
@@ -998,15 +983,14 @@ class Clusterer(util.ROICaT_Module):
         return loss  # Output must be a scalar. Used to update the hyperparameters
     
 
-    def compute_cluster_quality_metrics(
+    def compute_quality_metrics(
         self,
         sim_mat=None,
         dist_mat=None,
         labels=None,
     ):
         """
-        Compute cluster quality metrics.
-        Calls the cluster_quality_metrics function.
+        Compute quality metrics.
         RH 2023
 
         Args:
@@ -1042,21 +1026,31 @@ class Clusterer(util.ROICaT_Module):
         # if sklearn.__version__ < '1.3':
         ## Warn that current version is memory intensive and will be improved when sklearn 1.3 is released
         warnings.warn("Current version of silhouette samples calculation is memory intensive and will be improved when sklearn 1.3 is released.")
-        d_dense = dist_mat.copy().tocsr()
-        d_dense.eliminate_zeros()
-        d_dense = d_dense.astype(np.float32).toarray()
-        d_dense[d_dense==0] = (d_dense.max() - d_dense.min()) * 1000
-        np.fill_diagonal(d_dense, 0)  ## in-place fill diagonal with zeros
+        import sparse
+        d_dense = sparse.COO(dist_mat.copy().tocsr())
+        d_dense.fill_value = (d_dense.max() - d_dense.min()) * 1000
+        d_dense = d_dense.todense()
+        np.fill_diagonal(d_dense, 0)
         rs_sil = sklearn.metrics.silhouette_samples(X=d_dense, labels=labels, metric='precomputed')
 
-        self.cluster_quality_metrics = {
-            'cs_intra_means': cs_intra_means,
-            'cs_intra_mins': cs_intra_mins,
-            'cs_intra_maxs': cs_intra_maxs,
-            'cs_sil': cs_sil,
-            'rs_sil': rs_sil,
+        self.quality_metrics = {
+            'cluster_intra_means': cs_intra_means,
+            'cluster_intra_mins': cs_intra_mins,
+            'cluster_intra_maxs': cs_intra_maxs,
+            'cluster_silhouette': cs_sil,
+            'sample_silhouette': rs_sil,
+            'hdbscan': {
+                'sample_outlierScores': self.hdbs.outlier_scores_[:-1],  ## Remove last element which is the outlier score for the new fully connected node
+                'sample_probabilities': self.hdbs.probabilities_[:-1],  ## Remove last element which is the outlier score for the new fully connected node
+            }  if hasattr(self, 'hdbs') else None,
+            'sequentialHungarian': {
+                'recall': self.seqHung_performance['recall'],
+                'precision': self.seqHung_performance['precision'],
+                'f1_score': self.seqHung_performance['f1_score'],
+                'accuracy': self.seqHung_performance['accuracy'],
+            } if hasattr(self, 'seqHung_performance') else None,
         }
-        return self.cluster_quality_metrics
+        return self.quality_metrics
         
 
 def attach_fully_connected_node(d, dist_fullyConnectedNode=None, n_nodes=1):
@@ -1273,6 +1267,16 @@ def cluster_quality_metrics(sim, labels):
             Can be obtained using _, sConj, _,_,_,_ = clusterer.make_conjunctive_similarity_matrix().
         labels (np.array):
             Cluster labels of shape (n_roi,).
+
+    Returns:
+        cs_intra_means (np.array):
+            Intra-cluster mean similarity of shape (n_clusters,).
+        cs_intra_mins (np.array):
+            Intra-cluster min similarity of shape (n_clusters,).
+        cs_intra_maxs (np.array):
+            Intra-cluster max similarity of shape (n_clusters,).
+        cs_sil (np.array):
+            Cluster silhouette score of shape (n_clusters,).
     """
     import sparse
     
@@ -1288,3 +1292,59 @@ def cluster_quality_metrics(sim, labels):
     cs_intra_maxs = cs_max.diagonal()
     
     return cs_intra_means, cs_intra_mins, cs_intra_maxs, cs_sil
+
+def make_label_variants(labels, n_roi_bySession):
+    """
+    Makes convenient variants of labels.
+    RH 2023
+
+    Args:
+        labels (np.array):
+            Cluster integer labels of shape (n_roi,).
+        n_roi_bySession (np.array):
+            Number of ROIs in each session.
+
+    Returns:
+        labels_squeezed (np.array):
+    """
+    import scipy.sparse
+
+    ## assert that labels is a 1D np.array or list of numbers
+    if isinstance(labels, list):
+        labels = np.array(labels, dtype=np.int64)
+    elif isinstance(labels, np.ndarray):
+        labels = labels.astype(np.int64)
+    else:
+        raise TypeError('RH ERROR: labels must be a 1D np.array or list of numbers.')
+    assert labels.ndim == 1, 'RH ERROR: labels must be a 1D np.array or list of numbers.'
+
+    ## assert that n_roi_bySession is a 1D np.array or list of numbers
+    if isinstance(n_roi_bySession, list):
+        n_roi_bySession = np.array(n_roi_bySession, dtype=np.int64)
+    elif isinstance(n_roi_bySession, np.ndarray):
+        n_roi_bySession = n_roi_bySession.astype(np.int64)
+    else:
+        raise TypeError('RH ERROR: n_roi_bySession must be a 1D np.array or list of numbers.')
+    assert n_roi_bySession.ndim == 1, 'RH ERROR: n_roi_bySession must be a 1D np.array or list of numbers.'
+    
+    ## assert that the number of labels adds up to the number of ROIs
+    n_roi_total = n_roi_bySession.sum()
+    n_roi_cumsum = np.concatenate([[0], n_roi_bySession.cumsum()])
+    assert labels.shape[0] == n_roi_bySession.sum(), 'RH ERROR: the number of labels must add up to the number of ROIs.'
+
+    ## make session_bool
+    session_bool = util.make_session_bool(n_roi_bySession)
+
+    ## make variants
+    labels_squeezed = helpers.squeeze_integers(labels)
+    labels_bySession = [labels_squeezed[idx] for idx in session_bool.T]
+    labels_bool = scipy.sparse.vstack([scipy.sparse.csr_matrix(labels_squeezed==u) for u in np.sort(np.unique(labels_squeezed))]).T.tocsr()
+    labels_bool_bySession = [labels_bool[idx] for idx in session_bool.T]
+    labels_dict = {u: np.where(labels_squeezed==u)[0] for u in np.unique(labels_squeezed)}
+
+    ## testing
+    assert np.allclose(np.concatenate(labels_bySession), labels_squeezed)
+    assert np.allclose(labels_bool.nonzero()[1] - 1, labels_squeezed)
+    assert np.alltrue([np.allclose(np.where(labels_squeezed==u)[0], ldu) for u, ldu in labels_dict.items()])
+
+    return labels_squeezed, labels_bySession, labels_bool, labels_bool_bySession, labels_dict

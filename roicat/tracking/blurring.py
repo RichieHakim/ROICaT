@@ -11,6 +11,18 @@ class ROI_Blurrer(util.ROICaT_Module):
     """
     Class for blurring ROIs.
     RH 2022
+
+    Args:
+        frame_shape (tuple):
+            The shape of the frame/FOV.
+            frame_shape[0] * frame_shape[1]
+                must equal the length of a single flattened/
+                sparse spatialFootprint.
+        kernel_halfWidth (int):
+            The half-width of the cosine kernel to use
+                for convolutional blurring.
+        plot_kernel (bool):
+            Whether to plot an image of the kernel.
     """
     def __init__(
         self,
@@ -19,21 +31,6 @@ class ROI_Blurrer(util.ROICaT_Module):
         plot_kernel=False,
         verbose=True,
     ):
-        """
-        Initialize the class.
-
-        Args:
-            frame_shape (tuple):
-                The shape of the frame/FOV.
-                frame_shape[0] * frame_shape[1]
-                 must equal the length of a single flattened/
-                 sparse spatialFootprint.
-            kernel_halfWidth (int):
-                The half-width of the cosine kernel to use
-                 for convolutional blurring.
-            plot_kernel (bool):
-                Whether to plot an image of the kernel.
-        """
         ## Imports
         super().__init__()
 
@@ -41,7 +38,7 @@ class ROI_Blurrer(util.ROICaT_Module):
         self._verbose = verbose
 
         self._width = kernel_halfWidth * 2
-        self._kernel_size = int((self._width//2)*2) - 1
+        self._kernel_size = max(int((self._width//2)*2) - 1, 1)
         kernel_tmp = helpers.cosine_kernel_2D(
             center=(self._kernel_size//2, self._kernel_size//2), 
             image_size=(self._kernel_size, self._kernel_size),
@@ -66,24 +63,26 @@ class ROI_Blurrer(util.ROICaT_Module):
         self,
         spatialFootprints,
     ):
-        # sf_cat = helpers.scipy_sparse_csr_with_length(scipy.sparse.vstack(spatialFootprints))
-        # self.ROIs_blurred = scipy.sparse.vstack([
-        #     self._conv(
-        #         x=batch,
-        #         batching=True,
-        #         mode='same',
-        #     ) for batch in tqdm(helpers.make_batches(sf_cat, batch_size=batch_size), total=int(np.ceil(sf_cat.shape[0]/batch_size)))])
+        """
+        Method to blur the ROIs.
 
+        Args:
+            spatialFootprints (list):
+                A list of sparse matrices corresponding to
+                 spatial footprints from each session.
+        """
         print('Performing convolution for blurring') if self._verbose else None
-        self.ROIs_blurred = [
-                self._conv(
-                    x=sf,
-                    batching=True,
-                    mode='same',
-                ) for sf in spatialFootprints
-        ]
+        if self._width == 0:
+            self.ROIs_blurred = spatialFootprints
+        else:
+            self.ROIs_blurred = [
+                    self._conv(
+                        x=sf,
+                        batching=True,
+                        mode='same',
+                    ) for sf in spatialFootprints
+            ]
     
-
     def get_ROIsBlurred_maxIntensityProjection(self):
         """
         Returns the max intensity projection of the ROIs.

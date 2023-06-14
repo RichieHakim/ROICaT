@@ -152,7 +152,7 @@ def make_params_default_tracking(
     return params
 
 
-def get_system_versions(verbose=False):
+def system_info(verbose=False):
     """
     Checks the versions of various important softwares.
     Prints those versions
@@ -168,21 +168,61 @@ def get_system_versions(verbose=False):
     """
     ## Operating system and version
     import platform
-    operating_system = str(platform.system()) + ': ' + str(platform.release()) + ', ' + str(platform.version()) + ', ' + str(platform.machine()) + ', node: ' + str(platform.node()) 
-    print(f'Operating System: {operating_system}') if verbose else None
+    def try_fns(fn):
+        try:
+            return fn()
+        except:
+            return None
+    fns = {key: val for key, val in platform.__dict__.items() if (callable(val) and key[0] != '_')}
+    operating_system = {key: try_fns(val) for key, val in fns.items() if (callable(val) and key[0] != '_')}
+    print(f'== Operating System ==: {operating_system["uname"]}') if verbose else None
 
+    ## CPU info
+    try:
+        import cpuinfo
+        import multiprocessing as mp
+        # cpu_info = cpuinfo.get_cpu_info()
+        cpu_n_cores = mp.cpu_count()
+        cpu_brand = cpuinfo.cpuinfo.CPUID().get_processor_brand(cpuinfo.cpuinfo.CPUID().get_max_extension_support())
+        cpu_info = {'n_cores': cpu_n_cores, 'brand': cpu_brand}
+        if 'flags' in cpu_info:
+            cpu_info['flags'] = 'omitted'
+    except Exception as e:
+        warnings.warn(f'RH WARNING: unable to get cpu info. Got error: {e}')
+        cpu_info = 'ROICaT Error: Failed to get'
+    print(f'== CPU Info ==: {cpu_info}') if verbose else None
+
+    ## RAM
+    import psutil
+    ram = psutil.virtual_memory()
+    print(f'== RAM ==: {ram}') if verbose else None
+
+    ## User
+    import getpass
+    user = getpass.getuser()
+
+    ## GPU
+    try:
+        import GPUtil
+        gpus = GPUtil.getGPUs()
+        gpu_info = {gpu.id: gpu.__dict__ for gpu in gpus}
+    except Exception as e:
+        warnings.warn(f'RH WARNING: unable to get gpu info. Got error: {e}')
+        gpu_info = 'ROICaT Error: Failed to get'
+    print(f'== GPU Info ==: {gpu_info}') if verbose else None
+    
     ## Conda Environment
     import os
     if 'CONDA_DEFAULT_ENV' not in os.environ:
         conda_env = 'None'
     else:
         conda_env = os.environ['CONDA_DEFAULT_ENV']
-    print(f'Conda Environment: {conda_env}') if verbose else None
+    print(f'== Conda Environment ==: {conda_env}') if verbose else None
 
     ## Python
     import sys
     python_version = sys.version.split(' ')[0]
-    print(f'Python Version: {python_version}') if verbose else None
+    print(f'== Python Version ==: {python_version}') if verbose else None
 
     ## GCC
     import subprocess
@@ -191,51 +231,58 @@ def get_system_versions(verbose=False):
     except Exception as e:
         warnings.warn(f'RH WARNING: unable to get gcc version. Got error: {e}')
         gcc_version = 'Faled to get'
-    print(f'GCC Version: {gcc_version}') if verbose else None
+    print(f'== GCC Version ==: {gcc_version}') if verbose else None
     
     ## PyTorch
     import torch
     torch_version = str(torch.__version__)
-    print(f'PyTorch Version: {torch_version}') if verbose else None
+    print(f'== PyTorch Version ==: {torch_version}') if verbose else None
     ## CUDA
     if torch.cuda.is_available():
         cuda_version = torch.version.cuda
-        print(f"\
-CUDA Version: {cuda_version}, \
-CUDNN Version: {torch.backends.cudnn.version()}, \
-Number of Devices: {torch.cuda.device_count()}, \
-Devices: {[f'device {i}: Name={torch.cuda.get_device_name(i)}, Memory={torch.cuda.get_device_properties(i).total_memory / 1e9} GB' for i in range(torch.cuda.device_count())]}, \
-") if verbose else None
+        cudnn_version = torch.backends.cudnn.version()
+        torch_devices = [f'device {i}: Name={torch.cuda.get_device_name(i)}, Memory={torch.cuda.get_device_properties(i).total_memory / 1e9} GB' for i in range(torch.cuda.device_count())]
+        print(f"== CUDA Version ==: {cuda_version}, CUDNN Version: {cudnn_version}, Number of Devices: {torch.cuda.device_count()}, Devices: {torch_devices}, ") if verbose else None
     else:
         cuda_version = None
-        print('CUDA is not available') if verbose else None
+        cudnn_version = None
+        torch_devices = None
+        print('== CUDA is not available ==') if verbose else None
 
-    ## Numpy
-    import numpy
-    numpy_version = numpy.__version__
-    print(f'Numpy Version: {numpy_version}') if verbose else None
-
-    ## OpenCV
-    import cv2
-    opencv_version = cv2.__version__
-    print(f'OpenCV Version: {opencv_version}') if verbose else None
-    # print(cv2.getBuildInformation())
+    ## all packages in environment
+    import pkg_resources
+    pkgs_dict = {i.key: i.version for i in pkg_resources.working_set}
 
     ## roicat
     import roicat
+    import time
+    
     roicat_version = roicat.__version__
-    print(f'roicat Version: {roicat_version}') if verbose else None
+    roicat_fileDate = time.ctime(os.path.getctime(pkg_resources.get_distribution("roicat").location))
+    roicat_stuff = {'version': roicat_version, 'date_installed': roicat_fileDate}
+    print(f'== ROICaT Version ==: {roicat_version}') if verbose else None
+    print(f'== ROICaT date installed ==: {roicat_fileDate}') if verbose else None
+
+    ## get datetime
+    from datetime import datetime
+    dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     versions = {
-        'roicat_version': roicat_version,
+        'datetime': dt,
+        'roicat': roicat_stuff,
         'operating_system': operating_system,
+        'cpu_info': cpu_info,  ## This is the slow one.
+        'user': user,
+        'ram': ram,
+        'gpu_info': gpu_info,
         'conda_env': conda_env,
-        'python_version': python_version,
-        'gcc_version': gcc_version,
-        'torch_version': torch_version,
-        'cuda_version': cuda_version,
-        'numpy_version': numpy_version,
-        'opencv_version': opencv_version,
+        'python': python_version,
+        'gcc': gcc_version,
+        'torch': torch_version,
+        'cuda': cuda_version,
+        'cudnn': cudnn_version,
+        'torch_devices': torch_devices,
+        'pkgs': pkgs_dict,
     }
 
     return versions
@@ -277,6 +324,7 @@ class ROICaT_Module:
     RH 2023
     """
     def __init__(self):
+        self._system_info = system_info()
         pass
 
     @property
@@ -284,12 +332,14 @@ class ROICaT_Module:
         """
         Return a serializable dict that can be saved to disk.
         """
+        from functools import partial
         ## Go through all items in self.__dict__ and check if they are serializable.
         ### If they are, add them to a dictionary to be returned.
         import pickle
 
         ## Define a list of libraries and classes that are allowed to be serialized.
         allowed_libraries = [
+            'roicat',
             'builtins',
             'collections',
             'datetime',
@@ -323,33 +373,133 @@ class ROICaT_Module:
                     success = False
             return success
         
-        def make_serializable_dict(obj, depth=0, max_depth=100):
+        def make_serializable_dict(obj, depth=0, max_depth=100, name=None):
             """
             Recursively go through all items in self.__dict__ and check if they are serializable.
             """
+            # print(name)
+            msd_partial = partial(make_serializable_dict, depth=depth+1, max_depth=max_depth)
             if depth > max_depth:
                 raise Exception(f'RH ERROR: max_depth of {max_depth} reached with object: {obj}')
+                
             serializable_dict = {}
-            for key, val in obj.__dict__.items():
-                try:
-                    ## Check if the value is in the allowed_libraries list.
-                    if is_library_allowed(val):
-                        pass
-                    else:
-                        continue
-                    ## Check if the value is serializable.
-                    pickle.dumps(val)
-                    ## If it is, check to see if it has it's own serializable_dict property.
+            if hasattr(obj, '__dict__') and is_library_allowed(obj):
+                for key, val in obj.__dict__.items():
                     try:
-                        serializable_dict[key] = make_serializable_dict(val, depth=depth+1, max_depth=max_depth)
+                        serializable_dict[key] = msd_partial(val, name=key)
                     except:
-                        serializable_dict[key] = val
+                        pass
+
+            elif isinstance(obj, (list, tuple, set, frozenset)):
+                serializable_dict = [msd_partial(v, name=f'{name}_{ii}') for ii,v in enumerate(obj)]
+            elif isinstance(obj, dict):
+                serializable_dict = {k: msd_partial(v, name=f'{name}_{k}') for k,v in obj.items()}
+            else:
+                try:
+                    assert is_library_allowed(obj), f'RH ERROR: object {obj} is not serializable'
+                    pickle.dumps(obj)
                 except:
-                    pass
+                    return {'__repr__': repr(obj)} if hasattr(obj, '__repr__') else {'__str__': str(obj)} if hasattr(obj, '__str__') else None
+
+                serializable_dict = obj
+
             return serializable_dict
         
-        serializable_dict = make_serializable_dict(self, depth=0, max_depth=100)
+        serializable_dict = make_serializable_dict(self, depth=0, max_depth=100, name='self')
         return serializable_dict
+
+    def save(
+        self, 
+        path_save,
+        save_as_serializable_dict=False,
+        compress=False,
+        allow_overwrite=False,
+    ):
+        """
+        Save Data_roicat object to pickle file.
+        
+        Args:
+            save_path (str or pathlib.Path):
+                Path to save pickle file.
+            save_as_serializable_dict (bool):
+                A serializable dict is an archival-type format
+                 that is easy to load data from, but typically cannot
+                 be used to re-instantiate the object.
+                If True, save the object as a serializable dict.
+                If False, save the object as a Data_roicat object.
+            compress (bool):
+                If True, compress the pickle file.
+            allow_overwrite (bool):
+                If True, allow overwriting of existing file.
+        """
+        from pathlib import Path
+        ## Check if file already exists
+        if not allow_overwrite:
+            assert not Path(path_save).exists(), f"RH ERROR: File already exists: {path_save}. Set allow_overwrite=True to overwrite."
+
+        helpers.pickle_save(
+            obj=self.serializable_dict if save_as_serializable_dict else self,
+            path_save=path_save,
+            zipCompress=compress,
+            mkdir=True,
+            allow_overwrite=allow_overwrite,
+        )
+        print(f"Saved Data_roicat as a pickled object to {path_save}.") if self._verbose else None
+
+    def load(self, path_load):
+        """
+        Load attributes from Data_roicat object from pickle file.
+        
+        Args:
+            path_load (str or pathlib.Path):
+                Path to pickle file.
+        
+        Returns:
+            Data_roicat object.
+        """
+        from pathlib import Path
+        assert Path(path_load).exists(), f"RH ERROR: File does not exist: {path_load}."
+        obj = helpers.pickle_load(path_load)
+        assert isinstance(obj, (type(self), dict)), f"RH ERROR: Loaded object is not a Data_roicat object or dictionary. Loaded object is of type {type(obj)}."
+
+        if isinstance(obj, dict):
+            ## Set attributes from dict
+            ### If the object has a load_from_dict method, use that.
+            if hasattr(self, 'import_from_dict'):
+                self.import_from_dict(obj)
+            else:
+                for key, val in obj.items():
+                    setattr(self, key, val)
+        else:
+            ## Set attributes from object
+            for key, val in obj.__dict__.items():
+                setattr(self, key, val)
+
+        print(f"Loaded Data_roicat object from {path_load}.") if self._verbose else None
+
+
+##########################################################################################################################
+############################################### UCID handling ############################################################
+##########################################################################################################################
+
+def make_session_bool(n_roi):
+    """
+    Makes a session_bool array from an n_roi array.
+
+    Args:
+        n_roi (np.ndarray):
+            Array of number of ROIs per session
+
+    Returns:
+        session_bool (np.ndarray):
+            Boolean array of shape (n_roi_total, n_session) where
+             each column is a session and each row is a ROI.
+    """
+    n_roi_total = np.sum(n_roi)
+    r = np.arange(n_roi_total, dtype=np.int64)
+    n_roi_cumsum = np.concatenate([[0], np.cumsum(n_roi)])
+    session_bool = np.vstack([(b_lower <= r) * (r < b_upper) for b_lower, b_upper in zip(n_roi_cumsum[:-1], n_roi_cumsum[1:])]).T
+    return session_bool
 
 
 ##########################################################################################################################
@@ -640,3 +790,4 @@ def match_arrays_with_ucids_inverse(arrays, ucids):
                 arrays_out[i_sesh][idx] = arrays[i_sesh][u]
 
     return arrays_out
+    

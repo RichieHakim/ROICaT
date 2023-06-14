@@ -305,11 +305,11 @@ def pydata_sparse_to_torch_coo(sp_array):
 def squeeze_integers(intVec):
     """
     Make integers in an array consecutive numbers
-     starting from 0. ie. [7,2,7,4,1] -> [3,2,3,1,0].
-    Useful for removing unused class IDs from y_true
-     and outputting something appropriate for softmax.
-    This is v2. The old version is busted.
-    RH 2021
+     starting from the smallest value. 
+    ie. [7,2,7,4,-1,0] -> [3,2,3,1,-1,0].
+    Useful for removing unused class IDs.
+    This is v3.
+    RH 2023
     
     Args:
         intVec (np.ndarray):
@@ -319,10 +319,17 @@ def squeeze_integers(intVec):
         intVec_squeezed (np.ndarray):
             1-D array of integers with consecutive numbers
     """
-    uniques = np.unique(intVec)
-    # unique_positions = np.arange(len(uniques))
-    unique_positions = np.arange(uniques.min(), uniques.max()+1)
-    return unique_positions[np.array([np.where(intVec[ii]==uniques)[0] for ii in range(len(intVec))]).squeeze()]
+    if isinstance(intVec, list):
+        intVec = np.array(intVec, dtype=np.int64)
+    if isinstance(intVec, np.ndarray):
+        unique, arange = np.unique, np.arange
+    elif isinstance(intVec, torch.Tensor):
+        unique, arange = torch.unique, torch.arange
+        
+    u, inv = unique(intVec, return_inverse=True)  ## get unique values and their indices
+    u_min = u.min()  ## get the smallest value
+    u_s = arange(u_min, u_min + u.shape[0], dtype=u.dtype)  ## make consecutive numbers starting from the smallest value
+    return u_s[inv]  ## return the indexed consecutive unique values
 
 
 def idx_to_oneHot(arr, n_classes=None, dtype=None):
@@ -469,6 +476,60 @@ def pickle_load(
         with open(filename, mode) as f:
             return pickle.load(f)
 
+
+def matlab_save(
+    obj,
+    filepath,
+    mkdir=False, 
+    allow_overwrite=True,
+    clean_string=True,
+    list_to_objArray=True,
+    none_to_nan=True,
+    kwargs_scipy_savemat={
+        'appendmat': True,
+        'format': '5',
+        'long_field_names': False,
+        'do_compression': False,
+        'oned_as': 'row',
+    }
+):
+    """
+    Saves data to a matlab file.
+    Uses scipy.io.savemat.
+    Provides additional functionality by cleaning strings,
+     converting lists to object arrays, and converting None to
+     np.nan.
+    RH 2023
+
+    Args:
+        obj (dict):
+            Data to save.
+        filepath (str):
+            Path to save file to.
+        clean_string (bool):
+            If True, converts strings to bytes.
+        list_to_objArray (bool):
+            If True, converts lists to object arrays.
+        none_to_nan (bool):
+            If True, converts None to np.nan.
+        kwargs_scipy_savemat (dict):
+            Keyword arguments to pass to scipy.io.savemat.
+    """
+    import numpy as np
+
+    prepare_filepath_for_saving(filepath, mkdir=mkdir, allow_overwrite=allow_overwrite)
+
+    def walk(d, fn):
+        return {key: fn(val) if isinstance(val, dict)==False else walk(val, fn) for key, val in d.items()}
+    
+    fn_clean_string = (lambda x: x.encode('utf-8') if isinstance(x, str) and clean_string else x) if clean_string else (lambda x: x)
+    fn_list_to_objArray = (lambda x: np.array(x, dtype=object) if isinstance(x, list) and list_to_objArray else x) if list_to_objArray else (lambda x: x)
+    fn_none_to_nan = (lambda x: np.nan if x is None and none_to_nan else x) if none_to_nan else (lambda x: x)
+
+    data_cleaned = walk(walk(walk(obj, fn_clean_string), fn_list_to_objArray), fn_none_to_nan)
+
+    import scipy.io
+    scipy.io.savemat(filepath, data_cleaned, **kwargs_scipy_savemat)
 
 
 def deep_update_dict(dictionary, key, val, in_place=False):
@@ -915,6 +976,22 @@ def find_paths(
         paths = natsort.natsorted(paths, alg=alg_ns)
     return paths
 
+
+######################################################################################################################################
+########################################################## INDEXING ##################################################################
+######################################################################################################################################
+
+def sparse_to_dense_fill(arr_s, fill_val=0.):
+    """
+    Converts a sparse array to a dense array and fills
+     in sparse entries with a fill value.
+    """
+    import sparse
+    s = sparse.COO(arr_s)
+    s.fill_value = fill_val
+    return s.todense()
+
+
 ######################################################################################################################################
 ######################################################## FILE HELPERS ################################################################
 ######################################################################################################################################
@@ -1190,7 +1267,7 @@ def extract_zip(
 ######################################################################################################################################
 
 ## below is actually 'simple_load' from h5_handling
-def h5_load(filepath, return_dict=False):
+def h5_load(filepath, return_dict=True, verbose=False):
     """
     Returns a dictionary object containing the groups
     as keys and the datasets as values from
@@ -1205,17 +1282,88 @@ def h5_load(filepath, return_dict=False):
             or an h5py object (False)
     """
     import h5py
-    with h5py.File(filepath, 'r') as h5_file:
-        if return_dict:
-            data = {}
-            def h5_to_dict(name, obj):
-                if isinstance(obj, h5py.Dataset):
-                    data[name] = obj[()]
+    if return_dict:
+        with h5py.File(filepath, 'r') as h5_file:
+            if verbose:
+                print(f'==== Loading h5 file with hierarchy: ====')
+                show_item_tree(h5_file)
+            result = {}
+            def visitor_func(name, node):
+                # Split name by '/' and reduce to nested dict
+                keys = name.split('/')
+                sub_dict = result
+                for key in keys[:-1]:
+                    sub_dict = sub_dict.setdefault(key, {})
 
-            h5_file.visititems(h5_to_dict)  ## Converts h5 file to dict in-place
-            return data
-        else:
-            return h5_file
+                if isinstance(node, h5py.Dataset):
+                    sub_dict[keys[-1]] = node[...]
+                elif isinstance(node, h5py.Group):
+                    sub_dict.setdefault(keys[-1], {})
+
+            h5_file.visititems(visitor_func)            
+            return result
+    else:
+        return h5py.File(filepath, 'r')
+    
+def show_item_tree(hObj=None , path=None, depth=None, show_metadata=True, print_metadata=False, indent_level=0):
+    '''
+    Recursive function that displays all the items 
+     and groups in an h5 object or python dict
+    RH 2021
+
+    Args:
+        hObj:
+            'hierarchical Object'. hdf5 object OR python dictionary
+        path (Path or string):
+            If not None, then path to h5 object is used instead of hObj
+        depth (int):
+            how many levels deep to show the tree
+        show_metadata (bool): 
+            whether or not to list metadata with items
+        print_metadata (bool): 
+            whether or not to show values of metadata items
+        indent_level: 
+            used internally to function. User should leave blank
+
+    ##############
+    
+    example usage:
+        with h5py.File(path , 'r') as f:
+            h5_handling.show_item_tree(f)
+    '''
+    import h5py
+    if depth is None:
+        depth = int(10000000000000000000)
+    else:
+        depth = int(depth)
+
+    if depth < 0:
+        return
+
+    if path is not None:
+        with h5py.File(path , 'r') as f:
+            show_item_tree(hObj=f, path=None, depth=depth-1, show_metadata=show_metadata, print_metadata=print_metadata, indent_level=indent_level)
+    else:
+        indent = f'  '*indent_level
+        if hasattr(hObj, 'attrs') and show_metadata:
+            for ii,val in enumerate(list(hObj.attrs.keys()) ):
+                if print_metadata:
+                    print(f'{indent}METADATA: {val}: {hObj.attrs[val]}')
+                else:
+                    print(f'{indent}METADATA: {val}: shape={hObj.attrs[val].shape} , dtype={hObj.attrs[val].dtype}')
+        
+        for ii,val in enumerate(list(iter(hObj))):
+            if isinstance(hObj[val], h5py.Group):
+                print(f'{indent}{ii+1}. {val}:----------------')
+                show_item_tree(hObj[val], depth=depth-1, show_metadata=show_metadata, print_metadata=print_metadata , indent_level=indent_level+1)
+            elif isinstance(hObj[val], dict):
+                print(f'{indent}{ii+1}. {val}:----------------')
+                show_item_tree(hObj[val], depth=depth-1, show_metadata=show_metadata, print_metadata=print_metadata , indent_level=indent_level+1)
+            else:
+                if hasattr(hObj[val], 'shape') and hasattr(hObj[val], 'dtype'):
+                    print(f'{indent}{ii+1}. {val}:    '.ljust(20) + f'shape={hObj[val].shape} ,'.ljust(20) + f'dtype={hObj[val].dtype}')
+                else:
+                    print(f'{indent}{ii+1}. {val}:    '.ljust(20) + f'type={type(hObj[val])}')
         
 
 ######################################################################################################################################

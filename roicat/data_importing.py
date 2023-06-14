@@ -1,6 +1,6 @@
 import pathlib
 from pathlib import Path
-import multiprocessing as mp
+import warnings
 
 import numpy as np
 from tqdm import tqdm
@@ -192,6 +192,12 @@ class Data_roicat(util.ROICaT_Module):
         assert all([lbls.dtype==int for lbls in class_labels]), f"class_labels should be a list of 1-D numpy arrays of dtype np.int. First element of list is of dtype {class_labels[0].dtype}"
         assert all([np.all(lbls>=0) for lbls in class_labels]), f"All class labels should be non-negative. Found negative values."
 
+        ## Warn if there are any labels that are NaN or inf
+        if any([np.any([np.isnan(l).sum() for l in lbls]) for lbls in class_labels]):
+            warnings.warn("RH WARNING: There are NaN values in the class labels.")
+        if any([np.any([np.isinf(l).sum() for l in lbls]) for lbls in class_labels]):
+            warnings.warn("RH WARNING: There are inf values in the class labels.")
+
         ## Define some variables
         n_sessions = len(class_labels)
         class_labels_cat = np.concatenate(class_labels)
@@ -273,10 +279,16 @@ class Data_roicat(util.ROICaT_Module):
 
         Args:
             spatialFootprints (list):
-                List of scipy.sparse.csr_matrix objects, one for
-                 each session. Each matrix should have shape
-                 (n_ROIs, FOV_height * FOV_width). Reshaping should
-                 be done with 'C' indexing (standard).
+                One of the following:
+                - List of scipy.sparse.csr_matrix objects, one for
+                   each session. Each matrix should have shape
+                   (n_ROIs, FOV_height * FOV_width). Reshaping should
+                   be done with 'C' indexing (standard).
+                - List of dictionaries, one for each session. This 
+                  dictionary should be a serialized scipy.sparse.csr_matrix
+                  object. It should contains keys: 'data', 'indices',
+                  'indptr', 'shape'. See scipy.sparse.csr_matrix for
+                  more information.
             um_per_pixel (float):
                 The number of microns per pixel. This is used to
                  resize the images to a common size.
@@ -288,6 +300,11 @@ class Data_roicat(util.ROICaT_Module):
                 um_per_pixel = self.um_per_pixel
             print("RH WARNING: No um_per_pixel provided. We recommend making an educated guess. Assuming 1.0 um per pixel. This will affect the embedding results.")
             um_per_pixel = 1.0
+
+        ## If the input are dictionaries, assume that it is a serialized scipy.sparse.csr_matrix object and convert it
+        if all([isinstance(s, dict) for s in spatialFootprints]):
+            print("RH WARNING: spatialFootprints are dictionaries, assuming that they are serialized scipy.sparse.csr_matrix objects and converting them.") if self._verbose else None
+            spatialFootprints = [scipy.sparse.csr_matrix((sf['data'], sf['indices'], sf['indptr']), shape=sf['_shape']) for sf in spatialFootprints]
 
         ## Check inputs
         assert isinstance(spatialFootprints, list), f"RH ERROR: spatialFootprints must be a list."
@@ -404,26 +421,30 @@ class Data_roicat(util.ROICaT_Module):
          given the attributes that have been set.
         """
         completeness = {}
+        keys_classification_inference = ['ROI_images', 'um_per_pixel']
+        keys_classification_training = ['ROI_images', 'um_per_pixel', 'class_labels']
+        keys_tracking = ['ROI_images', 'um_per_pixel', 'spatialFootprints', 'FOV_images']
+        
         ## Check classification inference:
         ### ROI_images, um_per_pixel
-        if hasattr(self, 'ROI_images') and hasattr(self, 'um_per_pixel'):
+        if all([hasattr(self, key) for key in keys_classification_inference]):
             completeness['classification_inference'] = True
         else:
-            print(f"RH WARNING: Classification-Inference incomplete because following attributes are missing: {[key for key in ['ROI_images', 'um_per_pixel'] if not hasattr(self, key)]}") if verbose else None
+            print(f"RH WARNING: Classification-Inference incomplete because following attributes are missing: {[key for key in keys_classification_inference if not hasattr(self, key)]}") if verbose else None
             completeness['classification_inference'] = False
         ## Check classification training:
         ### ROI_images, um_per_pixel, class_labels
-        if hasattr(self, 'ROI_images') and hasattr(self, 'um_per_pixel') and hasattr(self, 'class_labels'):
+        if all([hasattr(self, key) for key in keys_classification_training]):
             completeness['classification_training'] = True
         else:
-            print(f"RH WARNING: Classification-Training incomplete because following attributes are missing: {[key for key in ['ROI_images', 'um_per_pixel', 'class_labels'] if not hasattr(self, key)]}") if verbose else None
+            print(f"RH WARNING: Classification-Training incomplete because the following attributes are missing: {[key for key in keys_tracking if not hasattr(self, key)]}") if verbose else None
             completeness['classification_training'] = False
         ## Check tracking:
         ### um_per_pixel, spatialFootprints, FOV_images
-        if hasattr(self, 'ROI_images') and hasattr(self, 'um_per_pixel') and hasattr(self, 'spatialFootprints') and hasattr(self, 'FOV_images'):
+        if all([hasattr(self, key) for key in keys_tracking]):
             completeness['tracking'] = True
         else:
-            print(f"RH WARNING: Tracking incomplete because following attributes are missing: {[key for key in ['ROI_images', 'um_per_pixel', 'spatialFootprints', 'FOV_images'] if not hasattr(self, key)]}") if verbose else None
+            print(f"RH WARNING: Tracking incomplete because the following attributes are missing: {[key for key in keys_tracking if not hasattr(self, key)]}") if verbose else None
             completeness['tracking'] = False
 
         self._checkValidity_classLabels_vs_ROIImages(verbose=verbose)
@@ -449,7 +470,8 @@ class Data_roicat(util.ROICaT_Module):
         ## Check that n_roi_total is correct
         assert sum(self.n_roi) == self.n_roi_total, f"RH ERROR: n_roi must sum to n_roi_total."
         ## Create session_bool
-        self.session_bool = np.vstack([np.array([helpers.idx2bool(i_sesh, length=self.n_sessions)]*n) for i_sesh, n in enumerate(self.n_roi)])
+        self.session_bool = util.make_session_bool(self.n_roi)
+
         print(f"Completed: Created session_bool.") if self._verbose else None
 
 
@@ -576,59 +598,40 @@ class Data_roicat(util.ROICaT_Module):
             'n_roi_total',
             'FOV_height',
             'FOV_width',
-            ]}
+        ]}
         return f"Data_roicat object: {attr_to_print}."
-    
-    def save(
-        self, 
-        path_save,
-        compress=False,
-        allow_overwrite=False,
-    ):
+
+    def import_from_dict(self, dict_load):
         """
-        Save Data_roicat object to pickle file.
-        
+        Import attributes from a dictionary. This is useful if a serializable
+         dictionary was saved.
+
         Args:
-            save_path (str or pathlib.Path):
-                Path to save pickle file.
+            dict_load (dict):
+                Dictionary containing attributes to load.
         """
-        from pathlib import Path
-        ## Check if file already exists
-        if not allow_overwrite:
-            assert not Path(path_save).exists(), f"RH ERROR: File already exists: {path_save}. Set allow_overwrite=True to overwrite."
+        ## Go through each important attribute in Data_roicat and look for it in dict_load
+        methods = {
+            self.set_ROI_images: ['ROI_images', 'um_per_pixel'],
+            self.set_spatialFootprints: ['spatialFootprints', 'um_per_pixel'],
+            self.set_FOV_images: ['FOV_images'],
+            self.set_class_labels: ['class_labels'],
+        }
 
-        helpers.pickle_save(
-            obj=self,
-            path_save=path_save,
-            zipCompress=compress,
-            allow_overwrite=allow_overwrite,
-        )
-        print(f"Saved Data_roicat as a pickled object to {path_save}.") if self._verbose else None
-
-    def load(self, path_load):
-        """
-        Load attributes from Data_roicat object from pickle file.
+        methodKeys_all = list(set(sum(list(methods.values()), [])))
         
-        Args:
-            path_load (str or pathlib.Path):
-                Path to pickle file.
+        ## Set other attributes
+        for key, val in dict_load.items():
+            if key not in methodKeys_all:
+                setattr(self, key, val)
+
+        ## Set attributes using methods
+        for method, methodKeys in methods.items():
+            if all([key in dict_load for key in methodKeys]):
+                method(**{key: dict_load[key] for key in methodKeys})
+            else:
+                print(f"RH WARNING: Could not load attribute using method {method.__name__}. Keys {methodKeys} not found in dict_load.") if self._verbose else None
         
-        Returns:
-            Data_roicat object.
-        """
-        from pathlib import Path
-        assert Path(path_load).exists(), f"RH ERROR: File does not exist: {path_load}."
-        obj = helpers.pickle_load(path_load)
-        assert isinstance(obj, type(self)), f"RH ERROR: Loaded object is not a Data_roicat object. Loaded object is of type {type(obj)}."
-
-        ## Set attributes
-        for key, val in obj.__dict__.items():
-            setattr(self, key, val)
-        
-
-        print(f"Loaded Data_roicat object from {path_load}.") if obj._verbose else None
-
-
 
 ############################################################################################################################
 ############################## CUSTOM CLASSES FOR SUITE2P AND CAIMAN OUTPUT FILES ##########################################
@@ -642,7 +645,49 @@ class Data_suite2p(Data_roicat):
     """
     Class for handling suite2p output files and data.
     In particular stat.npy and ops.npy files.
-    RH, JZ 2022
+    Imports FOV images and spatial footprints,
+     and prepares ROI images.
+    RH 2022
+
+    Args:
+        paths_statFiles (list of str or pathlib.Path):
+            List of paths to the stat.npy files.
+            Elements should be one of: str, pathlib.Path,
+                list of str or list of pathlib.Path
+        paths_opsFiles (list of str or pathlib.Path):
+            List of paths to the ops.npy files.
+            Elements should be one of: str, pathlib.Path,
+                list of str or list of pathlib.Path
+            Optional. 
+            Used to get FOV_images, FOV_height,
+                FOV_width, and shifts (if old matlab ops file).
+        um_per_pixel (float):
+            Resolution. 'micrometers per pixel' of the imaging
+             field of view.
+        new_or_old_suite2p (str):
+            Type of suite2p output files. Matlab=old, Python=new.
+            Should be: 'new' or 'old'.
+        out_height_width (tuple of int):
+            Height and width of output ROI images.
+            Should be: (int, int) (y, x).                
+        class_labels ((list of np.ndarray) or (list of str to paths) or None):
+            Optional. 
+            If None, class labels are not set.
+            If list of np.ndarray, each element should be
+                1D integer array of length n_roi specifying
+                the class label for each ROI.
+            If list of str, each element should be a path
+                to a .npy file containing 
+                of length n_roi specifying the class label 
+                for each ROI.
+        centroid_method (str):
+            Method for calculating centroid of ROI.
+            Should be: 'centerOfMass' or 'median'.
+        FOV_height_width (tuple of int):
+            Optional. If None, paths_opsFiles must be
+                provided to get FOV height and width.
+        verbose (bool):
+            If True, prints results from each function.
     """
     def __init__(
         self,
@@ -663,50 +708,6 @@ class Data_suite2p(Data_roicat):
         verbose=True,
     ):
         super().__init__()
-        """
-        Initializes the class for importing FOV images,
-         spatial footprints and prepareing ROI images.
-        Args:
-            paths_statFiles (list of str or pathlib.Path):
-                List of paths to the stat.npy files.
-                Elements should be one of: str, pathlib.Path,
-                 list of str or list of pathlib.Path
-            paths_opsFiles (list of str or pathlib.Path):
-                List of paths to the ops.npy files.
-                Elements should be one of: str, pathlib.Path,
-                 list of str or list of pathlib.Path
-                Optional. 
-                Used to get FOV_images, FOV_height,
-                 FOV_width, and shifts (if old matlab ops file).
-            um_per_pixel (float):
-                Resolution of imaging field of view.
-                'micrometers per pixel' of the imaging field
-                  of view.
-            new_or_old_suite2p (str):
-                Type of suite2p output files. Matlab=old, Python=new.
-                Should be: 'new' or 'old'.
-            out_height_width (tuple of int):
-                Height and width of output ROI images.
-                Should be: (int, int) (y, x).                
-            class_labels ((list of np.ndarray) or (list of str to paths) or None):
-                Optional. 
-                If None, class labels are not set.
-                If list of np.ndarray, each element should be
-                 1D integer array of length n_roi specifying
-                 the class label for each ROI.
-                If list of str, each element should be a path
-                 to a .npy file containing 
-                 of length n_roi specifying the class label 
-                 for each ROI.
-            centroid_method (str):
-                Method for calculating centroid of ROI.
-                Should be: 'centerOfMass' or 'median'.
-            FOV_height_width (tuple of int):
-                Optional. If None, paths_opsFiles must be
-                 provided to get FOV height and width.
-            verbose (bool):
-                If True, prints results from each function.
-        """
 
         self.paths_stat = fix_paths(paths_statFiles)
         self.paths_ops = fix_paths(paths_opsFiles) if paths_opsFiles is not None else None
@@ -1056,7 +1057,7 @@ class Data_caiman(Data_roicat):
         self.set_caimanLabels(overall_caimanLabels=overall_caimanLabels)
 
         cnn_caimanPreds = [self.import_cnn_caiman_preds(path, include_discarded=include_discarded) for path in self.paths_resultsFiles]
-        self.set_caimanPreds(cnn_caimanPreds=cnn_caimanPreds)
+        self.set_caimanPreds(cnn_caimanPreds=cnn_caimanPreds) if cnn_caimanPreds[0] is not None else None
 
         # 1.A. self.import_FOV_images
         # # self.FOV_images
@@ -1162,8 +1163,8 @@ class Data_caiman(Data_roicat):
                 List of lists of CNN-CaImAn predictions.
                 The outer list is over sessions, and the inner list is over ROIs.
         """
-        assert len(cnn_caimanPreds) == self.n_sessions
-        assert all([len(cnn_caimanPreds[i]) == self.n_roi[i] for i in range(self.n_sessions)])
+        assert len(cnn_caimanPreds) == self.n_sessions, f"{len(cnn_caimanPreds)} != {self.n_sessions}"
+        assert all([len(cnn_caimanPreds[i]) == self.n_roi[i] for i in range(self.n_sessions)]), f"{[len(cnn_caimanPreds[i]) for i in range(self.n_sessions)]} != {[self.n_roi[i] for i in range(self.n_sessions)]}"
         self.cnn_caimanPreds = cnn_caimanPreds
 
     def import_spatialFootprints(self, path_resultsFile, include_discarded=True):
@@ -1184,24 +1185,27 @@ class Data_caiman(Data_roicat):
             spatialFootprints (scipy.sparse.csr_matrix):
                 Spatial footprints.
         """
-        data = helpers.h5_load(path_resultsFile, return_dict=False)
-        FOV_height, FOV_width = data['estimates']['dims']
-        
-        ## initialize the estimates.A matrix, which is a 'Fortran' indexed version of sf. Note the flipped dimensions for shape.
-        sf_included = scipy.sparse.csr_matrix((data['estimates']['A']['data'], data['estimates']['A']['indices'], data['estimates']['A']['indptr']), shape=data['estimates']['A']['shape'][::-1])
-        print('kept ROIs',sf_included.shape)
-        if include_discarded:
-            discarded = data['estimates']['discarded_components']
-            sf_discarded = scipy.sparse.csr_matrix((discarded['A']['data'], discarded['A']['indices'], discarded['A']['indptr']), shape=discarded['A']['shape'][::-1])
-            print('dropped ROIs',sf_discarded.shape)
-            sf_F = scipy.sparse.vstack([sf_included, sf_discarded])
-        else:
-            sf_F = sf_included
+        with helpers.h5_load(path_resultsFile, return_dict=False) as data:
+            FOV_height, FOV_width = data['estimates']['dims'][()]
+            
+            ## initialize the estimates.A matrix, which is a 'Fortran' indexed version of sf. Note the flipped dimensions for shape.
+            sf_included = scipy.sparse.csr_matrix((data['estimates']['A']['data'][()], data['estimates']['A']['indices'], data['estimates']['A']['indptr'][()]), shape=data['estimates']['A']['shape'][()][::-1])
+            print('kept ROIs',sf_included.shape)
+            if include_discarded:
+                try:
+                    discarded = data['estimates']['discarded_components'][()]
+                    sf_discarded = scipy.sparse.csr_matrix((discarded['A']['data'], discarded['A']['indices'], discarded['A']['indptr']), shape=discarded['A']['shape'][::-1])
+                    print('dropped ROIs',sf_discarded.shape)
+                    sf_F = scipy.sparse.vstack([sf_included, sf_discarded])
+                except:
+                    sf_F = sf_included
+            else:
+                sf_F = sf_included
 
-        ## reshape sf_F (which is in Fortran flattened format) into C flattened format
-        sf = sparse.COO(sf_F).reshape((sf_F.shape[0], FOV_width, FOV_height)).transpose((0,2,1)).reshape((sf_F.shape[0], FOV_width*FOV_height)).tocsr()
-        
-        return sf
+            ## reshape sf_F (which is in Fortran flattened format) into C flattened format
+            sf = sparse.COO(sf_F).reshape((sf_F.shape[0], FOV_width, FOV_height)).transpose((0,2,1)).reshape((sf_F.shape[0], FOV_width*FOV_height)).tocsr()
+            
+            return sf
 
 
     def import_overall_caiman_labels(self, path_resultsFile, include_discarded=True):
@@ -1220,16 +1224,20 @@ class Data_caiman(Data_roicat):
         """
 
 
-        data = helpers.h5_load(path_resultsFile, return_dict=False)
-        labels_included = np.ones(data['estimates']['A']['indptr'].shape[0] - 1)
-        if include_discarded:
-            discarded = data['estimates']['discarded_components']
-            labels_discarded = np.zeros(discarded['A']['indptr'].shape[0] - 1)
-            labels = np.hstack([labels_included, labels_discarded])
-        else:
-            labels = labels_included
+        with helpers.h5_load(path_resultsFile, return_dict=False) as data:
+            labels_included = np.ones(data['estimates']['A']['indptr'][()].shape[0] - 1)
+            if include_discarded:
+                try:
+                    discarded = data['estimates']['discarded_components'][()]
+                    labels_discarded = np.zeros(discarded['A']['indptr'].shape[0] - 1)
+                    labels = np.hstack([labels_included, labels_discarded])
+                except:
+                    print('no discarded components for labels')
+                    labels = labels_included
+            else:
+                labels = labels_included
 
-        return labels
+            return labels
 
     def import_cnn_caiman_preds(self, path_resultsFile, include_discarded=True):
         """
@@ -1244,16 +1252,24 @@ class Data_caiman(Data_roicat):
             preds (np.ndarray):
                 CNN-based CaImAn prediction probabilities
         """
-        data = helpers.h5_load(path_resultsFile, return_dict=False)
-        preds_included = data['estimates']['cnn_preds']
-        if include_discarded:
-            discarded = data['estimates']['discarded_components']
-            preds_discarded = discarded['cnn_preds']
-            preds = np.hstack([preds_included, preds_discarded])
-        else:
-            preds = preds_included
-        
-        return preds
+        with helpers.h5_load(path_resultsFile, return_dict=False) as data:
+            preds_included = data['estimates']['cnn_preds'][()]
+            if preds_included == b'NoneType':
+                warnings.warn('No CNN preds found in results file')
+                return None
+            
+            if include_discarded:
+                try:
+                    discarded = data['estimates']['discarded_components'][()]
+                    preds_discarded = discarded['cnn_preds']
+                    preds = np.hstack([preds_included, preds_discarded])
+                except:
+                    print('no discarded components for cnn_preds')
+                    preds = preds_included
+            else:
+                preds = preds_included
+            
+            return preds
 
     def import_ROI_centeredImages(
         self,
@@ -1316,10 +1332,10 @@ class Data_caiman(Data_roicat):
                 List of FOV images (np.ndarray).
         """
         def _import_FOV_image(path_resultsFile):
-            data = helpers.h5_load(path_resultsFile, return_dict=False)
-            FOV_height, FOV_width = data['estimates']['dims']
-            FOV_image = data['estimates']['b'][:,0].reshape(FOV_height, FOV_width, order='F')
-            return FOV_image.astype(np.float32)
+            with helpers.h5_load(path_resultsFile, return_dict=False) as data:
+                FOV_height, FOV_width = data['estimates']['dims'][()]
+                FOV_image = data['estimates']['b'][()][:,0].reshape(FOV_height, FOV_width, order='F')
+                return FOV_image.astype(np.float32)
 
         if images is not None:
             if self._verbose:

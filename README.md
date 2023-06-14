@@ -5,7 +5,8 @@
 
 **R**egion **O**f **I**nterest **C**lassification **a**nd **T**racking
 A simple-to-use Python package for classifying images of cells and tracking them across imaging sessions/planes.
-Currently designed to be used with Suite2p output data (stat.npy and ops.npy files) and CaImAn output data (results.h5 files), but any image data can be used (see [TODO: link] for details on using non-standard data).
+
+For technical support, please visit the support forum here: [https://groups.google.com/g/roicat_support](), or the github issues page here: [ISSUES](https://github.com/RichieHakim/ROICaT/issues).
 
 With this package, you can:
 - **Classify cells** into different categories (e.g. neurons, glia, etc.) using a simple GUI.
@@ -21,7 +22,7 @@ We have found that ROICaT is capable of classifying cells with accuracy comparab
 - [TODO](#TODO)<br>
 
 ## Announcements
-- **TRACKING:** Try it out in the demo notebook [here](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/tracking/tracking_interactive_notebook.ipynb) or the demo script [here](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/tracking/tracking_scripted_notebook.ipynb).
+- **TRACKING:** Try it out in the [demo notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/tracking_interactive_notebook.ipynb), or [Google CoLab](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/colab/tracking/tracking_interactive_notebook.ipynb) or the (TODO) [demo script](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/tracking_scripted_notebook.ipynb).
 - **CLASSIFICATION:** still in Alpha. Contact me if you want to help test it.
 - To help with development or beta test releases, please contact: rhakim@g.harvard.edu
 
@@ -29,6 +30,7 @@ We have found that ROICaT is capable of classifying cells with accuracy comparab
 ROICaT works on Windows, MacOS, and Linux. If you have any issues during the installation process, please make a [github issue](https://github.com/RichieHakim/ROICaT/issues) with the error.
 
 ### 0. Requirements
+- **Suite2p** output data (stat.npy and ops.npy files) or **CaImAn** output data (results.h5 files), or any image data using this [custom data importing notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/other/demo_custom_data_importing.ipynb).
 - [Anaconda](https://www.anaconda.com/distribution/) or [Miniconda](https://docs.conda.io/en/latest/miniconda.html)<br>
 - GCC >= 5.4.0, ideally == 9.2.0. Google how to do this on your operating system. For unix/linux: check with `gcc --version`.<br>
 - On some Linux servers (like Harvard's O2 server), you may need to load modules instead of installing. To load conda, gcc, try: `module load conda3/latest gcc/9.2.0` or similar.<br>
@@ -36,23 +38,34 @@ ROICaT works on Windows, MacOS, and Linux. If you have any issues during the ins
 
 ### 1. (Recommended) Create a new conda environment
 ```
-conda create -n ROICaT python=3.11
-conda activate ROICaT
+conda create -n roicat python=3.11
+conda activate roicat
 ```
 
-### 2. Clone the repo
+### 2. Install ROICaT
+- **Basic users**:
+```
+pip install --upgrade pip
+pip install --user roicat[all]
+```
+Note: if you are using a zsh terminal, change command to: `pip3 install --user -v -e '.[all]'`
+
+- **For the latest development version**:
+```
+pip install --upgrade pip
+git clone https://github.com/RichieHakim/ROICaT
+cd path/to/ROICaT/directory
+pip install --user -v -e .[all]
+```
+Note: if you are using a zsh terminal, change command to: `pip3 install --user -v -e '.[all]'`
+
+### 3. Clone the repo to get the scripts and notebooks
 ```
 git clone https://github.com/RichieHakim/ROICaT
 cd path/to/ROICaT/directory
 ```
 
-### 3. Install ROICaT
-Optional: `pip install --upgrade pip`<br>
-```
-pip install --user -v -e .[all]
-```
-Note: if you are using a zsh terminal, change command to: `pip3 install --user -v -e '.[all]'`
-
+## Troubleshooting Installation
 #### Troubleshooting (Windows)
 If you receive the error: `ERROR: Could not build wheels for hdbscan, which is required to install pyproject.toml-based projects` on Windows, make sure that you have installed Microsoft C++ Build Tools. If not, download from [here](https://visualstudio.microsoft.com/visual-cpp-build-tools/) and run the commands:
 ```
@@ -116,9 +129,7 @@ If a CUDA version of PyTorch is installed but GPU is not available, make sure yo
 
 # TODO:
 - Unify model training into this repo
-- Improve classification notebooks
-- Try Bokeh for interactive plots
+- Improve classification notebooks, port to colab, make scripts
 - Integration tests
-- Port demo notebooks to CoLab
-- make reference API
+- make better reference API
 - make nice README.md with gifs
