@@ -317,10 +317,12 @@ def display_cropped_cluster_ims(
 
 def select_region_scatterPlot(
     data, 
-    path=None, 
     images_overlay=None, 
     idx_images_overlay=None, 
     size_images_overlay=None,
+    frac_overlap_allowed=0.5,
+    image_overlay_raster_size=None,
+    path=None, 
     figsize=(300,300),
 ):
     """Select a region of a scatter plot and return the indices 
@@ -329,16 +331,24 @@ def select_region_scatterPlot(
     Args:
         data (np.ndarray):
             Input data to draw a scatterplot.
+            Shape must be (n_samples, 2).
+        images_overlay (A 3D or 4D array):
+            A 3D array of grayscale images or a 4D array of RGB images,
+            where the first dimension is the number of images.
+        idx_images_overlay (np.ndarray):
+            A vector of the data indices corresponding to each images in images_overlay.
+            Shape must be (n_images,).
+        size_images_overlay (float, optional):
+            Size of each overlay images. Unit is relative to each axis.
+            This simply scales the resolution of the overlay raster.
+        frac_overlap_allowed (float, optional):
+            Fraction of overlap allowed between the selected region and the overlay images.
+            Only used when size_images_overlay is None.
+        image_overlay_raster_size (tuple of int or float, optional):
+            Size of the rasterized image overlay. Units are pixels.
+            If None, will be set to figsize.
         path (str, optional):
             Temporary file path that saves selected indices. Defaults to None.
-        images_overlay (A 3D or 4D array, optional):
-            A 3D array of grayscale images or a 4D array of RGB images,
-            where the first dimension is the number of images. Defaults to None.
-        idx_images_overlay (np.ndarray, optional):
-            A vector of the data indices correspond to each images in images_overlay.
-            Therefore, images_overlay must have the same number of images as idx_images_overlay. Defaults to None.
-        size_images_overlay (float, optional):
-            Size of each overlay images. Unit is relative to each axis. Defaults to None.
         figsize (tuple, optional):
             Size of the figure. Unit in pixel. Defaults to (300,300).
     """
@@ -365,8 +375,40 @@ def select_region_scatterPlot(
         assert (images_overlay.ndim == 3) or (images_overlay.ndim == 4), 'images_overlay must have 3 or 4 dimensions'
         assert images_overlay.shape[0] == idx_images_overlay.shape[0], 'images_overlay must have the same number of images as idx_images_overlay'
 
+    if image_overlay_raster_size is None:
+        image_overlay_raster_size = figsize
+
+    min_emb = np.nanmin(data, axis=0)  ## shape (2,)
+    max_emb = np.nanmax(data, axis=0)  ## shape (2,)
+    range_emb = max_emb - min_emb  ## shape (2,)
+    aspect_ratio_ims = (range_emb[1] / range_emb[0])  ## shape (1,)
+    lims_canvas = ((min_emb - range_emb*0.05), (max_emb + range_emb*0.05))  ## ( shape (2,)(mins), shape (2,)(maxs) )
+    range_canvas = lims_canvas[1] - lims_canvas[0]  ## shape (2,)
+
+    n_ims = images_overlay.shape[0] if images_overlay is not None else 0
+
     if size_images_overlay is None:
-        size_images_overlay = (data.max() - data.min()) / 30
+        import sklearn
+        min_image_distance = sklearn.neighbors.NearestNeighbors(
+            n_neighbors=2, 
+            algorithm='auto', 
+            metric='euclidean'
+        ).fit(
+            data[idx_images_overlay]
+        ).kneighbors_graph(
+            data[idx_images_overlay], 
+            n_neighbors=2,
+            mode='distance'
+        )
+        min_image_distance.eliminate_zeros()
+        min_image_distance = np.nanmin(min_image_distance.data)
+        size_images_overlay = float(min_image_distance) * (1 + frac_overlap_allowed)
+        print(f'Using size_images_overlay = {size_images_overlay}')
+
+    assert isinstance(size_images_overlay, (int, float, np.ndarray)), 'size_images_overlay must be an int, float, or shape (2,) numpy array'
+    if isinstance(size_images_overlay, (int, float)):
+        size_images_overlay = np.array([size_images_overlay / aspect_ratio_ims, size_images_overlay])
+    assert size_images_overlay.shape == (2,), 'size_images_overlay must be an int, float, or shape (2,) numpy array'
 
     # Declare some points
     points = hv.Points(data)
@@ -403,15 +445,53 @@ def select_region_scatterPlot(
         normalized_image = (image - np.min(image)) / np.max(image)
         return normalized_image
 
-    imo = hv.RGB([])
     if images_overlay is not None and idx_images_overlay is not None:
+        # Create a large canvas to hold all the images
+        iors = image_overlay_raster_size
+        canvas = np.zeros((iors[0], iors[1],4))
+
+        interp_0 = scipy.interpolate.interp1d(
+            x=np.linspace(lims_canvas[0][0], lims_canvas[1][0], num=iors[0], endpoint=False),
+            y=np.linspace(0,iors[0],num=iors[0], endpoint=False),
+        )
+        interp_1 = scipy.interpolate.interp1d(
+            x=np.linspace(lims_canvas[0][1], lims_canvas[1][1], num=iors[1], endpoint=False),
+            y=np.linspace(0,iors[1],num=iors[1], endpoint=False),
+        )
+           
         for image, idx in zip(images_overlay, idx_images_overlay):
-            image_rgb = np.stack([norm_img(image), norm_img(image), norm_img(image)], axis=-1) if image.ndim == 2 else image
-            image_rgb = hv.RGB(
-                image_rgb, 
-                bounds=(data[idx,0] - size_images_overlay/2, data[idx,1] - size_images_overlay/2, data[idx,0] + size_images_overlay/2, data[idx,1] + size_images_overlay/2)
-            )
-            imo *= image_rgb
+            sz_im_0 = int((size_images_overlay[0] / range_canvas[0]) * iors[0])
+            sz_im_1 = int((size_images_overlay[1] / range_canvas[1]) * iors[1])
+            im_interp = scipy.interpolate.RegularGridInterpolator(
+                points=(
+                    np.linspace(0, images_overlay.shape[1], num=images_overlay.shape[1], endpoint=False),
+                    np.linspace(0, images_overlay.shape[2], num=images_overlay.shape[2], endpoint=False),
+                ),
+                values=image,
+                bounds_error=False,
+                fill_value=0,
+            )(np.stack(np.meshgrid(
+                np.linspace(0, images_overlay.shape[1], num=sz_im_0, endpoint=False),
+                np.linspace(0, images_overlay.shape[2], num=sz_im_1, endpoint=False),
+            ), axis=-1))
+
+            image_rgb = np.stack([norm_img(im_interp), norm_img(im_interp), norm_img(im_interp)], axis=-1) if im_interp.ndim == 2 else im_interp
+
+            x1 = int(interp_0(data[idx,0]) - sz_im_0 / 2)
+            y1 = int(interp_1(data[idx,1]) - sz_im_1 / 2)
+            x2 = int(interp_0(data[idx,0]) + sz_im_0 / 2)
+            y2 = int(interp_1(data[idx,1]) + sz_im_1 / 2)
+            canvas[y1:y2, x1:x2,:3] = image_rgb
+            canvas[y1:y2, x1:x2,3] = 1
+        
+        canvas = np.flipud(canvas)
+
+        # Now create a single hv.RGB object
+        imo = hv.RGB(canvas, bounds=(lims_canvas[0][0], lims_canvas[0][1], lims_canvas[1][0], lims_canvas[1][1]))
+
+
+    ## Set bounds of the plot
+    layout = layout.redim.range(x=(lims_canvas[0][0], lims_canvas[1][0]), y=(lims_canvas[0][1], lims_canvas[1][1]))
 
     layout *= imo
 
@@ -435,4 +515,59 @@ def select_region_scatterPlot(
         else:
             return None
 
-    return layout, path_tempFile, fn_get_indices
+    return fn_get_indices, layout, path_tempFile
+
+
+def get_spread_out_points(data, n_ims=1000, dist_im_to_point=0.3, border_frac=0.05, device='cpu'):
+    """
+    Given a set of points, return the indices of a subset of points that are spread out.
+    Intended to be used to overlay images on a scatter plot of points.
+    RH 2023
+
+    Args:
+        data (np.ndarray):
+            Array of shape (N,2) containing the points to be spread out (i,j).
+        n_ims (int):
+            Number of indices to return corresponding to the number of images
+             to be displayed.
+        dist_im_to_point (float):
+            Minimum distance between an image and it's nearest point.
+            Images with a minimum distance to a point greater than this value
+             will be discarded.
+        border_frac (float):
+            Fraction of the range of the data to add as a border around the
+             points.
+        device (str):
+            Device to use for torch operations.
+
+    Returns:
+        idx_images_overlay (np.ndarray):
+            Array of shape (n_ims,) containing the indices of the points to
+             overlay images on.
+    """
+    import torch
+    DEVICE = device
+
+    min_data = np.nanmin(data, axis=0)  ## shape (2,)
+    max_data = np.nanmax(data, axis=0)  ## shape (2,)
+    range_data = max_data - min_data  ## shape (2,)
+    lims_canvas = ((min_data - range_data*border_frac), (max_data + range_data*border_frac))  ## ([
+    
+    sz_im = (range_data / (n_ims**0.5))
+    
+    grid_canvas = np.meshgrid(
+        np.linspace(lims_canvas[0][0], lims_canvas[1][0], int(n_ims**0.5)),
+        np.linspace(lims_canvas[0][1], lims_canvas[1][1], int(n_ims**0.5)),
+        indexing='xy',
+    )
+    grid_canvas_flat = np.vstack([g.reshape(-1) for g in grid_canvas]).T
+
+    dist_grid_to_imIdx = torch.as_tensor(data, device=DEVICE, dtype=torch.float32)[:,None,:] - \
+        torch.as_tensor(grid_canvas_flat, device=DEVICE, dtype=torch.float32)[None,:,:]
+    distNorm_grid_to_imIdx = torch.linalg.norm(dist_grid_to_imIdx, dim=2)
+    distMin_grid_to_imIdx = torch.min(distNorm_grid_to_imIdx, dim=0)
+    max_dist = (np.min(sz_im))*dist_im_to_point
+    idx_good = distMin_grid_to_imIdx.values < max_dist
+    idx_images_overlay = distMin_grid_to_imIdx.indices[idx_good]
+
+    return idx_images_overlay
