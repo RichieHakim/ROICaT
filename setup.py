@@ -49,6 +49,9 @@ deps_core = [deps_all_dict[dep] for dep in [
     'torch',
     'torchvision',
     'torchaudio',
+    'psutil',
+    'py-cpuinfo',
+    'GPUtil',
 ]]
 
 deps_classification = [deps_all_dict[dep] for dep in [
