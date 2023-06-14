@@ -14,12 +14,6 @@ With this package, you can:
 
 We have found that ROICaT is capable of classifying cells with accuracy comparable to human relabeling performance, and tracking cells with higher accuracy than any other methods we have tried. Paper coming soon.
 
-## Table of contents
-- [Announcements](#Announcements)<br>
-- [Installation](#Installation)<br>
-- [How to use ROICaT](#HowTo)<br>
-- [TODO](#TODO)<br>
-
 # <a name="HowTo"></a>How to use ROICaT
 **TRACKING:** 
 - [Interactive notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/tracking_interactive_notebook.ipynb)
