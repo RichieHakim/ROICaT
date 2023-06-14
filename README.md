@@ -18,15 +18,25 @@ We have found that ROICaT is capable of classifying cells with accuracy comparab
 - [Announcements](#Announcements)<br>
 - [Installation](#Installation)<br>
 - [How to use ROICaT](#HowTo)<br>
-- [Frequently Asked Questions](#FAQs)<br>
 - [TODO](#TODO)<br>
 
-## Announcements
-- **TRACKING:** Try it out in the [demo notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/tracking_interactive_notebook.ipynb), or [Google CoLab](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/colab/tracking/tracking_interactive_notebook.ipynb) or the (TODO) [demo script](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/tracking_scripted_notebook.ipynb).
-- **CLASSIFICATION:** still in Alpha. Contact me if you want to help test it.
-- To help with development or beta test releases, please contact: rhakim@g.harvard.edu
+# <a name="HowTo"></a>How to use ROICaT
+**TRACKING:** 
+- [Interactive notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/tracking_interactive_notebook.ipynb)
+- [Google CoLab](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/tracking/tracking_interactive_notebook.ipynb)
+- (TODO) [demo script](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/tracking_scripted_notebook.ipynb).
+  
+**CLASSIFICATION:**
+- [Interactive notebook - Drawing](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/classification_interactive_notebook.ipynb)
+- [Google CoLab - Drawing](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/classification/classification_interactive_notebook.ipynb)
+- (TODO) [Interactive notebook - Labeling]()
+- (TODO) [Interactive notebook - Train classifier]()
+- (TODO) [Interactive notebook - Inference with classifier]()
 
-# Installation
+**ADVANCED:** 
+-  Train a new ROInet model using the provided Jupyter Notebook [TODO: link].
+
+# <a name="Installation"></a>Installation
 ROICaT works on Windows, MacOS, and Linux. If you have any issues during the installation process, please make a [github issue](https://github.com/RichieHakim/ROICaT/issues) with the error.
 
 ### 0. Requirements
@@ -40,19 +50,18 @@ ROICaT works on Windows, MacOS, and Linux. If you have any issues during the ins
 ```
 conda create -n roicat python=3.11
 conda activate roicat
+pip install --upgrade pip
 ```
 
 ### 2. Install ROICaT
 - **Basic users**:
 ```
-pip install --upgrade pip
 pip install --user roicat[all]
 ```
 Note: if you are using a zsh terminal, change command to: `pip3 install --user -v -e '.[all]'`
 
 - **For the latest development version**:
 ```
-pip install --upgrade pip
 git clone https://github.com/RichieHakim/ROICaT
 cd path/to/ROICaT/directory
 pip install --user -v -e .[all]
@@ -62,7 +71,6 @@ Note: if you are using a zsh terminal, change command to: `pip3 install --user -
 ### 3. Clone the repo to get the scripts and notebooks
 ```
 git clone https://github.com/RichieHakim/ROICaT
-cd path/to/ROICaT/directory
 ```
 
 ## Troubleshooting Installation
@@ -105,27 +113,12 @@ torch.cuda.is_available() = False
 ```
 If a CUDA version of PyTorch is installed but GPU is not available, make sure you have a [CUDA compatible NVIDIA GPU](https://developer.nvidia.com/cuda-gpus) and [drivers](https://developer.nvidia.com/cuda-toolkit-archive) that match the same version as the PyTorch CUDA version you choose. All CUDA 11.x versions are intercompatible, so if you have CUDA 11.8 drivers, you can install `torch==2.0.1+cu117`.
 
-
-### 4. Use ROICaT<br>
-- Beginner: Run a Jupyter Notebook: [Notebooks](https://github.com/RichieHakim/ROICaT/tree/main/notebooks)<br>
-- Advanced: Make a parameter file and run in command line: `python -m ROICaT`. See [TODO: link to how-to] for details.<br>
-
-# <a name="HowTo"></a>How to use ROICaT
-  ***Ways to use ROICaT:***
--  **Easy:** Try out ROICaT on Google Colab: [TODO: Link]
--  **Intermediate:** Run it on your own computer. See [Installation](#Installation) for how to install.
-- Using provided Jupyter Notebook(s): [Notebooks](https://github.com/RichieHakim/ROICaT/tree/main/notebooks).
-- Using command line: `python -m ROICaT`. See [TODO: link to how-to] for details.
--  **Advanced:** Train a new ROInet model using the provided Jupyter Notebook [TODO: link]. Or contribute to the code base! This is a big collaborative effort, so please feel free to send a pull request or open an issue.
-
-***General workflow:***
+# General workflow:
 - **Pass ROIs through ROInet:** Images of the ROIs are passed through a neural network and outputs a feature vector for each image describing what the ROI looks like.
 -  **Classification:** The feature vectors can then be used to classify ROIs:
 - A simple classifier can be trained using user supplied labeled data (e.g. an array of images of ROIs and a corresponding array of labels for each ROI).
 - Alternatively, classification can be done by projecting the feature vectors into a lower-dimensional space using UMAP and then simply circling the region of space to classify the ROIs.
 -  **Tracking**: The feature vectors can be combined with information about the position of the ROIs to track the ROIs across imaging sessions/planes.
-
-# <a name="FAQs"></a>Frequently asked questions:
 
 # TODO:
 - Unify model training into this repo
