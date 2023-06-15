@@ -57,6 +57,8 @@ deps_core = [deps_all_dict[dep] for dep in [
 deps_classification = [deps_all_dict[dep] for dep in [
     'opencv_contrib_python',
     'umap-learn',
+    'bokeh',
+    'holoviews[recommended]',
 ]] + deps_core
 
 deps_tracking = [deps_all_dict[dep] for dep in [
