@@ -324,6 +324,9 @@ def select_region_scatterPlot(
     image_overlay_raster_size=None,
     path=None, 
     figsize=(300,300),
+    alpha_points=0.5,
+    size_points=1,
+    color_points='k',
 ):
     """Select a region of a scatter plot and return the indices 
      of the points in that region via a function call.
@@ -378,40 +381,13 @@ def select_region_scatterPlot(
     if image_overlay_raster_size is None:
         image_overlay_raster_size = figsize
 
-    min_emb = np.nanmin(data, axis=0)  ## shape (2,)
-    max_emb = np.nanmax(data, axis=0)  ## shape (2,)
-    range_emb = max_emb - min_emb  ## shape (2,)
-    aspect_ratio_ims = (range_emb[1] / range_emb[0])  ## shape (1,)
-    lims_canvas = ((min_emb - range_emb*0.05), (max_emb + range_emb*0.05))  ## ( shape (2,)(mins), shape (2,)(maxs) )
-    range_canvas = lims_canvas[1] - lims_canvas[0]  ## shape (2,)
-
-    n_ims = images_overlay.shape[0] if images_overlay is not None else 0
-
-    if size_images_overlay is None:
-        import sklearn
-        min_image_distance = sklearn.neighbors.NearestNeighbors(
-            n_neighbors=2, 
-            algorithm='auto', 
-            metric='euclidean'
-        ).fit(
-            data[idx_images_overlay]
-        ).kneighbors_graph(
-            data[idx_images_overlay], 
-            n_neighbors=2,
-            mode='distance'
-        )
-        min_image_distance.eliminate_zeros()
-        min_image_distance = np.nanmin(min_image_distance.data)
-        size_images_overlay = float(min_image_distance) * (1 + frac_overlap_allowed)
-        print(f'Using size_images_overlay = {size_images_overlay}')
-
-    assert isinstance(size_images_overlay, (int, float, np.ndarray)), 'size_images_overlay must be an int, float, or shape (2,) numpy array'
-    if isinstance(size_images_overlay, (int, float)):
-        size_images_overlay = np.array([size_images_overlay / aspect_ratio_ims, size_images_overlay])
-    assert size_images_overlay.shape == (2,), 'size_images_overlay must be an int, float, or shape (2,) numpy array'
-
-    # Declare some points
+    # Declare some points, set alpha, size, color
     points = hv.Points(data)
+    points.opts(
+        alpha=alpha_points,
+        size=size_points,
+        color=color_points,
+    )
 
     # Declare points as source of selection stream
     selection = hv.streams.Selection1D(source=points)
@@ -446,6 +422,38 @@ def select_region_scatterPlot(
         return normalized_image
 
     if images_overlay is not None and idx_images_overlay is not None:
+        min_emb = np.nanmin(data, axis=0)  ## shape (2,)
+        max_emb = np.nanmax(data, axis=0)  ## shape (2,)
+        range_emb = max_emb - min_emb  ## shape (2,)
+        aspect_ratio_ims = (range_emb[1] / range_emb[0])  ## shape (1,)
+        lims_canvas = ((min_emb - range_emb*0.05), (max_emb + range_emb*0.05))  ## ( shape (2,)(mins), shape (2,)(maxs) )
+        range_canvas = lims_canvas[1] - lims_canvas[0]  ## shape (2,)
+
+        n_ims = images_overlay.shape[0] if images_overlay is not None else 0
+
+        if size_images_overlay is None:
+            import sklearn
+            min_image_distance = sklearn.neighbors.NearestNeighbors(
+                n_neighbors=2, 
+                algorithm='auto', 
+                metric='euclidean'
+            ).fit(
+                data[idx_images_overlay]
+            ).kneighbors_graph(
+                data[idx_images_overlay], 
+                n_neighbors=2,
+                mode='distance'
+            )
+            min_image_distance.eliminate_zeros()
+            min_image_distance = np.nanmin(min_image_distance.data)
+            size_images_overlay = float(min_image_distance) * (1 + frac_overlap_allowed)
+            print(f'Using size_images_overlay = {size_images_overlay}')
+
+        assert isinstance(size_images_overlay, (int, float, np.ndarray)), 'size_images_overlay must be an int, float, or shape (2,) numpy array'
+        if isinstance(size_images_overlay, (int, float)):
+            size_images_overlay = np.array([size_images_overlay / aspect_ratio_ims, size_images_overlay])
+        assert size_images_overlay.shape == (2,), 'size_images_overlay must be an int, float, or shape (2,) numpy array'
+        
         # Create a large canvas to hold all the images
         iors = image_overlay_raster_size
         canvas = np.zeros((iors[0], iors[1],4))
@@ -490,10 +498,10 @@ def select_region_scatterPlot(
         imo = hv.RGB(canvas, bounds=(lims_canvas[0][0], lims_canvas[0][1], lims_canvas[1][0], lims_canvas[1][1]))
 
 
-    ## Set bounds of the plot
-    layout = layout.redim.range(x=(lims_canvas[0][0], lims_canvas[1][0]), y=(lims_canvas[0][1], lims_canvas[1][1]))
+        ## Set bounds of the plot
+        layout = layout.redim.range(x=(lims_canvas[0][0], lims_canvas[1][0]), y=(lims_canvas[0][1], lims_canvas[1][1]))
 
-    layout *= imo
+        layout *= imo
 
     ## start layout with lasso tool active
     layout = layout.opts(
