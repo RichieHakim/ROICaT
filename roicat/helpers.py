@@ -21,6 +21,11 @@ import cv2
 All of these are from basic_neural_processing_modules
 """
 
+######################################################################################################################################
+####################################################### TORCH HELPERS ################################################################
+######################################################################################################################################
+
+
 def set_device(use_GPU=True, device_num=0, verbose=True):
     """
     Set torch.cuda device to use.
@@ -47,30 +52,101 @@ def set_device(use_GPU=True, device_num=0, verbose=True):
     return device
 
 
-def get_dir_contents(directory):
+######################################################################################################################################
+###################################################### CONTAINER HELPERS #############################################################
+######################################################################################################################################
+
+
+def merge_dicts(dicts):
+    out = {}
+    [out.update(d) for d in dicts]
+    return out    
+
+
+def deep_update_dict(dictionary, key, val, in_place=False):
+    """
+    Updates a dictionary with a new value.
+    RH 2022
+
+    Args:
+        dictionary (Dict):
+            dictionary to update
+        key (list of str):
+            Key to update
+            List elements should be strings.
+            Each element should be a hierarchical
+             level of the dictionary.
+            DEMO:
+                deep_update_dict(params, ['dataloader_kwargs', 'prefetch_factor'], val)
+        val (any):
+            Value to update with
+        in_place (bool):
+            whether to update in place
+
+    Returns:
+        output (Dict):
+            updated dictionary
+    """
+    def helper_deep_update_dict(d, key, val):
+        if type(key) is str:
+            key = [key]
+
+        assert key[0] in d, f"RH ERROR, key: '{key[0]}' is not found"
+
+        if type(key) is list:
+            if len(key) > 1:
+                helper_deep_update_dict(d[key[0]], key[1:], val)
+            elif len(key) == 1:
+                key = key[0]
+                d.update({key:val})
+
+    if in_place:
+        helper_deep_update_dict(dictionary, key, val)
+    else:
+        d = copy.deepcopy(dictionary)
+        helper_deep_update_dict(d, key, val)
+        return d
+        
+
+######################################################################################################################################
+####################################################### MATH FUNCTIONS ###############################################################
+######################################################################################################################################
+
+
+def generalised_logistic_function(
+    x, 
+    a=0, 
+    k=1, 
+    b=1, 
+    v=1, 
+    q=1, 
+    c=1,
+    mu=0,
+    ):
     '''
-    Get the contents of a directory (does not
-     include subdirectories).
+    Generalized logistic function
+    See: https://en.wikipedia.org/wiki/Generalised_logistic_function
+     for parameters and details
     RH 2021
 
     Args:
-        directory (str):
-            path to directory
-    
+        a: the lower asymptote
+        k: the upper asymptote when C=1
+        b: the growth rate
+        v: > 0, affects near which asymptote maximum growth occurs
+        q: is related to the value Y (0). Center positions
+        c: typically takes a value of 1
+        mu: the center position of the function
+
     Returns:
-        folders (List):
-            list of folder names
-        files (List):
-            list of file names
-    '''
-    walk = os.walk(directory, followlinks=False)
-    folders = []
-    files = []
-    for ii,level in enumerate(walk):
-        folders, files = level[1:]
-        if ii==0:
-            break
-    return folders, files
+        output:
+            Logistic function
+     '''
+    if type(x) is np.ndarray:
+        exp = np.exp
+    elif type(x) is torch.Tensor:
+        exp = torch.exp
+    return a + (k-a) / (c + q*exp(-b*(x-mu)))**(1/v)
 
 
 def bounded_logspace(start, stop, num,):
@@ -95,6 +171,164 @@ def bounded_logspace(start, stop, num,):
     exp = 2  ## doesn't matter what this is, just needs to be > 1
 
     return exp ** np.linspace(np.log(start)/np.log(exp), np.log(stop)/np.log(exp), num, endpoint=True)
+
+
+######################################################################################################################################
+####################################################### CLASSIFICATION ###############################################################
+######################################################################################################################################
+
+
+def confusion_matrix(y_hat, y_true, counts=False):
+    """
+    Compute the confusion matrix from y_hat and y_true.
+    y_hat should be either predictions ().
+    RH 2021 / JZ 2022
+
+    Args:
+        y_hat (np.ndarray): 
+            numpy array of predictions or probabilities. 
+            Either PREDICTIONS: 2-D array of booleans
+             ('one hots') or 1-D array of predicted 
+             class indices.
+            Or PROBABILITIES: 2-D array floats ('one hot
+             like')
+        y_true (np.ndarray):
+            Either 1-D array of true class indices OR a
+             precomputed onehot matrix.
+    """
+    n_classes = max(np.max(y_true)+1, np.max(y_hat)+1)
+    if y_hat.ndim == 1:
+        y_hat = idx_to_oneHot(y_hat, n_classes).astype('int')
+    cmat = y_hat.T @ idx_to_oneHot(y_true, n_classes)
+    if not counts:
+        cmat = cmat / np.sum(cmat, axis=0)[None,:]
+    return cmat
+
+
+def squeeze_integers(intVec):
+    """
+    Make integers in an array consecutive numbers
+     starting from the smallest value. 
+    ie. [7,2,7,4,-1,0] -> [3,2,3,1,-1,0].
+    Useful for removing unused class IDs.
+    This is v3.
+    RH 2023
+    
+    Args:
+        intVec (np.ndarray):
+            1-D array of integers.
+    
+    Returns:
+        intVec_squeezed (np.ndarray):
+            1-D array of integers with consecutive numbers
+    """
+    if isinstance(intVec, list):
+        intVec = np.array(intVec, dtype=np.int64)
+    if isinstance(intVec, np.ndarray):
+        unique, arange = np.unique, np.arange
+    elif isinstance(intVec, torch.Tensor):
+        unique, arange = torch.unique, torch.arange
+        
+    u, inv = unique(intVec, return_inverse=True)  ## get unique values and their indices
+    u_min = u.min()  ## get the smallest value
+    u_s = arange(u_min, u_min + u.shape[0], dtype=u.dtype)  ## make consecutive numbers starting from the smallest value
+    return u_s[inv]  ## return the indexed consecutive unique values
+
+
+######################################################################################################################################
+######################################################## FEATURIZATION ###############################################################
+######################################################################################################################################
+
+
+def idx_to_oneHot(arr, n_classes=None, dtype=None):
+    """
+    Convert an array of class indices to matrix of
+     one-hot vectors.
+    RH 2021
+
+    Args:
+        arr (np.ndarray):
+            1-D array of class indices.
+            Values should be integers >= 0.
+            Values will be used as indices in the
+             output array.
+        n_classes (int):
+            Number of classes.
+    
+    Returns:
+        oneHot (np.ndarray):
+            2-D array of one-hot vectors.
+    """
+    if type(arr) is np.ndarray:
+        max = np.max
+        zeros = np.zeros
+        arange = np.arange
+        dtype = np.bool_ if dtype is None else dtype
+    elif type(arr) is torch.Tensor:
+        max = torch.max
+        zeros = torch.zeros
+        arange = torch.arange
+        dtype = torch.bool if dtype is None else dtype
+    assert arr.ndim == 1
+
+    if n_classes is None:
+        n_classes = max(arr)+1
+    oneHot = zeros((len(arr), n_classes), dtype=dtype)
+    oneHot[arange(len(arr)), arr] = True
+    return oneHot
+
+
+def cosine_kernel_2D(center=(5,5), image_size=(11,11), width=5):
+    """
+    Generate a 2D cosine kernel
+    RH 2021
+    
+    Args:
+        center (tuple):  
+            The mean position (X, Y) - where high value expected. 0-indexed. Make second value 0 to make 1D
+        image_size (tuple): 
+            The total image size (width, height). Make second value 0 to make 1D
+        width (scalar): 
+            The full width of one cycle of the cosine
+    
+    Return:
+        k_cos (np.ndarray): 
+            2D or 1D array of the cosine kernel
+    """
+    x, y = np.meshgrid(range(image_size[1]), range(image_size[0]))  # note dim 1:X and dim 2:Y
+    dist = np.sqrt((y - int(center[1])) ** 2 + (x - int(center[0])) ** 2)
+    dist_scaled = (dist/(width/2))*np.pi
+    dist_scaled[np.abs(dist_scaled > np.pi)] = np.pi
+    k_cos = (np.cos(dist_scaled) + 1)/2
+    return k_cos
+
+
+######################################################################################################################################
+########################################################## INDEXING ##################################################################
+######################################################################################################################################
+
+def idx2bool(idx, length=None):
+    '''
+    Converts a vector of indices to a boolean vector.
+    RH 2021
+
+    Args:
+        idx (np.ndarray):
+            1-D array of indices.
+        length (int):
+            Length of boolean vector.
+            If None then length will be set to
+             the maximum index in idx + 1.
+    
+    Returns:
+        bool_vec (np.ndarray):
+            1-D boolean array.
+    '''
+    if length is None:
+        length = np.uint64(np.max(idx) + 1)
+    out = np.zeros(length, dtype=np.bool_)
+    out[idx] = True
+    return out
 
 
 def make_batches(iterable, batch_size=None, num_batches=None, min_batch_size=0, return_idx=False, length=None):
@@ -145,6 +379,58 @@ def make_batches(iterable, batch_size=None, num_batches=None, min_batch_size=0, 
                 yield iterable[start:end]
 
 
+def sparse_to_dense_fill(arr_s, fill_val=0.):
+    """
+    Converts a sparse array to a dense array and fills
+     in sparse entries with a fill value.
+    """
+    import sparse
+    s = sparse.COO(arr_s)
+    s.fill_value = fill_val
+    return s.todense()
+
+def sparse_mask(x, mask_sparse, do_safety_steps=True):
+    """
+    Masks a sparse matrix with the non-zero elements of another
+     sparse matrix.
+    RH 2022
+
+    Args:
+        x (scipy.sparse.csr_matrix):
+            sparse matrix to mask
+        mask_sparse (scipy.sparse.csr_matrix):
+            sparse matrix to mask with
+        do_safety_steps (bool):
+            whether to do safety steps to ensure that things
+             are working as expected.
+
+    Returns:
+        output (scipy.sparse.csr_matrix):
+            masked sparse matrix
+    """
+    if do_safety_steps:
+        m = mask_sparse.copy()
+        m.eliminate_zeros()
+    else:
+        m = mask_sparse
+    return (m!=0).multiply(x)
+
+
+class scipy_sparse_csr_with_length(scipy.sparse.csr_matrix):
+    """
+    A scipy sparse matrix with a length attribute.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.length = self.shape[0]
+
+    def __len__(self):
+        return self.length
+
+    def __getitem__(self, key):
+        return self.__class__(super().__getitem__(key))
+
+
 class lazy_repeat_item():
     """
     Makes a lazy iterator that repeats an item.
@@ -183,94 +469,90 @@ class lazy_repeat_item():
         return repr(self.item)
 
 
-def cosine_kernel_2D(center=(5,5), image_size=(11,11), width=5):
+def find_nonredundant_idx(s):
     """
-    Generate a 2D cosine kernel
-    RH 2021
-    
-    Args:
-        center (tuple):  
-            The mean position (X, Y) - where high value expected. 0-indexed. Make second value 0 to make 1D
-        image_size (tuple): 
-            The total image size (width, height). Make second value 0 to make 1D
-        width (scalar): 
-            The full width of one cycle of the cosine
-    
-    Return:
-        k_cos (np.ndarray): 
-            2D or 1D array of the cosine kernel
-    """
-    x, y = np.meshgrid(range(image_size[1]), range(image_size[0]))  # note dim 1:X and dim 2:Y
-    dist = np.sqrt((y - int(center[1])) ** 2 + (x - int(center[0])) ** 2)
-    dist_scaled = (dist/(width/2))*np.pi
-    dist_scaled[np.abs(dist_scaled > np.pi)] = np.pi
-    k_cos = (np.cos(dist_scaled) + 1)/2
-    return k_cos
-
-
-def idx2bool(idx, length=None):
-    '''
-    Converts a vector of indices to a boolean vector.
-    RH 2021
+    Finds the indices of the nonredundant entries in a sparse matrix.
+    Useful when you are manually populating a spare matrix and want to
+     know which entries you have already populated.
+    RH 2022
 
     Args:
-        idx (np.ndarray):
-            1-D array of indices.
-        length (int):
-            Length of boolean vector.
-            If None then length will be set to
-             the maximum index in idx + 1.
-    
+        s (scipy.sparse.coo_matrix):
+            Sparse matrix. Should be in coo format.
+
     Returns:
-        bool_vec (np.ndarray):
-            1-D boolean array.
-    '''
-    if length is None:
-        length = np.uint64(np.max(idx) + 1)
-    out = np.zeros(length, dtype=np.bool_)
-    out[idx] = True
-    return out
-
-
-def merge_dicts(dicts):
-    out = {}
-    [out.update(d) for d in dicts]
-    return out    
-
-
-def nanmax(arr, dim=None, keepdim=False):
+        idx_unique (np.ndarray):
+            Indices of the nonredundant entries
     """
-    Compute the max of an array ignoring any NaNs.
-    RH 2021
+    if s.getformat() != 'coo':
+        s = s.coo()
+    idx_rowCol = np.vstack((s.row, s.col)).T
+    u, idx_u = np.unique(idx_rowCol, axis=0, return_index=True)
+    return idx_u
+def remove_redundant_elements(s, inPlace=False):
     """
-    if dim is None:
-        kwargs = {}
+    Removes redundant entries from a sparse matrix.
+    Useful when you are manually populating a spare matrix and want to
+     remove redundant entries.
+    RH 2022
+
+    Args:
+        s (scipy.sparse.coo_matrix):
+            Sparse matrix. Should be in coo format.
+        inPlace (bool):
+            If True, the input matrix is modified in place.
+            If False, a new matrix is returned.
+
+    Returns:
+        s (scipy.sparse.coo_matrix):
+            Sparse matrix with redundant entries removed.
+    """
+    idx_nonRed = find_nonredundant_idx(s)
+    if inPlace:
+        s_out = s
     else:
-        kwargs = {
-            'dim': dim,
-            'keepdim': keepdim,
-        }
-    
-    nan_mask = torch.isnan(arr)
-    arr_no_nan = arr.masked_fill(nan_mask, float('-inf'))
-    return torch.max(arr_no_nan, **kwargs)
+        s_out = scipy.sparse.coo_matrix(s.shape)
+    s_out.row = s.row[idx_nonRed]
+    s_out.col = s.col[idx_nonRed]
+    s_out.data = s.data[idx_nonRed]
+    return s_out
 
-def nanmin(arr, dim=None, keepdim=False):
+def merge_sparse_arrays(s_list, idx_list, shape_full, remove_redundant=True, elim_zeros=True):
     """
-    Compute the min of an array ignoring any NaNs.
-    RH 2021
+    Merges a list of square sparse arrays into a single square sparse array.
+    Note that no selection is performed for removing redundant entries;
+     just whatever is selected by np.unique is kept.
+
+    Args:
+        s_list (list of scipy.sparse.csr_matrix):
+            List of sparse arrays to merge.
+            Each array can be of any shape.
+        idx_list (list of np.ndarray int):
+            List of arrays of integers. Each array should be of the same
+             length as the corresponding array in s_list and should contain
+             integers in the range [0, shape_full[0]). These integers
+             represent the row/col indices in the full array.
+        shape_full (tuple of int):
+            Shape of the full array.
+        remove_redundant (bool):
+            If True, redundant entries are removed from the output array.
+            If False, redundant entries are kept.
+
+    Returns:
+        s_full (scipy.sparse.csr_matrix):
     """
-    if dim is None:
-        kwargs = {}
-    else:
-        kwargs = {
-            'dim': dim,
-            'keepdim': keepdim,
-        }
-    
-    nan_mask = torch.isnan(arr)
-    arr_no_nan = arr.masked_fill(nan_mask, float('inf'))
-    return torch.min(arr_no_nan, **kwargs)
+    row, col, data = np.array([]), np.array([]), np.array([])
+    for s, idx in zip(s_list, idx_list):
+        s_i = s.tocsr() if s.getformat() != 'csr' else s
+        s_i.eliminate_zeros() if elim_zeros else s_i
+        idx_grid = np.meshgrid(idx, idx)
+        row = np.concatenate([row, (s_i != 0).multiply(idx_grid[0]).data])
+        col = np.concatenate([col, (s_i != 0).multiply(idx_grid[1]).data])
+        data = np.concatenate([data, s_i.data])
+    s_full = scipy.sparse.coo_matrix((data, (row, col)), shape=shape_full)
+    if remove_redundant:
+        remove_redundant_elements(s_full, inPlace=True)
+    return s_full
 
 
 def scipy_sparse_to_torch_coo(sp_array, dtype=None):
@@ -302,72 +584,82 @@ def pydata_sparse_to_torch_coo(sp_array):
     shape = coo.shape
     return torch.sparse_coo_tensor(i, v, torch.Size(shape))
 
-def squeeze_integers(intVec):
-    """
-    Make integers in an array consecutive numbers
-     starting from the smallest value. 
-    ie. [7,2,7,4,-1,0] -> [3,2,3,1,-1,0].
-    Useful for removing unused class IDs.
-    This is v3.
-    RH 2023
-    
-    Args:
-        intVec (np.ndarray):
-            1-D array of integers.
-    
-    Returns:
-        intVec_squeezed (np.ndarray):
-            1-D array of integers with consecutive numbers
-    """
-    if isinstance(intVec, list):
-        intVec = np.array(intVec, dtype=np.int64)
-    if isinstance(intVec, np.ndarray):
-        unique, arange = np.unique, np.arange
-    elif isinstance(intVec, torch.Tensor):
-        unique, arange = torch.unique, torch.arange
-        
-    u, inv = unique(intVec, return_inverse=True)  ## get unique values and their indices
-    u_min = u.min()  ## get the smallest value
-    u_s = arange(u_min, u_min + u.shape[0], dtype=u.dtype)  ## make consecutive numbers starting from the smallest value
-    return u_s[inv]  ## return the indexed consecutive unique values
+
+######################################################################################################################################
+######################################################## FILE HELPERS ################################################################
+######################################################################################################################################
 
 
-def idx_to_oneHot(arr, n_classes=None, dtype=None):
+def find_paths(
+    dir_outer, 
+    reMatch='filename', 
+    find_files=True, 
+    find_folders=False, 
+    depth=0, 
+    natsorted=True, 
+    alg_ns=None, 
+):
     """
-    Convert an array of class indices to matrix of
-     one-hot vectors.
-    RH 2021
+    Search for files and/or folders recursively in a directory.
+    RH 2022
 
     Args:
-        arr (np.ndarray):
-            1-D array of class indices.
-            Values should be integers >= 0.
-            Values will be used as indices in the
-             output array.
-        n_classes (int):
-            Number of classes.
-    
-    Returns:
-        oneHot (np.ndarray):
-            2-D array of one-hot vectors.
-    """
-    if type(arr) is np.ndarray:
-        max = np.max
-        zeros = np.zeros
-        arange = np.arange
-        dtype = np.bool_ if dtype is None else dtype
-    elif type(arr) is torch.Tensor:
-        max = torch.max
-        zeros = torch.zeros
-        arange = torch.arange
-        dtype = torch.bool if dtype is None else dtype
-    assert arr.ndim == 1
+        dir_outer (str):
+            Path to directory to search
+        reMatch (str):
+            Regular expression to match
+            Each path name encountered will be compared using
+             re.search(reMatch, filename). If the output is not None,
+             the file will be included in the output.
+        find_files (bool):
+            Whether to find files
+        find_folders (bool):
+            Whether to find folders
+        depth (int):
+            Maximum folder depth to search.
+            depth=0 means only search the outer directory.
+            depth=2 means search the outer directory and two levels
+             of subdirectories below it.
+        natsorted (bool):
+            Whether to sort the output using natural sorting
+             with the natsort package.
+        alg_ns (str):
+            Algorithm to use for natural sorting.
+            See natsort.ns or
+             https://natsort.readthedocs.io/en/4.0.4/ns_class.html
+             for options.
+            Default is PATH.
+            Other commons are INT, FLOAT, VERSION.
 
-    if n_classes is None:
-        n_classes = max(arr)+1
-    oneHot = zeros((len(arr), n_classes), dtype=dtype)
-    oneHot[arange(len(arr)), arr] = True
-    return oneHot
+    Returns:
+        paths (List of str):
+            Paths to matched files and/or folders in the directory
+    """
+    import natsort
+    if alg_ns is None:
+        alg_ns = natsort.ns.PATH
+
+    def get_paths_recursive_inner(dir_inner, depth_end, depth=0):
+        paths = []
+        for path in os.listdir(dir_inner):
+            path = os.path.join(dir_inner, path)
+            if os.path.isdir(path):
+                if find_folders:
+                    if re.search(reMatch, path) is not None:
+                        paths.append(path)
+                if depth < depth_end:
+                    paths += get_paths_recursive_inner(path, depth_end, depth=depth+1)
+            else:
+                if find_files:
+                    if re.search(reMatch, path) is not None:
+                        paths.append(path)
+        return paths
+
+    paths = get_paths_recursive_inner(dir_outer, depth, depth=0)
+    if natsorted:
+        paths = natsort.natsorted(paths, alg=alg_ns)
+    return paths
+
 
 def prepare_filepath_for_saving(path, mkdir=False, allow_overwrite=True):
     """
@@ -386,6 +678,7 @@ def prepare_filepath_for_saving(path, mkdir=False, allow_overwrite=True):
     assert allow_overwrite or not Path(path).exists(), f'{path} already exists.'
     assert Path(path).parent.exists(), f'{Path(path).parent} does not exist.'
     assert Path(path).parent.is_dir(), f'{Path(path).parent} is not a directory.'
+
 
 def pickle_save(
     obj, 
@@ -531,470 +824,6 @@ def matlab_save(
     import scipy.io
     scipy.io.savemat(filepath, data_cleaned, **kwargs_scipy_savemat)
 
-
-def deep_update_dict(dictionary, key, val, in_place=False):
-    """
-    Updates a dictionary with a new value.
-    RH 2022
-
-    Args:
-        dictionary (Dict):
-            dictionary to update
-        key (list of str):
-            Key to update
-            List elements should be strings.
-            Each element should be a hierarchical
-             level of the dictionary.
-            DEMO:
-                deep_update_dict(params, ['dataloader_kwargs', 'prefetch_factor'], val)
-        val (any):
-            Value to update with
-        in_place (bool):
-            whether to update in place
-
-    Returns:
-        output (Dict):
-            updated dictionary
-    """
-    def helper_deep_update_dict(d, key, val):
-        if type(key) is str:
-            key = [key]
-
-        assert key[0] in d, f"RH ERROR, key: '{key[0]}' is not found"
-
-        if type(key) is list:
-            if len(key) > 1:
-                helper_deep_update_dict(d[key[0]], key[1:], val)
-            elif len(key) == 1:
-                key = key[0]
-                d.update({key:val})
-
-    if in_place:
-        helper_deep_update_dict(dictionary, key, val)
-    else:
-        d = copy.deepcopy(dictionary)
-        helper_deep_update_dict(d, key, val)
-        return d
-        
-
-def sparse_mask(x, mask_sparse, do_safety_steps=True):
-    """
-    Masks a sparse matrix with the non-zero elements of another
-     sparse matrix.
-    RH 2022
-
-    Args:
-        x (scipy.sparse.csr_matrix):
-            sparse matrix to mask
-        mask_sparse (scipy.sparse.csr_matrix):
-            sparse matrix to mask with
-        do_safety_steps (bool):
-            whether to do safety steps to ensure that things
-             are working as expected.
-
-    Returns:
-        output (scipy.sparse.csr_matrix):
-            masked sparse matrix
-    """
-    if do_safety_steps:
-        m = mask_sparse.copy()
-        m.eliminate_zeros()
-    else:
-        m = mask_sparse
-    return (m!=0).multiply(x)
-
-
-def generalised_logistic_function(
-    x, 
-    a=0, 
-    k=1, 
-    b=1, 
-    v=1, 
-    q=1, 
-    c=1,
-    mu=0,
-    ):
-    '''
-    Generalized logistic function
-    See: https://en.wikipedia.org/wiki/Generalised_logistic_function
-     for parameters and details
-    RH 2021
-
-    Args:
-        a: the lower asymptote
-        k: the upper asymptote when C=1
-        b: the growth rate
-        v: > 0, affects near which asymptote maximum growth occurs
-        q: is related to the value Y (0). Center positions
-        c: typically takes a value of 1
-        mu: the center position of the function
-
-    Returns:
-        output:
-            Logistic function
-     '''
-    if type(x) is np.ndarray:
-        exp = np.exp
-    elif type(x) is torch.Tensor:
-        exp = torch.exp
-    return a + (k-a) / (c + q*exp(-b*(x-mu)))**(1/v)
-
-
-class scipy_sparse_csr_with_length(scipy.sparse.csr_matrix):
-    """
-    A scipy sparse matrix with a length attribute.
-    """
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.length = self.shape[0]
-
-    def __len__(self):
-        return self.length
-
-    def __getitem__(self, key):
-        return self.__class__(super().__getitem__(key))
-
-
-def find_nonredundant_idx(s):
-    """
-    Finds the indices of the nonredundant entries in a sparse matrix.
-    Useful when you are manually populating a spare matrix and want to
-     know which entries you have already populated.
-    RH 2022
-
-    Args:
-        s (scipy.sparse.coo_matrix):
-            Sparse matrix. Should be in coo format.
-
-    Returns:
-        idx_unique (np.ndarray):
-            Indices of the nonredundant entries
-    """
-    if s.getformat() != 'coo':
-        s = s.coo()
-    idx_rowCol = np.vstack((s.row, s.col)).T
-    u, idx_u = np.unique(idx_rowCol, axis=0, return_index=True)
-    return idx_u
-def remove_redundant_elements(s, inPlace=False):
-    """
-    Removes redundant entries from a sparse matrix.
-    Useful when you are manually populating a spare matrix and want to
-     remove redundant entries.
-    RH 2022
-
-    Args:
-        s (scipy.sparse.coo_matrix):
-            Sparse matrix. Should be in coo format.
-        inPlace (bool):
-            If True, the input matrix is modified in place.
-            If False, a new matrix is returned.
-
-    Returns:
-        s (scipy.sparse.coo_matrix):
-            Sparse matrix with redundant entries removed.
-    """
-    idx_nonRed = find_nonredundant_idx(s)
-    if inPlace:
-        s_out = s
-    else:
-        s_out = scipy.sparse.coo_matrix(s.shape)
-    s_out.row = s.row[idx_nonRed]
-    s_out.col = s.col[idx_nonRed]
-    s_out.data = s.data[idx_nonRed]
-    return s_out
-
-def merge_sparse_arrays(s_list, idx_list, shape_full, remove_redundant=True, elim_zeros=True):
-    """
-    Merges a list of square sparse arrays into a single square sparse array.
-    Note that no selection is performed for removing redundant entries;
-     just whatever is selected by np.unique is kept.
-
-    Args:
-        s_list (list of scipy.sparse.csr_matrix):
-            List of sparse arrays to merge.
-            Each array can be of any shape.
-        idx_list (list of np.ndarray int):
-            List of arrays of integers. Each array should be of the same
-             length as the corresponding array in s_list and should contain
-             integers in the range [0, shape_full[0]). These integers
-             represent the row/col indices in the full array.
-        shape_full (tuple of int):
-            Shape of the full array.
-        remove_redundant (bool):
-            If True, redundant entries are removed from the output array.
-            If False, redundant entries are kept.
-
-    Returns:
-        s_full (scipy.sparse.csr_matrix):
-    """
-    row, col, data = np.array([]), np.array([]), np.array([])
-    for s, idx in zip(s_list, idx_list):
-        s_i = s.tocsr() if s.getformat() != 'csr' else s
-        s_i.eliminate_zeros() if elim_zeros else s_i
-        idx_grid = np.meshgrid(idx, idx)
-        row = np.concatenate([row, (s_i != 0).multiply(idx_grid[0]).data])
-        col = np.concatenate([col, (s_i != 0).multiply(idx_grid[1]).data])
-        data = np.concatenate([data, s_i.data])
-    s_full = scipy.sparse.coo_matrix((data, (row, col)), shape=shape_full)
-    if remove_redundant:
-        remove_redundant_elements(s_full, inPlace=True)
-    return s_full
-
-
-#########################
-# visualization helpers #
-#########################
-
-def rand_cmap(
-    nlabels, 
-    first_color_black=False, 
-    last_color_black=False,
-    verbose=True,
-    under=[0,0,0],
-    over=[0.5,0.5,0.5],
-    bad=[0.9,0.9,0.9],
-    ):
-    """
-    Creates a random colormap to be used together with matplotlib. Useful for segmentation tasks
-    :param nlabels: Number of labels (size of colormap)
-    :param type: 'bright' for strong colors, 'soft' for pastel colors
-    :param first_color_black: Option to use first color as black, True or False
-    :param last_color_black: Option to use last color as black, True or False
-    :param verbose: Prints the number of labels and shows the colormap. True or False
-    :return: colormap for matplotlib
-    """
-    from matplotlib.colors import LinearSegmentedColormap
-    import matplotlib.pyplot as plt
-    import colorsys
-    import numpy as np
-
-    assert nlabels > 0, 'Number of labels must be greater than 0'
-
-    if verbose:
-        print('Number of labels: ' + str(nlabels))
-
-    randRGBcolors = np.random.rand(nlabels, 3)
-    randRGBcolors = randRGBcolors / np.max(randRGBcolors, axis=1, keepdims=True)
-
-    if first_color_black:
-        randRGBcolors[0] = [0, 0, 0]
-
-    if last_color_black:
-        randRGBcolors[-1] = [0, 0, 0]
-
-    random_colormap = LinearSegmentedColormap.from_list('new_map', randRGBcolors, N=nlabels)
-
-    # Display colorbar
-    if verbose:
-        from matplotlib import colors, colorbar
-        fig, ax = plt.subplots(1, 1, figsize=(6, 0.5))
-
-        bounds = np.linspace(0, nlabels, nlabels + 1)
-        norm = colors.BoundaryNorm(bounds, nlabels)
-
-        cb = colorbar.ColorbarBase(ax, cmap=random_colormap, norm=norm, spacing='proportional', ticks=None,
-                                   boundaries=bounds, format='%1i', orientation=u'horizontal')
-
-    random_colormap.set_bad(bad)
-    random_colormap.set_over(over)
-    random_colormap.set_under(under)
-
-    return random_colormap
-
-
-def simple_cmap(
-    colors=[
-        [1,0,0],
-        [1,0.6,0],
-        [0.9,0.9,0],
-        [0.6,1,0],
-        [0,1,0],
-        [0,1,0.6],
-        [0,0.8,0.8],
-        [0,0.6,1],
-        [0,0,1],
-        [0.6,0,1],
-        [0.8,0,0.8],
-        [1,0,0.6],
-    ],
-    under=[0,0,0],
-    over=[0.5,0.5,0.5],
-    bad=[0.9,0.9,0.9],
-    name='none'):
-    """Create a colormap from a sequence of rgb values.
-    Stolen with love from Alex (https://gist.github.com/ahwillia/3e022cdd1fe82627cbf1f2e9e2ad80a7ex)
-    
-    Args:
-        colors (list):
-            List of RGB values
-        name (str):
-            Name of the colormap
-
-    Returns:
-        cmap:
-            Colormap
-
-    Demo:
-    cmap = simple_cmap([(1,1,1), (1,0,0)]) # white to red colormap
-    cmap = simple_cmap(['w', 'r'])         # white to red colormap
-    cmap = simple_cmap(['r', 'b', 'r'])    # red to blue to red
-    """
-    from matplotlib.colors import LinearSegmentedColormap, colorConverter
-
-    # check inputs
-    n_colors = len(colors)
-    if n_colors <= 1:
-        raise ValueError('Must specify at least two colors')
-
-    # convert colors to rgb
-    colors = [colorConverter.to_rgb(c) for c in colors]
-
-    # set up colormap
-    r, g, b = colors[0]
-    cdict = {'red': [(0.0, r, r)], 'green': [(0.0, g, g)], 'blue': [(0.0, b, b)]}
-    for i, (r, g, b) in enumerate(colors[1:]):
-        idx = (i+1) / (n_colors-1)
-        cdict['red'].append((idx, r, r))
-        cdict['green'].append((idx, g, g))
-        cdict['blue'].append((idx, b, b))
-
-    cmap = LinearSegmentedColormap(name, {k: tuple(v) for k, v in cdict.items()})
-                                   
-    cmap.set_bad(bad)
-    cmap.set_over(over)
-    cmap.set_under(under)
-
-    return cmap
-
-def confusion_matrix(y_hat, y_true, counts=False):
-    """
-    Compute the confusion matrix from y_hat and y_true.
-    y_hat should be either predictions ().
-    RH 2021 / JZ 2022
-
-    Args:
-        y_hat (np.ndarray): 
-            numpy array of predictions or probabilities. 
-            Either PREDICTIONS: 2-D array of booleans
-             ('one hots') or 1-D array of predicted 
-             class indices.
-            Or PROBABILITIES: 2-D array floats ('one hot
-             like')
-        y_true (np.ndarray):
-            Either 1-D array of true class indices OR a
-             precomputed onehot matrix.
-    """
-    n_classes = max(np.max(y_true)+1, np.max(y_hat)+1)
-    if y_hat.ndim == 1:
-        y_hat = idx_to_oneHot(y_hat, n_classes).astype('int')
-    cmat = y_hat.T @ idx_to_oneHot(y_true, n_classes)
-    if not counts:
-        cmat = cmat / np.sum(cmat, axis=0)[None,:]
-    return cmat
-
-
-def get_keep_nonnan_entries(original_features):
-    """
-    Get the image indices (axis 0) where all values at those indices are non-nan
-    JZ 2022
-
-    Args:
-        original_features (np.ndarray): 
-            image values (images x height x width)
-    """
-    has_nan = [np.unique(np.where(np.isnan(of))[0]) for of in original_features]
-    return np.array([_ for _ in range(original_features.shape[0]) if _ not in has_nan])
-
-
-def find_paths(
-    dir_outer, 
-    reMatch='filename', 
-    find_files=True, 
-    find_folders=False, 
-    depth=0, 
-    natsorted=True, 
-    alg_ns=None, 
-):
-    """
-    Search for files and/or folders recursively in a directory.
-    RH 2022
-
-    Args:
-        dir_outer (str):
-            Path to directory to search
-        reMatch (str):
-            Regular expression to match
-            Each path name encountered will be compared using
-             re.search(reMatch, filename). If the output is not None,
-             the file will be included in the output.
-        find_files (bool):
-            Whether to find files
-        find_folders (bool):
-            Whether to find folders
-        depth (int):
-            Maximum folder depth to search.
-            depth=0 means only search the outer directory.
-            depth=2 means search the outer directory and two levels
-             of subdirectories below it.
-        natsorted (bool):
-            Whether to sort the output using natural sorting
-             with the natsort package.
-        alg_ns (str):
-            Algorithm to use for natural sorting.
-            See natsort.ns or
-             https://natsort.readthedocs.io/en/4.0.4/ns_class.html
-             for options.
-            Default is PATH.
-            Other commons are INT, FLOAT, VERSION.
-
-    Returns:
-        paths (List of str):
-            Paths to matched files and/or folders in the directory
-    """
-    import natsort
-    if alg_ns is None:
-        alg_ns = natsort.ns.PATH
-
-    def get_paths_recursive_inner(dir_inner, depth_end, depth=0):
-        paths = []
-        for path in os.listdir(dir_inner):
-            path = os.path.join(dir_inner, path)
-            if os.path.isdir(path):
-                if find_folders:
-                    if re.search(reMatch, path) is not None:
-                        paths.append(path)
-                if depth < depth_end:
-                    paths += get_paths_recursive_inner(path, depth_end, depth=depth+1)
-            else:
-                if find_files:
-                    if re.search(reMatch, path) is not None:
-                        paths.append(path)
-        return paths
-
-    paths = get_paths_recursive_inner(dir_outer, depth, depth=0)
-    if natsorted:
-        paths = natsort.natsorted(paths, alg=alg_ns)
-    return paths
-
-
-######################################################################################################################################
-########################################################## INDEXING ##################################################################
-######################################################################################################################################
-
-def sparse_to_dense_fill(arr_s, fill_val=0.):
-    """
-    Converts a sparse array to a dense array and fills
-     in sparse entries with a fill value.
-    """
-    import sparse
-    s = sparse.COO(arr_s)
-    s.fill_value = fill_val
-    return s.todense()
-
-
-######################################################################################################################################
-######################################################## FILE HELPERS ################################################################
-######################################################################################################################################
 
 def download_file(
     url, 
@@ -1162,6 +991,33 @@ def hash_file(path, type_hash='MD5', buffer_size=65536):
         
     return hash_val
     
+
+def get_dir_contents(directory):
+    '''
+    Get the contents of a directory (does not
+     include subdirectories).
+    RH 2021
+
+    Args:
+        directory (str):
+            path to directory
+    
+    Returns:
+        folders (List):
+            list of folder names
+        files (List):
+            list of file names
+    '''
+    walk = os.walk(directory, followlinks=False)
+    folders = []
+    files = []
+    for ii,level in enumerate(walk):
+        folders, files = level[1:]
+        if ii==0:
+            break
+    return folders, files
+
+
 def compare_file_hashes(
     hash_dict_true,
     dir_files_test=None,
@@ -1260,6 +1116,150 @@ def extract_zip(
     print('Completed zip extraction.') if verbose else None
 
     return paths_extracted
+
+
+######################################################################################################################################
+###################################################### PLOTTING HELPERS ##############################################################
+######################################################################################################################################
+
+def rand_cmap(
+    nlabels, 
+    first_color_black=False, 
+    last_color_black=False,
+    verbose=True,
+    under=[0,0,0],
+    over=[0.5,0.5,0.5],
+    bad=[0.9,0.9,0.9],
+    ):
+    """
+    Creates a random colormap to be used together with matplotlib. Useful for segmentation tasks
+    :param nlabels: Number of labels (size of colormap)
+    :param type: 'bright' for strong colors, 'soft' for pastel colors
+    :param first_color_black: Option to use first color as black, True or False
+    :param last_color_black: Option to use last color as black, True or False
+    :param verbose: Prints the number of labels and shows the colormap. True or False
+    :return: colormap for matplotlib
+    """
+    from matplotlib.colors import LinearSegmentedColormap
+    import matplotlib.pyplot as plt
+    import colorsys
+    import numpy as np
+
+    assert nlabels > 0, 'Number of labels must be greater than 0'
+
+    if verbose:
+        print('Number of labels: ' + str(nlabels))
+
+    randRGBcolors = np.random.rand(nlabels, 3)
+    randRGBcolors = randRGBcolors / np.max(randRGBcolors, axis=1, keepdims=True)
+
+    if first_color_black:
+        randRGBcolors[0] = [0, 0, 0]
+
+    if last_color_black:
+        randRGBcolors[-1] = [0, 0, 0]
+
+    random_colormap = LinearSegmentedColormap.from_list('new_map', randRGBcolors, N=nlabels)
+
+    # Display colorbar
+    if verbose:
+        from matplotlib import colors, colorbar
+        fig, ax = plt.subplots(1, 1, figsize=(6, 0.5))
+
+        bounds = np.linspace(0, nlabels, nlabels + 1)
+        norm = colors.BoundaryNorm(bounds, nlabels)
+
+        cb = colorbar.ColorbarBase(ax, cmap=random_colormap, norm=norm, spacing='proportional', ticks=None,
+                                   boundaries=bounds, format='%1i', orientation=u'horizontal')
+
+    random_colormap.set_bad(bad)
+    random_colormap.set_over(over)
+    random_colormap.set_under(under)
+
+    return random_colormap
+
+
+def simple_cmap(
+    colors=[
+        [1,0,0],
+        [1,0.6,0],
+        [0.9,0.9,0],
+        [0.6,1,0],
+        [0,1,0],
+        [0,1,0.6],
+        [0,0.8,0.8],
+        [0,0.6,1],
+        [0,0,1],
+        [0.6,0,1],
+        [0.8,0,0.8],
+        [1,0,0.6],
+    ],
+    under=[0,0,0],
+    over=[0.5,0.5,0.5],
+    bad=[0.9,0.9,0.9],
+    name='none'):
+    """Create a colormap from a sequence of rgb values.
+    Stolen with love from Alex (https://gist.github.com/ahwillia/3e022cdd1fe82627cbf1f2e9e2ad80a7ex)
+    
+    Args:
+        colors (list):
+            List of RGB values
+        name (str):
+            Name of the colormap
+
+    Returns:
+        cmap:
+            Colormap
+
+    Demo:
+    cmap = simple_cmap([(1,1,1), (1,0,0)]) # white to red colormap
+    cmap = simple_cmap(['w', 'r'])         # white to red colormap
+    cmap = simple_cmap(['r', 'b', 'r'])    # red to blue to red
+    """
+    from matplotlib.colors import LinearSegmentedColormap, colorConverter
+
+    # check inputs
+    n_colors = len(colors)
+    if n_colors <= 1:
+        raise ValueError('Must specify at least two colors')
+
+    # convert colors to rgb
+    colors = [colorConverter.to_rgb(c) for c in colors]
+
+    # set up colormap
+    r, g, b = colors[0]
+    cdict = {'red': [(0.0, r, r)], 'green': [(0.0, g, g)], 'blue': [(0.0, b, b)]}
+    for i, (r, g, b) in enumerate(colors[1:]):
+        idx = (i+1) / (n_colors-1)
+        cdict['red'].append((idx, r, r))
+        cdict['green'].append((idx, g, g))
+        cdict['blue'].append((idx, b, b))
+
+    cmap = LinearSegmentedColormap(name, {k: tuple(v) for k, v in cdict.items()})
+                                   
+    cmap.set_bad(bad)
+    cmap.set_over(over)
+    cmap.set_under(under)
+
+    return cmap
+
+
+def export_svg_hv_bokeh(obj, path_save):
+    """
+    Save a scatterplot from holoviews as an svg file.
+    RH 2023
+
+    Args:
+        obj (holoviews.plotting.bokeh.ElementPlot):
+            Holoviews plot object.
+        path_save (str):
+            Path to save the svg file.
+    """
+    import holoviews as hv
+    import bokeh
+    plot_state = hv.renderer('bokeh').get_plot(obj).state
+    plot_state.output_backend = 'svg'
+    bokeh.io.export_svgs(plot_state, filename=path_save)
 
 
 ######################################################################################################################################
