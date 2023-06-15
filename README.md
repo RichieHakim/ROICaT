@@ -18,29 +18,31 @@ We have found that ROICaT is capable of classifying cells with accuracy comparab
 **TRACKING:** 
 - [Interactive notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/tracking_interactive_notebook.ipynb)
 - [Google CoLab](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/tracking/tracking_interactive_notebook.ipynb)
-- (TODO) [demo script](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/tracking_scripted_notebook.ipynb).
+- (TODO) [demo script](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/tracking_scripted_notebook.ipynb)
   
 **CLASSIFICATION:**
-- [Interactive notebook - Drawing](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/classification_interactive_notebook.ipynb)
-- [Google CoLab - Drawing](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/classification/classification_interactive_notebook.ipynb)
+- [Interactive notebook - Drawing](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/classify_by_drawingSelection.ipynb)
+- [Google CoLab - Drawing](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/classification/classify_by_drawingSelection_colab.ipynb)
 - (TODO) [Interactive notebook - Labeling]()
 - (TODO) [Interactive notebook - Train classifier]()
 - (TODO) [Interactive notebook - Inference with classifier]()
 
-**ADVANCED:** 
--  Train a new ROInet model using the provided Jupyter Notebook [TODO: link].
+**OTHER:** 
+- [Custom data importing notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/other/demo_custom_data_importing.ipynb)
+- Train a new ROInet model using the provided Jupyter Notebook [TODO: link].
+- Use the API to integrate ROICaT functions into your own code [TODO: link].
 
 # <a name="Installation"></a>Installation
 ROICaT works on Windows, MacOS, and Linux. If you have any issues during the installation process, please make a [github issue](https://github.com/RichieHakim/ROICaT/issues) with the error.
 
 ### 0. Requirements
-- **Suite2p** output data (stat.npy and ops.npy files) or **CaImAn** output data (results.h5 files), or any image data using this [custom data importing notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/other/demo_custom_data_importing.ipynb).
-- [Anaconda](https://www.anaconda.com/distribution/) or [Miniconda](https://docs.conda.io/en/latest/miniconda.html)<br>
+- **Suite2p** output data (stat.npy and ops.npy files) or **CaImAn** output data (results.h5 files), or any other type of data using this [custom data importing notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/other/demo_custom_data_importing.ipynb).
+- [Anaconda](https://www.anaconda.com/distribution/) or [Miniconda](https://docs.conda.io/en/latest/miniconda.html).<br>
 - GCC >= 5.4.0, ideally == 9.2.0. Google how to do this on your operating system. For unix/linux: check with `gcc --version`.<br>
-- On some Linux servers (like Harvard's O2 server), you may need to load modules instead of installing. To load conda, gcc, try: `module load conda3/latest gcc/9.2.0` or similar.<br>
 - **Optional:** [CUDA compatible NVIDIA GPU](https://developer.nvidia.com/cuda-gpus) and [drivers](https://developer.nvidia.com/cuda-toolkit-archive). Using a GPU can increase ROICaT speeds ~5-50x, though without it, ROICaT will still run reasonably quick. GPU support is not available for Macs.<br>
 
 ### 1. (Recommended) Create a new conda environment
+The below commands should be run in the terminal (Mac/Linux) or Anaconda Prompt (Windows).
 ```
 conda create -n roicat python=3.11
 conda activate roicat
@@ -48,13 +50,12 @@ pip install --upgrade pip
 ```
 
 ### 2. Install ROICaT
-- **Basic users**:
 ```
 pip install --user roicat[all]
 ```
-Note: if you are using a zsh terminal, change command to: `pip3 install --user -v -e '.[all]'`
+Note: if you are using a zsh terminal, change command to: `pip3 install --user 'roicat[all]'`
 
-- **For the latest development version**:
+- **Alternatively, for the latest development version**:
 ```
 git clone https://github.com/RichieHakim/ROICaT
 cd path/to/ROICaT/directory
@@ -75,7 +76,7 @@ cd path/to/vs_buildtools.exe
 vs_buildtools.exe --norestart --passive --downloadThenInstall --includeRecommended --add Microsoft.VisualStudio.Workload.NativeDesktop --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Workload.MSBuildTools
 ```
 Then, try proceeding with the installation by rerunning the pip install commands above.
-([Source](https://stackoverflow.com/questions/64261546/how-to-solve-error-microsoft-visual-c-14-0-or-greater-is-required-when-inst))
+([reference](https://stackoverflow.com/questions/64261546/how-to-solve-error-microsoft-visual-c-14-0-or-greater-is-required-when-inst))
 
 #### Troubleshooting (GPU support)
 GPU support is not required. Windows users will often need to manually install a CUDA version of pytorch (see below). Note that you can check your nvidia driver version using the shell command: `nvidia-smi` if you have drivers installed. 
