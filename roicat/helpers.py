@@ -1475,6 +1475,98 @@ def torch_pca(
 
 
 ######################################################################################################################################
+############################################################ VIDEO ###################################################################
+######################################################################################################################################
+
+
+def grayscale_to_rgb(array):
+    """
+    Convert a grayscale image (2D array) or movie (3D array) to
+     RGB (3D or 4D array).
+    RH 2023
+
+    Args:
+        array (np.ndarray or torch.Tensor or list):
+            2D or 3D array of grayscale images
+    """
+    if isinstance(array, list):
+        if isinstance(array[0], np.ndarray):
+            array = np.stack(array, axis=0)
+        elif isinstance(array[0], torch.Tensor):
+            array = torch.stack(array, axis=0)
+        else:
+            raise Exception(f'Failed to convert list of type {type(array[0])} to array')
+    if isinstance(array, np.ndarray):
+        return np.stack([array, array, array], axis=-1)
+    elif isinstance(array, torch.Tensor):
+        return torch.stack([array, array, array], dim=-1)
+    
+
+def save_gif(
+    array, 
+    path, 
+    frameRate=5.0, 
+    loop=0, 
+    # backend='PIL', 
+    kwargs_backend={},
+):
+    """
+    Save an array of images as a gif.
+    RH 2023
+
+    Args:
+        array (np.ndarray or list):
+            3D (grayscale) or 4D (color) array of images.
+            - if dtype is float type then scale from 0 to 1.
+            - if dtype is integer then scale from 0 to 255.
+        path (str):
+            Path to save the gif.
+        frameRate (float):
+            Frame rate of the gif.
+        loop (int):
+            Number of times to loop the gif.
+            0 mean loop forever
+            1 mean play once
+            2 means play twice (loop once)
+            etc.
+        # backend (str):
+        #     Which backend to use.
+        #     Options: 'imageio' or 'PIL'
+        kwargs_backend (dict):
+            Keyword arguments for the backend.
+    """
+    array = np.stack(array, axis=0) if isinstance(array, list) else array
+    array = grayscale_to_rgb(array) if array.ndim == 3 else array
+    if np.issubdtype(array.dtype, np.floating):
+        array = (array*255).astype('uint8')
+    
+    kwargs_backend.update({'loop': loop} if loop != 1 else {})
+
+    # if backend == 'imageio':
+    #     import imageio
+    #     imageio.mimsave(
+    #         path, 
+    #         array, 
+    #         format='GIF',
+    #         duration=1000/frameRate, 
+    #         **kwargs_backend,
+    #     )
+    # elif backend == 'PIL':
+    from PIL import Image
+    frames = [Image.fromarray(array[i_frame]) for i_frame in range(array.shape[0])]
+    frames[0].save(
+        path, 
+        format='GIF', 
+        append_images=frames[1:], 
+        save_all=True, 
+        duration=1000/frameRate, 
+        **kwargs_backend,
+    )
+    # else:
+    #     raise Exception(f'Unsupported backend {backend}')
+
+
+######################################################################################################################################
 ###################################################### IMAGE_PROCESSING ##############################################################
 ######################################################################################################################################
 
