@@ -351,13 +351,21 @@ def select_region_scatterPlot(
             Size of the rasterized image overlay. Units are pixels.
             If None, will be set to figsize.
         path (str, optional):
-            Temporary file path that saves selected indices. Defaults to None.
+            Temporary file path that saves selected indices. 
         figsize (tuple, optional):
-            Size of the figure. Unit in pixel. Defaults to (300,300).
+            Size of the figure. Unit in pixel. 
+        alpha_points (float, optional):
+            Alpha value of the scatter plot points. 
+        size_points (float, optional):
+            Size of the scatter plot points. 
+        color_points (str or list, optional):
+            Color of the scatter plot points. 
+            If a list, must be the same length as data.shape[0] and values
+             must be valid holoviews color names.
     """
     import holoviews as hv
     import numpy as np
-    import pandas as pd
+    import xxhash
 
     import tempfile
     try:
@@ -382,12 +390,34 @@ def select_region_scatterPlot(
         image_overlay_raster_size = figsize
 
     # Declare some points, set alpha, size, color
-    points = hv.Points(data)
-    points.opts(
-        alpha=alpha_points,
-        size=size_points,
-        color=color_points,
-    )
+    if isinstance(color_points, str):
+        color_points = np.array([color_points] * data.shape[0])
+    elif isinstance(color_points, list):
+        color_points = np.array(color_points)
+    else:
+        assert isinstance(color_points, np.ndarray), 'color_points must be a string, list, or numpy array'
+        assert color_points.shape[0] == data.shape[0], 'color_points must be the same length as data.shape[0]. If a numpy array, the first dimension must be the same length as data.shape[0]'
+    _, idx_unique, inverse_unique = np.unique(np.array([xxhash.xxh64(x).hexdigest() for x in color_points]), return_index=True, return_inverse=True)
+    color_points_unique = color_points[idx_unique]
+
+    points = hv.Points([])
+    for ii,c in enumerate(color_points_unique):
+        p = hv.Points(data[inverse_unique==ii])
+        p.opts(
+            alpha=alpha_points,
+            size=size_points,
+            color=c if isinstance(c, str) else tuple(c),
+            tools=['lasso_select', 'box_select'],
+            width=figsize[0],
+            height=figsize[1],
+        )
+        points *= p
+
+    # if isinstance(color_points, str):
+    #     points.opts(color=color_points)
+    # elif isinstance(color_points, list):
+    #     assert len(color_points) == data.shape[0], 'color_points must be the same length as data.shape[0]'
+    #     points.opts(color=hv.Cycle(values=color_points))
 
     # Declare points as source of selection stream
     selection = hv.streams.Selection1D(source=points)
@@ -489,6 +519,9 @@ def select_region_scatterPlot(
             y1 = int(interp_1(data[idx,1]) - sz_im_1 / 2)
             x2 = int(interp_0(data[idx,0]) + sz_im_0 / 2)
             y2 = int(interp_1(data[idx,1]) + sz_im_1 / 2)
+            
+            assert x1 >= 0 and x2 <= iors[0] and y1 >= 0 and y2 <= iors[1], f'Image is out of bounds of canvas: y1={y1}, y2={y2}, x1={x1}, x2={x2}, sz_im_0={sz_im_0}, sz_im_1={sz_im_1}, iors={iors}'
+            
             canvas[y1:y2, x1:x2,:3] = image_rgb
             canvas[y1:y2, x1:x2,3] = 1
         
