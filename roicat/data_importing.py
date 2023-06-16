@@ -6,7 +6,6 @@ import numpy as np
 from tqdm import tqdm
 import scipy.sparse
 import sparse
-from pynwb import NWBHDF5IO
 
 from . import helpers, util
 
