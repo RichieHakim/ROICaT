@@ -1410,7 +1410,7 @@ class Data_caiman(Data_roicat):
         return np.round(np.vstack([h_mean, w_mean])).astype(np.int64)
 
 ############################################
-########### class roiextractors ############
+############ DATA ROIEXTRACTORS ############
 ############################################
 
 class Data_roiextractors(Data_roicat):
@@ -1421,80 +1421,136 @@ class Data_roiextractors(Data_roicat):
     """
     def __init__(
             self,
-            path,
-            type, 
-            segmentation_extractor_object,
+            segmentation_extractor_objects: list,
 
-            um_per_pixel = 0.1,
-            out_height_width = [36,36],
+            um_per_pixel: float = 1.0,
+            out_height_width: list = [36,36],
+            FOV_image_name=None,
+            fallback_FOV_height_width: list = [512,512],
+            centroid_method: str = 'centerOfMass',
             class_labels=None,
-            verbose=True,
+            verbose: bool=True,
     ):
         """
         Args:
-            path (list or directory):
-                List of paths to the files.
-            type (str):
-                Type of roiextractor object to be imported.
-                'caiman', 'cnfme', 'extract', 'nwb', 'suite2p'
             segmentation_extractor_object (list):
                 List of segmentation extractor objects.
+                All objects must be of the same type.
+            um_per_pixel (float):
+                Resolution. 'micrometers per pixel' of the imaging
+                field of view.
+            out_height_width (tuple of int):
+                Height and width of output ROI images.
+                Should be: (int, int) (y, x).
+            FOV_image_name (str):
+                Optional. If provided, will use this key to extract
+                 the FOV image from the segmentation object's
+                 self.get_images_dict() method.
+                If None, then will attempt to pull out a mean image.
+            fallback_FOV_height_width (tuple of int):
+                If FOV images are unable to be imported automatically,
+                 this will be used as the FOV height and width. Otherwise,
+                 FOV height and width set from the first object in the list.
+            centroid_method (str):
+                Method for calculating centroid of ROI.
+                Should be: 'centerOfMass' or 'median'.
             class_labels (list):
-                List of class labels for each file.
+                List of class labels for each obj.
             verbose (bool):
                 If True, print statements will be printed.
 
         Attributes set:
-            self.paths_files (list):
-                List of paths to the files.
+            self.spatial_footprints (list):
+                List of spatial footprints for each obj.
+                Each spatial footprint is a scipy.sparse.csr_matrix.
+            session_bool (np.ndarray):
+                Boolean array of shape (n_roi_total, n_session) where
+                 each column is a session and each row is a ROI.
+            self.centroids (list):
+                List of centroids for each obj.
+            self.ROI_images (list):
+                List of small ROI images for each obj.
+            self.FOV_images (list):
+                List of large FOV images for each obj.
             self.class_labels (list):
-                List of class labels for each file.
+                List of class labels for each obj.
             self._verbose (bool):
                 If True, print statements will be printed.
         """
-        self.paths = fix_paths(path)
-        self.class_labels = class_labels
+        import roiextractors
+
         self._verbose = verbose
-        self.type = type 
-        self.segmentation_extractor_object = segmentation_extractor_object
 
+        type_extractors = {
+            'caiman': roiextractors.extractors.caiman.caimansegmentationextractor.CaimanSegmentationExtractor,
+            'cnmf': roiextractors.extractors.schnitzerextractor.cnmfesegmentationextractor.CnmfeSegmentationExtractor,
+            'extract': roiextractors.extractors.schnitzerextractor.extractsegmentationextractor.NewExtractSegmentationExtractor,
+            'nwb': roiextractors.extractors.nwbextractors.nwbextractors.NwbSegmentationExtractor,
+            'suite2p': roiextractors.extractors.suite2p.suite2psegmentationextractor.Suite2pSegmentationExtractor,
+        }
+        type_extractors_inv = {val: key for key,val in type_extractors.items()}
 
-        spatialFootprints = make_spatialFootprint(self.segmentation_extractor_object)
-        self.set_spatialFootprints(spatialFootprints=spatialFootprints, um_per_pixel=um_per_pixel)
+        ## if the input segmentation extractor objects are not a list, make it one
+        self.segmentation_extractor_objects = [segmentation_extractor_objects] if isinstance(segmentation_extractor_objects, list) == False else segmentation_extractor_objects
+        ## assert all segmentation extractor objects are the same type
+        assert all([type(self.segmentation_extractor_objects[0]) == type(obj) for obj in self.segmentation_extractor_objects]), 'All segmentation extractor objects must be of the same type.'
+        ## assert that the type of the segmentation extractor object is supported
+        assert type(self.segmentation_extractor_objects[0]) in type_extractors_inv.keys(), f'Segmentation extractor object type {type(self.segmentation_extractor_objects[0])} not supported. Please use one of the following: {type_extractors_inv.keys()}'
+        ## set the type of the segmentation extractor object
+        self.type = type_extractors_inv[type(self.segmentation_extractor_objects[0])]
+
+        ## set spatial footprints
+        self.set_spatialFootprints(
+            spatialFootprints=[self._make_spatialFootprints(obj) for obj in self.segmentation_extractor_objects],
+            um_per_pixel=um_per_pixel
+        )
 
         # Get the FOV images from the segmentation extractor object
-        if self.type == 'suite2p':
-            FOV_images = self.segmentation_extractor_object.get_image("mean") #or correlation
-        elif self.type == 'caiman':
-            FOV_images = self.segmentation_extractor_object.get_image("mean") #unclear if this is correct
-        elif self.type == 'cnfme':
-            FOV_images = self.segmentation_extractor_object.get_image("correlation")
-        elif self.type == 'extract':
-            FOV_images = self.segmentation_extractor_object.get_image("summary_image") # or f_per_pixel, max_image
-        elif self.type == 'nwb':
-            FOV_images = self.segmentation_extractor_object.get_image("mean") #or correlation
-        else:
-            # Handle the case when the type is not recognized
-            FOV_images = None
-        self.set_FOV_images(FOV_images=FOV_images)
+        types_FOV_images = {
+            'caiman': 'mean',
+            'cnmf': 'correlation',
+            'extract': 'summary_image',
+            'nwb': 'mean',
+            'suite2p': 'mean',
+        }
+        type_FOV_image = types_FOV_images[self.type] if FOV_image_name is None else FOV_image_name
 
-        # Get the centroids from the segmentation extractor object
-        self.centroids = self.segmentation_extractor_object.get_roi_locations()
+        try:
+            if type_FOV_image not in self.segmentation_extractor_objects[0].get_images_dict().keys():
+                warnings.warn(f'FOV image type {type_FOV_image} not found in segmentation extractor object. Please set FOV images manually using self.set_FOV_images()')
+            FOV_images = [obj.get_images_dict()[type_FOV_image] for obj in self.segmentation_extractor_objects]
+            self.set_FOV_images(FOV_images=FOV_images)
+        except Exception as e:
+            warnings.warn(f'Failed to retrieve and/or set FOV images. Please set FOV images manually using self.set_FOV_images(). Error: {e}')
+            self.set_FOVHeightWidth(FOV_height=fallback_FOV_height_width[0], FOV_width=fallback_FOV_height_width[1])
 
+        ## Make session_bool
+        self._make_session_bool()
+
+        ## Make spatial footprint centroids
+        self._make_spatialFootprintCentroids(method=centroid_method)
+
+        ## Transform spatial footprints to ROI images
         self._transform_spatialFootprints_to_ROIImages(out_height_width=out_height_width)
 
-        def make_spatialFootprint():
-            roi_pixel_masks = self.segmentation_extractor_object.get_roi_pixel_masks()
+        ## Make class labels
+        self.set_class_labels(class_labels=class_labels) if class_labels is not None else None
 
-            data = [r[:,2] for r in roi_pixel_masks]
-            ij_all = [r[:,:2].astype(np.int64) for r in roi_pixel_masks]
+    def _make_spatialFootprints(self, segObj):
+        roi_pixel_masks = segObj.get_roi_pixel_masks()
 
-            spatialFP = scipy.sparse.vstack(
-                [scipy.sparse.coo_matrix((d, (ij[:,0], ij[:,1])),
-                                          shape=tuple(self.segmentation_extractor_object.get_image_size())).reshape(1, -1) 
-                                          for d,ij in zip(data, ij_all)]
-            ).tocsr()
-            return spatialFP
+        data = [r[:,2] for r in roi_pixel_masks]
+        ij_all = [r[:,:2].astype(np.int64) for r in roi_pixel_masks]
+
+        sf = scipy.sparse.vstack(
+            [
+                scipy.sparse.coo_matrix(
+                    (d, (ij[:,0], ij[:,1])),
+                    shape=tuple(segObj.get_image_size())
+                ).reshape(1, -1) for d,ij in zip(data, ij_all)
+            ]
+        ).tocsr()
+        return sf
 
 
 
