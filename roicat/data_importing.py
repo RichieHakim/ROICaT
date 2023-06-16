@@ -6,6 +6,7 @@ import numpy as np
 from tqdm import tqdm
 import scipy.sparse
 import sparse
+from pynwb import NWBHDF5IO
 
 from . import helpers, util
 
@@ -1399,6 +1400,92 @@ class Data_caiman(Data_roicat):
             raise ValueError('Only valid methods are "centroid" or "median"')
         return np.round(np.vstack([h_mean, w_mean])).astype(np.int64)
 
+############################################
+########### class roiextractors ############
+############################################
+
+class Data_roiextractors(Data_roicat):
+    """
+    Class for importing all roiextractors supported data.
+    Will loop through object and ingest data for roicat. 
+
+    """
+    def __init__(
+            self,
+            path,
+            type, 
+            segmentation_extractor_object,
+
+            um_per_pixel = 0.1,
+            out_height_width = [36,36],
+            class_labels=None,
+            verbose=True,
+    ):
+        """
+        Args:
+            path (list or directory):
+                List of paths to the files.
+            type (str):
+                Type of roiextractor object to be imported.
+                'caiman', 'cnfme', 'extract', 'nwb', 'suite2p'
+            segmentation_extractor_object (list):
+                List of segmentation extractor objects.
+            class_labels (list):
+                List of class labels for each file.
+            verbose (bool):
+                If True, print statements will be printed.
+
+        Attributes set:
+            self.paths_files (list):
+                List of paths to the files.
+            self.class_labels (list):
+                List of class labels for each file.
+            self._verbose (bool):
+                If True, print statements will be printed.
+        """
+        self.paths = fix_paths(path)
+        self.class_labels = class_labels
+        self._verbose = verbose
+        self.type = type 
+        self.segmentation_extractor_object = segmentation_extractor_object
+
+
+        spatialFootprints = make_spatialFootprint(self.segmentation_extractor_object)
+        self.set_spatialFootprints(spatialFootprints=spatialFootprints, um_per_pixel=um_per_pixel)
+
+        # Get the FOV images from the segmentation extractor object
+        if self.type == 'suite2p':
+            FOV_images = self.segmentation_extractor_object.get_image("mean") #or correlation
+        elif self.type == 'caiman':
+            FOV_images = self.segmentation_extractor_object.get_image("mean") #unclear if this is correct
+        elif self.type == 'cnfme':
+            FOV_images = self.segmentation_extractor_object.get_image("correlation")
+        elif self.type == 'extract':
+            FOV_images = self.segmentation_extractor_object.get_image("summary_image") # or f_per_pixel, max_image
+        elif self.type == 'nwb':
+            FOV_images = self.segmentation_extractor_object.get_image("mean") #or correlation
+        else:
+            # Handle the case when the type is not recognized
+            FOV_images = None
+        self.set_FOV_images(FOV_images=FOV_images)
+
+        # Get the centroids from the segmentation extractor object
+        self.centroids = self.segmentation_extractor_object.get_roi_locations()
+
+        self._transform_spatialFootprints_to_ROIImages(out_height_width=out_height_width)
+
+        def make_spatialFootprint():
+            roi_pixel_masks = self.segmentation_extractor_object.get_roi_pixel_masks()
+
+            data = [r[:,2] for r in roi_pixel_masks]
+            ij_all = [r[:,:2].astype(np.int64) for r in roi_pixel_masks]
+
+            spatialFP = scipy.sparse.vstack(
+                [scipy.sparse.coo_matrix((d, (ij[:,0], ij[:,1])),
+                                          shape=tuple(self.segmentation_extractor_object.get_image_size())).reshape(1, -1) 
+                                          for d,ij in zip(data, ij_all)]
+            ).tocsr()
+            return spatialFP
 
 
 
