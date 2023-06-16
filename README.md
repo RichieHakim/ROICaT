@@ -14,7 +14,7 @@
 ## **R**egion **O**f **I**nterest **C**lassification **a**nd **T**racking
 A simple-to-use Python package for automatically classifying images of cells and tracking them across imaging sessions/planes.
 <div>
-    <img src="media/tracking_FOV_clusters_rich.gif" alt="tracking_FOV_clusters_rich"  width="400"  align="right" style="margin-bottom: 0px"/>
+    <img src="media/tracking_FOV_clusters_rich.gif" alt="tracking_FOV_clusters_rich"  width="400"  align="right" style="margin-left: 20px"/>
 </div>
 
 With this package, you can:
@@ -57,14 +57,15 @@ ROICaT works on Windows, MacOS, and Linux. If you have any issues during the ins
 - If using Windows: [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
 - If using linux/unix: GCC >= 5.4.0, ideally == 9.2.0. Google how to do this on your operating system. Check with: `gcc --version`.
 - **Optional:** [CUDA compatible NVIDIA GPU](https://developer.nvidia.com/cuda-gpus) and [drivers](https://developer.nvidia.com/cuda-toolkit-archive). Using a GPU can increase ROICaT speeds ~5-50x, though without it, ROICaT will still run reasonably quick. GPU support is not available for Macs.
+- The below commands should be run in the terminal (Mac/Linux) or Anaconda Prompt (Windows).
 
 ### 1. (Recommended) Create a new conda environment
-The below commands should be run in the terminal (Mac/Linux) or Anaconda Prompt (Windows).
 ```
 conda create -n roicat python=3.11
 conda activate roicat
 pip install --upgrade pip
 ```
+You will need to activate the environment with `conda activate roicat` each time you want to use ROICaT.
 
 ### 2. Install ROICaT
 ```
@@ -126,6 +127,6 @@ If a CUDA version of PyTorch is installed but GPU is not available, make sure yo
 
 # TODO:
 - Unify model training into this repo
-- Improve classification notebooks, port to colab, make scripts
+- Finish classification notebooks, port to colab, make scripts
 - Integration tests
 - make better reference API
