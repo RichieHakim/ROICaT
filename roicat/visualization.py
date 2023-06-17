@@ -612,3 +612,59 @@ def get_spread_out_points(data, n_ims=1000, dist_im_to_point=0.3, border_frac=0.
     idx_images_overlay = distMin_grid_to_imIdx.indices[idx_good]
 
     return idx_images_overlay
+
+
+def display_labeled_ROIs(
+    images,
+    labels,
+    max_images_per_label=10,
+    figsize=(10, 3),
+    fontsize=25,
+    shuffle=True,
+):
+    """
+    Display a grid of images, each row corresponding to a label, 
+     and each image is a randomly selected image from that label.
+    RH 2023
+
+    Args:
+        images (np.ndarray):
+            Array of images. Shape either:
+             (num_images, height, width) or
+             (num_images, height, width, num_channels)
+        labels (np.ndarray or dict):
+            If dict: Must contain keys 'index' and 'label'.
+            If ndarray: Must be a 1D array of labels.
+        max_images_per_label (int):
+            Maximum number of images to display per label.
+        figsize (tuple):
+            Size of the figure.
+        fontsize (int):
+            Fontsize of the labels.
+    """
+    import random
+
+    if isinstance(labels, (np.ndarray, list)):
+        print(f'labels is a {type(labels)}. Converting to a labels_dict by assuming that image indices are the same as the indices in labels.')
+        labels_dict = {
+            'index': np.arange(len(labels)),
+            'label': labels,
+        }
+    elif isinstance(labels, dict):
+        labels_dict = labels
+    else:
+        raise Exception(f'labels must be a list, np.ndarray, or dict. Got {type(labels)}.')
+
+    for l in np.unique(labels_dict['label']):
+        idx_l = np.where(labels_dict['label']==l)[0]
+        idx_l = random.sample(list(idx_l), len(idx_l)) if shuffle else idx_l
+        n_l = min(len(idx_l), max_images_per_label)
+
+        fig, axs = helpers.plot_image_grid(
+            images=images[labels['index'][idx_l]],
+            # images=images[idx_l],
+            labels=labels['index'][idx_l],
+            grid_shape=(1, n_l),
+            kwargs_subplots={'figsize': figsize}
+        );
+        fig.text(0,0.4, l, fontdict={'size': fontsize});
