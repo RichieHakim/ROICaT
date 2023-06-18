@@ -2731,6 +2731,131 @@ def cv2RemappingIdx_to_pytorchFlowField(ri):
     return normgrid
 
 
+def add_text_to_images(images, text, position=(10,10), font_size=1, color=(255,255,255), line_width=1, font=None, show=False, frameRate=30):
+    """
+    Add text to images using cv2.putText()
+    RH 2022
+
+    Args:
+        images (np.array):
+            frames of video or images.
+            shape: (n_frames, height, width, n_channels)
+        text (list of lists):
+            text to add to images.
+            Outer list: one element per frame.
+            Inner list: each element is a line of text.
+        position (tuple):
+            (x,y) position of text (top left corner)
+        font_size (int):
+            font size of text
+        color (tuple):
+            (r,g,b) color of text
+        line_width (int):
+            line width of text
+        font (str):
+            font to use.
+            If None, then will use cv2.FONT_HERSHEY_SIMPLEX
+            See cv2.FONT... for more options
+        show (bool):
+            if True, then will show the images with text added.
+
+    Returns:
+        images_with_text (np.array):
+            frames of video or images with text added.
+    """
+    import cv2
+    import copy
+    
+    if font is None:
+        font = cv2.FONT_HERSHEY_SIMPLEX
+    
+    images_cp = copy.deepcopy(images)
+    for i_f, frame in enumerate(images_cp):
+        for i_t, t in enumerate(text[i_f]):
+            fn_putText = lambda frame_gray: cv2.putText(frame_gray, t, [position[0] , position[1] + i_t*font_size*30], font, font_size, color, line_width)
+            if frame.ndim == 3:
+                [fn_putText(frame[:,:,ii]) for ii in range(frame.shape[2])]
+            else:
+                fn_putText(frame)
+        if show:
+            cv2.imshow('add_text_to_images', frame)
+            cv2.waitKey(int(1000/frameRate))
+    
+    if show:
+        cv2.destroyWindow('add_text_to_images')
+    return images_cp
+
+
+def resize_images(
+    images, 
+    new_shape=(100,100),
+    interpolation='linear',
+    antialias=False,
+    align_corners=False,
+    device='cpu',
+):
+    """
+    Resize images.
+    Uses torch.nn.functional.interpolate.
+    RH 2023
+
+    Args:
+        images (np.array or list):
+            frames of video or images.
+            Can be 2D, 3D, or 4D
+            2D shape: (height, width)
+            3D shape: (n_frames, height, width)
+            4D shape: (n_frames, height, width, n_channels)
+        new_shape (tuple):
+            (height, width) of resized images.
+        interpolation (str):
+            interpolation method to use.
+            See torch.nn.functional.interpolate for options.
+        antialias (bool):
+            if True, then will use antialiasing.
+        align_corners (bool):
+            if True, then will align corners.
+            See torch.nn.functional.interpolate for details.
+        device (str):
+            device to use for torch.nn.functional.interpolate.
+            
+    Returns:
+        images_resized (np.array):
+            frames of video or images with overlay added.
+    """
+    if isinstance(images, list):
+        images = np.stack(images, axis=0)
+    
+    if images.ndim == 2:
+        images = images[None,:,:]
+    elif images.ndim == 3:
+        images = images
+    elif images.ndim == 4:
+        images = images.transpose(0,3,1,2)
+    else:
+        raise ValueError('images must be 2D, 3D, or 4D.')
+    
+    images_torch = torch.as_tensor(images, device=device)
+    images_torch = torch.nn.functional.interpolate(
+        images_torch, 
+        size=tuple(np.array(new_shape, dtype=int)), 
+        mode=interpolation,
+        align_corners=align_corners,
+        recompute_scale_factor=None,
+        antialias=antialias,
+    )
+    images_resized = images_torch.cpu().numpy()
+    
+    if images.ndim == 2:
+        images_resized = images_resized[0,:,:]
+    elif images.ndim == 3:
+        images_resized = images_resized
+    elif images.ndim == 4:
+        images_resized = images_resized.transpose(0,2,3,1)
+    
+    return images_resized
+
+
 ######################################################################################################################################
 ######################################################## TIME SERIES #################################################################
 ######################################################################################################################################
