@@ -70,6 +70,7 @@ You will need to activate the environment with `conda activate roicat` each time
 ### 2. Install ROICaT
 ```
 pip install --user roicat[all]
+pip install git+https://github.com/RichieHakim/roiextractors
 ```
 Note: if you are using a zsh terminal, change command to: `pip3 install --user 'roicat[all]'`
 
