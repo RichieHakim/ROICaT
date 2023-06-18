@@ -60,6 +60,8 @@ class Data_roicat(util.ROICaT_Module):
 
         self._verbose = verbose
     
+        self.type = type(self)  ## Overwrites the superclass attribute self.type
+
     #########################################################
     ################# CLASSIFICATION ########################
     #########################################################
@@ -280,6 +282,9 @@ class Data_roicat(util.ROICaT_Module):
         Args:
             spatialFootprints (list):
                 One of the following:
+                - List of numpy.ndarray objects, one for each session.
+                   Each array should have shape 
+                   (n_ROIs, FOV_height, FOV_width).
                 - List of scipy.sparse.csr_matrix objects, one for
                    each session. Each matrix should have shape
                    (n_ROIs, FOV_height * FOV_width). Reshaping should
@@ -301,24 +306,31 @@ class Data_roicat(util.ROICaT_Module):
             print("RH WARNING: No um_per_pixel provided. We recommend making an educated guess. Assuming 1.0 um per pixel. This will affect the embedding results.")
             um_per_pixel = 1.0
 
+        ## Check inputs
+        if isinstance(spatialFootprints, list)==False:
+            print(f'RH WARNING: Input spatialFootprints is not a list. Converting to list.')
+            spatialFootprints = [spatialFootprints]
+
         ## If the input are dictionaries, assume that it is a serialized scipy.sparse.csr_matrix object and convert it
         if all([isinstance(s, dict) for s in spatialFootprints]):
             print("RH WARNING: spatialFootprints are dictionaries, assuming that they are serialized scipy.sparse.csr_matrix objects and converting them.") if self._verbose else None
-            spatialFootprints = [scipy.sparse.csr_matrix((sf['data'], sf['indices'], sf['indptr']), shape=sf['_shape']) for sf in spatialFootprints]
-
-        ## Check inputs
-        assert isinstance(spatialFootprints, list), f"RH ERROR: spatialFootprints must be a list."
-        assert all([scipy.sparse.issparse(sf) for sf in spatialFootprints]), f"RH ERROR: All elements in spatialFootprints must be scipy.sparse.csr_matrix objects."
-        if spatialFootprints[0].format != 'csr':
-            spatialFootprints = [sf.tocsr() for sf in spatialFootprints]
-        assert all([isinstance(sfp, scipy.sparse.csr_matrix) for sfp in spatialFootprints]), f"RH ERROR: All elements in spatialFootprints must be scipy.sparse.csr_matrix objects."
+            sf_all = [scipy.sparse.csr_matrix((sf['data'], sf['indices'], sf['indptr']), shape=sf['_shape']) for sf in spatialFootprints]
+        ## If the input are numpy.ndarray objects, convert them to scipy.sparse.csr_matrix objects
+        elif all([isinstance(s, np.ndarray) for s in spatialFootprints]):
+            print("RH WARNING: spatialFootprints are numpy.ndarray objects. Assuming structure is a list of arrays (1 per session) of shape (n_roi, height, width), converting them to scipy.sparse.csr_matrix objects.") if self._verbose else None
+            sf_all = [scipy.sparse.csr_matrix(sf.reshape(sf.shape[0], -1), copy=False) for sf in spatialFootprints]
+            self.set_FOVHeightWidth(FOV_height=spatialFootprints[0].shape[1], FOV_width=spatialFootprints[0].shape[2])
+        elif all([scipy.sparse.issparse(s) for s in spatialFootprints]):
+            sf_all = [sf.tocsr() for sf in spatialFootprints]
+        else:
+            raise ValueError(f"spatialFootprints should be a list of numpy.ndarray objects, scipy.sparse.csr_matrix objects, or dictionaries of csr_matrix input arguments (see documentation). Found elements of type: {type(spatialFootprints[0])}")
 
         self._check_um_per_pixel(um_per_pixel)
         um_per_pixel = float(um_per_pixel)
 
         ## Get some variables
-        n_sessions = len(spatialFootprints)
-        n_roi = [sf.shape[0] for sf in spatialFootprints]
+        n_sessions = len(sf_all)
+        n_roi = [sf.shape[0] for sf in sf_all]
         n_roi_total = int(np.sum(n_roi))
 
         ## Check that attributes match if they already exist as an attribute
@@ -330,13 +342,12 @@ class Data_roicat(util.ROICaT_Module):
             assert self.n_roi_total == n_roi_total, f"n_roi_total is already set to {self.n_roi_total} but new value is {n_roi_total}"
 
         ## Set attributes
-        self.spatialFootprints = spatialFootprints
+        self.spatialFootprints = sf_all
         self.um_per_pixel = um_per_pixel
         self.n_sessions = n_sessions
         self.n_roi = n_roi
         self.n_roi_total = n_roi_total
-        print(f"Completed: Set spatialFootprints for {len(spatialFootprints)} sessions successfully.") if self._verbose else None
-
+        print(f"Completed: Set spatialFootprints for {len(sf_all)} sessions successfully.") if self._verbose else None
 
     def set_FOV_images(
         self,
@@ -437,7 +448,7 @@ class Data_roicat(util.ROICaT_Module):
         if all([hasattr(self, key) for key in keys_classification_training]):
             completeness['classification_training'] = True
         else:
-            print(f"RH WARNING: Classification-Training incomplete because the following attributes are missing: {[key for key in keys_tracking if not hasattr(self, key)]}") if verbose else None
+            print(f"RH WARNING: Classification-Training incomplete because the following attributes are missing: {[key for key in keys_classification_training if not hasattr(self, key)]}") if verbose else None
             completeness['classification_training'] = False
         ## Check tracking:
         ### um_per_pixel, spatialFootprints, FOV_images
@@ -555,11 +566,14 @@ class Data_roicat(util.ROICaT_Module):
         ## Check inputs
         assert hasattr(self, 'spatialFootprints'), f"RH ERROR: spatialFootprints must be set before ROI images can be created."
         assert hasattr(self, 'FOV_height') and hasattr(self, 'FOV_width'), f"RH ERROR: FOV_height and FOV_width must be set before ROI images can be created."
-        assert hasattr(self, 'centroids'), f"RH ERROR: centroids must be set before ROI images can be created."
         assert isinstance(out_height_width, (tuple, list)), f"RH ERROR: out_height_width must be a tuple or list containing two elements (y, x)."
         assert len(out_height_width) == 2, f"RH ERROR: out_height_width must be a tuple of length 2."
         assert all([isinstance(h, int) for h in out_height_width]), f"RH ERROR: out_height_width must be a tuple of integers."
         assert all([h > 0 for h in out_height_width]), f"RH ERROR: out_height_width must be a tuple of positive integers."
+
+        if hasattr(self, 'centroids') == False:
+            print(f"Centroids must be set before ROI images can be created. Creating centroids now.") if self._verbose else None
+            self._make_spatialFootprintCentroids()
 
         ## Make helper function
         def sf_to_centeredROIs(sf, centroids):
@@ -707,6 +721,7 @@ class Data_suite2p(Data_roicat):
         
         verbose=True,
     ):
+        ## Inherit from Data_roicat
         super().__init__()
 
         self.paths_stat = fix_paths(paths_statFiles)
@@ -782,10 +797,12 @@ class Data_suite2p(Data_roicat):
         assert len(self.paths_ops) > 0, "RH ERROR: paths_ops is empty. Please set paths_ops before calling this function."
         assert all([Path(path).exists() for path in self.paths_ops]), "RH ERROR: One or more paths in paths_ops do not exist."
 
-        FOV_images = np.array([np.load(path, allow_pickle=True)[()][type_meanImg] for path in self.paths_ops]).astype(np.float32)
+        FOV_images = [np.load(path, allow_pickle=True)[()][type_meanImg] for path in self.paths_ops]
 
-        assert all([FOV_images[0].shape[0] == FOV_images[i].shape[0] for i in range(1, len(FOV_images))]), "RH ERROR: FOV images are not all the same height."
-        assert all([FOV_images[0].shape[1] == FOV_images[i].shape[1] for i in range(1, len(FOV_images))]), "RH ERROR: FOV images are not all the same width."
+        assert all([FOV_images[0].shape[0] == FOV_images[i].shape[0] for i in range(1, len(FOV_images))]), f"RH ERROR: FOV images are not all the same height. Shapes: {[FOV_image.shape for FOV_image in FOV_images]}"
+        assert all([FOV_images[0].shape[1] == FOV_images[i].shape[1] for i in range(1, len(FOV_images))]), f"RH ERROR: FOV images are not all the same width. Shapes: {[FOV_image.shape for FOV_image in FOV_images]}"
+
+        FOV_images = np.stack(FOV_images, axis=0).astype(np.float32)
 
         self.set_FOVHeightWidth(FOV_height=FOV_images[0].shape[0], FOV_width=FOV_images[0].shape[1])
         
@@ -1031,6 +1048,8 @@ class Data_caiman(Data_roicat):
             self._include_discarded (bool):
                 If True, include ROIs that were discarded by CaImAn.
         """
+        ## Inherit from Data_roicat
+        super().__init__()
 
         self.paths_resultsFiles = fix_paths(paths_resultsFiles)
         self.n_sessions = len(self.paths_resultsFiles)
@@ -1122,12 +1141,6 @@ class Data_caiman(Data_roicat):
 
         # ## Make class labels
         # self.set_class_labels(class_labels=class_labels) if class_labels is not None else None
-
-        # ############################################
-        # ############################################
-        # ############################################
-        # ############################################
-
 
         # self.import_caimanResults(paths_resultsFiles, include_discarded=self._include_discarded)
         
@@ -1478,26 +1491,33 @@ class Data_roiextractors(Data_roicat):
                 If True, print statements will be printed.
         """
         import roiextractors
+        
+        ## Inherit from Data_roicat
+        super().__init__()
 
         self._verbose = verbose
 
-        type_extractors = {
+        types_roiextractors = {
             'caiman': roiextractors.extractors.caiman.caimansegmentationextractor.CaimanSegmentationExtractor,
             'cnmf': roiextractors.extractors.schnitzerextractor.cnmfesegmentationextractor.CnmfeSegmentationExtractor,
             'extract': roiextractors.extractors.schnitzerextractor.extractsegmentationextractor.NewExtractSegmentationExtractor,
             'nwb': roiextractors.extractors.nwbextractors.nwbextractors.NwbSegmentationExtractor,
             'suite2p': roiextractors.extractors.suite2p.suite2psegmentationextractor.Suite2pSegmentationExtractor,
         }
-        type_extractors_inv = {val: key for key,val in type_extractors.items()}
+        types_roiextractors_inv = {val: key for key,val in types_roiextractors.items()}
 
         ## if the input segmentation extractor objects are not a list, make it one
         self.segmentation_extractor_objects = [segmentation_extractor_objects] if isinstance(segmentation_extractor_objects, list) == False else segmentation_extractor_objects
+
+        self.class_roiextractors = type(self.segmentation_extractor_objects[0])
+
         ## assert all segmentation extractor objects are the same type
-        assert all([type(self.segmentation_extractor_objects[0]) == type(obj) for obj in self.segmentation_extractor_objects]), 'All segmentation extractor objects must be of the same type.'
+        assert all([self.class_roiextractors == type(obj) for obj in self.segmentation_extractor_objects]), 'All segmentation extractor objects must be of the same type.'
         ## assert that the type of the segmentation extractor object is supported
-        assert type(self.segmentation_extractor_objects[0]) in type_extractors_inv.keys(), f'Segmentation extractor object type {type(self.segmentation_extractor_objects[0])} not supported. Please use one of the following: {type_extractors_inv.keys()}'
+        assert self.class_roiextractors in types_roiextractors_inv.keys(), f'Segmentation extractor object type {type(self.segmentation_extractor_objects[0])} not supported. Please use one of the following: {type_extractors_inv.keys()}'
         ## set the type of the segmentation extractor object
-        self.type = type_extractors_inv[type(self.segmentation_extractor_objects[0])]
+        self.type_roiextractors = types_roiextractors_inv[self.class_roiextractors]
+        self.class_roiextractors
 
         ## set spatial footprints
         self.set_spatialFootprints(
@@ -1513,7 +1533,7 @@ class Data_roiextractors(Data_roicat):
             'nwb': 'mean',
             'suite2p': 'mean',
         }
-        type_FOV_image = types_FOV_images[self.type] if FOV_image_name is None else FOV_image_name
+        type_FOV_image = types_FOV_images[self.type_roiextractors] if FOV_image_name is None else FOV_image_name
 
         try:
             if type_FOV_image not in self.segmentation_extractor_objects[0].get_images_dict().keys():
@@ -1571,15 +1591,12 @@ def fix_paths(paths):
             List of str
     """
     
-    if (type(paths) is str) or (type(paths) is pathlib.PosixPath):
-        paths_files = [Path(paths)]
-    elif type(paths[0]) is str:
-        paths_files = [Path(path) for path in paths]
-    elif type(paths[0]) is pathlib.PosixPath or type(paths[0]) is pathlib.WindowsPath:
-        paths_files = paths
+    if isinstance(paths, (str, pathlib.Path)):
+        paths_files = [Path(paths).resolve()]
+    elif isinstance(paths[0], (str, pathlib.Path)):
+        paths_files = [Path(path).resolve() for path in paths]
     else:
         raise TypeError("path_files must be a list of str or list of pathlib.Path or a str or pathlib.Path")
-
     return [str(p) for p in paths_files]
 
 
