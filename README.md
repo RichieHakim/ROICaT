@@ -39,7 +39,7 @@ We have found that ROICaT is capable of classifying cells with accuracy comparab
 **CLASSIFICATION:**
 - [Interactive notebook - Drawing](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/classify_by_drawingSelection.ipynb)
 - [Google CoLab - Drawing](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/classification/classify_by_drawingSelection_colab.ipynb)
-- (TODO) [Interactive notebook - Labeling]()
+- [Interactive notebook - Labeling](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/labeling_interactive.ipynb)
 - (TODO) [Interactive notebook - Train classifier]()
 - (TODO) [Interactive notebook - Inference with classifier]()
 
