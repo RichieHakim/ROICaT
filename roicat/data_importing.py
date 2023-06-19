@@ -1,6 +1,7 @@
 import pathlib
 from pathlib import Path
 import warnings
+from typing import List, Optional, Union, Tuple, Dict, Any, Callable, Iterable
 
 import numpy as np
 from tqdm import tqdm
@@ -45,15 +46,52 @@ Conventions:
 
 class Data_roicat(util.ROICaT_Module):
     """
-    Super class for all data objects.
-    Incase you want to make a custom data object,
-     you can use this class as a template to fill
-     in the required attributes.
-    RH 2022
+    Super class for all data objects. Incase you want to make a custom data
+    object, you can use this class as a template to fill in the required
+    attributes. RH 2022
+
+    Args:
+        verbose (bool):
+            Whether to print status updates.
+
+    Attributes:
+        type (str):
+            The type of data object. This is set by the subclass.
+        n_sessions (int):
+            The number of imaging sessions.
+        n_roi (int):
+            The number of ROIs in each session.
+        n_roi_total (int):
+            The total number of ROIs across all sessions.
+        FOV_height (int):
+            The height of the FOV in pixels.
+        FOV_width (int):
+            The width of the FOV in pixels.
+        FOV_images (List[np.ndarray]):
+            A list of numpy arrays of shape (FOV_height, FOV_width). Each
+            element of the list is an imaging session.
+        ROI_images (List[np.ndarray]):
+            A list of numpy arrays of shape (n_roi, height, width). Each element
+            of the list is an imaging session and each element of the numpy
+            array (first dimension) is an ROI.
+        spatialFootprints (List[scipy.sparse.csr_matrix]):
+            A list of scipy.sparse.csr_matrix of shape (n_roi,
+            FOV_height*FOV_width). Each element of the listis an imaging
+            session.
+        class_labels (List[np.ndarray]):
+            A list of numpy arrays of shape (n_roi,), where each element is an
+            integer. Each element of the list is an imaging session and each
+            element of the numpy array is a class label.
+        um_per_pixel (float):
+            The conversion factor from pixels to microns. This is used to scale
+            the ROI_images to a common size.
+        session_bool (np.ndarray):
+            A boolean matrix of shape (n_roi_total, n_sessions). Each element is
+            True if the ROI is present in the session.
     """
     def __init__(
         self,
-        verbose=True,
+        verbose: bool = True,
     ):       
         ## Imports
         super().__init__()
@@ -68,27 +106,23 @@ class Data_roicat(util.ROICaT_Module):
 
     def set_ROI_images(
         self,
-        ROI_images: list,
-        um_per_pixel: float=None,
+        ROI_images: List[np.ndarray],
+        um_per_pixel: Optional[float] = None,
     ):
         """
-        Imports ROI images into the class.
-        Images are expected to be formated as a list of 
-         numpy arrays. Each element is an imaging session.
-         Each element is a numpy array of shape 
-         (n_roi, FOV_height, FOV_width).
-        This function will set the attributes:
-            self.ROI_images, self.n_roi, self.n_roi_total,
-             self.n_sessions.
-        If any of these attributes are already set, they will
-         check to make sure the new values are the same.
+        Imports ROI images into the class. Images are expected to be formatted as a 
+        list of numpy arrays. Each element is an imaging session. Each element is a 
+        numpy array of shape (n_roi, FOV_height, FOV_width). This function will set 
+        the attributes: self.ROI_images, self.n_roi, self.n_roi_total, self.n_sessions.
+        If any of these attributes are already set, they will check to make sure the 
+        new values are the same.
 
         Args:
-            ROI_images (list of np.ndarray):
+            ROI_images (List[np.ndarray]): 
                 List of numpy arrays of shape (n_roi, FOV_height, FOV_width).
-            um_per_pixel (float):
-                The number of microns per pixel. This is used to
-                 resize the images to a common size.
+            um_per_pixel (Optional[float]): 
+                The number of microns per pixel. This is used to resize the images 
+                to a common size.
         """
 
         ## Warn if no um_per_pixel is provided
@@ -140,38 +174,32 @@ class Data_roicat(util.ROICaT_Module):
 
     def set_class_labels(
         self,
-        class_labels,
-        n_classes=None,
+        class_labels: Optional[Union[List[np.ndarray], List[str]]] = None,
+        n_classes: Optional[int] = None,
     ):
         """
-        Imports class labels into the class.
-        Class labels are expected to be formated as a list of 
-         numpy arrays. Each element is an imaging session and
-         is associated with the n-th element of the self.ROI_images
-         list.
-        Each element is a numpy array of shape (n_roi,).
-        Sets the attributes:
-            self.class_labels, self.n_classes, self.n_class_labels,
-            self.n_class_labels_total, self.unique_class_labels.
-        If any of these attributes are already set, they will
-         check to make sure the new values are the same.
+        Imports class labels into the class. 
+        
+        * Class labels are expected to be formatted as a list of numpy arrays.
+          Each element is an imaging session and is associated with the n-th
+          element of the self.ROI_images list. Each element is a numpy array of
+          shape (n_roi,). 
+        
+        * Sets the attributes: self.class_labels, self.n_classes,
+          self.n_class_labels, self.n_class_labels_total,
+          self.unique_class_labels. If any of these attributes are already set,
+          they will check to make sure the new values are the same.
 
         Args:
-            class_labels ((list of np.ndarray) or (list of str to paths) or None):
-                Optional. If None, class labels are not set.
-                If list of np.ndarray, each element should be
-                 1D integer array of length n_roi specifying
-                 the class label for each ROI.
-                If list of str, each element should be a path
-                 to a .npy file containing 
-                 of length n_roi specifying the class label 
-                 for each ROI.
-                Label values will be 'squeezed' to remove non-contiguous
-                 integer values: [2, 4, 6, 7] -> [0, 1, 2, 3].
-            n_classes (int):
-                Optional.
-                Number of classes. If not provided, will be inferred
-                 from the class labels.
+            class_labels (Optional[Union[List[np.ndarray], List[str]]]): 
+                Optional. If ``None``, class labels are not set. If list of np.ndarray, 
+                each element should be 1D integer array of length n_roi specifying the 
+                class label for each ROI. If list of str, each element should be a path to a 
+                .npy file containing of length n_roi specifying the class label for each ROI.
+                Label values will be 'squeezed' to remove non-contiguous integer values: 
+                [2, 4, 6, 7] -> [0, 1, 2, 3].
+            n_classes (Optional[int]): 
+                Number of classes. If not provided, will be inferred from the class labels.
         """
 
         print(f"Starting: Importing class labels") if self._verbose else None
@@ -237,17 +265,25 @@ class Data_roicat(util.ROICaT_Module):
 
         print(f"Completed: Imported labels for {n_sessions} sessions. Each session has {n_class_labels} class labels. Total number of class labels is {n_class_labels_total}.") if self._verbose else None
 
-    def _check_um_per_pixel(self, um_per_pixel):
-        ### Check um_per_pixel
+    def _check_um_per_pixel(self, um_per_pixel: float):
+        """
+        Checks whether um_per_pixel is of appropriate type and is positive.
+
+        Args:
+            um_per_pixel (float):
+                The number of microns per pixel.
+        """
         assert isinstance(um_per_pixel, (int, float)), f"um_per_pixel should be a float. It is a {type(um_per_pixel)}"
         assert um_per_pixel > 0, f"um_per_pixel should be a positive number. It is {um_per_pixel}"
 
-
-    
-    def _checkValidity_classLabels_vs_ROIImages(self, verbose=None):
+    def _checkValidity_classLabels_vs_ROIImages(self, verbose: Optional[bool] = None):
         """
-        Checks that the class labels and the ROI images have the same
-         number of sessions and the same number of ROIs in each session.
+        Checks that the class labels and the ROI images have the same number of
+        sessions and the same number of ROIs in each session.
+
+        Args:
+            verbose (Optional[bool]):
+                If None, the verbosity level set in the class is used.
         """
         if verbose is None:
             verbose = self._verbose
@@ -266,7 +302,7 @@ class Data_roicat(util.ROICaT_Module):
         assert all([l == r for l, r in zip(n_ROIs_classLabels, n_ROIs_ROIImages)]), f"RH ERROR: Number of ROIs in each session in class_labels ({n_ROIs_classLabels}) does not match number of ROIs in each session in ROI_images ({n_ROIs_ROIImages})."
         print(f"Labels and ROI Images match in shapes: Class labels and ROI images have the same number of sessions and the same number of ROIs in each session.") if verbose else None
         return True
-    
+
     #########################################################
     #################### TRACKING ###########################
     #########################################################
@@ -277,27 +313,26 @@ class Data_roicat(util.ROICaT_Module):
         um_per_pixel: float=None,
     ):
         """
-        Sets the spatialFootprints attribute.
+        Sets the `spatialFootprints` attribute.
 
         Args:
             spatialFootprints (list):
-                One of the following:
-                - List of numpy.ndarray objects, one for each session.
-                   Each array should have shape 
-                   (n_ROIs, FOV_height, FOV_width).
-                - List of scipy.sparse.csr_matrix objects, one for
-                   each session. Each matrix should have shape
-                   (n_ROIs, FOV_height * FOV_width). Reshaping should
-                   be done with 'C' indexing (standard).
-                - List of dictionaries, one for each session. This 
-                  dictionary should be a serialized scipy.sparse.csr_matrix
-                  object. It should contains keys: 'data', 'indices',
-                  'indptr', 'shape'. See scipy.sparse.csr_matrix for
-                  more information.
-            um_per_pixel (float):
-                The number of microns per pixel. This is used to
-                 resize the images to a common size.
+                One of the following: \n
+                * List of `numpy.ndarray` objects, one for each session. Each
+                  array should have shape `(n_ROIs, FOV_height, FOV_width)`.
+                * List of `scipy.sparse.csr_matrix` objects, one for each
+                  session. Each matrix should have shape `(n_ROIs, FOV_height *
+                  FOV_width)`. Reshaping should be done with 'C' indexing
+                  (standard).
+                * List of dictionaries, one for each session. This dictionary
+                  should be a serialized `scipy.sparse.csr_matrix` object. It
+                  should contains keys: 'data', 'indices', 'indptr', 'shape'.
+                  See `scipy.sparse.csr_matrix` for more information.
+            um_per_pixel (float, optional):
+                The number of microns per pixel. This is used to resize the
+                images to a common size.
         """
+
         ## Warn if no um_per_pixel is provided
         if um_per_pixel is None:
             ## Check if it is already set
@@ -354,13 +389,14 @@ class Data_roicat(util.ROICaT_Module):
         FOV_images: list,
     ):
         """
-        Sets the FOV_images attribute.
+        Sets the `FOV_images` attribute.
 
         Args:
             FOV_images (list):
-                List of 2D numpy arrays, one for each session.
-                 Each array should have shape (FOV_height, FOV_width).
+                List of 2D `numpy.ndarray` objects, one for each session. Each
+                array should have shape `(FOV_height, FOV_width)`.
         """
+
         if isinstance(FOV_images, np.ndarray):
             assert FOV_images.ndim == 3, f"RH ERROR: FOV_images must be a list of 2D numpy arrays."
             FOV_images = [fov for fov in FOV_images]
@@ -385,21 +421,21 @@ class Data_roicat(util.ROICaT_Module):
 
         print(f"Completed: Set FOV_images for {len(FOV_images)} sessions successfully.") if self._verbose else None
 
-
     def set_FOVHeightWidth(
         self,
         FOV_height: int,
         FOV_width: int,
     ):
         """
-        Sets the FOV_height and FOV_width attributes.
+        Sets the `FOV_height` and `FOV_width` attributes.
 
         Args:
             FOV_height (int):
-                The height of the FOV in pixels.
+                The height of the field of view (FOV) in pixels.
             FOV_width (int):
-                The width of the FOV in pixels.
+                The width of the field of view (FOV) in pixels.
         """
+
         ## Check inputs
         assert isinstance(FOV_height, int), f"RH ERROR: FOV_height must be an integer."
         assert isinstance(FOV_width, int), f"RH ERROR: FOV_width must be an integer."
@@ -411,10 +447,16 @@ class Data_roicat(util.ROICaT_Module):
         print(f"Completed: Set FOV_height and FOV_width successfully.") if self._verbose else None
 
 
-    def _checkValidity_spatialFootprints_and_FOVImages(self, verbose=None):
+    def _checkValidity_spatialFootprints_and_FOVImages(self, verbose: Optional[bool] = None):
         """
-        Checks that spatialFootprints and FOV_images are compatible.
+        Checks that `spatialFootprints` and `FOV_images` are compatible.
+
+        Args:
+            verbose (bool, optional):
+                If `True`, outputs progress and error messages. Defaults to
+                `None`.
         """
+        
         if verbose is None:
             verbose = self._verbose
         if hasattr(self, 'spatialFootprints') and hasattr(self, 'FOV_images'):
@@ -426,11 +468,17 @@ class Data_roicat(util.ROICaT_Module):
             print("Cannot check validity of spatialFootprints and FOV_images because one or both do not exist as attributes.") if verbose else None
             return False
 
-    def check_completeness(self, verbose=True):
+    def check_completeness(self, verbose: bool = True):
         """
-        Checks which pipelines the data object is capable of running
-         given the attributes that have been set.
+        Checks which pipelines the data object is capable of running given the
+        attributes that have been set.
+
+        Args:
+            verbose (bool, optional):
+                If `True`, outputs progress and error messages. Defaults to
+                `True`.
         """
+        
         completeness = {}
         keys_classification_inference = ['ROI_images', 'um_per_pixel']
         keys_classification_training = ['ROI_images', 'um_per_pixel', 'class_labels']
@@ -468,12 +516,12 @@ class Data_roicat(util.ROICaT_Module):
 
     def _make_session_bool(self):
         """
-        Creates a boolean array of shape (n_roi_total, n_sessions) 
-         where each row is a boolean vector indicating which session(s) 
-         the ROI was present in.
-        Use the self.n_roi attribute to determine which rows belong to 
-         which session.
+        Creates a boolean array of shape `(n_roi_total, n_sessions)` where each
+        row is a boolean vector indicating which session(s) the ROI was present
+        in. Uses the `self.n_roi` attribute to determine which rows belong to
+        which session.
         """
+        
         ## Check that n_roi is set
         assert hasattr(self, 'n_roi'), f"RH ERROR: n_roi must be set before session_bool can be created."
         ## Check that n_roi is the correct length
@@ -486,37 +534,34 @@ class Data_roicat(util.ROICaT_Module):
         print(f"Completed: Created session_bool.") if self._verbose else None
 
 
-    def _make_spatialFootprintCentroids(self, method='centerOfMass'):
+    def _make_spatialFootprintCentroids(self, method: str = 'centerOfMass'):
         """
-        Gets the centroids of a sparse array of flattented spatial footprints.
+        Gets the centroids of a sparse array of flattened spatial footprints.
         Calculates the centroid position as the center of mass of the ROI.
         JZ, RH 2022
 
         Args:
-            method (str):
-                Method to use to calculate the centroid.
-                Options:
-                    'centerOfMass':
-                        Calculates the centroid position as the mean center of
-                         mass of the ROI.
-                    'median':
-                        Calculates the centroid position as the median center of
-                         mass of the ROI.
+            method (str, optional):
+                Method to use to calculate the centroid. Options are:
+                * `'centerOfMass'`: Calculates the centroid position as the mean
+                  center of mass of the ROI. Default is `'centerOfMass'`.
+                * `'median'`: Calculates the centroid position as the median
+                  center of mass of the ROI.
 
-        Input Attributes:
-            self.spatialFootprints (scipy.sparse.csr_matrix):
-                Spatial footprints.
-                Shape: (n_roi, FOV_height*FOV_width) in C flattened format.
-            self.FOV_height (int):
+        Attributes:
+            spatialFootprints (scipy.sparse.csr_matrix):
+                Spatial footprints, shape `(n_roi, FOV_height*FOV_width)` in `'C'`
+                flattened format.
+            FOV_height (int):
                 Height of the FOV.
-            self.FOV_width (int):
+            FOV_width (int):
                 Width of the FOV.
 
         Returns:
-            self.centroids (np.ndarray):
-                Centroids of the ROIs.
-                Shape: (2, n_roi). (y, x) coordinates.
+            centroids (np.ndarray):
+                Centroids of the ROIs, shape `(2, n_roi)`. (y, x) coordinates.
         """
+        
         ## Check that sf is a list of csr sparse arrays
         assert isinstance(self.spatialFootprints, list), f"RH ERROR: spatialFootprints must be a list of scipy.sparse.csr_matrix."
         assert all([isinstance(sf, scipy.sparse.csr_matrix) for sf in self.spatialFootprints]), f"RH ERROR: spatialFootprints must be a list of scipy.sparse.csr_matrix."
@@ -555,14 +600,15 @@ class Data_roicat(util.ROICaT_Module):
         print(f"Completed: Created centroids.") if self._verbose else None
 
     
-    def _transform_spatialFootprints_to_ROIImages(self, out_height_width=(36,36)):
+    def _transform_spatialFootprints_to_ROIImages(self, out_height_width: Tuple[int, int] = (36, 36)):
         """
-        Transform sparse spatial footprints to dense ROI images.
+        Transforms sparse spatial footprints to dense ROI images.
 
         Args:
-            out_height_width (tuple):
-                Height and width of the output images. Default is (36,36).
+            out_height_width (tuple, optional):
+                Height and width of the output images. Default is `(36, 36)`.
         """
+
         ## Check inputs
         assert hasattr(self, 'spatialFootprints'), f"RH ERROR: spatialFootprints must be set before ROI images can be created."
         assert hasattr(self, 'FOV_height') and hasattr(self, 'FOV_width'), f"RH ERROR: FOV_height and FOV_width must be set before ROI images can be created."
@@ -600,6 +646,7 @@ class Data_roicat(util.ROICaT_Module):
         
 
     def __repr__(self):
+
         ## Check which attributes are set
         attr_to_print = {key: val for key,val in self.__dict__.items() if key in [
             'um_per_pixel', 
@@ -615,15 +662,16 @@ class Data_roicat(util.ROICaT_Module):
         ]}
         return f"Data_roicat object: {attr_to_print}."
 
-    def import_from_dict(self, dict_load):
+    def import_from_dict(self, dict_load: dict):
         """
-        Import attributes from a dictionary. This is useful if a serializable
-         dictionary was saved.
+        Imports attributes from a dictionary. This is useful if a serializable
+        dictionary was saved.
 
         Args:
             dict_load (dict):
                 Dictionary containing attributes to load.
         """
+
         ## Go through each important attribute in Data_roicat and look for it in dict_load
         methods = {
             self.set_ROI_images: ['ROI_images', 'um_per_pixel'],
@@ -657,70 +705,65 @@ class Data_roicat(util.ROICaT_Module):
 
 class Data_suite2p(Data_roicat):
     """
-    Class for handling suite2p output files and data.
-    In particular stat.npy and ops.npy files.
-    Imports FOV images and spatial footprints,
-     and prepares ROI images.
-    RH 2022
+    Class for handling suite2p output files and data. In particular stat.npy and
+    ops.npy files. Imports FOV images and spatial footprints, and prepares ROI
+    images. RH 2022
 
     Args:
         paths_statFiles (list of str or pathlib.Path):
-            List of paths to the stat.npy files.
-            Elements should be one of: str, pathlib.Path,
-                list of str or list of pathlib.Path
-        paths_opsFiles (list of str or pathlib.Path):
-            List of paths to the ops.npy files.
-            Elements should be one of: str, pathlib.Path,
-                list of str or list of pathlib.Path
-            Optional. 
-            Used to get FOV_images, FOV_height,
-                FOV_width, and shifts (if old matlab ops file).
+            List of paths to the stat.npy files. Elements should be one of: str,
+            pathlib.Path, list of str or list of pathlib.Path.
+        paths_opsFiles (list of str or pathlib.Path, optional):
+            List of paths to the ops.npy files. Elements should be one of: str,
+            pathlib.Path, list of str or list of pathlib.Path. Optional. Used to
+            get FOV_images, FOV_height, FOV_width, and shifts (if old matlab ops
+            file).
         um_per_pixel (float):
-            Resolution. 'micrometers per pixel' of the imaging
-             field of view.
+            Resolution in micrometers per pixel of the imaging field of view.
         new_or_old_suite2p (str):
-            Type of suite2p output files. Matlab=old, Python=new.
-            Should be: 'new' or 'old'.
+            Type of suite2p output files. Matlab=old, Python=new. Should be:
+            ``'new'`` or ``'old'``.
         out_height_width (tuple of int):
-            Height and width of output ROI images.
-            Should be: (int, int) (y, x).                
-        class_labels ((list of np.ndarray) or (list of str to paths) or None):
-            Optional. 
-            If None, class labels are not set.
-            If list of np.ndarray, each element should be
-                1D integer array of length n_roi specifying
-                the class label for each ROI.
-            If list of str, each element should be a path
-                to a .npy file containing 
-                of length n_roi specifying the class label 
-                for each ROI.
+            Height and width of output ROI images. Should be: *(int, int)* *(y,
+            x)*.
+        type_meanImg (str):
+            Type of mean image to use. Should be: ``'meanImgE'`` or ``'meanImg'``.
+        FOV_images (np.ndarray, optional):
+            FOV images. Array of shape *(n_sessions, FOV_height, FOV_width)*.
+            Optional.
         centroid_method (str):
-            Method for calculating centroid of ROI.
-            Should be: 'centerOfMass' or 'median'.
-        FOV_height_width (tuple of int):
-            Optional. If None, paths_opsFiles must be
-                provided to get FOV height and width.
+            Method for calculating the centroid of an ROI. Should be:
+            ``'centerOfMass'`` or ``'median'``.
+        class_labels ((list of np.ndarray) or (list of str to paths) or None):
+            Optional. If ``None``, class labels are not set. If list of
+            np.ndarray, each element should be a 1D integer array of length
+            n_roi specifying the class label for each ROI. If list of str, each
+            element should be a path to a .npy file containing an array of
+            length n_roi specifying the class label for each ROI.
+        FOV_height_width (tuple of int, optional):
+            FOV height and width. If ``None``, **paths_opsFiles** must be provided to
+            get FOV height and width.
         verbose (bool):
-            If True, prints results from each function.
+            If ``True``, prints results from each function.
     """
     def __init__(
         self,
-        paths_statFiles,
-        paths_opsFiles=None,
-        um_per_pixel=1.0,
-        new_or_old_suite2p='new',
-        
-        out_height_width=(36,36),
-        type_meanImg='meanImgE',
-        FOV_images=None,
-        
-        centroid_method = 'centerOfMass',
-
-        class_labels=None,
-        FOV_height_width=None,
-        
-        verbose=True,
+        paths_statFiles: Union[str, pathlib.Path, List[Union[str, pathlib.Path]]],
+        paths_opsFiles: Optional[Union[str, pathlib.Path, List[Union[str, pathlib.Path]]]] = None,
+        um_per_pixel: float = 1.0,
+        new_or_old_suite2p: str = 'new',
+        out_height_width: Tuple[int, int] = (36, 36),
+        type_meanImg: str = 'meanImgE',
+        FOV_images: Optional[np.ndarray] = None,
+        centroid_method: str = 'centerOfMass',
+        class_labels: Optional[Union[List[np.ndarray], List[str], None]] = None,
+        FOV_height_width: Optional[Tuple[int, int]] = None,
+        verbose: bool = True,
     ):
+        """
+        Initialize the Data_suite2p object.
+        """
+
         ## Inherit from Data_roicat
         super().__init__()
 
@@ -767,28 +810,23 @@ class Data_suite2p(Data_roicat):
 
     def import_FOV_images(
         self,
-        type_meanImg='meanImgE',
-    ):
+        type_meanImg: str = 'meanImgE',
+    ) -> List[np.ndarray]:
         """
-        Imports the FOV images from ops files or user defined
-         image arrays.
+        Imports the FOV images from ops files or user defined image arrays.
 
         Args:
             type_meanImg (str):
-                Type of the mean image.
-                References the key in the ops.npy file.
-                Options are:
-                    'meanImgE':
-                        Enhanced mean image.
-                    'meanImg':
-                        Mean image.
+                Type of the mean image. References the key in the ops.npy file.
+                Options are: \n
+                * ``'meanImgE'``: Enhanced mean image. 
+                * ``'meanImg'``: Mean image.
         
         Returns:
-            FOV_images (list):
-                List of FOV images.
-                Length of the list is the same self.paths_files.
-                Each element is a numpy.ndarray of shape:
-                 (n_files, height, width)
+            FOV_images (List[np.ndarray]):
+                List of FOV images. Length of the list is the same as
+                self.paths_files. Each element is a numpy.ndarray of shape
+                *(n_files, height, width)*.
         """
 
         print(f"Starting: Importing FOV images from ops files") if self._verbose else None
@@ -813,34 +851,30 @@ class Data_suite2p(Data_roicat):
 
     def import_spatialFootprints(
         self,
-        frame_height_width=None,
-        dtype=np.float32,
-    ):
+        frame_height_width: Optional[Union[list, tuple]] = None,
+        dtype: np.dtype = np.float32,
+    ) -> List[scipy.sparse.csr_matrix]:
         """
-        Imports and converts the spatial footprints of the ROIs
-         in the stat files into images in sparse arrays.
-        Output will be a list of arrays of shape 
-         (n_roi, frame height, frame width).
-        Also generates self.session_bool which is a bool np.ndarray
-         of shape(n_roi, n_sessions) indicating which session each ROI
-         belongs to.
+        Imports and converts the spatial footprints of the ROIs in the stat
+        files into images in sparse arrays. Output will be a list of arrays of
+        shape *(n_roi, frame_height, frame_width)*. Also generates
+        self.session_bool which is a bool np.ndarray of shape *(n_roi,
+        n_sessions)* indicating which session each ROI belongs to.
         
         Args:
-            frame_height_width (list or tuple):
-                [height, width] of the frame.
-                If None, then import_FOV_images must be
-                 called before this method, and the frame
-                 height and width will be taken from the first FOV 
-                 image.
+            frame_height_width (Optional[List[int], Tuple[int]):
+                [*height*, *width*] of the frame. If None, then
+                ``self.import_FOV_images`` must be called before this method,
+                and the frame height and width will be taken from the first FOV
+                image.
             dtype (np.dtype):
                 Data type of the sparse array.
 
         Returns:
             sf (list):
-                Spatial Footprints.
-                Length of the list is the same self.paths_files.
-                Each element is a np.ndarray of shape:
-                    (n_roi, frame_height_width[0], frame_height_width[1])
+                Spatial Footprints. Length of the list is the same as
+                ``self.paths_files``. Each element is a scipy.sparse.csr_matrix
+                of shape *(n_roi, frame_height * frame_width)*.
         """
 
         print("Importing spatial footprints from stat files.") if self._verbose else None
@@ -875,11 +909,22 @@ class Data_suite2p(Data_roicat):
 
     def import_neuropil_masks(
         self,
-        frame_height_width=None,
-    ):
+        frame_height_width: Optional[Union[list, tuple]] = None,
+    ) -> List[scipy.sparse.csr_matrix]:
         """
-        Imports and converts the neuropil masks of the ROIs
-         in the stat files into images in sparse arrays.
+        Imports and converts the neuropil masks of the ROIs in the stat files into
+        images in sparse arrays.
+
+        Args:
+            frame_height_width (Optional[Union[list, tuple]]):
+                [*height*, *width*] of the frame. If None, the height and width will
+                be taken from the FOV images.
+
+        Returns:
+            neuropilMasks (List[scipy.sparse.csr_matrix]):
+                List of neuropil masks. Length of the list is the same as
+                ``self.paths_stat``. Each element is a sparse array of shape
+                *(n_roi, frame_height, frame_width)*.
         """
 
         print("Importing neuropil masks from stat files.") if self._verbose else None
@@ -911,10 +956,27 @@ class Data_suite2p(Data_roicat):
         return neuropilMasks
     
 
-    def _make_shifts(self, paths_ops: list=None, new_or_old_suite2p: str='new'):
+    def _make_shifts(
+        self, 
+        paths_ops: Optional[List[str]] = None, 
+        new_or_old_suite2p: str = 'new',
+    ) -> List[np.ndarray]:
         """
         Helper function to make the shifts for the old suite2p indexing.
-        """
+
+        Args:
+            paths_ops (list of str, optional):
+                List of paths to the ops.npy files. Default is ``None``.
+            new_or_old_suite2p (str):
+                Type of suite2p output files. Should be: ``'new'`` or ``'old'``.
+                Default is ``'new'``.
+
+        Returns:
+            shifts (list of np.ndarray):
+                List of shifts. Each element is a numpy array of shape (2,) and
+                dtype np.uint64.
+        """        
+        
         if paths_ops is None:
             shifts = [np.array([0,0], dtype=np.uint64)]*self.n_sessions
             return shifts
@@ -928,11 +990,40 @@ class Data_suite2p(Data_roicat):
         return shifts
 
     @staticmethod
-    def _transform_statFile_to_spatialFootprints(frame_height_width, stat, shifts=(0,0), dtype=None, normalize_mask=True):
+    def _transform_statFile_to_spatialFootprints(
+        frame_height_width: Tuple[int, int], 
+        stat: np.ndarray, 
+        shifts: Tuple[int, int] = (0, 0), 
+        dtype: Optional[np.dtype] = None, 
+        normalize_mask: bool = True,
+    ) -> scipy.sparse.csr_matrix:
         """
-        Populates a sparse array with the spatial footprints from ROIs
-        in a stat file.
+        Populates a sparse array with the spatial footprints from ROIs in a stat
+        file.
+
+        Args:
+            frame_height_width (Tuple[int, int]):
+                Height and width of the frame.
+
+            stat (np.ndarray):
+                Stat file containing ROIs information.
+
+            shifts (Tuple[int, int]):
+                Shifts in x and y coordinates to apply to ROIs. Default is (0,
+                0).
+            
+            dtype (Optional[np.dtype]):
+                Data type of the array elements. If ``None``, it will be inferred
+                from the data. Default is ``None``.
+            
+            normalize_mask (bool):
+                If True, normalize the mask. Default is ``True``.
+
+        Returns:
+            sparse_array (scipy.sparse.csr_matrix):
+                Sparse array populated with spatial footprints from ROIs.
         """
+
         isInt = np.issubdtype(dtype, np.integer)
 
         rois_to_stack = []
@@ -953,11 +1044,31 @@ class Data_suite2p(Data_roicat):
         return scipy.sparse.vstack(rois_to_stack).tocsr()
 
     @staticmethod
-    def _transform_statFile_to_neuropilMasks(frame_height_width, stat, shifts=(0,0)):
+    def _transform_statFile_to_neuropilMasks(
+        frame_height_width: Tuple[int, int], 
+        stat: np.ndarray, 
+        shifts: Tuple[int, int] = (0, 0)
+    ) -> scipy.sparse.csr_matrix:
         """
-        Populates a sparse array with the neuropil masks from ROIs
-        in a stat file.
+        Populates a sparse array with the neuropil masks from ROIs in a stat
+        file.
+
+        Args:
+            frame_height_width (Tuple[int, int]):
+                Height and width of the frame.
+            
+            stat (np.ndarray):
+                Stat file containing ROIs information.
+            
+            shifts (Tuple[int, int]):
+                Shifts in x and y coordinates to apply to ROIs. Default is (0,
+                0).
+
+        Returns:
+            sparse_array (scipy.sparse.csr_matrix):
+                Sparse array populated with neuropil masks from ROIs.
         """
+        
         rois_to_stack = []
         
         for jj, roi in enumerate(stat):
@@ -980,74 +1091,39 @@ class Data_suite2p(Data_roicat):
 
 class Data_caiman(Data_roicat):
     """
-    Class for importing data from CaImAn output files.
-    In particular, the hdf5 results files.
-    RH, JZ 2022
+    Class for importing data from CaImAn output files, specifically hdf5 results
+    files.
+
+    Args:
+        paths_resultsFiles (List[str]):
+            List of paths to the results files.
+        include_discarded (bool):
+            If ``True``, include ROIs that were discarded by CaImAn. Default is
+            ``True``.
+        um_per_pixel (float):
+            Microns per pixel. Default is 1.0.
+        out_height_width (List[int]):
+            Output height and width. Default is [36, 36].
+        centroid_method (str):
+            Method for calculating the centroid of an ROI. Should be:
+            ``'centerOfMass'`` or ``'median'``.
+        verbose (bool):
+            If ``True``, print statements will be printed. Default is ``True``.
+        class_labels (str, optional):
+            Class labels. Default is ``None``.
     """
+    
     def __init__(
         self,
-        paths_resultsFiles,
-        # paths_labelFiles=None,
-        include_discarded=True,
-        um_per_pixel=1.0,
+        paths_resultsFiles: List[str],
+        include_discarded: bool = True,
+        um_per_pixel: float = 1.0,
+        out_height_width: List[int] = [36,36],        
+        centroid_method: str = 'median',
+        verbose: bool = True,
+        class_labels: Optional[str] = None,
+    ) -> None:
         
-        out_height_width=[36,36],        
-        centroid_method = 'median',
-        
-        verbose=True,
-
-        # type_meanImg='meanImgE',
-        # FOV_images=None,
-        
-        # centroid_method = 'centerOfMass',
-
-        class_labels=None,
-        # FOV_height_width=None,
-        
-        # verbose=True,
-    ):
-        """
-        Args:
-            paths_resultsFiles (list):
-                List of paths to the results files.
-            um_per_pixel (float):
-                Microns per pixel.
-            verbose (bool):
-                If True, print statements will be printed.
-
-        Attributes set:
-            self.paths_resultsFiles (list):
-                List of paths to the CaImAn results files.
-            self.spatialFootprints (list):
-                List of spatial footprints.
-                Each element is a scipy.sparse.csr_matrix that contains
-                 the flattened (order='C', C-memory order) spatial footprint masks for
-                 each ROI in a given session. Each element is a session,
-                 and each element has shape (n_roi, frame_height_width[0]*frame_height_width[1]).
-            self.session_bool (np.ndarray):
-                a bool np.ndarray of shape(n_roi, n_sessions) indicating
-                 which session each ROI belongs to.
-            self.n_sessions (int):
-                Number of sessions.
-            self.n_roi (list):
-                List of number of ROIs in each session.
-            self.n_roi_total (int):
-                Total number of ROIs across all sessions.
-            self.FOV_height (int):
-                Height of the FOV in pixels.
-            self.FOV_width (int):
-                Width of the FOV in pixels.
-            self.um_per_pixel (float):
-                Microns per pixel of the FOV.
-            self.centroid_method (str):
-                Either 'centerOfMass' or 'median'. Centroid computes the weighted
-                mean location of an ROI. Median takes the median of all x and y
-                pixels of an ROI.
-            self._verbose (bool):
-                If True, print statements will be printed.
-            self._include_discarded (bool):
-                If True, include ROIs that were discarded by CaImAn.
-        """
         ## Inherit from Data_roicat
         super().__init__()
 
@@ -1055,9 +1131,6 @@ class Data_caiman(Data_roicat):
         self.n_sessions = len(self.paths_resultsFiles)
         # self._include_discarded = include_discarded
         self._verbose = verbose
-
-
-        # Things to get...
 
         # 1. import_caiman_results
         # # self.spatialFootprints
@@ -1067,132 +1140,68 @@ class Data_caiman(Data_roicat):
         # # self.n_roi_total
         
         spatialFootprints = [self.import_spatialFootprints(path, include_discarded=include_discarded) for path in self.paths_resultsFiles]
-        # print(len(spatialFootprints))
         self.set_spatialFootprints(spatialFootprints=spatialFootprints, um_per_pixel=um_per_pixel)
 
-        # spatialFootprints = self.import_spatialFootprints(paths_resultsFiles, include_discarded=include_discarded)
         overall_caimanLabels = [self.import_overall_caiman_labels(path, include_discarded=include_discarded) for path in self.paths_resultsFiles]
-        # print(sum(overall_caimanLabels),len(overall_caimanLabels))
         self.set_caimanLabels(overall_caimanLabels=overall_caimanLabels)
 
         cnn_caimanPreds = [self.import_cnn_caiman_preds(path, include_discarded=include_discarded) for path in self.paths_resultsFiles]
         self.set_caimanPreds(cnn_caimanPreds=cnn_caimanPreds) if cnn_caimanPreds[0] is not None else None
 
-        # 1.A. self.import_FOV_images
-        # # self.FOV_images
-        # # self.FOV_height
-        # # self.FOV_width
         FOV_images = self.import_FOV_images(self.paths_resultsFiles)
         self.set_FOV_images(FOV_images=FOV_images)
-
-        # 2. self.get_centroids
-        # # self.centroids =
         self._make_spatialFootprintCentroids(method=centroid_method)
-
-        # 3. helpers.idx2Bool
-        # # self.session_ID_concat = 
         self._make_session_bool()
-        
-        # 4. self.import_ROI_centered_images
-        # # self.ROI_images =
-        # ROI_images = self.import_ROI_centeredImages(out_height_width=out_height_width, centroid_method=centroid_method)
-        # ROI_images = self.import_ROI_centeredImages(out_height_width=out_height_width)
-        ## Transform spatial footprints to ROI images
         self._transform_spatialFootprints_to_ROIImages(out_height_width=out_height_width)
-        # self.set_ROI_images(ROI_images=ROI_images, um_per_pixel=um_per_pixel)
-        
-        
-        # 5. self.import_ROI_labels
-        # # self.labelFiles
         self.set_class_labels(class_labels=class_labels) if class_labels is not None else None
-        
 
-        
-        
-
-
-
-
-
-
-
-
-
-
-        # # ## shifts are applied to convert the 'old' matlab version of suite2p indexing (where there is an offset and its 1-indexed)
-        # # self.shifts = self._make_shifts(paths_ops=self.paths_ops, new_or_old_suite2p=new_or_old_suite2p)
-
-        # ### Import FOV images if self.paths_ops or FOV_images is provided
-        # FOV_images = self.import_FOV_images()
-        # self.set_FOV_images(FOV_images=FOV_images)
-
-        # ## Import spatial footprints
-        # spatialFootprints = self.import_spatialFootprints()
-        # self.set_spatialFootprints(spatialFootprints=spatialFootprints, um_per_pixel=um_per_pixel)
-
-        # ## Make session_bool
-        # self._make_session_bool()
-
-        # ## Make spatial footprint centroids
-        # self._make_spatialFootprintCentroids(method=centroid_method)
-        
-        # ## Transform spatial footprints to ROI images
-        # self._transform_spatialFootprints_to_ROIImages(out_height_width=out_height_width)
-
-        # ## Make class labels
-        # self.set_class_labels(class_labels=class_labels) if class_labels is not None else None
-
-        # self.import_caimanResults(paths_resultsFiles, include_discarded=self._include_discarded)
-        
-        # print(f"Computing centroids from spatial footprints") if self._verbose else None
-        # self.centroids = [self.get_centroids(s, self.FOV_height, self.FOV_width).T for s in self.spatialFootprints]
-
-        # self.import_ROI_centeredImages(
-        #     out_height_width=out_height_width
-        # )
-
-    def set_caimanLabels(self, overall_caimanLabels):
+    def set_caimanLabels(self, overall_caimanLabels: List[List[bool]]) -> None:
         """
-        Sets the CaImAn labels
+        Sets the CaImAn labels.
 
         Args:
-            overall_caimanLabels (list):
+            overall_caimanLabels (List[List[bool]]):
                 List of lists of CaImAn labels.
-                The outer list is over sessions, and the inner list is over ROIs.
+                The outer list corresponds to sessions, and the inner list corresponds to ROIs.
         """
+
         assert len(overall_caimanLabels) == self.n_sessions
         print('kept labels', sum(overall_caimanLabels).sum(), len(sum(overall_caimanLabels))-sum(overall_caimanLabels).sum())
-        # print([overall_caimanLabels[i] for i in range(self.n_sessions)])
-        # print([self.n_roi[i] for i in range(self.n_sessions)])
         assert all([len(overall_caimanLabels[i]) == self.n_roi[i] for i in range(self.n_sessions)])
         self.cnn_caimanLabels = overall_caimanLabels
 
-    def set_caimanPreds(self, cnn_caimanPreds):
+    def set_caimanPreds(self, cnn_caimanPreds: List[List[bool]]) -> None:
         """
-        Sets the CNN-CaImAn predictions
+        Sets the CNN-CaImAn predictions.
 
         Args:
-            cnn_caimanPreds (list):
-                List of lists of CNN-CaImAn predictions.
-                The outer list is over sessions, and the inner list is over ROIs.
+            cnn_caimanPreds (List[List[bool]]):
+                List of lists of CNN-CaImAn predictions. The outer list
+                corresponds to sessions, and the inner list corresponds to ROIs.
         """
+
         assert len(cnn_caimanPreds) == self.n_sessions, f"{len(cnn_caimanPreds)} != {self.n_sessions}"
         assert all([len(cnn_caimanPreds[i]) == self.n_roi[i] for i in range(self.n_sessions)]), f"{[len(cnn_caimanPreds[i]) for i in range(self.n_sessions)]} != {[self.n_roi[i] for i in range(self.n_sessions)]}"
         self.cnn_caimanPreds = cnn_caimanPreds
 
-    def import_spatialFootprints(self, path_resultsFile, include_discarded=True):
+    def import_spatialFootprints(
+        self, 
+        path_resultsFile: Union[str, pathlib.Path], 
+        include_discarded: bool = True
+    ) -> scipy.sparse.csr_matrix:
         """
-        Imports the spatial footprints from the results file.
-        Note that CaImAn's data['estimates']['A'] is similar to 
-            self.spatialFootprints, but uses 'F' order. ROICaT converts
-            this into 'C' order to make self.spatialFootprints.
-        RH 2022
+        Imports the spatial footprints from the results file. Note that CaImAn's
+        ``data['estimates']['A']`` is similar to ``self.spatialFootprints``, but
+        uses 'F' order. This function converts this into 'C' order to form
+        ``self.spatialFootprints``.
 
         Args:
-            path_resultsFile (str or pathlib.Path):
+            path_resultsFile (Union[str, pathlib.Path]):
                 Path to a single results file.
+            
             include_discarded (bool):
-                If True, include ROIs that were discarded by CaImAn.
+                If ``True``, include ROIs that were discarded by CaImAn. Default
+                is ``True``.
 
         Returns:
             spatialFootprints (scipy.sparse.csr_matrix):
@@ -1220,22 +1229,26 @@ class Data_caiman(Data_roicat):
             
             return sf
 
-
-    def import_overall_caiman_labels(self, path_resultsFile, include_discarded=True):
+    def import_overall_caiman_labels(
+        self, 
+        path_resultsFile: Union[str, pathlib.Path], 
+        include_discarded: bool = True
+    ) -> np.ndarray:
         """
         Imports the overall CaImAn labels from the results file.
         
         Args:
-            path_resultsFile (str or pathlib.Path):
+            path_resultsFile (Union[str, pathlib.Path]):
                 Path to a single results file.
+            
             include_discarded (bool):
-                If True, include ROIs that were discarded by CaImAn.
+                If ``True``, include ROIs that were discarded by CaImAn. Default
+                is ``True``.
 
         Returns:
             labels (np.ndarray):
                 Overall CaImAn labels.
         """
-
 
         with helpers.h5_load(path_resultsFile, return_dict=False) as data:
             labels_included = np.ones(data['estimates']['A']['indptr'][()].shape[0] - 1)
@@ -1252,19 +1265,29 @@ class Data_caiman(Data_roicat):
 
             return labels
 
-    def import_cnn_caiman_preds(self, path_resultsFile, include_discarded=True):
+    def import_cnn_caiman_preds(
+        self, 
+        path_resultsFile: Union[str, pathlib.Path], 
+        include_discarded: bool = True,
+    ) -> Union[np.ndarray, None]:
         """
-        Imports the CNN-based CaImAn prediction probabilities of a single path results file
+        Imports the CNN-based CaImAn prediction probabilities from the given
+        file.
+
         Args:
-            path_resultsFile (str or pathlib.Path):
-                Path to a single results file.
-            include_discarded (bool):
-                If True, include ROIs that were discarded by CaImAn.
+            path_resultsFile (Union[str, pathlib.Path]): 
+                Path to a single results file. Can be either a string or a
+                pathlib.Path object.
+            include_discarded (bool): 
+                If set to True, the function will include ROIs that were
+                discarded by CaImAn. By default, this is set to True.
 
         Returns:
-            preds (np.ndarray):
-                CNN-based CaImAn prediction probabilities
+            An np.ndarray containing the CNN-based CaImAn prediction
+            probabilities. If no predictions are found, the function returns
+            None.
         """
+
         with helpers.h5_load(path_resultsFile, return_dict=False) as data:
             preds_included = data['estimates']['cnn_preds'][()]
             if preds_included == b'NoneType':
@@ -1284,22 +1307,18 @@ class Data_caiman(Data_roicat):
             
             return preds
 
-    def import_ROI_centeredImages(
-        self,
-        out_height_width=[36,36],
-    ):
+    def import_ROI_centeredImages(self, out_height_width: List[int] = [36,36]) -> np.ndarray:
         """
         Imports the ROI centered images from the CaImAn results files.
-        RH, JZ 2022
 
         Args:
-            out_height_width (list):
-                Height and width of the output images. Default is [36,36].
+            out_height_width (List[int]): 
+                Height and width of the output images. Default is *[36,36]*.
 
         Returns:
             sf_rs_centered (np.ndarray):
-                Centered ROI masks.
-                Shape: (n_roi, out_height_width[0], out_height_width[1]).
+                The shape of the returned numpy array is *(n_roi,
+                out_height_width[0], out_height_width[1])*.
         """
         def sf_to_centeredROIs(sf, centroids, out_height_width=36):
             out_height_width = np.array([36,36])
@@ -1326,24 +1345,25 @@ class Data_caiman(Data_roicat):
 
     def import_FOV_images(
         self,
-        paths_resultsFiles=None,
-        images=None,
-    ):
+        paths_resultsFiles: Optional[List] = None,
+        images: Optional[List] = None,
+    ) -> List[np.ndarray]:
         """
         Imports the FOV images from the CaImAn results files.
-        RH, JZ 2022
 
         Args:
-            paths_resultsFiles (list):
-                List of paths to CaImAn results files.
-            images (list):
-                List of FOV images. If None, will import the 
-                 estimates.b image from paths_resultsFiles.
+            paths_resultsFiles (Optional[List]):
+                List of paths to CaImAn results files. If not provided, will use 
+                the paths stored in the class instance.
+            images (Optional[List]):
+                List of FOV images. If None, the function will import the
+                `estimates.b` image from the paths specified in `paths_resultsFiles`.
 
         Returns:
-            FOV_images (list):
-                List of FOV images (np.ndarray).
+            List[np.ndarray]:
+                List of FOV images.
         """
+    
         def _import_FOV_image(path_resultsFile):
             with helpers.h5_load(path_resultsFile, return_dict=False) as data:
                 FOV_height, FOV_width = data['estimates']['dims'][()]
@@ -1363,64 +1383,6 @@ class Data_caiman(Data_roicat):
 
         return FOV_images
     
-    def import_ROI_labels(self):
-        """
-        Imports the image labels from an npy file. Should
-        have the same 0th dimension as the stats files.
-
-        Returns:
-            self.labelFiles (np.array):
-                Concatenated set of image labels.
-        """
-        
-        print(f"Starting: Importing labels footprints from npy files") if self._verbose else None
-        
-        raw_labels = [np.load(path) for path in self.paths_labels]
-        self.n_label = [len(stat) for stat in raw_labels]
-        self.n_label_total = sum(self.n_label)
-        self.labelFiles = helpers.squeeze_integers(np.concatenate(raw_labels))
-        if type(self.statFiles) is np.ndarray:
-            assert self.statFiles.shape[0] == self.labelFiles.shape[0] , 'num images in stat files does not correspond to num labels'
-                
-        print(f"Completed: Imported {len(self.labelFiles)} labels into class as self.labelFiles. Total number of ROIs: {self.n_label_total}. Number of ROI from each file: {self.n_label}") if self._verbose else None
-        
-        return self.labelFiles
-    
-    def get_centroids(self, sf, FOV_height, FOV_width):
-        """
-        Gets the centroids of a sparse array of flattented spatial footprints.
-        Calculates the centroid position as the center of mass of the ROI.
-        JZ 2022
-
-        Args:
-            sf (scipy.sparse.csr_matrix):
-                Spatial footprints.
-                Shape: (n_roi, FOV_height*FOV_width) in C flattened format.
-            FOV_height (int):
-                Height of the FOV.
-            FOV_width (int):
-                Width of the FOV.
-
-        Returns:
-            centroids (np.ndarray):
-                Centroids of the ROIs.
-                Shape: (2, n_roi). (y, x) coordinates.
-        """
-        sf_rs = sparse.COO(sf).reshape((sf.shape[0], FOV_height, FOV_width))
-        w_wt, h_wt = sf_rs.sum(axis=2), sf_rs.sum(axis=1)
-        if self.centroid_method == 'centerOfMass':
-            h_mean = (((w_wt*np.arange(w_wt.shape[1]).reshape(1,-1))).sum(1)/w_wt.sum(1)).todense()
-            w_mean = (((h_wt*np.arange(h_wt.shape[1]).reshape(1,-1))).sum(1)/h_wt.sum(1)).todense()
-        elif self.centroid_method == 'median':
-            h_mean = ((((w_wt!=0)*np.arange(w_wt.shape[1]).reshape(1,-1))).todense()).astype(float)
-            h_mean[h_mean==0] = np.nan
-            h_mean = np.nanmedian(h_mean, axis=1)
-            w_mean = ((((h_wt!=0)*np.arange(h_wt.shape[1]).reshape(1,-1))).todense()).astype(float)
-            w_mean[w_mean==0] = np.nan
-            w_mean = np.nanmedian(w_mean, axis=1)
-        else:
-            raise ValueError('Only valid methods are "centroid" or "median"')
-        return np.round(np.vstack([h_mean, w_mean])).astype(np.int64)
 
 ############################################
 ############ DATA ROIEXTRACTORS ############
@@ -1428,68 +1390,53 @@ class Data_caiman(Data_roicat):
 
 class Data_roiextractors(Data_roicat):
     """
-    Class for importing all roiextractors supported data.
-    Will loop through object and ingest data for roicat. 
-
+    A class for importing all roiextractors supported data. This class will loop
+    through each object and ingest data for roicat. 
+    RH, JB 2023
+    
+    Args:
+        segmentation_extractor_objects (list): 
+            List of segmentation extractor objects. All objects must be of the
+            same type.
+        um_per_pixel (float, optional): 
+            The resolution, specified as 'micrometers per pixel' of the imaging
+            field of view. Defaults to 1.0.
+        out_height_width (tuple of int, optional): 
+            The height and width of output ROI images, specified as *(y, x)*.
+            Defaults to *[36,36]*.
+        FOV_image_name (str, optional): 
+            If provided, this key will be used to extract the FOV image from the
+            segmentation object's self.get_images_dict() method. If None, the
+            function will attempt to pull out a mean image. Defaults to None.
+        fallback_FOV_height_width (tuple of int, optional): 
+            If the FOV images cannot be imported automatically, this will be
+            used as the FOV height and width. Otherwise, FOV height and width
+            are set from the first object in the list. Defaults to *[512,512]*.
+        centroid_method (str, optional): 
+            The method for calculating the centroid of the ROI. This should be
+            either ``'centerOfMass'`` or ``'median'``. Defaults to
+            ``'centerOfMass'``.
+        class_labels (list, optional): 
+            A list of class labels for each object. Defaults to ``None``.
+        verbose (bool, optional): 
+            If set to True, print statements will be displayed. Defaults to
+            ``True``.
     """
     def __init__(
             self,
-            segmentation_extractor_objects: list,
-
+            segmentation_extractor_objects: List[Any],
             um_per_pixel: float = 1.0,
-            out_height_width: list = [36,36],
-            FOV_image_name=None,
-            fallback_FOV_height_width: list = [512,512],
+            out_height_width: Tuple[int, int] = (36,36),
+            FOV_image_name: Optional[str] = None,
+            fallback_FOV_height_width: Tuple[int, int] = (512,512),
             centroid_method: str = 'centerOfMass',
-            class_labels=None,
-            verbose: bool=True,
+            class_labels: Optional[List[Any]] = None,
+            verbose: bool = True,
     ):
         """
-        Args:
-            segmentation_extractor_object (list):
-                List of segmentation extractor objects.
-                All objects must be of the same type.
-            um_per_pixel (float):
-                Resolution. 'micrometers per pixel' of the imaging
-                field of view.
-            out_height_width (tuple of int):
-                Height and width of output ROI images.
-                Should be: (int, int) (y, x).
-            FOV_image_name (str):
-                Optional. If provided, will use this key to extract
-                 the FOV image from the segmentation object's
-                 self.get_images_dict() method.
-                If None, then will attempt to pull out a mean image.
-            fallback_FOV_height_width (tuple of int):
-                If FOV images are unable to be imported automatically,
-                 this will be used as the FOV height and width. Otherwise,
-                 FOV height and width set from the first object in the list.
-            centroid_method (str):
-                Method for calculating centroid of ROI.
-                Should be: 'centerOfMass' or 'median'.
-            class_labels (list):
-                List of class labels for each obj.
-            verbose (bool):
-                If True, print statements will be printed.
-
-        Attributes set:
-            self.spatial_footprints (list):
-                List of spatial footprints for each obj.
-                Each spatial footprint is a scipy.sparse.csr_matrix.
-            session_bool (np.ndarray):
-                Boolean array of shape (n_roi_total, n_session) where
-                 each column is a session and each row is a ROI.
-            self.centroids (list):
-                List of centroids for each obj.
-            self.ROI_images (list):
-                List of small ROI images for each obj.
-            self.FOV_images (list):
-                List of large FOV images for each obj.
-            self.class_labels (list):
-                List of class labels for each obj.
-            self._verbose (bool):
-                If True, print statements will be printed.
+        Initializer for the `Data_roiextractors` class.
         """
+
         import roiextractors
         
         ## Inherit from Data_roicat
@@ -1514,7 +1461,7 @@ class Data_roiextractors(Data_roicat):
         ## assert all segmentation extractor objects are the same type
         assert all([self.class_roiextractors == type(obj) for obj in self.segmentation_extractor_objects]), 'All segmentation extractor objects must be of the same type.'
         ## assert that the type of the segmentation extractor object is supported
-        assert self.class_roiextractors in types_roiextractors_inv.keys(), f'Segmentation extractor object type {type(self.segmentation_extractor_objects[0])} not supported. Please use one of the following: {type_extractors_inv.keys()}'
+        assert self.class_roiextractors in types_roiextractors_inv.keys(), f'Segmentation extractor object type {type(self.segmentation_extractor_objects[0])} not supported. Please use one of the following: {types_roiextractors_inv.keys()}'
         ## set the type of the segmentation extractor object
         self.type_roiextractors = types_roiextractors_inv[self.class_roiextractors]
         self.class_roiextractors
@@ -1556,7 +1503,21 @@ class Data_roiextractors(Data_roicat):
         ## Make class labels
         self.set_class_labels(class_labels=class_labels) if class_labels is not None else None
 
-    def _make_spatialFootprints(self, segObj):
+    def _make_spatialFootprints(self, segObj: Any) -> scipy.sparse.csr.csr_matrix:
+        """
+        Creates spatial footprints from the given roiextractors segmentation
+        object.
+
+        Args:
+            segObj (Any): 
+                An roiextractors segmentation object.
+
+        Returns:
+            sf (scipy.sparse.csr.csr_matrix): 
+                A scipy CSR (Compressed Sparse Row) matrix that represents the
+                spatial footprints.
+        """
+
         roi_pixel_masks = segObj.get_roi_pixel_masks()
 
         data = [r[:,2] for r in roi_pixel_masks]
@@ -1578,17 +1539,23 @@ class Data_roiextractors(Data_roicat):
 ######### HELPER FUNCTIONS #########
 ####################################
 
-def fix_paths(paths):
+def fix_paths(paths: Union[List[Union[str, pathlib.Path]], str, pathlib.Path]) -> List[str]:
     """
-    Make sure path_files is a list of str
-    
+    Ensures the input paths are a list of strings.
+
     Args:
-        paths (list of str or pathlib.Path or str or pathlib.Path):
-            Potentially dirty input.
+        paths (Union[List[Union[str, pathlib.Path]], str, pathlib.Path]):
+            The input can be either a list of strings or pathlib.Path objects,
+            or a single string or pathlib.Path object.
             
     Returns:
-        paths (list of str):
-            List of str
+        List[str]: 
+            A list of strings representing the paths.
+
+    Raises:
+        TypeError: 
+            If the input isn't a list of str or pathlib.Path objects, a single
+            str, or a pathlib.Path object.
     """
     
     if isinstance(paths, (str, pathlib.Path)):

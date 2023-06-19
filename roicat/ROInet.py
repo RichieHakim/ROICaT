@@ -1,23 +1,27 @@
+# Documentation style guide:
+## - Class init docstrings should be in the class definition docstring.
+## - Use a style guide similar to Google's Python style guide except that argument definitions should start on a new indented line after the argument name.
+## - If there is more than one argument, use multiple lines for the argument definition code.
+## - Example parameters should start on a new line ('\n' should be used before the first one), should start with a dash, and the parameter definition should start on a new indented line.
+## - All arguments should have type hints, accurately reflecting the expected type of the argument.
+## - Special inputs or conditions related to the arguments should be highlighted using bold for emphasis, italic for optional aspects, and code for specific values or code-related inputs.
+## - Keep the return variable name in the docstring for clarity.
+## - Keep a consistent line length to improve readability of the docstring.
+## - Ensure the clarity of argument descriptions through the use of clear sentence structure and punctuation.
+
 """
 OSF.io links to ROInet versions:
 
-ROInet_tracking:
-    Info:
-        This version does not includde occlusions or large
-        affine transformations.
-    Link:
-        https://osf.io/x3fd2/download
-    Hash (MD5 hex):
-        7a5fb8ad94b110037785a46b9463ea94
-
-ROInet_classification:
-    Info:
-        This version includes occlusions and large affine
-        transformations.
-    Link:
-        https://osf.io/c8m3b/download
-    Hash (MD5 hex):
-        357a8d9b630ec79f3e015d0056a4c2d5
+* ROInet_tracking:
+    * Info: This version does not include occlusions or large
+      affine transformations.
+    * Link: https://osf.io/x3fd2/download
+    * Hash (MD5 hex): 7a5fb8ad94b110037785a46b9463ea94
+* ROInet_classification:
+    * Info: This version includes occlusions and large affine
+      transformations.
+    * Link: https://osf.io/c8m3b/download
+    * Hash (MD5 hex): 357a8d9b630ec79f3e015d0056a4c2d5
 """
 
 
@@ -30,9 +34,9 @@ import PIL
 import multiprocessing as mp
 from functools import partial
 import gc
+from typing import List, Tuple, Union, Optional, Dict, Any, Callable
 
 import numpy as np
-# import gdown
 import torch
 import torchvision
 from torch.nn import Module
@@ -48,103 +52,79 @@ from . import util
 class ROInet_embedder(util.ROICaT_Module):
     """
     Class for loading the ROInet model, preparing data for it,
-     and running it.
+    and running it.
 
-    OSF.io links to ROInet versions:
+OSF.io links to ROInet versions:
 
-    ROInet_tracking:
-        Info:
-            This version does not includde occlusions or large
-             affine transformations.
-        Link:
-            https://osf.io/x3fd2/download
-        Hash (MD5 hex):
-            7a5fb8ad94b110037785a46b9463ea94
+* ROInet_tracking:
+    * Info: This version does not include occlusions or large
+      affine transformations.
+    * Link: https://osf.io/x3fd2/download
+    * Hash (MD5 hex): 7a5fb8ad94b110037785a46b9463ea94
+* ROInet_classification:
+    * Info: This version includes occlusions and large affine
+      transformations.
+    * Link: https://osf.io/c8m3b/download
+    * Hash (MD5 hex): 357a8d9b630ec79f3e015d0056a4c2d5
 
-    ROInet_classification:
-        Info:
-            This version includes occlusions and large affine
-             transformations.
-        Link:
-            https://osf.io/c8m3b/download
-        Hash (MD5 hex):
-            357a8d9b630ec79f3e015d0056a4c2d5
+    Initialize the class.
 
-
+    This method will look for a local copy of the network files, and if they
+    don't exist, it will download them from Google Drive using a user specified
+    download_url. There is some hash checking to make sure the files are the
+    same. 
     RH, JZ 2022
 
-    Initialization of the class.
-    This will look for a local copy of the network files, and
-        if they don't exist, it will download them from Google Drive
-        using a user specified download_url.
-    There is some hash checking to make sure the files are the same.
-
     Args:
-        dir_networkFiles (str):
-            The directory to find an existing ROInet.zip file
-                or download and extract a new one into.
-        device (str):
-            The device to use for the model and data.
-        download_method (str):
-            Approach to downloading the network files.
-            'check_local_first':
-                Check if the network files are already in
-                    dir_networkFiles. If so, use them.
-            'force_download':
-                Download an ROInet.zip file from download_url.
-            'force_local':
-                Use an existing local copy of an ROInet.zip file.
-                If they don't exist, raise an error.
-                Hash checking is done and download_hash must be
-                    specified.
-        download_url (str):
-            The url to download the ROInet.zip file from.
-        download_hash (dict):
-            MD5 hash of the ROInet.zip file. This can be obtained
-                from ROICaT documentation. If you don't have one,
-                use download_method='force_download' and determine
-                the hash using helpers.hash_file().
-        names_networkFiles (dict):
-            Optional. The names of the files in the ROInet.zip
-                file.
-            If uncertain, leave as None.
-            Should be of form (example):
-            {
-                'params': 'params.json',
-                'model': 'model.py',
-                'state_dict': 'ConvNext_tiny__1_0_unfrozen__simCLR.pth'
-            }
-            'params':
-                The parameters used to train the network.
-                    Usually a .json file.
-            'model':
-                The model definition. Usually a .py file.
-            'state_dict':
-                The weights of the network. Usually a .pth
-                    file.
-        forward_pass_version (str):
-            The version of the forward pass to use.
-            'latent':
-                Return the post-head output latents.
-                Use this for tracking.
-            'head':
-                Return the output of the head layers.
-                Use this for classification.
-            'base':
-                Return the output of the base model.
-        verbose (bool):
-            Whether to print out extra information.
+        dir_networkFiles (str): 
+            Directory to find an existing ROInet.zip file or download and
+            extract a new one into.
+        device (str): 
+            Device to use for the model and data.
+        download_method (str): 
+            Approach to downloading the network files. Options are: \n
+            * ``'check_local_first'``: Check if the network files are already in
+              dir_networkFiles, if so, use them.
+            * ``'force_download'``: Download an ROInet.zip file from
+              download_url.
+            * ``'force_local'``: Use an existing local copy of an ROInet.zip
+              file, if they don't exist, raise an error. Hash checking is done
+              and download_hash must be specified.
+        download_url (str): 
+            URL to download the ROInet.zip file from.
+        download_hash (dict): 
+            MD5 hash of the ROInet.zip file. This can be obtained from
+            ROICaT documentation. If you don't have one, use
+            download_method='force_download' and determine the hash using
+            helpers.hash_file().
+        names_networkFiles (dict, optional): 
+            Names of the files in the ROInet.zip file. If uncertain, leave
+            as None. The dictionary should have the form: \n
+            ``{'params': 'params.json', 'model': 'model.py', 'state_dict':
+            'ConvNext_tiny__1_0_unfrozen__simCLR.pth',}`` \n
+            Where 'params' is the parameters used to train the network
+            (usually a .json file), 'model' is the model definition (usually
+            a .py file), and 'state_dict' are the weights of the network
+            (usually a .pth file).
+        forward_pass_version (str): 
+            Version of the forward pass to use. Options are 'latent' (return
+            the post-head output latents, use this for tracking), 'head'
+            (return the output of the head layers, use this for
+            classification), and 'base' (return the output of the base
+            model).
+        verbose (bool): 
+            If True, print out extra information.
     """
     def __init__(
         self,
-        dir_networkFiles,
-        device='cpu',
-        download_method='check_local_first',
-        download_url='https://osf.io/x3fd2/download',
-        download_hash=None,
-        names_networkFiles=None,
-        forward_pass_version='latent',
-        verbose=True,
+        dir_networkFiles: str,
+        device: str = 'cpu',
+        download_method: str = 'check_local_first',
+        download_url: str = 'https://osf.io/x3fd2/download',
+        download_hash: dict = None,
+        names_networkFiles: dict = None,
+        forward_pass_version: str = 'latent',
+        verbose: bool = True,
     ):
         ## Imports
         super().__init__()
@@ -226,71 +206,69 @@ class ROInet_embedder(util.ROICaT_Module):
         self.net = self.net.to(self._device)
         print(f'Loaded network onto device {self._device}') if self._verbose else None
 
-        ## Prepare dataloader
-
     def generate_dataloader(
         self,
-        ROI_images,
-        # goal_frac=0.1929,
-        um_per_pixel=1.0,
-        nan_to_num=True,
-        nan_to_num_val=0.0,
-        pref_plot=False,
-        batchSize_dataloader=8,
-        pinMemory_dataloader=True,
-        numWorkers_dataloader=-1,
-        persistentWorkers_dataloader=True,
-        prefetchFactor_dataloader=2,
-        transforms=None,
-        img_size_out=(224, 224),
-        jit_script_transforms=False,
+        ROI_images: List[np.ndarray],  # list of np.ndarray of images
+        um_per_pixel: float = 1.0,
+        nan_to_num: bool = True,
+        nan_to_num_val: float = 0.0,
+        pref_plot: bool = False,
+        batchSize_dataloader: int = 8,
+        pinMemory_dataloader: bool = True,
+        numWorkers_dataloader: int = -1,
+        persistentWorkers_dataloader: bool = True,
+        prefetchFactor_dataloader: int = 2,
+        transforms: Optional[Callable] = None,
+        img_size_out: Tuple[int, int] = (224, 224),
+        jit_script_transforms: bool = False,
     ):
         """
-        Generate a dataloader for the given ROI_images.
-        This will be used to pass the data through the network
+        Generates a dataloader for the given ROI_images which will be used to
+        pass the data through the network.
 
         Args:
-            ROI_images (list of np.ndarray of images):
-                The ROI images to use for the dataloader.
-                List of arrays where each array is from a session,
-                 and each array is of shape (n_rois, height, width)
-                This can be derived using the data_importing module.
-            um_per_pixel (float):
-                The number of microns per pixel. Used to rescale the
-                 ROI images to the same size as the network input.
-            nan_to_num (bool):
+            ROI_images (List[np.ndarray]): 
+                The ROI images to use for the dataloader. List of arrays where
+                each array is from a session, and each array is of shape
+                (n_rois, height, width). This can be derived using the
+                data_importing module.
+            um_per_pixel (float): 
+                The number of microns per pixel. Used to rescale the ROI images
+                to the same size as the network input.
+            nan_to_num (bool): 
                 Whether to replace NaNs with a value.
-            nan_to_num_val (float):
+            nan_to_num_val (float): 
                 The value to replace NaNs with.
-            pref_plot (bool):
-                Whether to plot the sizes of the ROI images before
-                 and after normalization.
-            batchSize_dataloader (int):
+            pref_plot (bool): 
+                Whether to plot the sizes of the ROI images before and after
+                normalization.
+            batchSize_dataloader (int): 
                 The batch size to use for the dataloader.
-            pinMemory_dataloader (bool):
-                Whether to pin the memory of the dataloader.
-                See pytorch documentation on dataloaders.
-            numWorkers_dataloader (int):
-                The number of workers to use for the dataloader.
-                See pytorch documentation on dataloaders.
-            persistentWorkers_dataloader (bool):
-                Whether to use persistent workers for the dataloader.
-                See pytorch documentation on dataloaders.
-            prefetchFactor_dataloader (int):
-                The prefetch factor to use for the dataloader.
-                See pytorch documentation on dataloaders.
-            transforms (torchvision.transforms):
-                (Optional) The transforms to use for the dataloader.
-                If None, will only scale dynamic range (to 0-1),
-                 resize (to img_size_out dimensions), and tile channels (to 3).
-                 These are the minimum transforms required to pass
-                 images through the network.
-            img_size_out (tuple of ints):
-                (Optional) Image output dimensions of dataloader if transforms is None.
-            jit_script_transforms (bool):
-                (Optional) Whether or not to convert the transforms pipeline into a
-                TorchScript pipeline. (Should improve calculation speed but can cause
-                problems with multiprocessing.)
+            pinMemory_dataloader (bool): 
+                Whether to pin the memory of the dataloader. See PyTorch
+                documentation on dataloaders.
+            numWorkers_dataloader (int): 
+                The number of workers to use for the dataloader. See PyTorch
+                documentation on dataloaders.
+            persistentWorkers_dataloader (bool): 
+                Whether to use persistent workers for the dataloader. See
+                PyTorch documentation on dataloaders.
+            prefetchFactor_dataloader (int): 
+                The prefetch factor to use for the dataloader. See PyTorch
+                documentation on dataloaders.
+            transforms (Optional[torchvision.transforms]): 
+                (Optional) The transforms to use for the dataloader. If
+                ``None`` will only scale dynamic range (to 0-1), resize (to
+                img_size_out dimensions), and tile channels (to 3). These are
+                the minimum transforms required to pass images through the
+                network.
+            img_size_out (Tuple[int, int]): 
+                (Optional) Image output dimensions of dataloader if transforms
+                is ``None``.
+            jit_script_transforms (bool): 
+                (Optional) Whether or not to convert the transforms pipeline
+                into a TorchScript pipeline. Should improve calculation speed
+                but can cause problems with multiprocessing.
         """
         ## Remove NaNs
         ### Check if any NaNs
@@ -379,37 +357,40 @@ class ROInet_embedder(util.ROICaT_Module):
         return ROI_images_rs
 
     @classmethod
-    def resize_ROIs(self, ROI_images, um_per_pixel):
+    def resize_ROIs(
+        self,
+        ROI_images: np.ndarray,  # Array of shape (n_rois, height, width)
+        um_per_pixel: float
+    ) -> np.ndarray:
         """
-        Resize the ROI images to prepare for pass through network.
-        RH 2022
+        Resizes the ROI images to prepare for pass through network.
 
         Args:
-            ROI_images (np.ndarray):
-                The ROI images to resize.
-                Array of shape (n_rois, height, width)
-            um_per_pixel (float):
-                The number of microns per pixel. Used to rescale the
-                 ROI images so that they occupy a standard region of
-                 the image frame.
+            ROI_images (np.ndarray): 
+                The ROI images to resize. Array of shape (n_rois, height,
+                width).
+            um_per_pixel (float): 
+                The number of microns per pixel. Used to rescale the ROI images
+                so that they occupy a standard region of the image frame.
 
         Returns:
-            ROI_images_rs (np.ndarray):
+            ROI_images_rs (np.ndarray): 
                 The resized ROI images.
         """
         scale_forRS = 0.7 * um_per_pixel  ## hardcoded for now sorry
         return np.stack([resize_affine(img, scale=scale_forRS, clamp_range=True) for img in ROI_images], axis=0)
 
 
-    def generate_latents(self):
+    def generate_latents(self) -> torch.Tensor:
         """
-        Pass the data in the dataloader (see self.generate_dataloader)
-         through the network and generate latents.
+        Passes the data in the dataloader (see self.generate_dataloader) through
+        the network and generates latents.
 
         Returns:
-            latents (torch.Tensor):
-                latents for each ROI
+            latents (torch.Tensor): 
+                Latents for each ROI.
         """
+
         if hasattr(self, 'dataloader') == False:
             raise Exception('dataloader not defined. Call generate_dataloader() first.')
 
@@ -423,103 +404,32 @@ class ROInet_embedder(util.ROICaT_Module):
         torch.cuda.empty_cache()
         
         return self.latents
-    
-    def dump_latents(self, latent_folder_out, file_prefix='latent_dump', num_copies=1, start_copy_num=0):
-        """
-        Run data from the dataloader (see self.generate_dataloader)
-         through the network and dump resulting latents to file.
-        """
-        print(f'starting: dumping latents')
-        
-        for icopy in trange(start_copy_num, start_copy_num+num_copies):
-            augmented_lst = []
-            for data in tqdm(self.dataloader, mininterval=5):
-                aug = self.net(data[0][0].to(self._device)).detach().cpu()
-                augmented_lst.append(aug)
-            
-            augmented_latents = (torch.cat(augmented_lst, dim=0)).detach()
-            dump = np.save(Path(latent_folder_out) / f'{file_prefix}-{icopy}.npy', augmented_latents.numpy())
-
-    # def _download_network_files(self):
-    #     if self._download_url is None or self._dir_networkFiles is None:
-    #         raise ValueError('download_url and dir_networkFiles must be specified if download_method is True')
-
-    #     print(f'Downloading network files from Google Drive to {self._dir_networkFiles}') if self._verbose else None
-    #     download_file(
-    #         url=self._download_url,
-    #         path_save=self._dir_networkFiles,
-    #         check_local_first=True,
-    #         check_hash=True,
-    #         hash_type='MD5',
-    #         hash_hex='1e62893d8e944819516e793656afc31d',
-    #         mkdir=True,
-    #         allow_overwrite=True,
-    #         write_mode='wb',
-    #         verbose=True,
-    #         chunk_size=1024,
-    #     )
-    #     paths_files = gdown.download_folder(id=self._download_url, output=self._dir_networkFiles, quiet=False, use_cookies=False)
-    #     print('Downloaded network files') if self._verbose else None
-    #     return paths_files
-
-    def show_rescaled_rois(self, rows=10, cols=10, figsize=(7,7)):
-        """
-        Show post-rescaling ROIs for um_per_pixel sanity checking.
-
-        JZ 2022
-
-        Note: rows & cols both must be > 1.
-        """
-        fig, ax = plt.subplots(rows,cols,figsize=figsize)
-        for ir,roi in enumerate(self.ROI_images_rs[:(rows*cols)]):
-            ax[ir//cols,ir%cols].imshow(roi)
-            ax[ir//cols,ir%cols].axis('off')
-
-    def show_augmentations(self, rows=10, cols=10, figsize=(7,7)):
-        """
-        Pass the data through the dataloader (see self.generate_dataloader)
-         to show augmented ROIs for sanity checking.
-        """
-        print(f'starting: running data through network')
-        augmented_lst = []
-        for data in (self.dataloader):
-            aug = data[0][0].detach()
-            augmented_lst.append(aug)
 
 
-        augmented = torch.cat(augmented_lst, dim=0).cpu()
-        print(f'completed: running data through network')
-
-        fig, ax = plt.subplots(rows,cols,figsize=figsize)
-        for ir,roi in enumerate(augmented[:(rows*cols)]):
-            ax[ir//cols,ir%cols].imshow(roi[0])
-            ax[ir//cols,ir%cols].axis('off')
-
-
-def resize_affine(img, scale, clamp_range=False):
+def resize_affine(
+    img: np.ndarray, 
+    scale: float, 
+    clamp_range: bool = False
+) -> np.ndarray:
     """
-    Wrapper for torchvision.transforms.Resize.
-    Useful for resizing images to match the size of the images
-     used in the training of the neural network.
-    RH 2022
+    A wrapper for torchvision.transforms.Resize. Useful for resizing images to 
+    match the size of the images used in the training of the neural network.
 
     Args:
-        img (np.ndarray):
-            Image to resize
-            shape: (H,W)
-        scale (float):
-            Scale factor to use for resizing
-        clamp_range (bool):
-            If True, will clamp the image to the range [min(img), max(img)]
-            This is to prevent the interpolation from going outside of the
-             range of the image.
+        img (np.ndarray): 
+            Image to resize. Shape: (H, W).
+        scale (float): 
+            Scale factor to use for resizing.
+        clamp_range (bool): 
+            If ``True``, will clamp the image to the range [min(img), max(img)].
+            This is to prevent the interpolation from going outside of the range
+            of the image.
 
     Returns:
-        np.ndarray:
-            Resized image
+        img_rs (np.ndarray): 
+            Resized image.
     """
     img_rs = np.array(torchvision.transforms.functional.affine(
-#         img=torch.as_tensor(img[None,...]),
         img=PIL.Image.fromarray(img),
         angle=0, translate=[0,0], shear=0,
         scale=scale,
@@ -588,58 +498,52 @@ def hash_file(path, type_hash='MD5', buffer_size=65536):
 
 
 def download_file(
-    url,
-    path_save,
-    check_local_first=True,
-    check_hash=False,
-    hash_type='MD5',
-    hash_hex=None,
-    mkdir=False,
-    allow_overwrite=True,
-    write_mode='wb',
-    verbose=True,
-    chunk_size=1024,
+    url: Optional[str],
+    path_save: str,
+    check_local_first: bool = True,
+    check_hash: bool = False,
+    hash_type: str = 'MD5',
+    hash_hex: Optional[str] = None,
+    mkdir: bool = False,
+    allow_overwrite: bool = True,
+    write_mode: str = 'wb',
+    verbose: bool = True,
+    chunk_size: int = 1024,
 ):
     """
-    Download a file from a URL to a local path using requests.
-    Allows for checking if file already exists locally and
-    checking the hash of the downloaded file against a provided hash.
-    RH 2022
+    Download a file from a URL to a local path using requests. Allows for
+    checking if file already exists locally and checking the hash of the
+    downloaded file against a provided hash.
 
     Args:
-        url (str):
-            URL of file to download.
-            If url is None, then no download is attempted.
-        path_save (str):
+        url (Optional[str]): 
+            URL of file to download. If ``None``, then no download is attempted.
+        path_save (str): 
             Path to save file to.
-        check_local_first (bool):
-            If True, checks if file already exists locally.
-            If True and file exists locally, plans to skip download.
-            If True and check_hash is True, checks hash of local file.
-             If hash matches, skips download. If hash does not match,
-             downloads file.
-        check_hash (bool):
-            If True, checks hash of local or downloaded file against
-             hash_hex.
-        hash_type (str):
-            Type of hash to use. Can be:
-                'MD5', 'SHA1', 'SHA256', 'SHA512'
-        hash_hex (str):
-            Hash to compare to. In hex format (e.g. 'a1b2c3d4e5f6...').
-            Can be generated using hash_file() or hashlib and .hexdigest().
-            If check_hash is True, hash_hex must be provided.
-        mkdir (bool):
+        check_local_first (bool): 
+            If True, checks if file already exists locally. If True and file
+            exists locally, plans to skip download. If True and check_hash is
+            True, checks hash of local file. If hash matches, skips download. If
+            hash does not match, downloads file.
+        check_hash (bool): 
+            If True, checks hash of local or downloaded file against hash_hex.
+        hash_type (str): 
+            Type of hash to use. Can be: 'MD5', 'SHA1', 'SHA256', 'SHA512'.
+        hash_hex (Optional[str]): 
+            Hash to compare to. In hex format (e.g. 'a1b2c3d4e5f6...'). Can be
+            generated using hash_file() or hashlib and .hexdigest(). If
+            check_hash is True, hash_hex must be provided.
+        mkdir (bool): 
             If True, creates parent directory of path_save if it does not exist.
-        write_mode (str):
-            Write mode for saving file. Should be one of:
-                'wb' (write binary)
-                'ab' (append binary)
-                'xb' (write binary, fail if file exists)
-        verbose (bool):
+        write_mode (str): 
+            Write mode for saving file. Should be one of: 'wb' (write binary),
+            'ab' (append binary), 'xb' (write binary, fail if file exists).
+        verbose (bool): 
             If True, prints status messages.
-        chunk_size (int):
+        chunk_size (int): 
             Size of chunks to download file in.
     """
+
     import os
     import requests
 
@@ -847,50 +751,50 @@ class ScaleDynamicRange(Module):
 
 class dataset_simCLR(Dataset):
     """
-    demo:
+    demo::
 
-    transforms = torch.nn.Sequential(
-        torchvision.transforms.RandomHorizontalFlip(p=0.5),
+        transforms = torch.nn.Sequential(
+            torchvision.transforms.RandomHorizontalFlip(p=0.5),
 
-        torchvision.transforms.GaussianBlur(
-            5,
-            sigma=(0.01, 1.)
-        ),
-        torchvision.transforms.RandomPerspective(
-            distortion_scale=0.6,
-            p=1,
-            interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
-            fill=0
-        ),
-        torchvision.transforms.RandomAffine(
-            degrees=(-180,180),
-            translate=(0.4, 0.4),
-            scale=(0.7, 1.7),
-            shear=(-20, 20, -20, 20),
-            interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
-            fill=0,
-            fillcolor=None,
-            resample=None
-        ),
-    )
-    scripted_transforms = torch.jit.script(transforms)
+            torchvision.transforms.GaussianBlur(
+                5,
+                sigma=(0.01, 1.)
+            ),
+            torchvision.transforms.RandomPerspective(
+                distortion_scale=0.6,
+                p=1,
+                interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
+                fill=0
+            ),
+            torchvision.transforms.RandomAffine(
+                degrees=(-180,180),
+                translate=(0.4, 0.4),
+                scale=(0.7, 1.7),
+                shear=(-20, 20, -20, 20),
+                interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
+                fill=0,
+                fillcolor=None,
+                resample=None
+            ),
+        )
+        scripted_transforms = torch.jit.script(transforms)
 
-    dataset = util.dataset_simCLR(  torch.tensor(images),
-                                labels,
-                                n_transforms=2,
-                                transform=scripted_transforms,
-                                DEVICE='cpu',
-                                dtype_X=torch.float32,
-                                dtype_y=torch.int64 )
+        dataset = util.dataset_simCLR(  torch.tensor(images),
+                                    labels,
+                                    n_transforms=2,
+                                    transform=scripted_transforms,
+                                    DEVICE='cpu',
+                                    dtype_X=torch.float32,
+                                    dtype_y=torch.int64 )
 
-    dataloader = torch.utils.data.DataLoader(   dataset,
-                                            batch_size=64,
-        #                                     sampler=sampler,
-                                            shuffle=True,
-                                            drop_last=True,
-                                            pin_memory=False,
-                                            num_workers=0,
-                                            )
+        dataloader = torch.utils.data.DataLoader(   dataset,
+                                                batch_size=64,
+            #                                     sampler=sampler,
+                                                shuffle=True,
+                                                drop_last=True,
+                                                pin_memory=False,
+                                                num_workers=0,
+                                                )
     """
     def __init__(   self,
                     X,

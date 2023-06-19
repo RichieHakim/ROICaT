@@ -14,6 +14,7 @@ import PIL
 from PIL import ImageTk
 import csv
 import warnings
+from typing import List, Dict, Tuple, Union, Optional, Any, Callable, Iterable, Sequence
 
 import numpy as np
 import torch
@@ -832,58 +833,52 @@ def matlab_save(
 
 
 def download_file(
-    url, 
-    path_save, 
-    check_local_first=True, 
-    check_hash=False, 
-    hash_type='MD5', 
-    hash_hex=None,
-    mkdir=False,
-    allow_overwrite=True,
-    write_mode='wb',
-    verbose=True,
-    chunk_size=1024,
+    url: Optional[str],
+    path_save: str,
+    check_local_first: bool = True,
+    check_hash: bool = False,
+    hash_type: str = 'MD5',
+    hash_hex: Optional[str] = None,
+    mkdir: bool = False,
+    allow_overwrite: bool = True,
+    write_mode: str = 'wb',
+    verbose: bool = True,
+    chunk_size: int = 1024,
 ):
     """
-    Download a file from a URL to a local path using requests.
-    Allows for checking if file already exists locally and
-    checking the hash of the downloaded file against a provided hash.
-    RH 2022
+    Download a file from a URL to a local path using requests. Allows for
+    checking if file already exists locally and checking the hash of the
+    downloaded file against a provided hash.
 
     Args:
-        url (str):
-            URL of file to download.
-            If url is None, then no download is attempted.
-        path_save (str):
+        url (Optional[str]): 
+            URL of file to download. If ``None``, then no download is attempted.
+        path_save (str): 
             Path to save file to.
-        check_local_first (bool):
-            If True, checks if file already exists locally.
-            If True and file exists locally, plans to skip download.
-            If True and check_hash is True, checks hash of local file.
-             If hash matches, skips download. If hash does not match, 
-             downloads file.
-        check_hash (bool):
-            If True, checks hash of local or downloaded file against
-             hash_hex.
-        hash_type (str):
-            Type of hash to use. Can be:
-                'MD5', 'SHA1', 'SHA256', 'SHA512'
-        hash_hex (str):
-            Hash to compare to. In hex format (e.g. 'a1b2c3d4e5f6...').
-            Can be generated using hash_file() or hashlib and .hexdigest().
-            If check_hash is True, hash_hex must be provided.
-        mkdir (bool):
+        check_local_first (bool): 
+            If True, checks if file already exists locally. If True and file
+            exists locally, plans to skip download. If True and check_hash is
+            True, checks hash of local file. If hash matches, skips download. If
+            hash does not match, downloads file.
+        check_hash (bool): 
+            If True, checks hash of local or downloaded file against hash_hex.
+        hash_type (str): 
+            Type of hash to use. Can be: 'MD5', 'SHA1', 'SHA256', 'SHA512'.
+        hash_hex (Optional[str]): 
+            Hash to compare to. In hex format (e.g. 'a1b2c3d4e5f6...'). Can be
+            generated using hash_file() or hashlib and .hexdigest(). If
+            check_hash is True, hash_hex must be provided.
+        mkdir (bool): 
             If True, creates parent directory of path_save if it does not exist.
-        write_mode (str):
-            Write mode for saving file. Should be one of:
-                'wb' (write binary)
-                'ab' (append binary)
-                'xb' (write binary, fail if file exists)
-        verbose (bool):
+        write_mode (str): 
+            Write mode for saving file. Should be one of: 'wb' (write binary),
+            'ab' (append binary), 'xb' (write binary, fail if file exists).
+        verbose (bool): 
             If True, prints status messages.
-        chunk_size (int):
+        chunk_size (int): 
             Size of chunks to download file in.
     """
+
     import os
     import requests
 
