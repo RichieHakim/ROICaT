@@ -1345,6 +1345,6 @@ def make_label_variants(labels, n_roi_bySession):
     ## testing
     assert np.allclose(np.concatenate(labels_bySession), labels_squeezed)
     assert np.allclose(labels_bool.nonzero()[1] - 1, labels_squeezed)
-    assert np.alltrue([np.allclose(np.where(labels_squeezed==u)[0], ldu) for u, ldu in labels_dict.items()])
+    assert np.all([np.allclose(np.where(labels_squeezed==u)[0], ldu) for u, ldu in labels_dict.items()])
 
     return labels_squeezed, labels_bySession, labels_bool, labels_bool_bySession, labels_dict
