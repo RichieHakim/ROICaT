@@ -7,7 +7,6 @@ Subpackages
 .. toctree::
    :maxdepth: 4
 
-   roicat.model_training
    roicat.tracking
 
 roicat.ROInet module
