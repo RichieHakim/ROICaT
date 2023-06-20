@@ -1,6 +1,7 @@
 import copy
 import typing
 import warnings
+from typing import List, Tuple, Union, Optional, Dict, Any, Sequence, Callable
 
 import numpy as np
 import cv2
@@ -12,14 +13,13 @@ from .. import helpers, util
 
 class Aligner(util.ROICaT_Module):
     """
-    A class for registering ROIs to a template FOV.
-    Currently relies on available OpenCV methods for 
-     non-rigid registration.
+    A class for registering ROIs to a template FOV. Currently relies on
+    available OpenCV methods for non-rigid registration.
     RH 2023
 
     Args:
-    verbose (bool):
-        Whether to print progress updates.
+        verbose (bool):
+            Whether to print progress updates. (Default is ``True``)
     """
     def __init__(
         self,
@@ -36,39 +36,45 @@ class Aligner(util.ROICaT_Module):
 
     @classmethod
     def augment_FOV_images(
-        self,
-        ims: typing.List[np.ndarray],
-        spatialFootprints: typing.List[scipy.sparse.csr_matrix]=None,
-        roi_FOV_mixing_factor: float=0.5,
-        use_CLAHE: bool=True,
-        CLAHE_grid_size: int=1,
-        CLAHE_clipLimit: int=1,
-        CLAHE_normalize: bool=True,
-    ):
+        cls,
+        ims: List[np.ndarray],
+        spatialFootprints: Optional[List[scipy.sparse.csr_matrix]] = None,
+        roi_FOV_mixing_factor: float = 0.5,
+        use_CLAHE: bool = True,
+        CLAHE_grid_size: int = 1,
+        CLAHE_clipLimit: int = 1,
+        CLAHE_normalize: bool = True,
+    ) -> None:
         """
-        Augment the FOV images by mixing the FOV with the ROI images
-         and optionally applying CLAHE.
+        Augments the FOV images by mixing the FOV with the ROI images and
+        optionally applying CLAHE.
+        RH 2023
 
         Args:
-            ims (list of np.ndarray):
+            ims (List[np.ndarray]): 
                 A list of FOV images.
-            spatialFootprints (list of scipy.sparse.csr_matrix, optional):
-                A list of spatial footprints for each ROI.
-                If None, then no mixing will be performed.
-            roi_FOV_mixing_factor (float, optional):
+            spatialFootprints (List[scipy.sparse.csr_matrix], optional):
+                A list of spatial footprints for each ROI. If ``None``, then no
+                mixing will be performed. (Default is ``None``)
+            roi_FOV_mixing_factor (float):
                 The factor by which to mix the ROI images into the FOV images.
-                If 0, then no mixing will be performed.
-            use_CLAHE (bool, optional):
-                Whether to apply CLAHE to the images.
-            CLAHE_grid_size (int, optional):
-                The grid size for CLAHE.
-                See alignment.clahe for more details.
-            CLAHE_clipLimit (int, optional):
-                The clip limit for CLAHE.
-                See alignment.clahe for more details.
-            CLAHE_normalize (bool, optional):
-                Whether to normalize the CLAHE output.
-                See alignment.clahe for more details.
+                If 0, then no mixing will be performed. (Default is *0.5*)
+            use_CLAHE (bool):
+                Whether to apply CLAHE to the images. (Default is ``True``)
+            CLAHE_grid_size (int):
+                The grid size for CLAHE. See alignment.clahe for more details.
+                (Default is *1*)
+            CLAHE_clipLimit (int):
+                The clip limit for CLAHE. See alignment.clahe for more details.
+                (Default is *1*)
+            CLAHE_normalize (bool):
+                Whether to normalize the CLAHE output. See alignment.clahe for
+                more details. (Default is ``True``)
+
+        Returns:
+            (List[np.ndarray]):
+                FOV_images_augmented (List[np.ndarray]):
+                    The augmented FOV images.
         """
         ## Warn if roi_FOV_mixing_factor = 0 but spatialFootprints is not None
         if (roi_FOV_mixing_factor == 0) and (spatialFootprints is not None):
@@ -82,67 +88,63 @@ class Aligner(util.ROICaT_Module):
         FOV_images = [f + np.array(roi_FOV_mixing_factor*(sf.multiply(1/sf.max(1).A)).sum(0).reshape(h, w)) for f, sf in zip(ims, sf)] if spatialFootprints is not None else ims
         FOV_images = [clahe(im, grid_size=CLAHE_grid_size, clipLimit=CLAHE_clipLimit, normalize=CLAHE_normalize) for im in FOV_images] if use_CLAHE else FOV_images
 
-        self.FOV_images_augmented = FOV_images
-        return self.FOV_images_augmented
+        return FOV_images
 
     def fit_geometric(
         self,
-        template: typing.Union[int, np.ndarray],
-        ims_moving: typing.List[np.ndarray],
+        template: Union[int, np.ndarray],
+        ims_moving: List[np.ndarray],
         template_method: str = 'sequential',
         mode_transform: str = 'affine',
         gaussFiltSize: int = 11,
-        mask_borders: typing.Tuple[int, int, int, int] = (0, 0, 0, 0),
+        mask_borders: Tuple[int, int, int, int] = (0, 0, 0, 0),
         n_iter: int = 1000,
         termination_eps: float = 1e-9,
-        auto_fix_gaussFilt_step: int = 10,
+        auto_fix_gaussFilt_step: Union[bool, int] = 10,
     ) -> np.ndarray:
         """
-        Perform geometric registration of ims_moving to a template.
-        Currently relies on cv2.findTransformECC.
+        Performs geometric registration of ``ims_moving`` to a template, using 
+        ``cv2.findTransformECC``. 
         RH 2023
 
         Args:
-            template (int or np.ndarray):
-                If 'template_method' == 'image', this is either a 2D np.ndarray
-                 image, an integer index of the image to use as the template, or
-                 a float between 0 and 1 representing the fractional index of the
-                 image to use as the template.
-                If 'template_method' == 'sequential', then template is the
-                 integer index or fractional index of the image to use as the
-                 template.
-            ims_moving (list of np.ndarray):
-                A list of images to be aligned.
-            template_method (str, optional):
-                The method to use for template selection.
-                'image': use the image specified by 'template'.
-                'sequential': register each image to the previous or next image
-                    (will be next for images before the template and previous for
-                    images after the template)
-            mode_transform (str, optional):
-                The mode of geometric transformation.
-                Can be 'translation', 'euclidean', 'affine', or 'homography'.
-                See cv2.findTransformECC for more details.
-            gaussFiltSize (int, optional):
-                The size of the Gaussian filter, default is 11.
-            mask_borders (tuple of int, int, optional):
-                The border mask for the image, default is (0, 0, 0, 0).
-                (top, bottom, left, right)
-            n_iter (int, optional):
-                The number of iterations for cv2.findTransformECC, default is 1000.
-            termination_eps (float, optional):
-                The termination criteria for cv2.findTransformECC, default is 1e-9.
-            auto_fix_gaussFilt_step (bool, int):
-                Whether to automatically fix convergence issues by increasing the
-                 gaussFiltSize.
-                If False, then no automatic fixing is performed.
-                If True, then the gaussFiltSize is increased by 2 until convergence.
-                If int, then the gaussFiltSize is increased by this amount until
-                 convergence.
+            template (Union[int, np.ndarray]): 
+                Depends on the value of 'template_method'. 
+                If 'template_method' == 'image', this should be a 2D np.ndarray image, an integer index 
+                of the image to use as the template, or a float between 0 and 1 representing the fractional 
+                index of the image to use as the template. 
+                If 'template_method' == 'sequential', then template is the integer index or fractional index 
+                of the image to use as the template.
+            ims_moving (List[np.ndarray]): 
+                List of images to be aligned.
+            template_method (str): 
+                Method to use for template selection. \n
+                * 'image': use the image specified by 'template'. 
+                * 'sequential': register each image to the previous or next image \n
+                (Default is 'sequential')
+            mode_transform (str): 
+                Mode of geometric transformation. Can be 'translation', 'euclidean', 
+                'affine', or 'homography'. See ``cv2.findTransformECC`` for more details. 
+                (Default is 'affine')
+            gaussFiltSize (int): 
+                Size of the Gaussian filter. (Default is *11*)
+            mask_borders (Tuple[int, int, int, int]): 
+                Border mask for the image. Format is (top, bottom, left, right). 
+                (Default is (0, 0, 0, 0))
+            n_iter (int): 
+                Number of iterations for ``cv2.findTransformECC``. (Default is *1000*)
+            termination_eps (float): 
+                Termination criteria for ``cv2.findTransformECC``. (Default is *1e-9*)
+            auto_fix_gaussFilt_step (Union[bool, int]): 
+                Automatically fixes convergence issues by increasing the gaussFiltSize. 
+                If ``False``, no automatic fixing is performed. If ``True``, the 
+                gaussFiltSize is increased by 2 until convergence. If int, the gaussFiltSize 
+                is increased by this amount until convergence. (Default is *10*)
 
         Returns:
-            remapIdx_geo (np.ndarray): 
-                An array of shape (N, H, W, 2) representing the remap field for N images.
+            (np.ndarray): 
+                remapIdx_geo (np.ndarray): 
+                    An array of shape *(N, H, W, 2)* representing the remap field for N images.
         """
         ## Imports
         super().__init__()
@@ -253,52 +255,55 @@ class Aligner(util.ROICaT_Module):
         # convert warp matrices to remap indices
         self.remappingIdx_geo = np.stack([helpers.warp_matrix_to_remappingIdx(warp_matrix=warp_matrix, x=W, y=H) for warp_matrix in self.warp_matrices], axis=0)
 
-        return self.remappingIdx_geo
-        
+        return self.remappingIdx_geo   
 
     def fit_nonrigid(
         self,
-        template: typing.Union[int, np.ndarray],
-        ims_moving: typing.List[np.ndarray],
-        remappingIdx_init: np.ndarray = None,
+        template: Union[int, np.ndarray],
+        ims_moving: List[np.ndarray],
+        remappingIdx_init: Optional[np.ndarray] = None,
         template_method: str = 'sequential',
         mode_transform: str = 'createOptFlow_DeepFlow',
-        kwargs_mode_transform: dict = None,
+        kwargs_mode_transform: Optional[dict] = None,
     ) -> np.ndarray:
         """
-        Perform geometric registration of ims_moving to a template.
-        Currently relies on cv2.findTransformECC.
+        Perform geometric registration of ``ims_moving`` to a **template**.
+        Currently relies on ``cv2.findTransformECC``.
         RH 2023
 
         Args:
-            template (int or np.ndarray):
-                If 'template_method' == 'image', then template is either
-                 an image or an integer index or a float fractional index
-                 of the image to use as the template.
-                If 'template_method' == 'sequential', then template is the
-                 integer index of the image to use as the template.
-            ims_moving (list of np.ndarray):
+            template (Union[int, np.ndarray]): 
+                * If ``template_method`` == ``'image'``: Then **template** is
+                  either an image or an integer index or a float fractional
+                  index of the image to use as the **template**.
+                * If ``template_method`` == ``'sequential'``: then **template**
+                  is the integer index of the image to use as the **template**.
+            ims_moving (List[np.ndarray]): 
                 A list of images to be aligned.
-            remappingIdx_init (np.ndarray, optional):
-                An array of shape (N, H, W, 2) representing any initial
-                 remap field to apply to the images in ims_moving.
-                The output of this method will be added/composed with remappingIdx_init.
-            template_method (str, optional):
-                The method to use for template selection.
-                'image': use the image specified by 'template'.
-                'sequential': register each image to the previous or next image
-                    (will be next for images before the template and previous for
-                    images after the template)
-            mode_transform (str, optional):
+            remappingIdx_init (Optional[np.ndarray]): 
+                An array of shape *(N, H, W, 2)* representing any initial
+                remap field to apply to the images in ``ims_moving``.
+                The output of this method will be added/composed with ``remappingIdx_init``.
+                (Default is ``None``)
+            template_method (str): 
+                The method to use for **template** selection. Either \n
+                * ``'image'``: use the image specified by 'template'.
+                * ``'sequential'``: register each image to the previous or next
+                  image (will be next for images before the template and
+                  previous for images after the template) \n
+                (Default is 'sequential')
+            mode_transform (str): 
                 The type of transformation to use for registration.
                 Either 'createOptFlow_DeepFlow' or 'calcOpticalFlowFarneback'.
-            kwargs_mode_transform (dict, optional):
-                Keyword arguments to pass to the mode_transform function.
-                See cv2 functions for more details.
+                (Default is 'createOptFlow_DeepFlow')
+            kwargs_mode_transform (Optional[dict]): 
+                Keyword arguments to pass to the ``mode_transform`` function.
+                See cv2 functions for more details. (Default is ``None``)
 
         Returns:
-            remapIdx_nonrigid (np.ndarray): 
-                An array of shape (N, H, W, 2) representing the remap field for N images.
+            (np.ndarray): 
+                remapIdx_nonrigid (np.ndarray): 
+                    An array of shape *(N, H, W, 2)* representing the remap field for N images.
         """
         # Check if ims_moving is a non-empty list
         assert len(ims_moving) > 0, "ims_moving must be a non-empty list of images."
@@ -403,18 +408,79 @@ class Aligner(util.ROICaT_Module):
 
         return self.remappingIdx_nonrigid
         
-    def transform_images_geometric(self, ims_moving, remappingIdx=None):
+    def transform_images_geometric(
+        self, 
+        ims_moving: np.ndarray, 
+        remappingIdx: Optional[np.ndarray] = None
+    ) -> np.ndarray:
+        """
+        Transforms images based on geometric registration warps.
+
+        Args:
+            ims_moving (np.ndarray): 
+                The images to be transformed. *(N, H, W)*
+            remappingIdx (Optional[np.ndarray]): 
+                An array specifying how to remap the images. If ``None``, the
+                remapping index from geometric registration is used. (Default is
+                ``None``)
+
+        Returns:
+            (np.ndarray): 
+                ims_registered_geo (np.ndarray):
+                    The images after applying the geometric registration warps.
+                    *(N, H, W)*
+        """
         remappingIdx = self.remappingIdx_geo if remappingIdx is None else remappingIdx
         print('Applying geometric registration warps to images...') if self._verbose else None
         self.ims_registered_geo = self._transform_images(ims_moving=ims_moving, remappingIdx=remappingIdx)
         return self.ims_registered_geo
-    def transform_images_nonrigid(self, ims_moving, remappingIdx=None):
+    
+    def transform_images_nonrigid(
+        self, 
+        ims_moving: np.ndarray, 
+        remappingIdx: Optional[np.ndarray] = None
+    ) -> np.ndarray:
+        """
+        Transforms images based on non-rigid registration warps.
+
+        Args:
+            ims_moving (np.ndarray): 
+                The images to be transformed. *(N, H, W)*
+            remappingIdx (Optional[np.ndarray]): 
+                An array specifying how to remap the images. If ``None``, the
+                remapping index from non-rigid registration is used. (Default is
+                ``None``)
+
+        Returns:
+            (np.ndarray): 
+                ims_registered_nonrigid (np.ndarray): 
+                    The images after applying the non-rigid registration warps.
+                    *(N, H, W)*
+        """
         remappingIdx = self.remappingIdx_nonrigid if remappingIdx is None else remappingIdx
         print('Applying nonrigid registration warps to images...') if self._verbose else None
         self.ims_registered_nonrigid = self._transform_images(ims_moving=ims_moving, remappingIdx=remappingIdx)
         return self.ims_registered_nonrigid
     
-    def _transform_images(self, ims_moving, remappingIdx):
+    def _transform_images(
+        self, 
+        ims_moving: np.ndarray, 
+        remappingIdx: np.ndarray
+    ) -> List[np.ndarray]:
+        """
+        Transforms images using the specified remapping index.
+
+        Args:
+            ims_moving (np.ndarray): 
+                The images to be transformed. *(N, H, W)*
+            remappingIdx (np.ndarray): 
+                The remapping index to apply to the images.
+
+        Returns:
+            (List[np.ndarray]): 
+                ims_registered (List[np.ndarray]): 
+                    The transformed images. *(N, H, W)*
+        """
         ims_registered = []
         for ii, (im_moving, remapIdx) in enumerate(zip(ims_moving, remappingIdx)):
             im_registered = helpers.remap_images(
@@ -429,10 +495,29 @@ class Aligner(util.ROICaT_Module):
         return ims_registered
     
 
-    def _compose_warps(self, warp_0, warps_to_add, warpMat_or_remapIdx='remapIdx'):
+    def _compose_warps(
+        self, 
+        warp_0: np.ndarray, 
+        warps_to_add: List[np.ndarray], 
+        warpMat_or_remapIdx: str = 'remapIdx'
+    ) -> np.ndarray:
         """
-        Compose a series of warps into a single warp.
+        Composes a series of warps into a single warp.
         RH 2023
+
+        Args:
+            warp_0 (np.ndarray): 
+                The initial warp.
+            warps_to_add (List[np.ndarray]): 
+                A list of warps to add to the initial warp.
+            warpMat_or_remapIdx (str): 
+                Determines the function to use for composition. Can be either 
+                'warpMat' or 'remapIdx'. (Default is 'remapIdx')
+
+        Returns:
+            (np.ndarray): 
+                warp_out (np.ndarray): 
+                    The resulting warp after composition.
         """
         if warpMat_or_remapIdx == 'warpMat':
             fn_compose = helpers.compose_transform_matrices
@@ -449,13 +534,31 @@ class Aligner(util.ROICaT_Module):
                 warp_out = fn_compose(warp_out, warp_to_add)
             return warp_out
 
-
     def transform_ROIs(
         self, 
-        ROIs, 
-        remappingIdx=None,
-        normalize=True,
-    ):
+        ROIs: np.ndarray, 
+        remappingIdx: Optional[np.ndarray] = None,
+        normalize: bool = True,
+    ) -> List[np.ndarray]:
+        """
+        Transforms ROIs based on remapping indices and normalization settings.
+        RH 2023
+
+        Args:
+            ROIs (np.ndarray): 
+                The regions of interest to transform. (shape: *(H, W)*)
+            remappingIdx (Optional[np.ndarray]): 
+                The indices for remapping the ROIs. If ``None``, geometric or
+                nonrigid registration must be performed first. (Default is
+                ``None``)
+            normalize (bool): 
+                If ``True``, data is normalized. (Default is ``True``)
+
+        Returns:
+            (List[np.ndarray]): 
+                ROIs_aligned (List[np.ndarray]): 
+                    Transformed ROIs.
+        """
         if remappingIdx is None:
             assert (self.remappingIdx_geo is not None) or (self.remappingIdx_nonrigid is not None), 'If remappingIdx is not provided, then geometric or nonrigid registration must be performed first.'
             remappingIdx = self.remappingIdx_nonrigid if self.remappingIdx_nonrigid is not None else self.remappingIdx_geo
@@ -489,16 +592,51 @@ class Aligner(util.ROICaT_Module):
 
         return self.ROIs_aligned
 
-    def get_ROIsAligned_maxIntensityProjection(self, H=None, W=None):
+    def get_ROIsAligned_maxIntensityProjection(
+        self, 
+        H: Optional[int] = None, 
+        W: Optional[int] = None,
+    ) -> List[np.ndarray]:
         """
-        Returns the max intensity projection of the ROIs aligned to the template FOV.
+        Returns the max intensity projection of the ROIs aligned to the template
+        FOV.
+
+        Args:
+            H (Optional[int]): 
+                The height of the output projection. If not provided and if not
+                already set, an error will be thrown. (Default is ``None``)
+            W (Optional[int]): 
+                The width of the output projection. If not provided and if not
+                already set, an error will be thrown. (Default is ``None``)
+
+        Returns:
+            (List[np.ndarray]): 
+                max_projection (List[np.ndarray]): 
+                    The max intensity projections of the ROIs.
         """
         if H is None:
             assert self._HW is not None, 'H and W must be provided if not already set.'
             H, W = self._HW
         return [rois.max(0).toarray().reshape(H, W) for rois in self.ROIs_aligned]
     
-    def get_flowFields(self, remappingIdx=None):
+    def get_flowFields(
+        self, 
+        remappingIdx: Optional[np.ndarray] = None,
+    ) -> List[np.ndarray]:
+        """
+        Returns the flow fields based on the remapping indices.
+
+        Args:
+            remappingIdx (Optional[np.ndarray]): 
+                The indices for remapping the flow fields. 
+                If ``None``, geometric or nonrigid registration must be performed first. 
+                (Default is ``None``)
+
+        Returns:
+            (List[np.ndarray]): 
+                flow_fields (List[np.ndarray]): 
+                    The transformed flow fields.
+        """
         if remappingIdx is None:
             assert (self.remappingIdx_geo is not None) or (self.remappingIdx_nonrigid is not None), 'If remappingIdx is not provided, then geometric or nonrigid registration must be performed first.'
             remappingIdx = self.remappingIdx_nonrigid if self.remappingIdx_nonrigid is not None else self.remappingIdx_geo
@@ -506,10 +644,49 @@ class Aligner(util.ROICaT_Module):
     
     def _fix_input_images(
         self,
-        ims_moving: typing.List[np.ndarray],
-        template: typing.Union[int, np.ndarray],
-        template_method: str
-    ) -> typing.Tuple[int, typing.List[np.ndarray]]:
+        ims_moving: List[np.ndarray],
+        template: Union[int, np.ndarray],
+        template_method: str,
+    ) -> Tuple[int, List[np.ndarray]]:
+        """
+        Converts the input images and template to float32 dtype if they are not
+        already. 
+
+        Warnings are printed for any conversions made. The method for selecting
+        the template image can either be **'image'** or **'sequential'**.
+
+        Args:
+            ims_moving (List[np.ndarray]):
+                A list of input images. Images should be of type ``np.float32``,
+                if not, they will be converted to it.
+            template (Union[int, np.ndarray]): 
+                The index or actual template image. Depending on the
+                `template_method`, this could be an integer index, a float
+                representing a fractional index, or a numpy array representing
+                the actual template image.
+            template_method (str):
+                Method for selecting the template image. Either \n
+                * ``'image'``: template is considered as an image
+                 (``np.ndarray``) or as an index (``int`` or ``float``)
+                 referring to the list of images (``ims_moving``). 
+                * ``'sequential'``: template is considered as a sequential index
+                  (``int`` or ``float``) referring to the list of images
+                  (``ims_moving``). \n
+
+        Returns:
+            (Tuple[int, List[np.ndarray]]): tuple containing:
+                template (int):
+                    Index of the template in the list of images.
+                ims_moving (List[np.ndarray]):
+                    List of converted images.
+
+        Example:
+            .. highlight:: python
+            .. code-block:: python
+
+                ims_moving, template = _fix_input_images(ims_moving, template,
+                'image')
+        """
         ## convert images to float32 and warn if they are not
         print(f'WARNING: ims_moving are not all dtype: np.float32, found {np.unique([im.dtype for im in ims_moving])}, converting...') if any(im.dtype != np.float32 for im in ims_moving) else None
         ims_moving = [im.astype(np.float32) for im in ims_moving]    
@@ -544,22 +721,48 @@ class Aligner(util.ROICaT_Module):
         return ims_moving, template
 
 
-class PhaseCorrelation_registration:
+class PhaseCorrelationRegistration:
     """
-    Class for performing rigid transformation using phase correlation.
+    Performs rigid transformation using phase correlation. 
     RH 2022
+
+    Attributes:
+        mask (np.ndarray):
+            Spectral mask created using `set_spectral_mask()`.
+        ims_registered (np.ndarray):
+            Registered images, set in `register()`.
+        shifts (np.ndarray):
+            Pixel shift values (y, x), set in `register()`.
+        ccs (np.ndarray):
+            Phase correlation coefficient images, set in `register()`.
+        ims_template_filt (np.ndarray):
+            Template images filtered by the spectral mask, set in `register()`.
+        ims_moving_filt (np.ndarray):
+            Moving images filtered by the spectral mask, set in `register()`.
     """
-    def __init__(
-        self,
-    ):
+    def __init__(self) -> None:
+        """
+        Initializes the PhaseCorrelationRegistration.
+        """
         self.mask = None
 
     def set_spectral_mask(
-        self,
-        freq_highPass=0.01,
-        freq_lowPass=0.3,
-        im_shape=(512, 512),
-    ):
+        self, 
+        freq_highPass: float = 0.01, 
+        freq_lowPass: float = 0.3,
+        im_shape: Tuple[int, int] = (512, 512),
+    ) -> None:
+        """
+        Sets the spectral mask for the phase correlation.
+
+        Args:
+            freq_highPass (float): 
+                High pass frequency. (Default is *0.01*)
+            freq_lowPass (float): 
+                Low pass frequency. (Default is *0.3*)
+            im_shape (Tuple[int, int]): 
+                Shape of the image. (Default is *(512, 512)*)
+        """
         self.mask = make_spectral_mask(
             freq_highPass=freq_highPass,
             freq_lowPass=freq_lowPass,
@@ -568,43 +771,37 @@ class PhaseCorrelation_registration:
 
     def register(
         self, 
-        template, 
-        ims_moving,
-        template_method='sequential',
-    ):
+        template: Union[np.ndarray, int], 
+        ims_moving: np.ndarray,
+        template_method: str = 'sequential',
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Register set of images using phase correlation.
+        Registers a set of images using phase correlation. 
         RH 2022
-        
-        Args:
-            template (np.ndarray or int):
-                Template image
-            ims_moving (np.ndarray):
-                Images to align to the template.
-            template_method (str):
-                The method used to register the images.
-                Either 'image' or 'sequential'.
-                If 'image':      template must be a single image.
-                If 'sequential': template must be an integer corresponding 
-                 to the index of the image to set as 'zero' offset.
-        
-        Returns:
-            template (np.ndarray):
-                Registered images
-            shifts (np.ndarray):
-                Pixel shift values (y, x).
 
-        Attributes set:
-            self.ims_registered (np.ndarray):
-                Registered images
-            self.shifts (np.ndarray):
-                Pixel shift values (y, x).
-            self.ccs (np.ndarray):
-                Phase correlation coefficient images.
-            self.ims_template_filt (np.ndarray):
-                Template images filtered by the spectral mask.
-            self.ims_moving_filt (np.ndarray):
-                Moving images filtered by the spectral mask.
+        Args:
+            template (Union[np.ndarray, int]): 
+                Template image. \n
+                * If ``template_method`` is 'image', ``template`` should be a
+                  single image.
+                * If ``template_method`` is 'sequential', ``template`` should be
+                  an integer corresponding to the index of the image to set as
+                  'zero' offset.
+            ims_moving (np.ndarray): 
+                Images to align to the template. (shape: *(n, H, W)*)
+            template_method (str): 
+                Method used to register the images. \n
+                * 'image': ``template`` should be a single image.
+                * 'sequential': ``template`` should be an integer corresponding 
+                  to the index of the image to set as 'zero' offset. \n
+                (Default is 'sequential')
+
+        Returns:
+            (Tuple[np.ndarray, np.ndarray]): tuple containing:
+                ims_registered (np.ndarray):
+                    Registered images. (shape: *(n, H, W)*)
+                shifts (np.ndarray):
+                    Pixel shift values (y, x). (shape: *(n, 2)*)
         """
         self.ccs, self.ims_template_filt, self.ims_moving_filt, self.shifts, self.ims_registered = [], [], [], [], []
         shift_old = np.array([0,0])
@@ -640,26 +837,40 @@ class PhaseCorrelation_registration:
         return self.ims_registered, self.shifts
 
 
-def phase_correlation(im_template, im_moving, mask_fft=None, return_filtered_images=False):
+def phase_correlation(
+    im_template: np.ndarray, 
+    im_moving: np.ndarray, 
+    mask_fft: Optional[np.ndarray] = None, 
+    return_filtered_images: bool = False,
+) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray]]:
     """
-    From BNPM
     Perform phase correlation on two images.
     RH 2022
-    
+
     Args:
-        im_template (np.ndarray):
-            Template image
-        im_moving (np.ndarray):
-            Moving image
-        mask_fft (np.ndarray):
-            Mask for the FFT.
-            If None, no mask is used.
+        im_template (np.ndarray): 
+            The template image.
+        im_moving (np.ndarray): 
+            The moving image.
+        mask_fft (Optional[np.ndarray]): 
+            Mask for the FFT. If ``None``, no mask is used. (Default is
+            ``None``)
+        return_filtered_images (bool): 
+            If set to ``True``, the function will return filtered images in
+            addition to the phase correlation coefficient. (Default is
+            ``False``)
     
     Returns:
-        cc (np.ndarray):
-            Phase correlation coefficient.
+        (Tuple[np.ndarray, np.ndarray, np.ndarray]): tuple containing:
+            cc (np.ndarray): 
+                The phase correlation coefficient.
+            fft_template (np.ndarray): 
+                The filtered template image. Only returned if
+                return_filtered_images is ``True``.
+            fft_moving (np.ndarray): 
+                The filtered moving image. Only returned if
+                return_filtered_images is ``True``.
     """
-    
     if mask_fft is None:
         mask_fft = np.ones(im_template.shape)
     else:
@@ -676,26 +887,29 @@ def phase_correlation(im_template, im_moving, mask_fft=None, return_filtered_ima
         return cc, np.abs(np.fft.ifft2(fft_template)), np.abs(np.fft.ifft2(fft_moving))
 
 
-def convert_phaseCorrelationImage_to_shifts(cc_im):
+def convert_phaseCorrelationImage_to_shifts(cc_im: np.ndarray) -> Tuple[int, int]:
     """
     Convert phase correlation image to pixel shift values.
     RH 2022
 
     Args:
         cc_im (np.ndarray):
-            Phase correlation image.
-            Middle of image is zero-shift.
+            Phase correlation image. The middle of the image corresponds to a
+            zero-shift.
 
     Returns:
-        shifts (np.ndarray):
-            Pixel shift values (y, x).
+        (Tuple[int, int]): tuple containing:
+            shift_y (int):
+                The pixel shift in the y-axis.
+            shift_x (int):
+                The pixel shift in the x-axis.
     """
     height, width = cc_im.shape
     shift_y_raw, shift_x_raw = np.unravel_index(cc_im.argmax(), cc_im.shape)
     return int(np.floor(height/2) - shift_y_raw) , int(np.ceil(width/2) - shift_x_raw)
 
 
-def helper_shift(X, shift, fill_val=0):
+def _helper_shift(X, shift, fill_val=0):
     X_shift = np.empty_like(X, dtype=X.dtype)
     if shift>0:
         X_shift[:shift] = fill_val
@@ -706,11 +920,60 @@ def helper_shift(X, shift, fill_val=0):
     else:
         X_shift[:] = X
     return X_shift
-def shift_along_axis(X, shift, fill_val=0, axis=0):
-    return np.apply_along_axis(helper_shift, axis, np.array(X, dtype=X.dtype), shift, fill_val)
+def shift_along_axis(
+    X: np.ndarray, 
+    shift: int, 
+    fill_val: int = 0, 
+    axis: int = 0
+) -> np.ndarray:
+    """
+    Shifts the elements of an array along a specified axis.
+    RH 2023
+
+    Args:
+        X (np.ndarray): 
+            Input array to be shifted.
+        shift (int): 
+            The number of places to shift. If the value is positive, the shift
+            is to the right. If the value is negative, the shift is to the left.
+        fill_val (int): 
+            The value to fill in the emptied places after the shift. (Default is
+            ``0``)
+        axis (int): 
+            The axis along which to apply the shift. (Default is ``0``)
+
+    Returns:
+        (np.ndarray): 
+            shifted_array (np.ndarray):
+                The array after shifting elements along the specified axis.
+    """
+    return np.apply_along_axis(_helper_shift, axis, np.array(X, dtype=X.dtype), shift, fill_val)
 
 
-def make_spectral_mask(freq_highPass=0.01, freq_lowPass=0.3, im_shape=(512, 512)):
+def make_spectral_mask(
+    freq_highPass: float = 0.01, 
+    freq_lowPass: float = 0.3, 
+    im_shape: Tuple[int, int] = (512, 512),
+) -> np.ndarray:
+    """
+    Generates a spectral mask for an image with given high pass and low pass frequencies.
+
+    Args:
+        freq_highPass (float): 
+            High pass frequency to use. 
+            (Default is ``0.01``)
+        freq_lowPass (float): 
+            Low pass frequency to use. 
+            (Default is ``0.3``)
+        im_shape (Tuple[int, int]): 
+            Shape of the input image as a tuple *(height, width)*. 
+            (Default is *(512, 512)*)
+
+    Returns:
+        (np.ndarray): 
+            mask_out (np.ndarray): 
+                The generated spectral mask.
+    """
     height, width = im_shape[0], im_shape[1]
     
     idx_highPass = (int(np.ceil(height * freq_highPass / 2)), int(np.ceil(width * freq_highPass / 2)))
@@ -739,27 +1002,32 @@ def make_spectral_mask(freq_highPass=0.01, freq_lowPass=0.3, im_shape=(512, 512)
     return mask_out
 
 
-def clahe(im, grid_size=50, clipLimit=0, normalize=True):
+def clahe(
+    im: np.ndarray, 
+    grid_size: int = 50, 
+    clipLimit: int = 0, 
+    normalize: bool = True,
+) -> np.ndarray:
     """
-    Perform Contrast Limited Adaptive Histogram Equalization (CLAHE)
-     on an image.
-    RH 2022
+    Perform Contrast Limited Adaptive Histogram Equalization (CLAHE) on an image.
 
     Args:
         im (np.ndarray):
-            Input image
+            Input image.
         grid_size (int):
-            Grid size.
-            See cv2.createCLAHE for more info.
+            Size of the grid. See ``cv2.createCLAHE`` for more info. 
+            (Default is *50*)
         clipLimit (int):
-            Clip limit.
-            See cv2.createCLAHE for more info.
+            Clip limit. See ``cv2.createCLAHE`` for more info. 
+            (Default is *0*)
         normalize (bool):
-            Whether to normalize the output image.
+            Whether to normalize the output image. 
+            (Default is ``True``)
         
     Returns:
-        im_out (np.ndarray):
-            Output image
+        (np.ndarray): 
+            im_out (np.ndarray): 
+                Output image after applying CLAHE.
     """
     im_tu = (im / im.max())*(2**8) if normalize else im
     im_tu = (im_tu/10).astype(np.uint8)

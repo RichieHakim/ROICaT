@@ -397,8 +397,7 @@ def select_region_scatterPlot(
     	.. highlight:: python
     	.. code-block:: python
     	
-            fn_get_indices, layout, path_tempfile =
-            select_region_scatterPlot(data)
+            fn_get_indices, layout, path_tempfile = select_region_scatterPlot(data)
     """
     import holoviews as hv
     import numpy as np
