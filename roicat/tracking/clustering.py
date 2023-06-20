@@ -10,7 +10,7 @@ import sklearn
 import matplotlib.pyplot as plt
 import torch
 from tqdm import tqdm
-import optuna
+# import optuna
 
 from .. import helpers, util
 
@@ -168,6 +168,7 @@ class Clusterer(util.ROICaT_Module):
                     The optimal parameters for the
                     self.make_conjunctive_distance_matrix function.
         """
+        import optuna
         self.bounds_findParameters = bounds_findParameters
 
         self.n_bins = max(min(self.s_sf.nnz // 30000, 1000), 30) if n_bins is None else n_bins
@@ -999,7 +1000,7 @@ class Clusterer(util.ROICaT_Module):
         return dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover
     def _objectiveFn_distSameMagnitude(
         self, 
-        trial: optuna.trial.Trial,
+        trial: object,
     ) -> float:
         """
         Computes the magnitude of the 'same' distribution for Optuna
@@ -1183,7 +1184,7 @@ def attach_fully_connected_node(
     return d2.tocsr()
 
 
-class ConvergenceChecker:
+class Convergence_checker:
     """
     Checks if the optuna optimization has converged.
     RH 2023
@@ -1254,8 +1255,8 @@ class ConvergenceChecker:
         
     def check(
         self, 
-        study: optuna.study.Study, 
-        trial: optuna.trial.FrozenTrial,
+        study: object, 
+        trial: object,
     ):
         """
         Checks if the optuna optimization has converged. This function should be
