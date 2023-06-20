@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional, Union, List, Tuple, Callable, Iterable, 
 import importlib
 
 import numpy as np
+import scipy.sparse
 
 from . import helpers
 
@@ -434,7 +435,7 @@ class ROICaT_Module:
 
     def save(
         self, 
-        path_save: Union[str, pathlib.Path],
+        path_save: Union[str, Path],
         save_as_serializable_dict: bool = False,
         compress: bool = False,
         allow_overwrite: bool = False,
