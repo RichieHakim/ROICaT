@@ -1,6 +1,7 @@
 from pathlib import Path
 import warnings
 import copy
+from typing import Dict, Any, Optional, Union, List, Tuple, Callable, Iterable, Iterator, Type
 
 import importlib
 
@@ -8,26 +9,32 @@ import numpy as np
 
 from . import helpers
 
-def get_roicat_version():
+def get_roicat_version() -> str:
     """
-    Get the version of the roicat package.
+    Retrieves the version of the roicat package.
+
+    Returns:
+        (str): 
+            version (str):
+                The version of the roicat package.
     """
     return importlib.metadata.version('roicat')
 
-
-def make_params_default_tracking(
-    dir_networkFiles=None,
-):
+def make_params_default_tracking(dir_networkFiles: Optional[str] = None,) -> Dict:
     """
-    Make a dictionary of default parameters for a 
-     standard tracking pipeline.
+    Generates a dictionary of default parameters for a standard tracking
+    pipeline.
 
     Args:
-        dir_networkFiles (str):
-            Directory where the ROInet network files are saved.
-            If None, use the current directory.
-    """
+        dir_networkFiles (Optional[str]):
+            Directory where the ROInet network files are stored. If ``None``,
+            uses the current directory. (Default is ``None``)
 
+    Returns:
+        (Dict):
+            params (Dict):
+                Dictionary of default parameters.
+    """
     dir_networkFiles = str(Path.cwd() / 'network_files') if dir_networkFiles is None else dir_networkFiles
 
     params = {
@@ -152,19 +159,20 @@ def make_params_default_tracking(
     return params
 
 
-def system_info(verbose=False):
+def system_info(verbose: bool = False,) -> Dict:
     """
-    Checks the versions of various important softwares.
-    Prints those versions
+    Checks and prints the versions of various important software packages.
     RH 2022
 
     Args:
         verbose (bool): 
-            Whether to print the versions
+            Whether to print the software versions. 
+            (Default is ``False``)
 
     Returns:
-        versions (dict):
-            Dictionary of versions
+        (Dict): 
+            versions (Dict):
+                Dictionary containing the versions of various software packages.
     """
     ## Operating system and version
     import platform
@@ -288,18 +296,19 @@ def system_info(verbose=False):
     return versions
 
 
-def download_data_test_zip(dir_data_test):
+def download_data_test_zip(dir_data_test: str,) -> str:
     """
-    Downloads the test data if it does not exist.
-    If the data exists, check its hash.
+    Downloads the test data if it does not exist and checks its hash. If the
+    data already exists, it only checks the hash.
 
     Args:
         dir_data_test (str):
-            directory to download zip file into
+            Directory to download the zip file into.
 
     Returns:
-        path_save (str):
-            path to data_test.zip file
+        (str): 
+            path_save (str):
+                Path to the downloaded data_test.zip file.
     """
     path_save = str(Path(dir_data_test) / 'data_test.zip')
     helpers.download_file(
@@ -322,15 +331,30 @@ class ROICaT_Module:
     """
     Super class for ROICaT modules.
     RH 2023
+
+    Attributes:
+        _system_info (object): 
+            System information.
+
     """
-    def __init__(self):
+    def __init__(self) -> None:
+        """
+        Initializes the ROICaT_Module class by gathering system information.
+        """
         self._system_info = system_info()
         pass
 
     @property
-    def serializable_dict(self):
+    def serializable_dict(self) -> Dict[str, Any]:
         """
-        Return a serializable dict that can be saved to disk.
+        Returns a serializable dictionary that can be saved to disk. This method
+        goes through all items in self.__dict__ and checks if they are
+        serializable. If they are, add them to a dictionary to be returned.
+
+        Returns:
+            (Dict[str, Any]): 
+                serializable_dict (Dict[str, Any]): 
+                    Dictionary containing serializable items.
         """
         from functools import partial
         ## Go through all items in self.__dict__ and check if they are serializable.
@@ -410,27 +434,27 @@ class ROICaT_Module:
 
     def save(
         self, 
-        path_save,
-        save_as_serializable_dict=False,
-        compress=False,
-        allow_overwrite=False,
-    ):
+        path_save: Union[str, pathlib.Path],
+        save_as_serializable_dict: bool = False,
+        compress: bool = False,
+        allow_overwrite: bool = False,
+    ) -> None:
         """
-        Save Data_roicat object to pickle file.
-        
+        Saves Data_roicat object to pickle file.
+
         Args:
-            save_path (str or pathlib.Path):
+            path_save (Union[str, pathlib.Path]): 
                 Path to save pickle file.
-            save_as_serializable_dict (bool):
-                A serializable dict is an archival-type format
-                 that is easy to load data from, but typically cannot
-                 be used to re-instantiate the object.
-                If True, save the object as a serializable dict.
-                If False, save the object as a Data_roicat object.
-            compress (bool):
-                If True, compress the pickle file.
-            allow_overwrite (bool):
-                If True, allow overwriting of existing file.
+            save_as_serializable_dict (bool): 
+                An archival-type format that is easy to load data from, but typically 
+                cannot be used to re-instantiate the object. If ``True``, save the object 
+                as a serializable dictionary. If ``False``, save the object as a Data_roicat 
+                object. (Default is ``False``)
+            compress (bool): 
+                If ``True``, compress the pickle file. (Default is ``False``)
+            allow_overwrite (bool): 
+                If ``True``, allow overwriting of existing file. (Default is ``False``)
+
         """
         from pathlib import Path
         ## Check if file already exists
@@ -446,16 +470,31 @@ class ROICaT_Module:
         )
         print(f"Saved Data_roicat as a pickled object to {path_save}.") if self._verbose else None
 
-    def load(self, path_load):
+    def load(
+        self,
+        path_load: Union[str, Path],
+    ) -> None:
         """
-        Load attributes from Data_roicat object from pickle file.
-        
+        Loads attributes from a Data_roicat object from a pickle file.
+
         Args:
-            path_load (str or pathlib.Path):
-                Path to pickle file.
-        
-        Returns:
-            Data_roicat object.
+            path_load (Union[str, Path]): 
+                Path to the pickle file.
+
+        Note: 
+            After calling this method, the attributes of this object are updated with those 
+            loaded from the pickle file. If an object in the pickle file is a dictionary, 
+            the object's attributes are set directly from the dictionary. Otherwise, if 
+            the object in the pickle file has a 'import_from_dict' method, it is used 
+            to load attributes. If it does not, the attributes are directly loaded from 
+            the object's `__dict__` attribute.
+
+        Example:
+            .. highlight:: python
+            .. code-block:: python
+
+                obj = Data_roicat()
+                obj.load('/path/to/pickle/file')
         """
         from pathlib import Path
         assert Path(path_load).exists(), f"RH ERROR: File does not exist: {path_load}."
@@ -478,18 +517,27 @@ class ROICaT_Module:
         print(f"Loaded Data_roicat object from {path_load}.") if self._verbose else None
 
 
-def make_session_bool(n_roi):
+def make_session_bool(n_roi: np.ndarray,) -> np.ndarray:
     """
-    Makes a session_bool array from an n_roi array.
+    Generates a boolean array representing ROIs (Region Of Interest) per session from an array of ROI counts.
 
     Args:
-        n_roi (np.ndarray):
-            Array of number of ROIs per session
+        n_roi (np.ndarray): 
+            Array representing the number of ROIs per session. 
+            *shape*: *(n_sessions,)*
 
     Returns:
-        session_bool (np.ndarray):
-            Boolean array of shape (n_roi_total, n_session) where
-             each column is a session and each row is a ROI.
+        (np.ndarray): 
+            session_bool (np.ndarray): 
+                Boolean array of shape *(n_roi_total, n_session)* where each column represents a session 
+                and each row corresponds to an ROI.
+                
+    Example:
+        .. highlight:: python
+        .. code-block:: python
+
+            n_roi = np.array([3, 4, 2])
+            session_bool = make_session_bool(n_roi)
     """
     n_roi_total = np.sum(n_roi)
     r = np.arange(n_roi_total, dtype=np.int64)
@@ -502,28 +550,50 @@ def make_session_bool(n_roi):
 ############################################### UCID handling ############################################################
 ##########################################################################################################################
 
-def check_dataStructure__list_ofListOrArray_ofDtype(lolod, dtype=np.int64, fix=True, verbose=True):
+def check_dataStructure__list_ofListOrArray_ofDtype(
+    lolod: Union[List[List[Union[int, float]]], List[np.ndarray]], 
+    dtype: Type = np.int64, 
+    fix: bool = True, 
+    verbose: bool = True,
+) -> Union[List[List[Union[int, float]]], List[np.ndarray]]:
     """
-    Checks 'lolod' (list of list of dtype) data structure.
-    Structure should be a list of lists of dtypes OR a list of np.arrays of dtypes.
+    Verifies and optionally corrects the data structure of 'lolod' (list of list
+    of dtype).
+    
+    The structure should be a list of lists of dtypes or a list of numpy arrays
+    of dtypes.
 
     Args:
-        lolod (list):
-            List of lists of dtypes OR a list of np.arrays of dtypes.
-        fix (bool):
-            Whether to attempt to fix the data structure if it is incorrect.
-            If fix=False, then raises an error if it is not correct.
-            
-            If lolod is array, then will be cast to [lolod]
-            If lolod is np.object_, then will be cast to [np.array(lolod, dtype=dtype)]
-            If lolod is list of lists of numbers (int or float), then will be cast to [np.array(lod, dtype=dtype) for lod in lolod]
-            If lolod is list of arrays of wrong dtype, then will be cast to [np.array(lod, dtype=dtype) for lod in lolod]
+        lolod (Union[List[List[Union[int, float]]], List[np.ndarray]]): 
+            * The data structure to check. It should be a list of lists of
+              dtypes or a list of numpy arrays of dtypes.
+        
+        dtype (Type): 
+            * The expected dtype of the elements in 'lolod'. (Default is
+              ``np.int64``)
+
+        fix (bool): 
+            * If ``True``, attempts to correct the data structure if it is not
+              as expected. The corrections are as follows: \n
+                * If 'lolod' is an array, it will be cast to [lolod]
+                * If 'lolod' is a numpy object, it will be cast to
+                  [np.array(lolod, dtype=dtype)]
+                * If 'lolod' is a list of lists of numbers (int or float), it
+                  will be cast to [np.array(lod, dtype=dtype) for lod in lolod]
+                * If 'lolod' is a list of arrays of wrong dtype, it will be cast
+                  to [np.array(lod, dtype=dtype) for lod in lolod] \n
+            * If ``False``, raises an error if the structure is not as expected.
+              (Default is ``True``)
+
+        verbose (bool): 
+            * If ``True``, prints warnings when the structure is not as expected
+              and is corrected. (Default is ``True``)
 
     Returns:
-        lolod (list):
-            List of lists of dtypes OR a list of np.arrays of dtypes.
+        (Union[List[List[Union[int, float]]], List[np.ndarray]]): 
+            lolod (Union[List[List[Union[int, float]]], List[np.ndarray]]):
+                The verified or corrected data structure.
     """
-
     ## switch case for if it is a list or np.ndarray
     if isinstance(lolod, list):
         ## switch case for if the elements are lists or np.ndarray or numbers (int or float) or dtypes
@@ -585,21 +655,25 @@ def check_dataStructure__list_ofListOrArray_ofDtype(lolod, dtype=np.int64, fix=T
     return lolod
 
 
-def mask_UCIDs_with_iscell(ucids, iscell):
+def mask_UCIDs_with_iscell(
+    ucids: List[Union[List[int], np.ndarray]], 
+    iscell: List[Union[List[bool], np.ndarray]]
+) -> List[Union[List[int], np.ndarray]]:
     """
-    Masks the UCIDs with the iscell array.
-    If iscell is False, then the UCID is set to -1.
+    Masks the UCIDs with the **iscell** array. If ``iscell`` is False, then the
+    UCID is set to -1.
 
     Args:
-        ucids (list of [list or array] of int):
+        ucids (List[Union[List[int], np.ndarray]]): 
             List of lists of UCIDs for each session.
-        iscell (list of [list or array] of bool):
-            List of lists of iscell.
+        iscell (List[Union[List[bool], np.ndarray]]): 
+            List of lists of boolean indicators for each UCID. 
 
     Returns:
-        ucids_out (list of [list or array] of int):
-            Masked list of lists of UCIDs.
-            Elements that are not cells are set to -1 in each session.
+        (List[Union[List[int], np.ndarray]]): 
+            ucids_out (List[Union[List[int], np.ndarray]]): 
+                Masked list of lists of UCIDs. Elements that are not cells are
+                set to -1 in each session.
     """
     ucids_out = copy.deepcopy(ucids)
     ucids_out = check_dataStructure__list_ofListOrArray_ofDtype(
@@ -623,25 +697,30 @@ def mask_UCIDs_with_iscell(ucids, iscell):
 
 
 def discard_UCIDs_with_fewer_matches(
-    ucids, 
-    n_sesh_thresh='all',
-    verbose=True,
-):
+    ucids: List[Union[List[int], np.ndarray]], 
+    n_sesh_thresh: Union[int, str] = 'all',
+    verbose: bool = True
+) -> List[Union[List[int], np.ndarray]]:
     """
-    Discards UCIDs that do not appear in at least n_sesh_thresh sessions.
-    If n_sesh_thresh='all', then only UCIDs that appear in all sessions are kept.
+    Discards UCIDs that do not appear in at least **n_sesh_thresh** sessions. If
+    ``n_sesh_thresh='all'``, then only UCIDs that appear in all sessions are
+    kept.
 
     Args:
-        ucids (list of [list or array] of int):
+        ucids (List[Union[List[int], np.ndarray]]): 
             List of lists of UCIDs for each session.
-        n_sesh_thresh (int or 'all'):
-            Number of sessions that a UCID must appear in to be kept.
-            If 'all', then only UCIDs that appear in all sessions are kept.
+        n_sesh_thresh (Union[int, str]): 
+            Number of sessions that a UCID must appear in to be kept. If
+            ``'all'``, then only UCIDs that appear in all sessions are kept.
+            (Default is ``'all'``)
+        verbose (bool): 
+            If ``True``, print verbose output. (Default is ``True``)
 
     Returns:
-        ucids_out (list of [list or array] of int):
-            List of lists of UCIDs with UCIDs that do not appear in at least
-             n_sesh_thresh sessions set to -1.
+        (List[Union[List[int], np.ndarray]]): 
+            ucids_out (List[Union[List[int], np.ndarray]]): 
+                List of lists of UCIDs with UCIDs that do not appear in at least
+                **n_sesh_thresh** sessions set to -1.
     """
     ucids_out = copy.deepcopy(ucids)
     ucids_out = check_dataStructure__list_ofListOrArray_ofDtype(
@@ -664,21 +743,24 @@ def discard_UCIDs_with_fewer_matches(
     return ucids_out
     
 
-def squeeze_UCID_labels(ucids):
+def squeeze_UCID_labels(
+    ucids: List[Union[List[int], np.ndarray]]
+) -> List[Union[List[int], np.ndarray]]:
     """
-    Squeezes the UCID labels.
-    Finds all the unique UCIDs across all sessions, then removes spaces in the
-     UCID labels by mapping the unique UCIDs to new values. Output UCIDs are
-     contiguous integers starting at 0, and maintains elements with UCID=-1.
+    Squeezes the UCID labels. Finds all the unique UCIDs across all sessions,
+    then removes spaces in the UCID labels by mapping the unique UCIDs to new
+    values. Output UCIDs are contiguous integers starting at 0, and maintains
+    elements with UCID=-1.
 
     Args:
-        ucids (list of [list or array] of int):
+        ucids (List[Union[List[int], np.ndarray]]): 
             List of lists of UCIDs for each session.
 
     Returns:
-        ucids_out (list of [list or array] of int):
-            List of lists of UCIDs with UCIDs that do not appear in at least
-             n_sesh_thresh sessions set to -1.
+        (List[Union[List[int], np.ndarray]]): 
+            ucids_out (List[Union[List[int], np.ndarray]]): 
+                List of lists of UCIDs with UCIDs that do not appear in at least
+                **n_sesh_thresh** sessions set to -1.
     """
     ucids_out = copy.deepcopy(ucids)
     ucids_out = check_dataStructure__list_ofListOrArray_ofDtype(
@@ -701,29 +783,34 @@ def squeeze_UCID_labels(ucids):
     return ucids_out
 
 
-def match_arrays_with_ucids(arrays, ucids, squeeze=False):
+def match_arrays_with_ucids(
+    arrays: Union[np.ndarray, List[np.ndarray]], 
+    ucids: Union[List[np.ndarray], List[List[int]]], 
+    squeeze: bool = False,
+) -> List[Union[np.ndarray, scipy.sparse.lil_matrix]]:
     """
-    Matches the indices of the arrays using the UCIDs.
-    Array indices with UCIDs corresponding to -1 are set to np.nan.
-    Useful for aligning Fluorescence and Spiking data across sessions
-     using UCIDs.
-    
+    Matches the indices of the arrays using the UCIDs. Array indices with UCIDs
+    corresponding to -1 are set to ``np.nan``. This is useful for aligning
+    Fluorescence and Spiking data across sessions using UCIDs.
+
     Args:
-        arrays (list of np.array):
-            List of of numpy arrays for each session.
-            Matching is done along the first dimension.
-        ucids (list of [list or array] of int):
+        arrays (Union[np.ndarray, List[np.ndarray]]): 
+            List of numpy arrays for each session. Matching is done along the
+            first dimension.
+        ucids (Union[List[np.ndarray], List[List[int]]]): 
             List of lists of UCIDs for each session.
-        squeeze (bool):
-            If True, then UCIDs are squeezed to be contiguous integers.
+        squeeze (bool): 
+            If ``True``, then UCIDs are squeezed to be contiguous integers.
+            (Default is ``False``)
 
     Returns:
-        arrays_out (list of np.array):
-            List of of arrays for each session.
-            Array indices with UCIDs corresponding to -1 are set to np.nan.
-            Each array will have shape: 
-                (n_ucids if squeeze==True OR max_ucid if squeeze==False, *array.shape[1:]). 
-                UCIDs will be used as the index of the first dimension.
+        (List[Union[np.ndarray, scipy.sparse.lil_matrix]]): 
+            arrays_out (List[Union[np.ndarray, scipy.sparse.lil_matrix]]): 
+                List of arrays for each session. Array indices with UCIDs
+                corresponding to -1 are set to ``np.nan``. Each array will have
+                shape: *(n_ucids if squeeze==True OR max_ucid if squeeze==False,
+                *array.shape[1:])*. UCIDs will be used as the index of the first
+                dimension.
     """
     import scipy.sparse
 
@@ -755,14 +842,28 @@ def match_arrays_with_ucids(arrays, ucids, squeeze=False):
 
     return arrays_out
 
-def match_arrays_with_ucids_inverse(arrays, ucids):
+def match_arrays_with_ucids_inverse(
+    arrays: Union[np.ndarray, List[np.ndarray]], 
+    ucids: Union[List[np.ndarray], List[List[int]]],
+) -> List[Union[np.ndarray, scipy.sparse.lil_matrix]]:
     """
-    Inverts the matching of the indices of the arrays using the UCIDs.
-    Arrays should have indices that correspond to the UCID values.
-    The return will be a lit of arrays with indices that correspond to
-     the original indices of the arrays / ucids.
-    Essentially, this function undoes the matching done by
-     match_arrays_with_ucids().
+    Inverts the matching of the indices of the arrays using the UCIDs. Arrays
+    should have indices that correspond to the UCID values. The return will be a
+    list of arrays with indices that correspond to the original indices of the
+    arrays / ucids. Essentially, this function undoes the matching done by
+    match_arrays_with_ucids().
+
+    Args:
+        arrays (Union[np.ndarray, List[np.ndarray]]): 
+            List of numpy arrays for each session.
+        ucids (Union[List[np.ndarray], List[List[int]]]): 
+            List of lists of UCIDs for each session.
+
+    Returns:
+        (List[Union[np.ndarray, scipy.sparse.lil_matrix]]): 
+            arrays_out (List[Union[np.ndarray, scipy.sparse.lil_matrix]]): 
+                List of arrays with indices that correspond to the original
+                indices of the arrays / ucids. 
     """
     import scipy.sparse
 
