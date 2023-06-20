@@ -1,6 +1,11 @@
-# ROICaT
 <div>
-    <img src="media/logo1.png" alt="ROICaT" width="200"  align="right"  style="margin-left: 20px"/>
+    <img src="docs/media/favicon_grayOnWhite.png" alt="ROICaT" width="30"  align="Left"  style="margin-left: 20px; margin-right: 10px"/>
+</div>
+
+# ROICaT
+
+<div>
+    <img src="docs/media/logo1.png" alt="ROICaT" width="200"  align="right"  style="margin-left: 20px"/>
 </div>
 
 [![build](https://github.com/RichieHakim/ROICaT/actions/workflows/.github/workflows/build.yml/badge.svg)](https://github.com/RichieHakim/ROICaT/actions/workflows/build.yml) 
@@ -14,7 +19,7 @@
 ## **R**egion **O**f **I**nterest **C**lassification **a**nd **T**racking
 A simple-to-use Python package for automatically classifying images of cells and tracking them across imaging sessions/planes.
 <div>
-    <img src="media/tracking_FOV_clusters_rich.gif" alt="tracking_FOV_clusters_rich"  width="400"  align="right" style="margin-left: 20px"/>
+    <img src="docs/media/tracking_FOV_clusters_rich.gif" alt="tracking_FOV_clusters_rich"  width="400"  align="right" style="margin-left: 20px"/>
 </div>
 
 With this package, you can:
@@ -28,7 +33,7 @@ We have found that ROICaT is capable of classifying cells with accuracy comparab
 
 # How to use ROICaT
 <div>
-    <img src="media/umap_with_labels.png" alt="ROICaT" width="300"  align="right"  style="margin-left: 20px"/>
+    <img src="docs/media/umap_with_labels.png" alt="ROICaT" width="300"  align="right"  style="margin-left: 20px"/>
 </div>
 
 **TRACKING:** 

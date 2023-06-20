@@ -504,7 +504,7 @@ class ROICaT_Module:
 
         if isinstance(obj, dict):
             ## Set attributes from dict
-            ### If the object has a load_from_dict method, use that.
+            ### If the subclass has a load_from_dict method, use that.
             if hasattr(self, 'import_from_dict'):
                 self.import_from_dict(obj)
             else:
