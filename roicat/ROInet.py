@@ -546,16 +546,15 @@ class dataset_simCLR(Dataset):
         transform (Optional[Callable]): 
             Optional transform to be applied on a sample. See
             torchvision.transforms for more information. Can use
-            torch.nn.Sequential( a bunch of transforms ) or other methods from
-            torchvision.transforms. Try to use torch.jit.script(transform) if
-            possible. If not ``None``: 
-                Transform(s) are applied to each image and the output shape of
-                X_sample_transformed for __getitem__ will be *(n_samples,
-                n_transforms, n_channels, height, width)*.
-            If ``None``: 
-                No transform is applied and output shape of X_sample_trasformed
-                for __getitem__ will be *(n_samples, n_channels, height, width)*
-                (which is missing the n_transforms dimension).
+            torch.nn.Sequential(a, bunch, of, transforms,) or other methods
+            from torchvision.transforms. \n
+            * If not ``None``: Transform(s) are applied to each image and the
+              output shape of X_sample_transformed for __getitem__ will be
+              *(n_samples, n_transforms, n_channels, height, width)*.
+            * If ``None``: No transform is applied and output shape of
+              X_sample_trasformed for __getitem__ will be *(n_samples,
+              n_channels, height, width)* (which is missing the n_transforms
+              dimension). \n
             (Default is ``None``)
         DEVICE (str): 
             Device on which the data will be stored and transformed. Best to

@@ -1,34 +1,41 @@
 import copy
 import os
+from typing import List, Tuple, Union, Optional, Dict, Any, Callable, Iterable
 
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 import sparse
 import scipy.sparse
+import torch
 
 from . import util, helpers
 
 
-def display_toggle_image_stack(images, image_size=None, clim=None, interpolation='nearest'):
+def display_toggle_image_stack(
+    images: Union[List[np.ndarray], List[torch.Tensor]],
+    image_size: Optional[Tuple[int, int]] = None,
+    clim: Optional[Tuple[float, float]] = None,
+    interpolation: str = 'nearest',
+) -> None:
     """
-    Display images in a slider using Jupyter Notebook.
+    Displays images in a slider using Jupyter Notebook. 
     RH 2023
 
     Args:
-        images (list of numpy arrays or PyTorch tensors):
-            List of images as numpy arrays or PyTorch tensors
-        image_size (tuple of ints, optional):
-            Tuple of (width, height) for resizing images.
-            If None (default), images are not resized.
-        clim (tuple of floats, optional):
-            Tuple of (min, max) values for scaling pixel intensities.
-            If None (default), min and max values are computed from the images
-             and used as bounds for scaling.
-        interpolation (string, optional):
-            String specifying the interpolation method for resizing.
-            Options: 'nearest', 'box', 'bilinear', 'hamming', 'bicubic', 'lanczos'.
-            Uses the Image.Resampling.* methods from PIL.
+        images (Union[List[np.ndarray], List[torch.Tensor]]): 
+            List of images as numpy arrays or PyTorch tensors.
+        image_size (Optional[Tuple[int, int]]): 
+            Tuple of *(width, height)* for resizing images. If ``None``, images
+            are not resized. (Default is ``None``)
+        clim (Optional[Tuple[float, float]]): 
+            Tuple of *(min, max)* values for scaling pixel intensities. If
+            ``None``, min and max values are computed from the images and used
+            as bounds for scaling. (Default is ``None``)
+        interpolation (str): 
+            String specifying the interpolation method for resizing. Options are
+            'nearest', 'box', 'bilinear', 'hamming', 'bicubic', 'lanczos'. Uses
+            the Image.Resampling.* methods from PIL. (Default is 'nearest')
     """
     from IPython.display import display, HTML
     import numpy as np
@@ -139,42 +146,49 @@ def display_toggle_image_stack(images, image_size=None, clim=None, interpolation
 
 
 def compute_colored_FOV(
-    spatialFootprints,
-    FOV_height,
-    FOV_width,
-    labels,
-    cmap='random',
-    alphas_labels=None,
-    alphas_sf=None,
-):
+    spatialFootprints: List[scipy.sparse.csr_matrix],
+    FOV_height: int,
+    FOV_width: int,
+    labels: Union[List[np.ndarray], np.ndarray],
+    cmap: Union[str, object] = 'random',
+    alphas_labels: Optional[np.ndarray] = None,
+    alphas_sf: Optional[Union[List[np.ndarray], np.ndarray]] = None,
+) -> List[np.ndarray]:
     """
-    Computes a set of images of FOVs of spatial footprints, colored
-     by the predicted class.
+    Computes a set of images of fields of view (FOV) of spatial footprints,
+    colored by the predicted class.
+    RH 2023
 
     Args:
-        spatialFootprints (list of scipy.sparse.csr_matrix):
+        spatialFootprints (List[scipy.sparse.csr_matrix]): 
             Each element is all the spatial footprints for a given session.
-        FOV_height (int):
-            Height of the field of view
-        FOV_width (int):
-            Width of the field of view
-        labels (list of arrays or array):
-            Label (will be a unique color) for each spatial footprint.
-            Each element is all the labels for a given session.
-            Can either be a list of integer labels for each session,
-             or a single array with all the labels concatenated.
-        cmap (str or matplotlib.colors.ListedColormap):
-            Colormap to use for the labels.
-            If 'random', then a random colormap is generated.
-            Else, this is passed to matplotlib.colors.ListedColormap.
-        alphas_labels (np.ndarray):
-            Alpha value for each label.
-            shape (n_labels,) which is the same as the number of unique
-             labels len(np.unique(labels))
-        alphas_sf (list of np.ndarray):
-            Alpha value for each spatial footprint.
-            Can either be a list of alphas for each session, or a single array
-             with all the alphas concatenated.
+        FOV_height (int): 
+            Height of the field of view.
+        FOV_width (int): 
+            Width of the field of view.
+        labels (Union[List[np.ndarray], np.ndarray]): 
+            Label (will be a unique color) for each spatial footprint. Each
+            element is all the labels for a given session. Can either be a list
+            of integer labels for each session, or a single array with all the
+            labels concatenated.
+        cmap (Union[str, object]): 
+            Colormap to use for the labels. If 'random', then a random colormap
+            is generated. Else, this is passed to
+            matplotlib.colors.ListedColormap. (Default is 'random')
+        alphas_labels (Optional[np.ndarray]): 
+            Alpha value for each label. shape: *(n_labels,)* which is the same
+            as the number of unique labels len(np.unique(labels)). (Default is
+            ``None``)
+        alphas_sf (Optional[Union[List[np.ndarray], np.ndarray]]): 
+            Alpha value for each spatial footprint. Can either be a list of
+            alphas for each session, or a single array with all the alphas
+            concatenated. (Default is ``None``)
+
+    Returns:
+        (List[np.ndarray]): 
+            rois_c_bySession_FOV (List[np.ndarray]):
+                List of images of fields of view (FOV) of spatial footprints,
+                colored by the predicted class.
     """
     spatialFootprints = [spatialFootprints] if isinstance(spatialFootprints, np.ndarray) else spatialFootprints
 
@@ -243,18 +257,19 @@ def compute_colored_FOV(
     return rois_c_bySessions_FOV
 
 
-def crop_cluster_ims(ims):
+def crop_cluster_ims(ims: np.ndarray) -> np.ndarray:
     """
     Crops the images to the smallest rectangle containing all non-zero pixels.
     RH 2022
 
     Args:
-        ims (np.ndarray):
-            Images to crop.
+        ims (np.ndarray): 
+            Images to crop. (shape: *(n, H, W)*)
 
     Returns:
-        np.ndarray:
-            Cropped images.
+        (np.ndarray): 
+            cropped_ims (np.ndarray):
+                Cropped images. (shape: *(n, H', W')*)
     """
     ims_max = np.max(ims, axis=0)
     z_im = ims_max > 0
@@ -271,27 +286,28 @@ def crop_cluster_ims(ims):
     return im_out
 
 def display_cropped_cluster_ims(
-    spatialFootprints, 
-    labels, 
-    FOV_height=512, 
-    FOV_width=1024,
-    n_labels_to_display=100,
-):
+    spatialFootprints: List[np.ndarray], 
+    labels: np.ndarray, 
+    FOV_height: int = 512, 
+    FOV_width: int = 1024,
+    n_labels_to_display: int = 100,
+) -> None:
     """
     Displays the cropped cluster images.
     RH 2023
 
     Args:
-        spatialFootprints (list):
-            List of spatial footprints.
-        labels (np.ndarray):
-            Labels for each ROI.
-        FOV_height (int, optional):
-            Height of the field of view.
-        FOV_width (int, optional):
-            Width of the field of view.
-        n_labels_to_display (int, optional):
-            Number of labels to display.
+        spatialFootprints (List[np.ndarray]): 
+            List of spatial footprints. Each footprint is a 2D array
+            representing one region. (shape of each footprint: *(H, W)*)
+        labels (np.ndarray): 
+            Labels for each region of interest (ROI). (shape: *(n,)*)
+        FOV_height (int): 
+            Height of the field of view. (Default is *512*)
+        FOV_width (int): 
+            Width of the field of view. (Default is *1024*)
+        n_labels_to_display (int): 
+            Number of labels to display. (Default is *100*)
     """
     import scipy.sparse
 
@@ -316,52 +332,73 @@ def display_cropped_cluster_ims(
 
 
 def select_region_scatterPlot(
-    data, 
-    images_overlay=None, 
-    idx_images_overlay=None, 
-    size_images_overlay=None,
-    frac_overlap_allowed=0.5,
-    image_overlay_raster_size=None,
-    path=None, 
-    figsize=(300,300),
-    alpha_points=0.5,
-    size_points=1,
-    color_points='k',
-):
-    """Select a region of a scatter plot and return the indices 
-     of the points in that region via a function call.
+    data: np.ndarray, 
+    images_overlay: Optional[np.ndarray] = None, 
+    idx_images_overlay: Optional[np.ndarray] = None, 
+    size_images_overlay: Optional[float] = None,
+    frac_overlap_allowed: float = 0.5,
+    image_overlay_raster_size: Optional[Tuple[int, int]] = None,
+    path: Optional[str] = None, 
+    figsize: Tuple[int, int] = (300, 300),
+    alpha_points: float = 0.5,
+    size_points: float = 1,
+    color_points: Union[str, List[str]] = 'k',
+) -> Tuple[Callable, object, str]:
+    """
+    Selects a region of a scatter plot and returns the indices of the points in
+    that region.
 
     Args:
-        data (np.ndarray):
-            Input data to draw a scatterplot.
-            Shape must be (n_samples, 2).
-        images_overlay (A 3D or 4D array):
-            A 3D array of grayscale images or a 4D array of RGB images,
-            where the first dimension is the number of images.
-        idx_images_overlay (np.ndarray):
-            A vector of the data indices corresponding to each images in images_overlay.
-            Shape must be (n_images,).
-        size_images_overlay (float, optional):
-            Size of each overlay images. Unit is relative to each axis.
-            This simply scales the resolution of the overlay raster.
-        frac_overlap_allowed (float, optional):
-            Fraction of overlap allowed between the selected region and the overlay images.
-            Only used when size_images_overlay is None.
-        image_overlay_raster_size (tuple of int or float, optional):
-            Size of the rasterized image overlay. Units are pixels.
-            If None, will be set to figsize.
-        path (str, optional):
-            Temporary file path that saves selected indices. 
-        figsize (tuple, optional):
-            Size of the figure. Unit in pixel. 
-        alpha_points (float, optional):
-            Alpha value of the scatter plot points. 
-        size_points (float, optional):
-            Size of the scatter plot points. 
-        color_points (str or list, optional):
-            Color of the scatter plot points. 
-            If a list, must be the same length as data.shape[0] and values
-             must be valid holoviews color names.
+        data (np.ndarray): 
+            Input data to create a scatterplot. The shape must be *(n_samples,
+            2)*.
+        images_overlay (np.ndarray, optional): 
+            A 3D array of grayscale images or a 4D array of RGB images, where
+            the first dimension is the number of images. (Default is ``None``)
+        idx_images_overlay (np.ndarray, optional): 
+            A vector of data indices corresponding to each image in
+            images_overlay. The shape must be *(n_images,)*. (Default is
+            ``None``)
+        size_images_overlay (float, optional): 
+            Size of each overlay image. The unit is relative to each axis. This
+            value scales the resolution of the overlay raster. (Default is
+            ``None``)
+        frac_overlap_allowed (float, optional): 
+            Fraction of overlap allowed between the selected region and the
+            overlay images. This is only used when size_images_overlay is
+            ``None``. (Default is 0.5)
+        image_overlay_raster_size (Tuple[int, int], optional): 
+            Size of the rasterized image overlay in pixels. If ``None``, the
+            size will be set to figsize. (Default is ``None``)
+        path (str, optional): 
+            Temporary file path to save the selected indices. (Default is
+            ``None``)
+        figsize (Tuple[int, int], optional): 
+            Size of the figure in pixels. (Default is (300, 300))
+        alpha_points (float, optional): 
+            Alpha value of the scatter plot points. (Default is 0.5)
+        size_points (float, optional): 
+            Size of the scatter plot points. (Default is 1)
+        color_points (Union[str, List[str]], optional): 
+            Color of the scatter plot points. If a list, it must be the same
+            length as data.shape[0] and the values must be valid holoviews color
+            names. (Default is 'k')
+
+    Returns:
+        (Tuple[Callable, object, str]): tuple containing:
+            fn_get_indices (Callable):
+                Function that returns the indices of the selected points.
+            layout (object):
+                Holoviews layout object.
+            path_tempfile (str):
+                Path to the temporary file that saves the selected indices.
+                
+    Example:
+    	.. highlight:: python
+    	.. code-block:: python
+    	
+            fn_get_indices, layout, path_tempfile =
+            select_region_scatterPlot(data)
     """
     import holoviews as hv
     import numpy as np
@@ -412,12 +449,6 @@ def select_region_scatterPlot(
             height=figsize[1],
         )
         points *= p
-
-    # if isinstance(color_points, str):
-    #     points.opts(color=color_points)
-    # elif isinstance(color_points, list):
-    #     assert len(color_points) == data.shape[0], 'color_points must be the same length as data.shape[0]'
-    #     points.opts(color=hv.Cycle(values=color_points))
 
     # Declare points as source of selection stream
     selection = hv.streams.Selection1D(source=points)
@@ -559,32 +590,40 @@ def select_region_scatterPlot(
     return fn_get_indices, layout, path_tempFile
 
 
-def get_spread_out_points(data, n_ims=1000, dist_im_to_point=0.3, border_frac=0.05, device='cpu'):
+def get_spread_out_points(
+    data: np.ndarray, 
+    n_ims: int = 1000, 
+    dist_im_to_point: float = 0.3, 
+    border_frac: float = 0.05, 
+    device: str = 'cpu',
+) -> np.ndarray:
     """
-    Given a set of points, return the indices of a subset of points that are spread out.
-    Intended to be used to overlay images on a scatter plot of points.
+    Given a set of points, returns the indices of a subset of points that are
+    spread out. Intended to be used to overlay images on a scatter plot of
+    points.
     RH 2023
 
     Args:
-        data (np.ndarray):
-            Array of shape (N,2) containing the points to be spread out (i,j).
-        n_ims (int):
-            Number of indices to return corresponding to the number of images
-             to be displayed.
-        dist_im_to_point (float):
-            Minimum distance between an image and it's nearest point.
-            Images with a minimum distance to a point greater than this value
-             will be discarded.
-        border_frac (float):
+        data (np.ndarray): 
+            Array containing the points to be spread out. Shape: *(N, 2)*
+        n_ims (int): 
+            Number of indices to return corresponding to the number of images to
+            be displayed. (Default is *1000*)
+        dist_im_to_point (float): 
+            Minimum distance between an image and its nearest point. Images with
+            a minimum distance to a point greater than this value will be
+            discarded. (Default is *0.3*)
+        border_frac (float): 
             Fraction of the range of the data to add as a border around the
-             points.
-        device (str):
-            Device to use for torch operations.
+            points. (Default is *0.05*)
+        device (str): 
+            Device to use for torch operations. (Default is 'cpu')
 
     Returns:
-        idx_images_overlay (np.ndarray):
-            Array of shape (n_ims,) containing the indices of the points to
-             overlay images on.
+        (np.ndarray): 
+            idx_images_overlay (np.ndarray):
+                Array containing the indices of the points to overlay images on.
+                Shape: *(n_ims,)*
     """
     import torch
     DEVICE = device
@@ -615,32 +654,34 @@ def get_spread_out_points(data, n_ims=1000, dist_im_to_point=0.3, border_frac=0.
 
 
 def display_labeled_ROIs(
-    images,
-    labels,
-    max_images_per_label=10,
-    figsize=(10, 3),
-    fontsize=25,
-    shuffle=True,
-):
+    images: np.ndarray,
+    labels: Union[np.ndarray, Dict[str, Any]],
+    max_images_per_label: int = 10,
+    figsize: Tuple[int, int] = (10, 3),
+    fontsize: int = 25,
+    shuffle: bool = True,
+) -> None:
     """
-    Display a grid of images, each row corresponding to a label, 
-     and each image is a randomly selected image from that label.
+    Displays a grid of images, each row corresponding to a label, and each image
+    is a randomly selected image from that label.
     RH 2023
 
     Args:
-        images (np.ndarray):
-            Array of images. Shape either:
-             (num_images, height, width) or
-             (num_images, height, width, num_channels)
-        labels (np.ndarray or dict):
-            If dict: Must contain keys 'index' and 'label'.
-            If ndarray: Must be a 1D array of labels.
-        max_images_per_label (int):
-            Maximum number of images to display per label.
-        figsize (tuple):
-            Size of the figure.
-        fontsize (int):
-            Fontsize of the labels.
+        images (np.ndarray): 
+            Array of images. Shape: *(num_images, height, width)* or
+            *(num_images, height, width, num_channels)*
+        labels (Union[np.ndarray, Dict[str, Any]]): 
+            If dict, it must contain keys 'index' and 'label'. If ndarray, it
+            must be a 1D array of labels.
+        max_images_per_label (int): 
+            Maximum number of images to display per label. (Default is *10*)
+        figsize (Tuple[int, int]): 
+            Size of the figure. (Default is *(10, 3)*)
+        fontsize (int): 
+            Font size of the labels. (Default is *25*)
+        shuffle (bool): 
+            If ``True``, the order of the images will be shuffled. (Default is
+            ``True``)
     """
     import random
 

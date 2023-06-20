@@ -1600,40 +1600,40 @@ def simple_cmap(
 
 class ImageLabeler:
     """
-    A simple graphical interface for labeling image classes. 
-    Use this class with a context manager to ensure the window 
-    is closed properly. The class provides a tkinter window 
-    which displays images from a provided numpy array one by one 
-    and lets you classify each image by pressing a key. The title 
-    of the window is the image index. The classification label 
-    and image index are stored as self.labels_ and saved to a 
-    CSV file in self.path_csv. 
+    A simple graphical interface for labeling image classes. Use this class with
+    a context manager to ensure the window is closed properly. The class
+    provides a tkinter window which displays images from a provided numpy array
+    one by one and lets you classify each image by pressing a key. The title of
+    the window is the image index. The classification label and image index are
+    stored as the ``self.labels_`` attribute and saved to a CSV file in
+    self.path_csv. 
     RH 2023
 
     Args:
         image_array (np.ndarray): 
             A numpy array of images. Either 3D: *(n_images, height, width)* or
-            4D: *(n_images, height, width, n_channels)*. Images should be scaled 
+            4D: *(n_images, height, width, n_channels)*. Images should be scaled
             between 0 and 255 and will be converted to uint8.
         start_index (int): 
             The index of the first image to display. (Default is *0*)
         path_csv (str): 
-            Path to the CSV file for saving results. If ``None``, results will 
+            Path to the CSV file for saving results. If ``None``, results will
             not be saved.
         save_csv (bool):
             Whether to save the results to a CSV. (Default is ``True``)
         resize_factor (float): 
-            A scaling factor for the fractional change in image size. 
-            (Default is *1.0*)
+            A scaling factor for the fractional change in image size. (Default
+            is *1.0*)
         normalize_images (bool):
-            Whether to normalize the images between min and max values. 
-            (Default is ``True``)
+            Whether to normalize the images between min and max values. (Default
+            is ``True``)
         verbose (bool):
             Whether to print status updates. (Default is ``True``)
         key_end (str): 
             Key to press to end the session. (Default is ``'Escape'``)
         key_prev (str):
-            Key to press to go back to the previous image. (Default is ``'Left'``)
+            Key to press to go back to the previous image. (Default is
+            ``'Left'``)
         key_next (str):
             Key to press to go to the next image. (Default is ``'Right'``)
 
@@ -1641,38 +1641,42 @@ class ImageLabeler:
         .. highlight:: python
         .. code-block:: python
 
-            with ImageLabeler(images, start_index=0, resize_factor=4.0, key_end='Escape') as labeler:
+            with ImageLabeler(images, start_index=0, resize_factor=4.0,
+            key_end='Escape') as labeler:
                 labeler.run()
             path_csv, labels = labeler.path_csv, labeler.labels_
 
     Attributes:
         image_array (np.ndarray):
             A numpy array of images. Either 3D: *(n_images, height, width)* or
-            4D: *(n_images, height, width, n_channels)*. Images should be scaled 
+            4D: *(n_images, height, width, n_channels)*. Images should be scaled
             between 0 and 255 and will be converted to uint8.
         start_index (int): 
             The index of the first image to display. (Default is *0*)
         path_csv (str): 
-            Path to the CSV file for saving results. If ``None``, results will 
+            Path to the CSV file for saving results. If ``None``, results will
             not be saved.
         save_csv (bool):
             Whether to save the results to a CSV. (Default is ``True``)
         resize_factor (float): 
-            A scaling factor for the fractional change in image size. 
-            (Default is *1.0*)
+            A scaling factor for the fractional change in image size. (Default
+            is *1.0*)
         normalize_images (bool):
-            Whether to normalize the images between min and max values. 
-            (Default is ``True``)
+            Whether to normalize the images between min and max values. (Default
+            is ``True``)
         verbose (bool):
             Whether to print status updates. (Default is ``True``)
         key_end (str): 
             Key to press to end the session. (Default is ``'Escape'``)
         key_prev (str):
-            Key to press to go back to the previous image. (Default is ``'Left'``)
+            Key to press to go back to the previous image. (Default is
+            ``'Left'``)
         key_next (str):
             Key to press to go to the next image. (Default is ``'Right'``)
+        labels_ (list):
+            A list of tuples containing the image index and classification label
+            for each image. The list is saved to a CSV file in self.path_csv.
     """
-
     def __init__(
         self, 
         image_array: np.ndarray, 
