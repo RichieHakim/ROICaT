@@ -26,7 +26,7 @@ Requirements
 
 
 Installation
-------------
+############
 
 
 1. **Recommended: Create a new conda environment**
@@ -61,10 +61,10 @@ command, i.e. ``pip install "roicat[all]"``
 
 
 Troubleshooting Installation
-----------------------------
+############################
 
 Windows installation
-####################
+---------------------
 
 If you receive the error:
 ``ERROR: Could not build wheels for hdbscan, which is required to install pyproject.toml-based projects``
@@ -84,7 +84,7 @@ commands above.
 
 
 GPU support
-###########
+-----------
 
 GPU support is not required. Windows users will often need to manually
 install a CUDA version of pytorch (see below). Note that you can check
