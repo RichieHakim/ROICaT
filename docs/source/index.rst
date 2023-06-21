@@ -1,5 +1,8 @@
-ROICaT (Region of Interest Classification and Tracking)
-=======================================================
+ROICaT
+======
+
+Region of Interest Classification and Tracking
+##############################################
 
 `Github Repository <https://github.com/richiehakim/ROICaT>`_
 
@@ -18,10 +21,12 @@ Contents
 --------
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
 
    installation
-   
+
+   howto
+
    roicat
 
 

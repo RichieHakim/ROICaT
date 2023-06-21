@@ -61,7 +61,7 @@ command, i.e. ``pip install "roicat[all]"``
 
 
 Troubleshooting Installation
-============================
+----------------------------
 
 Windows installation
 ####################
