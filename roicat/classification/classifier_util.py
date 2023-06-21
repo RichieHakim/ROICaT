@@ -141,13 +141,12 @@ def import_data(
 
     return
 
->>>>>>> f7e8b20 (Updates to classifier training notebooks)
 class Datasplit():
     """
     Split data into training and validation sets with additional helper methods
     JZ 2023
     """
-    def __init__(self, features, labels, n_train=None, test_size=None):
+    def __init__(self, features, labels, n_train=None, train_size=None, val_size=None, test_size=None):
         """
         Split data into training and validation sets
         Args:
@@ -160,19 +159,38 @@ class Datasplit():
             test_size (float):
                 Fraction of data to be used for validation
         """
+        # Assert that exactly 2 or 3 of train_size, val_size, and test_size are not None and that the sum of those specified add up to 1 if 3 are specified or <= 1 if 2 are specified
+        assert sum([train_size is not None, val_size is not None, test_size is not None]) == 2 or sum([train_size is not None, val_size is not None, test_size is not None]) == 3, 'JZ: Exactly 2 or 3 of train_size, val_size, and test_size must be specified'
+        if sum([train_size is not None, val_size is not None, test_size is not None]) == 3:
+            assert train_size + val_size + test_size == 1, 'JZ: train_size + val_size + test_size must equal 1'
+        elif sum([train_size is not None, val_size is not None, test_size is not None]) == 2:
+            assert sum([set_size for set_size in [train_size, val_size, test_size] if set_size is not None]) <= 1, 'JZ: Specified train_size + val_size + test_size must be <= 1'
+
         self.features = features
         self.labels = labels
         self.n_train = n_train
-        self.test_size = test_size
-    
-        self.idx_train, self.idx_val = self.stratified_sample(self.features, self.labels, n_splits=1, test_size=self.test_size)
-        
+
+        self.train_size = 1 - val_size - test_size if train_size is None else train_size
+        self.val_size = 1 - train_size - test_size if val_size is None else val_size
+        self.test_size = 1 - train_size - val_size if test_size is None else test_size
+
+        # Extract training data
+        self.idx_train, self.idx_nonTrain = self.stratified_sample(self.features, self.labels, n_splits=1, test_size=(self.val_size + self.test_size))
         self.features_train = self.features[self.idx_train]
         self.labels_train = self.labels[self.idx_train]
-        
-        self.features_val = self.features[self.idx_val]
-        self.labels_val = self.labels[self.idx_val]
 
+        # Temporary Holder for non-train data to be split into validation and test sets
+        features_nonTrain = self.features[self.idx_nonTrain]
+        labels_nonTrain = self.labels[self.idx_nonTrain]
+
+        # Extract validation and test data
+        self.idx_val, self.idx_test = self.stratified_sample(features_nonTrain, labels_nonTrain, n_splits=1, test_size=self.test_size/(1 - self.train_size))
+        self.features_val = features_nonTrain[self.idx_val]
+        self.labels_val = labels_nonTrain[self.idx_val]
+        self.features_test = features_nonTrain[self.idx_test]
+        self.labels_test = labels_nonTrain[self.idx_test]
+
+        # Downsample training data if specified
         self.idx_train_subset, _ = self.downsample_train(self.features_train, self.labels_train, len(self.idx_train))
         self.features_train_subset = self.features_train[self.idx_train_subset]
         self.labels_train_subset = self.labels_train[self.idx_train_subset]
