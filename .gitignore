@@ -132,3 +132,4 @@ dmypy.json
 .DS_Store
 data_test/
 .vscode/
+.fuse_hidden*
