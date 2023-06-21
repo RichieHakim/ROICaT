@@ -281,9 +281,9 @@ class Aligner(util.ROICaT_Module):
             ims_moving (List[np.ndarray]): 
                 A list of images to be aligned.
             remappingIdx_init (Optional[np.ndarray]): 
-                An array of shape *(N, H, W, 2)* representing any initial
-                remap field to apply to the images in ``ims_moving``.
-                The output of this method will be added/composed with ``remappingIdx_init``.
+                An array of shape *(N, H, W, 2)* representing any initial remap
+                field to apply to the images in ``ims_moving``. The output of
+                this method will be added/composed with ``remappingIdx_init``.
                 (Default is ``None``)
             template_method (str): 
                 The method to use for **template** selection. Either \n
@@ -293,17 +293,18 @@ class Aligner(util.ROICaT_Module):
                   previous for images after the template) \n
                 (Default is 'sequential')
             mode_transform (str): 
-                The type of transformation to use for registration.
-                Either 'createOptFlow_DeepFlow' or 'calcOpticalFlowFarneback'.
-                (Default is 'createOptFlow_DeepFlow')
+                The type of transformation to use for registration. Either
+                'createOptFlow_DeepFlow' or 'calcOpticalFlowFarneback'. (Default
+                is 'createOptFlow_DeepFlow')
             kwargs_mode_transform (Optional[dict]): 
-                Keyword arguments to pass to the ``mode_transform`` function.
-                See cv2 functions for more details. (Default is ``None``)
+                Keyword arguments for the transform chosen. See cv2 docs for
+                chosen transform. (Default is ``None``)
 
         Returns:
             (np.ndarray): 
                 remapIdx_nonrigid (np.ndarray): 
-                    An array of shape *(N, H, W, 2)* representing the remap field for N images.
+                    An array of shape *(N, H, W, 2)* representing the remap
+                    field for N images.
         """
         # Check if ims_moving is a non-empty list
         assert len(ims_moving) > 0, "ims_moving must be a non-empty list of images."

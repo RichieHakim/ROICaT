@@ -23,7 +23,7 @@ def add_subdirs_to_sys_path(path):
         if _dir.name[:2] in ['__pycache__', '.ipynb_checkpoints']:
             continue
         if _dir.is_dir():
-            print(f'Adding {_dir} to sys.path')
+            # print(f'Adding {_dir} to sys.path')
             sys.path.insert(0, str(_dir))
             add_subdirs_to_sys_path(_dir)
 sys.path.insert(0, str(_dir_parent))
