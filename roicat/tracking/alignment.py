@@ -4,7 +4,6 @@ import warnings
 from typing import List, Tuple, Union, Optional, Dict, Any, Sequence, Callable
 
 import numpy as np
-import cv2
 import scipy.sparse
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -306,6 +305,7 @@ class Aligner(util.ROICaT_Module):
                     An array of shape *(N, H, W, 2)* representing the remap
                     field for N images.
         """
+        import cv2
         # Check if ims_moving is a non-empty list
         assert len(ims_moving) > 0, "ims_moving must be a non-empty list of images."
         # Check if all images in ims_moving have the same shape
@@ -1030,6 +1030,7 @@ def clahe(
             im_out (np.ndarray): 
                 Output image after applying CLAHE.
     """
+    import cv2
     im_tu = (im / im.max())*(2**8) if normalize else im
     im_tu = (im_tu/10).astype(np.uint8)
     clahe = cv2.createCLAHE(clipLimit=clipLimit, tileGridSize=(grid_size, grid_size))
