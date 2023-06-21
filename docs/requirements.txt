@@ -1,25 +1,4 @@
-sphinx==7.0.1
-# sphinx-rtd-theme==1.2.1
-readthedocs-sphinx-search
-einops
-hdbscan
-jupyter
-kymatio
-matplotlib
-natsort
-numpy
-opencv_contrib_python
-optuna
-paramiko
-Pillow
-pytest
-scikit_learn
-scipy
-seaborn
-sparse
-tqdm
-umap
-xxhash
-torch
-torchvision
-torchaudio
+# docs/requirements.txt
+sphinx==6.2.1
+sphinx_rtd_theme==1.2.2
+roicat

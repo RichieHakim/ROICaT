@@ -121,7 +121,19 @@ class Data():
         have any NaN value in any of their dimensions and removes
         those entries from both self.statFiles and self.labelFiles
         """
-        idx_nne = helpers.get_keep_nonnan_entries(self.statFiles)
+        def get_keep_nonnan_entries(original_features):
+            """
+            Get the image indices (axis 0) where all values at those indices are non-nan
+            JZ 2022
+
+            Args:
+                original_features (np.ndarray): 
+                    image values (images x height x width)
+            """
+            has_nan = [np.unique(np.where(np.isnan(of))[0]) for of in original_features]
+            return np.array([_ for _ in range(original_features.shape[0]) if _ not in has_nan])
+
+        idx_nne = get_keep_nonnan_entries(self.statFiles)
         self.statFiles = self.statFiles[idx_nne]
         self.labelFiles = self.labelFiles[idx_nne]
         return self.statFiles, self.labelFiles
