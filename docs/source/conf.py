@@ -7,6 +7,7 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 from pathlib import Path
+_dir_parent = Path(__file__).parent.parent.parent  ## ROICaT outer directory
 
 # -- Path setup --------------------------------------------------------------
 
@@ -16,16 +17,20 @@ from pathlib import Path
 #
 import os
 import sys
-sys.path.insert(0, os.path.abspath('../../'))
-sys.path.insert(0, os.path.abspath('../'))
-sys.path.insert(0, os.path.abspath('../media'))
-sys.path.insert(0, os.path.abspath('../source'))
-
+## add all subdirectories to sys.path
+def add_subdirs_to_sys_path(path):
+    for _dir in path.iterdir():
+        if _dir.name[:2] in ['__pycache__', '.ipynb_checkpoints']:
+            continue
+        if _dir.is_dir():
+            print(f'Adding {_dir} to sys.path')
+            sys.path.insert(0, str(_dir))
+            add_subdirs_to_sys_path(_dir)
+sys.path.insert(0, str(_dir_parent))
+add_subdirs_to_sys_path(_dir_parent)
 
 
 ## Get version number
-_dir_parent = Path(__file__).parent.parent.parent
-
 with open(str(_dir_parent / "roicat" / "__init__.py"), "r") as _f:
     for _line in _f:
         if _line.startswith("__version__"):
