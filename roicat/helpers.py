@@ -2880,3 +2880,182 @@ def get_balanced_sample_weights(labels, class_weights=None):
         weights = class_weights
     sample_weights = weights[labels]
     return sample_weights
+
+class Figure_Saver:
+    """
+    Class for saving figures
+    RH 2022/JZ 2023
+    """
+    def __init__(
+        self,
+        dir_save: str=None,
+        format_save: list=['png'],
+        kwargs_savefig: dict={
+            'bbox_inches': 'tight',
+            'pad_inches': 0.1,
+            'transparent': True,
+            'dpi': 300,
+        },
+        overwrite: bool=False,
+        verbose: int=1,
+    ):
+        """
+        Initializes Figure_Saver object
+
+        Args:
+            dir_save (str):
+                Directory to save the figure. Used if path_config is None.
+                Must be specified if path_config is None.
+            format (list of str):
+                Format(s) to save the figure. Default is 'png'.
+                Others: ['png', 'svg', 'eps', 'pdf']
+            overwrite (bool):
+                If True, then overwrite the file if it exists.
+            kwargs_savefig (dict):
+                Keyword arguments to pass to fig.savefig().
+            verbose (int):
+                Verbosity level.
+                0: No output.
+                1: Warning.
+                2: All info.
+        """
+        self.dir_save = str(Path(dir_save).resolve().absolute()) if dir_save is not None else None
+
+        assert isinstance(format_save, list), "RH ERROR: format_save must be a list of strings"
+        assert all([isinstance(f, str) for f in format_save]), "RH ERROR: format_save must be a list of strings"
+        self.format_save = format_save
+
+        assert isinstance(kwargs_savefig, dict), "RH ERROR: kwargs_savefig must be a dictionary"
+        self.kwargs_savefig = kwargs_savefig
+
+        self.overwrite = overwrite
+        self.verbose = verbose
+
+    def save(
+        self,
+        fig,
+        path_save: str=None,
+        dir_save: str=None,
+        name_file: str=None,
+
+        path_save_notes: str=None,
+        notes: str=None,
+        note_ext: str='txt',
+    ):
+        """
+        Save the figures.
+
+        Args:
+            fig (matplotlib.figure.Figure):
+                Figure to save.
+            path_save (str):
+                Path to save the figure.
+                Should not contain suffix.
+                If None, then the dir_save must be specified here or in
+                 the initialization and name_file must be specified.
+            dir_save (str):
+                Directory to save the figure. If None, then the directory
+                 specified in the initialization is used.
+            name_file (str):
+                Name of the file to save. If None, then the name of 
+                the figure is used.
+        """
+        import matplotlib.pyplot as plt
+        assert isinstance(fig, plt.Figure), "RH ERROR: fig must be a matplotlib.figure.Figure"
+
+        ## Get path_save
+        if path_save is not None:
+            assert len(Path(path_save).suffix) == 0, "RH ERROR: path_save must not contain suffix"
+            path_save = [str(Path(path_save).resolve()) + '.' + f for f in self.format_save]
+        else:
+            assert (dir_save is not None) or (self.dir_save is not None), "RH ERROR: dir_save must be specified if path_save is None"
+            assert name_file is not None, "RH ERROR: name_file must be specified if path_save is None"
+
+            ## Get dir_save
+            dir_save = self.dir_save if dir_save is None else str(Path(dir_save).resolve())
+
+            ## Get figure title
+            if name_file is None:
+                titles = [a.get_title() for a in fig.get_axes() if a.get_title() != '']
+                name_file = '.'.join(titles)
+            path_save = [str(Path(dir_save) / (name_file + '.' + f)) for f in self.format_save]
+        
+        if notes is not None:
+            if path_save_notes is not None:
+                assert len(Path(path_save_notes).suffix) == 0, "JZ ERROR: path_save_notes must not contain suffix"
+                path_save_notes = str(Path(path_save_notes).resolve()) + '.' + note_ext
+            elif dir_save is not None:
+                assert (dir_save is not None) or (self.dir_save is not None), "RH ERROR: dir_save must be specified if path_save is None"
+                assert name_file is not None, "JZ ERROR: name_file must be specified if path_save is None"
+                path_save_notes = str(Path(dir_save) / (name_file + '.' + note_ext))
+        else:
+            path_save_notes = None
+
+        ## Save figure
+        for path, form in zip(path_save, self.format_save):
+            if Path(path).exists():
+                if self.overwrite:
+                    print(f'RH Warning: Overwriting file. File: {path} already exists.') if self.verbose > 0 else None
+                else:
+                    print(f'RH Warning: Not saving anything. File exists and overwrite==False. {path} already exists.') if self.verbose > 0 else None
+                    return None
+            print(f'FR: Saving figure {path} as format(s): {form}') if self.verbose > 1 else None
+            fig.savefig(path, format=form, **self.kwargs_savefig)
+        ## Save notes
+        if Path(path_save).exists():
+            if self.overwrite:
+                print(f'RH Warning: Overwriting file. File: {path} already exists.') if self.verbose > 0 else None
+            else:
+                print(f'RH Warning: Not saving anything. File exists and overwrite==False. {path} already exists.') if self.verbose > 0 else None
+                return None
+        print(f'FR: Saving figure {path} as format(s): {form}') if self.verbose > 1 else None
+        fig.savefig(path, format=form, **self.kwargs_savefig)
+
+        if path_save_notes is not None and notes is not None:
+            with open(path_save_notes, 'w') as f:
+                f.write(notes)
+    
+    def save_batch(
+        self,
+        figs,
+        dir_save: str=None,
+        names_files: str=None,
+    ):
+        """
+        Save all figures in a list.
+
+        Args:
+            figs (list of matplotlib.figure.Figure):
+                Figures to save.
+            dir_save (str):
+                Directory to save the figure. If None, then the directory
+                 specified in the initialization is used.
+            name_file (str):
+                Name of the file to save. If None, then the name of 
+                the figure is used.
+        """
+        import matplotlib.pyplot as plt
+        assert isinstance(figs, list), "RH ERROR: figs must be a list of matplotlib.figure.Figure"
+        assert all([isinstance(fig, plt.Figure) for fig in figs]), "RH ERROR: figs must be a list of matplotlib.figure.Figure"
+
+        ## Get dir_save
+        dir_save = self.dir_save if dir_save is None else str(Path(dir_save).resolve())
+
+        for fig, name_file in zip(figs, names_files):
+            self.save(fig, name_file=name_file, dir_save=dir_save)
+
+    def __call__(
+        self,
+        fig,
+        path_save: str=None,
+        name_file: str=None,
+        dir_save: str=None,
+    ):
+        """
+        Calls save() method.
+        """
+        self.save(fig, path_save=path_save, name_file=name_file, dir_save=dir_save)
+
+    def __repr__(self):
+        return f"Figure_Saver(dir_save={self.dir_save}, format={self.format_save}, overwrite={self.overwrite}, kwargs_savefig={self.kwargs_savefig}, verbose={self.verbose})"
+

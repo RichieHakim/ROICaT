@@ -15,6 +15,7 @@ from tqdm import tqdm, trange
 from roicat import ROInet, data_importing
 import warnings
 import h5py
+import umap
 
 activation_lookup = {
                'relu': nn.ReLU,
@@ -24,12 +25,245 @@ activation_lookup = {
                'sigmoid': nn.Sigmoid,
     }
 
+<<<<<<< HEAD
+=======
+class UMAP_Labeler(umap.UMAP):
+    def __init__(self,
+            n_neighbors=30,
+            n_components=2,
+            metric='euclidean',
+            metric_kwds=None,
+            output_metric='euclidean',
+            output_metric_kwds=None,
+            n_epochs=None,
+            learning_rate=1.0,
+            init='spectral',
+            min_dist=0.1,
+            spread=1.0,
+            low_memory=True,
+            n_jobs=-1,
+            set_op_mix_ratio=1.0,
+            local_connectivity=1.0,
+            repulsion_strength=1.0,
+            negative_sample_rate=5,
+            transform_queue_size=4.0,
+            a=None,
+            b=None,
+            random_state=None,
+            angular_rp_forest=False,
+            target_n_neighbors=-1,
+            target_metric='categorical',
+            target_metric_kwds=None,
+            target_weight=0.5,
+            transform_seed=42,
+            transform_mode='embedding',
+            force_approximation_algorithm=False,
+            verbose=False,
+            tqdm_kwds=None,
+            unique=False,
+            densmap=False,
+            dens_lambda=2.0,
+            dens_frac=0.3,
+            dens_var_shift=0.1,
+            output_dens=False,
+            disconnection_distance=None,
+            precomputed_knn=(None, None, None),
+    ):
+        self.umap_params = dict(
+            n_neighbors=n_neighbors,
+            n_components=n_components,
+            metric=metric,
+            metric_kwds=metric_kwds,
+            output_metric=output_metric,
+            output_metric_kwds=output_metric_kwds,
+            n_epochs=n_epochs,
+            learning_rate=learning_rate,
+            init=init,
+            min_dist=min_dist,
+            spread=spread,
+            low_memory=low_memory,
+            n_jobs=n_jobs,
+            set_op_mix_ratio=set_op_mix_ratio,
+            local_connectivity=local_connectivity,
+            repulsion_strength=repulsion_strength,
+            negative_sample_rate=negative_sample_rate,
+            transform_queue_size=transform_queue_size,
+            a=a,
+            b=b,
+            random_state=random_state,
+            angular_rp_forest=angular_rp_forest,
+            target_n_neighbors=target_n_neighbors,
+            target_metric=target_metric,
+            target_metric_kwds=target_metric_kwds,
+            target_weight=target_weight,
+            transform_seed=transform_seed,
+            transform_mode=transform_mode,
+            force_approximation_algorithm=force_approximation_algorithm,
+            verbose=verbose,
+            tqdm_kwds=tqdm_kwds,
+            unique=unique,
+            densmap=densmap,
+            dens_lambda=dens_lambda,
+            dens_frac=dens_frac,
+            dens_var_shift=dens_var_shift,
+            output_dens=output_dens,
+            disconnection_distance=disconnection_distance,
+            precomputed_knn=precomputed_knn,
+        )
+        super().__init__(**self.umap_params)
+
+    def plot_annotated(
+            self,
+            data,
+            embeddings,
+            figsize=(10,10),
+            **kwargs
+        ):
+        assert embeddings.shape[1] == 2, "Embeddings must be 2-dimensional"
+        import matplotlib.pyplot as plt
+        import matplotlib.offsetbox
+
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.scatter(embeddings[:,0], embeddings[:,1], s=5, cmap='gist_rainbow')
+
+        inx_lst = np.arange(np.concatenate(data.ROI_images).shape[0])
+        inx_lst = np.random.choice(inx_lst, 100, replace=False)
+        img_lst = np.concatenate(data.ROI_images)[inx_lst]
+        x = embeddings[inx_lst, 0]
+        y = embeddings[inx_lst, 1]
+
+        for x0, y0, ROI_single in zip(x, y, img_lst):
+            offsetImage = matplotlib.offsetbox.OffsetImage(ROI_single, cmap='gray', zoom=1) # initialize offset image to contain ROI visualization
+            ab = matplotlib.offsetbox.AnnotationBbox(offsetImage, (x0, y0), frameon=False)
+            ax.add_artist(ab)
+        
+        return fig, ax
+
+
+def import_data(
+        list_dict_data=[]
+
+        # list_dict_data_suite2p=[],
+        # list_dict_data_caiman=[],
+        # list_dict_data_raw=[],
+        # list_dict_data_raw_sparse=[],
+
+        # um_per_pixel,
+        # new_or_old_suite2p,
+        # out_height_width,
+        # type_meanImg,
+        # FOV_images,
+        # verbose,
+):
+    print(f"JZ: Number of sessions to be imported from suite2p = {len(list_dict_data_suite2p)}")
+    print(f"JZ: Number of sessions to be imported from caiman = {len(list_dict_data_caiman)}")
+    print(f"JZ: Number of sessions to be imported from raw = {len(list_dict_data_raw)}")
+    print(f"JZ: Number of sessions to be imported from raw_sparse = {len(list_dict_data_raw_sparse)}")
+
+    if len(list_dict_data) > 0:
+        # Check that all suite2p imports have the same parameters (except for filepath_stat and filepath_ops)
+        params_import = {}
+        for dict_data in list_dict_data:
+            if dict_data['datatype'] == 'suite2p': assert 'filepath_stat' in dict_data and 'filepath_ops' in dict_data, 'JZ: suite2p imports must include filepath_stat and filepath_ops'
+            if dict_data['datatype'] == 'raw_ROIs': assert 'filename_rawImages' in dict_data, 'JZ: raw_ROIs imports must include filepath_stat and filepath_ops'
+            if dict_data['datatype'] == 'raw_ROIs_sparse': assert 'filename_rawImages_sparse' in dict_data, 'JZ: raw_ROIs_sparse imports must include filepath_stat and filepath_ops'
+            if dict_data['datatype'] == 'caiman': assert False
+            
+            for key, value in dict_data.items():
+                if key == 'datatype':
+                    continue
+                elif 'filepath' in key:
+                    params_import_suite2p[key] = params_import_suite2p.get(key, []) + [value]
+                    continue
+                elif key in params_import:
+                    assert params_import[key] == dict_data[key], f'JZ: All suite2p imports must have the same {key}'
+                else:
+                    params_import[key] = dict_data[key]
+
+        # Create data importing object to import suite2p data
+        data = roicat.data_importing.Data_suite2p(**params_import_suite2p)
+
+        # paths_statFiles=params_import_suite2p['filepath_stat'],
+        # paths_opsFiles=params_import_suite2p['filepath_ops'],
+        # class_labels=params_import_suite2p['filepath_labels'],
+        # um_per_pixel=params['hyperparameters_data']['um_per_pixel'],
+        # new_or_old_suite2p=params['hyperparameters_data']['new_or_old_suite2p'],
+        # out_height_width=params['hyperparameters_data']['out_height_width'],
+        # type_meanImg=params['hyperparameters_data']['type_meanImg'],
+        # FOV_images=params['hyperparameters_data']['FOV_images'],
+        # verbose=params['hyperparameters_data']['verbose'],
+    
+
+    if len(list_dict_data_caiman) > 0:
+        # Check that all suite2p imports have the same parameters (except for filepath_stat and filepath_ops)
+        params_import_suite2p = {}
+        for dict_data_suite2p in list_dict_data_suite2p:
+            assert 'filepath_stat' in dict_data_suite2p and 'filepath_ops' in dict_data_suite2p, 'JZ: suite2p imports must include filepath_stat and filepath_ops'
+            for key, value in dict_data_suite2p.items():
+                if 'filepath' in key:
+                    params_import_suite2p[key] = params_import_suite2p.get(key, []) + [value]
+                    continue
+                elif key in params_import_suite2p:
+                    assert params_import_suite2p[key] == dict_data_suite2p[key], f'JZ: All suite2p imports must have the same {key}'
+                else:
+                    params_import_suite2p[key] = dict_data_suite2p[key]
+
+        # Create data importing object to import suite2p data
+        data = roicat.data_importing.Data_suite2p(**params_import_suite2p)
+
+        # paths_statFiles=params_import_suite2p['filepath_stat'],
+        # paths_opsFiles=params_import_suite2p['filepath_ops'],
+        # class_labels=params_import_suite2p['filepath_labels'],
+        # um_per_pixel=params['hyperparameters_data']['um_per_pixel'],
+        # new_or_old_suite2p=params['hyperparameters_data']['new_or_old_suite2p'],
+        # out_height_width=params['hyperparameters_data']['out_height_width'],
+        # type_meanImg=params['hyperparameters_data']['type_meanImg'],
+        # FOV_images=params['hyperparameters_data']['FOV_images'],
+        # verbose=params['hyperparameters_data']['verbose'],
+    
+
+    elif params['datatype'] == "caiman":
+        
+        # TODO: Add Caiman data importing
+        # # assert 'filename_stat' in params['paths'] and 'filename_ops' in params['paths'], 'JZ: The caiman params.json file must include paths.filename_stat and paths.filename_ops for stat_s2p datatype'
+        # filepath_data_stat = str((Path(params['paths']['directory_data']) / params['paths']['filename_stat']).resolve())
+        # filepath_data_ops = str((Path(params['paths']['directory_data']) / params['paths']['filename_ops']).resolve())
+
+        # # # Create data importing object to import suite2p data
+        # # data = roicat.data_importing.Data_caiman(
+        # #     paths_statFiles=[filepath_data_stat],
+        # #     paths_opsFiles=[filepath_data_ops],
+        # #     class_labels=[filepath_data_labels],
+        #     # um_per_pixel=params['hyperparameters_data']['um_per_pixel'],
+        #     # new_or_old_suite2p=params['hyperparameters_data']['new_or_old_suite2p'],
+        #     # out_height_width=params['hyperparameters_data']['out_height_width'],
+        #     # type_meanImg=params['hyperparameters_data']['type_meanImg'],
+        #     # FOV_images=params['hyperparameters_data']['FOV_images'],
+        #     # verbose=params['hyperparameters_data']['verbose'],
+        # # )
+        pass
+    elif params['datatype'] == "raw_images":
+        assert 'filename_rawImages' in params['paths'], 'JZ: The suite2p params.json file must include paths.filename_rawImages for raw_images datatype'
+        filepath_data_rawImages = str((Path(params['paths']['directory_data']) / params['paths']['filename_rawImages']).resolve())
+
+        sf = scipy.sparse.load_npz(filepath_data_rawImages)
+        labels = np.load(filepath_data_labels)
+
+        data = roicat.data_importing.Data_roicat(verbose=True)
+        data.set_ROI_images(ROI_images=[sf.A.reshape(sf.shape[0], 36, 36)], um_per_pixel=params['hyperparameters_data']['um_per_pixel'])
+        data.set_class_labels(class_labels=[labels.astype(int)])
+    else:
+        raise ValueError(f"Invalid datatype for simclr: {params['datatype']}")
+
+    return
+
+>>>>>>> f7e8b20 (Updates to classifier training notebooks)
 class Datasplit():
     """
     Split data into training and validation sets with additional helper methods
     JZ 2023
     """
-    def __init__(self, features, labels, n_train=None, test_size=None):
+    def __init__(self, features, labels, n_train=None, train_size=None, val_size=None, test_size=None):
         """
         Split data into training and validation sets
         Args:
@@ -42,19 +276,38 @@ class Datasplit():
             test_size (float):
                 Fraction of data to be used for validation
         """
+        # Assert that exactly 2 or 3 of train_size, val_size, and test_size are not None and that the sum of those specified add up to 1 if 3 are specified or <= 1 if 2 are specified
+        assert sum([train_size is not None, val_size is not None, test_size is not None]) == 2 or sum([train_size is not None, val_size is not None, test_size is not None]) == 3, 'JZ: Exactly 2 or 3 of train_size, val_size, and test_size must be specified'
+        if sum([train_size is not None, val_size is not None, test_size is not None]) == 3:
+            assert train_size + val_size + test_size == 1, 'JZ: train_size + val_size + test_size must equal 1'
+        elif sum([train_size is not None, val_size is not None, test_size is not None]) == 2:
+            assert sum([set_size for set_size in [train_size, val_size, test_size] if set_size is not None]) <= 1, 'JZ: Specified train_size + val_size + test_size must be <= 1'
+
         self.features = features
         self.labels = labels
         self.n_train = n_train
-        self.test_size = test_size
-    
-        self.idx_train, self.idx_val = self.stratified_sample(self.features, self.labels, n_splits=1, test_size=self.test_size)
-        
+
+        self.train_size = 1 - val_size - test_size if train_size is None else train_size
+        self.val_size = 1 - train_size - test_size if train_size is None else train_size
+        self.test_size = 1 - train_size - val_size if train_size is None else train_size
+
+        # Extract training data
+        self.idx_train, self.idx_nonTrain = self.stratified_sample(self.features, self.labels, n_splits=1, test_size=(self.val_size + self.test_size))
         self.features_train = self.features[self.idx_train]
         self.labels_train = self.labels[self.idx_train]
-        
-        self.features_val = self.features[self.idx_val]
-        self.labels_val = self.labels[self.idx_val]
 
+        # Temporary Holder for non-train data to be split into validation and test sets
+        self.features_nonTrain = self.features[self.idx_nonTrain]
+        self.labels_nonTrain = self.labels[self.idx_nonTrain]
+
+        # Extract validation and test data
+        self.idx_val, self.idx_test = self.stratified_sample(self.features_nonTrain, self.labels_nonTrain, n_splits=1, test_size=self.test_size/(1 - self.train_size))
+        self.features_val = self.features_nonTrain[self.idx_train]
+        self.labels_val = self.labels_nonTrains[self.idx_train]
+        self.features_test = self.features_nonTrain[self.idx_test]
+        self.labels_test = self.labels_nonTrains[self.idx_test]
+
+        # Downsample training data if specified
         self.idx_train_subset, _ = self.downsample_train(self.features_train, self.labels_train, len(self.idx_train))
         self.features_train_subset = self.features_train[self.idx_train_subset]
         self.labels_train_subset = self.labels_train[self.idx_train_subset]
