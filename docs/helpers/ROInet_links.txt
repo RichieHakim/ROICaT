@@ -1,0 +1,12 @@
+OSF.io links to ROInet versions:
+
+* ROInet_tracking:
+    * Info: This version does not include occlusions or large
+      affine transformations.
+    * Link: https://osf.io/x3fd2/download
+    * Hash (MD5 hex): 7a5fb8ad94b110037785a46b9463ea94
+* ROInet_classification:
+    * Info: This version includes occlusions and large affine
+      transformations.
+    * Link: https://osf.io/c8m3b/download
+    * Hash (MD5 hex): 357a8d9b630ec79f3e015d0056a4c2d5

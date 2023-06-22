@@ -1,6 +1,15 @@
 How to use ROICaT
 =================
 
+Listed below, we have a suite of easy to run notebooks for running the ROICaT
+pipelines.
+
+* The **Google CoLab notebooks** can be run fully remotely without installing
+  anything on your computer.
+* The **Jupyter notebooks** can be run locally on your computer and require you to
+  `install ROICaT
+  <https://roicat.readthedocs.io/en/latest/installation.html>`__.
+
 .. image:: ../media/tracking_FOV_clusters_rich.gif
    :align: right
    :width: 300
@@ -28,15 +37,15 @@ How to use ROICaT
 |
 
 **OTHER:** 
-   * `Custom data importing notebook <https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/other/demo_custom_data_importing.ipynb>`__
+   * `Custom data importing notebook <https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/other/demo_data_importing.ipynb>`__
    * Train a new ROInet model using the provided Jupyter Notebook [TODO: link]. 
-   * Use the API to integrate ROICaT functions into your own code: `Documentation <https://roicat.readthedocs.io/en/latest/>`__.
+   * Use the API to integrate ROICaT functions into your own code: `Documentation <https://roicat.readthedocs.io/en/latest/roicat.html>`__.
 
-General workflow:
-#################
+How ROICaT pipelines work:
+##########################
 
    * **Pass ROIs through ROInet:** Images of the ROIs are passed through a
-     neural network and outputs a feature vector for each image describing what
+     neural network which outputs a feature vector for each image describing what
      the ROI looks like. These feature vectors are used in the next steps.
    * **Classification:**
       * A simple **classifier** can be trained using user supplied labeled data
@@ -52,15 +61,10 @@ General workflow:
 ROInet model data
 #################
 
-OSF.io links to ROInet versions:
+Below are links to the current ROInet models. These models are trained on data
+from many labs from around the world. They take in images of ROIs and output a
+feature vector describing each ROI. See documentation on the `ROInet_embedder
+<https://roicat.readthedocs.io/en/latest/roicat.html#roicat.ROInet.ROInet_embedder>`__
+for more information on how to use these models.
 
-* ROInet_tracking:
-    * Info: This version does not include occlusions or large
-      affine transformations.
-    * Link: https://osf.io/x3fd2/download
-    * Hash (MD5 hex): 7a5fb8ad94b110037785a46b9463ea94
-* ROInet_classification:
-    * Info: This version includes occlusions and large affine
-      transformations.
-    * Link: https://osf.io/c8m3b/download
-    * Hash (MD5 hex): 357a8d9b630ec79f3e015d0056a4c2d5
+.. include:: ../helpers/ROInet_links.txt

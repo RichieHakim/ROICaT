@@ -1,0 +1,3 @@
+conda create -n roicat python=3.11
+conda activate roicat
+pip install --upgrade pip
