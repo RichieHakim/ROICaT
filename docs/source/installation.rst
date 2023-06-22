@@ -43,7 +43,7 @@ time you want to use ROICaT.
 Note: if you are using a zsh terminal, add quotes around the pip install
 command, i.e. ``pip install "roicat[all]"``
 
-1. **Clone the repo to get the scripts and notebooks**
+3. **Clone the repo to get the scripts and notebooks**
    
 .. literalinclude:: ../helpers/clone_repo.txt
 
