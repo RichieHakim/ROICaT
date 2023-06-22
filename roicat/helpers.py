@@ -14,6 +14,7 @@ import PIL
 from PIL import ImageTk
 import csv
 import warnings
+from typing import List, Dict, Tuple, Union, Optional, Any, Callable, Iterable, Sequence, Type
 
 import numpy as np
 import torch
@@ -982,6 +983,59 @@ def find_paths(
         paths = natsort.natsorted(paths, alg=alg_ns)
     return paths
 
+def find_paths_requireAll(
+    dir_outer,
+    filenames,
+    find_files=True,
+    find_folders=False,
+    depth=0,
+    natsorted=True,
+    alg_ns=None,
+    ):
+    """
+    Search for files and/or folders recursively in a directory.
+    JZ 2023
+
+    Args:
+        dir_outer (str):
+            Path to directory to search
+        filenames (List of str):
+            Filenames to match
+        find_files (bool):
+            Whether to find files
+        find_folders (bool):
+            Whether to find folders
+        depth (int):
+            Maximum folder depth to search.
+            depth=0 means only search the outer directory.
+            depth=2 means search the outer directory and two levels
+                of subdirectories below it.
+        natsorted (bool):
+            Whether to sort the output using natural sorting
+                with the natsort package.
+        alg_ns (str):
+            Algorithm to use for natural sorting.
+            See natsort.ns or
+                https://natsort.readthedocs.io/en/4.0.4/ns_class.html
+                for options.
+            Default is PATH.
+            Other commons are INT, FLOAT, VERSION.
+    """
+    paths = find_paths(dir_outer, filenames[0], find_files=True, find_folders=False, depth=0, natsorted=True, alg_ns=None)
+    list_reMatches = [[] for _ in range(len(filenames))]
+    for str_filepath in paths:
+        path_filepath = Path(str_filepath)
+        bool_continue = False
+        for filename in filenames:
+            if not (path_filepath.parent / filename).resolve().exists():
+                bool_continue = True
+                break
+        if bool_continue:
+            continue
+        else:
+            for i, filename in enumerate(filenames):
+                list_reMatches[i].append(str((path_filepath.parent / filename).resolve()))
+    return list_reMatches
 
 ######################################################################################################################################
 ########################################################## INDEXING ##################################################################
@@ -3065,72 +3119,101 @@ class Figure_Saver:
     def __repr__(self):
         return f"Figure_Saver(dir_save={self.dir_save}, format={self.format_save}, overwrite={self.overwrite}, kwargs_savefig={self.kwargs_savefig}, verbose={self.verbose})"
 
-class Image_labeler:
+class ImageLabeler:
     """
-    A simple graphical interface for labeling image classes.
-    Use this class with a context manager to ensure that the
-     window is closed properly. See demo below.
-    This class provides a tkinter window which displays images
-     from a provided numpy array one by one and lets you classify
-     each image by pressing a key. 
-    The title of the window is the image index.
-    The classification label and image index are stored as
-     self.labels_ and saved to a CSV file in self.path_csv.
+    A simple graphical interface for labeling image classes. Use this class with
+    a context manager to ensure the window is closed properly. The class
+    provides a tkinter window which displays images from a provided numpy array
+    one by one and lets you classify each image by pressing a key. The title of
+    the window is the image index. The classification label and image index are
+    stored as the ``self.labels_`` attribute and saved to a CSV file in
+    self.path_csv. 
     RH 2023
 
-    Demo:
-    with Image_labeler(images, start_index=0, resize_factor=4.0, key_end='Escape') as labeler:
-        labeler.run()
-    path_csv, labels = labeler.path_csv, labeler.labels_
-
     Args:
-        images (np.ndarray): 
-            A numpy array of images.
-            Either 3D: (n_images, height, width) or
-             4D: (n_images, height, width, n_channels).
-            Images should be scaled between 0 and 255 and will be
-             converted to uint8.
+        image_array (np.ndarray): 
+            A numpy array of images. Either 3D: *(n_images, height, width)* or
+            4D: *(n_images, height, width, n_channels)*. Images should be scaled
+            between 0 and 255 and will be converted to uint8.
         start_index (int): 
-            The index of the first image to display. Default is 0.
+            The index of the first image to display. (Default is *0*)
         path_csv (str): 
-            A string of the path to the CSV file for saving results.
-            If None, results will not be saved.
+            Path to the CSV file for saving results. If ``None``, results will
+            not be saved.
         save_csv (bool):
-            A boolean indicating whether to save the results to a CSV.
+            Whether to save the results to a CSV. (Default is ``True``)
         resize_factor (float): 
-            A scaling factor indicating the fractional change in 
-             image size. Default is 1.0 (no change).
-        key_end (str): 
-            A string of the key to press to end the session.
-        key_prev (str):
-            A string of the key to press to go back to the previous
-             image.
-        key_next (str):
-            A string of the key to press to go to the next image.
+            A scaling factor for the fractional change in image size. (Default
+            is *1.0*)
         normalize_images (bool):
-            A boolean indicating whether to normalize the images
-             between min and max values. Default is True.
+            Whether to normalize the images between min and max values. (Default
+            is ``True``)
         verbose (bool):
-            A boolean indicating whether to print status updates.
-    """
+            Whether to print status updates. (Default is ``True``)
+        key_end (str): 
+            Key to press to end the session. (Default is ``'Escape'``)
+        key_prev (str):
+            Key to press to go back to the previous image. (Default is
+            ``'Left'``)
+        key_next (str):
+            Key to press to go to the next image. (Default is ``'Right'``)
 
+    Example:
+        .. highlight:: python
+        .. code-block:: python
+
+            with ImageLabeler(images, start_index=0, resize_factor=4.0,
+            key_end='Escape') as labeler:
+                labeler.run()
+            path_csv, labels = labeler.path_csv, labeler.labels_
+
+    Attributes:
+        image_array (np.ndarray):
+            A numpy array of images. Either 3D: *(n_images, height, width)* or
+            4D: *(n_images, height, width, n_channels)*. Images should be scaled
+            between 0 and 255 and will be converted to uint8.
+        start_index (int): 
+            The index of the first image to display. (Default is *0*)
+        path_csv (str): 
+            Path to the CSV file for saving results. If ``None``, results will
+            not be saved.
+        save_csv (bool):
+            Whether to save the results to a CSV. (Default is ``True``)
+        resize_factor (float): 
+            A scaling factor for the fractional change in image size. (Default
+            is *1.0*)
+        normalize_images (bool):
+            Whether to normalize the images between min and max values. (Default
+            is ``True``)
+        verbose (bool):
+            Whether to print status updates. (Default is ``True``)
+        key_end (str): 
+            Key to press to end the session. (Default is ``'Escape'``)
+        key_prev (str):
+            Key to press to go back to the previous image. (Default is
+            ``'Left'``)
+        key_next (str):
+            Key to press to go to the next image. (Default is ``'Right'``)
+        labels_ (list):
+            A list of tuples containing the image index and classification label
+            for each image. The list is saved to a CSV file in self.path_csv.
+    """
     def __init__(
         self, 
         image_array: np.ndarray, 
         start_index: int=0,
-        path_csv: str=None, 
-        save_csv: bool=True,
-        resize_factor: float=10.0, 
-        normalize_images: bool=True,
-        verbose: bool=True,
-        key_end: str='Escape', 
-        key_prev: str='Left',
-        key_next: str='Right',
-    ):
+        path_csv: Optional[str] = None, 
+        save_csv: bool = True,
+        resize_factor: float = 10.0, 
+        normalize_images: bool = True,
+        verbose: bool = True,
+        key_end: str = 'Escape', 
+        key_prev: str = 'Left',
+        key_next: str = 'Right',
+    ) -> None:
         """
-        Initializes class with images, path to save csv and UI
-         elements.
-        Binds keys for classifying images and ending the session.
+        Initializes the ImageLabeler with the given image array, csv path, and UI 
+        elements. Binds keys for classifying images and ending the session.
         """
         import tempfile
         import datetime
@@ -3152,8 +3235,8 @@ class Image_labeler:
         
     def run(self):
         """
-        Runs the image labeler. Opens a tkinter window and displays
-         the first image.
+        Runs the image labeler. Opens a tkinter window and displays the first
+        image.
         """
         try:
             self._root = tk.Tk()
@@ -3224,7 +3307,9 @@ class Image_labeler:
             self.next_img()  ## Move to the next image
 
     def end_session(self, event):
-        """Ends the classification session by destroying the tkinter window."""
+        """
+        Ends the classification session by destroying the tkinter window.
+        """
         self._img_tk = None
         self._root.destroy() if self._root is not None else None
         self._root = None
@@ -3247,19 +3332,32 @@ class Image_labeler:
             writer.writerow(('image_index', 'label'))
             writer.writerows(self.labels_.items())
 
-    def get_labels(self, kind='dict',):
+    def get_labels(self, kind: str = 'dict') -> Union[dict, List[Tuple[int, str]], dict]:
         """
-        Returns a dictionary of the labels.
-        The keys are the image indices and the values are the labels.
+        Returns the labels. The format of the output is determined by the ``kind`` parameter. 
+        If the labels dictionary is empty, returns ``None``. RH 2023
 
         Args:
-            kind (str):
-                A string indicating the type of object to return.
-                'dict': {idx: label, idx: label, ...}
-                'list': [(idx, label), (idx, label), ...]
-                'dataframe': {'index': [idx, idx, ...], 'label': [label, label, ...]}
-                    This can be converted to a pandas dataframe with:
-                     pd.DataFrame(self.get_labels('dataframe'))
+            kind (str): 
+                The type of object to return. (Default is ``'dict'``) \n
+                * ``'dict'``: {idx: label, idx: label, ...}
+                * ``'list'``: [(idx, label), (idx, label), ...]
+                * ``'dataframe'``: {'index': [idx, idx, ...], 'label': [label, label, ...]}
+                  This can be converted to a pandas dataframe with:
+                  pd.DataFrame(self.get_labels('dataframe'))
+
+        Returns:
+            (Union[dict, List[Tuple[int, str]], dict]): 
+                Depending on the ``kind`` parameter, it returns either: \n
+                * dict: 
+                    A dictionary where keys are the image indices and values are
+                    the labels.
+                * List[Tuple[int, str]]: 
+                    A list of tuples, where each tuple contains an image index
+                    and a label.
+                * dict: 
+                    A dictionary with keys 'index' and 'label' where values are
+                    lists of indices and labels respectively.
         """
         ## if the dict is empty, return None
         if len(self.labels_) == 0:
@@ -3278,3 +3376,24 @@ class Image_labeler:
         elif kind == 'dataframe':
             # return {'index': np.array([x[0] for x in self.labels_], dtype=np.int64), 'label': np.array([x[1] for x in self.labels_])}
             return {'index': np.array(list(self.labels_.keys()), dtype=np.int64), 'label': np.array(list(self.labels_.values()), dtype=str)}
+
+
+def export_svg_hv_bokeh(
+    obj: object, 
+    path_save: str
+) -> None:
+    """
+    Saves a scatterplot from holoviews as an SVG file.
+    RH 2023
+
+    Args:
+        obj (object): 
+            Holoviews plot object.
+        path_save (str):
+            Path to save the SVG file.
+    """
+    import holoviews as hv
+    import bokeh
+    plot_state = hv.renderer('bokeh').get_plot(obj).state
+    plot_state.output_backend = 'svg'
+    bokeh.io.export_svgs(plot_state, filename=path_save)

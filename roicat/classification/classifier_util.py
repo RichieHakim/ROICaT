@@ -5,16 +5,16 @@ from sklearn.model_selection import StratifiedShuffleSplit
 import copy
 import numpy as np
 import torch
-from roicat.model_training import augmentation
+import roicat
 from torch import nn
 from sklearn.metrics import confusion_matrix
 from collections import defaultdict
 from sklearn.metrics import accuracy_score
 import pandas as pd
 from tqdm import tqdm, trange
-from roicat import ROInet, data_importing
 import warnings
 import h5py
+import sklearn
 
 activation_lookup = {
                'relu': nn.ReLU,
@@ -196,6 +196,10 @@ class Datasplit():
         self.labels_train_subset = self.labels_train[self.idx_train_subset]
 
         self.n_train_actual = len(self.idx_train_subset)
+        self.class_weights = sklearn.utils.class_weight.compute_class_weight(class_weight='balanced',
+                                                                             classes=np.unique(labels),
+                                                                             y=labels)
+        self.dict_class_weights = {iClassWeight:classWeight for iClassWeight, classWeight in enumerate(self.class_weights)}
     
     def downsample_train(self, features, labels, n_train_actual_prv):
         """
@@ -504,3 +508,74 @@ def merge_dict_to_hdf5_file(file_path, data_dict):
     """
     with h5py.File(file_path, 'a') as file:
         merge_dict_to_hdf5(data_dict, file)
+
+# def get_classifier_class(classifier_baseClass):
+#     class Classifier(classifier_baseClass, roicat.util.ROICaT_Module):
+#         """
+#         Classifier class for training and evaluating classifiers
+#         """
+#         def __init__(self, *args, **kwargs):
+#             super().__init__(*args, **kwargs)
+#             super(roicat.util.ROICaT_Module).__init__()
+    
+#     return Classifier
+
+
+class Classifier(roicat.util.ROICaT_Module):
+    """
+    Classifier class for training and evaluating classifiers
+    """
+    def __init__(self, Model_Class, verbose=False, path_load=None, *args, **kwargs):
+        super(roicat.util.ROICaT_Module).__init__()
+        self.model_dict = {}
+        self._args = args
+        self._kwargs = kwargs
+
+        if path_load is not None:
+            self.load(Model_Class, path_load=path_load);
+        else:
+            self.model = Model_Class(*args, **kwargs)
+            self.model_dict.update(self.model.__dict__)
+            self.__dict__.update(self.model.__dict__);
+        self._verbose = verbose
+
+    def fit(self, *args, **kwargs):
+        self.model.fit(*args, **kwargs);
+        self.model_dict.update(self.model.__dict__);
+        self.__dict__.update(self.model.__dict__);
+
+    def predict(self, *args, **kwargs):
+        return self.model.predict(*args, **kwargs)
+
+    def predict_proba(self, *args, **kwargs):
+        return self.model.predict_proba(*args, **kwargs)
+    
+    def load(self, Model_Class, path_load=None):
+        super().load(path_load)
+        self.model = Model_Class(*self._args, **self._kwargs)
+        self.model.__dict__.update(self.model_dict)
+
+    def save_eval(self, data_splitter, training_tracker):
+        y_train_preds = self.model.predict(data_splitter.features_train).astype(int)
+        y_train_true = data_splitter.labels_train
+        y_val_preds = self.model.predict(data_splitter.features_val).astype(int)
+        y_val_true = data_splitter.labels_val
+        y_test_preds = self.model.predict(data_splitter.features_test).astype(int)
+        y_test_true = data_splitter.labels_test
+
+        # Save training loop results from current epoch for training set
+        training_tracker.add_accuracy(0, 'accuracy_training', y_train_true, y_train_preds) # Generating training loss
+        training_tracker.add_confusion_matrix(0, 'confusionMatrix_training', y_train_true, y_train_preds) # Generating confusion matrix
+
+        # Save training loop results from current epoch for validation set
+        training_tracker.add_accuracy(0, 'accuracy_val', y_val_true, y_val_preds) # Generating validation accuracy
+        training_tracker.add_confusion_matrix(0, 'confusionMatrix_val', y_val_true, y_val_preds) # Generating validation confusion matrix
+
+        # Save training loop results from current epoch for test set
+        training_tracker.add_accuracy(0, 'accuracy_test', y_test_true, y_test_preds) # Generating test accuracy
+        training_tracker.add_confusion_matrix(0, 'confusionMatrix_test', y_test_true, y_test_preds) # Generating test confusion matrix
+
+        training_tracker.save_results() # TODO: JZ, ADJUST RESULTS SAVING TO SAVE CONFUSION MATRICES AS NOT A DATAFRAME CSV
+        training_tracker.print_results()
+
+        return training_tracker
