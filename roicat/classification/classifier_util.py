@@ -524,8 +524,24 @@ def merge_dict_to_hdf5_file(file_path, data_dict):
 class Classifier(roicat.util.ROICaT_Module):
     """
     Classifier class for training and evaluating classifiers
+
+    JZ 2023
     """
     def __init__(self, Model_Class, verbose=False, path_load=None, *args, **kwargs):
+        """
+        Initialize classifier
+        Args:
+            Model_Class (class):
+                Class of the model to be used for classification
+            verbose (bool):
+                Whether to print verbose output
+            path_load (str):
+                Path to load model from
+            *args:
+                Arguments to pass to the model class
+            **kwargs:
+                Keyword arguments to pass to the model class
+        """
         super(roicat.util.ROICaT_Module).__init__()
         self.model_dict = {}
         self._args = args
@@ -540,22 +556,83 @@ class Classifier(roicat.util.ROICaT_Module):
         self._verbose = verbose
 
     def fit(self, *args, **kwargs):
+        """
+        Fit the model
+        
+        Args:
+            *args:
+                Arguments to pass to the model's fit method
+            **kwargs:
+                Keyword arguments to pass to the model's fit method
+        """
         self.model.fit(*args, **kwargs);
         self.model_dict.update(self.model.__dict__);
         self.__dict__.update(self.model.__dict__);
 
     def predict(self, *args, **kwargs):
+        """
+        Predict labels
+
+        Args:
+            *args:
+                Arguments to pass to the model's predict method
+            **kwargs:
+                Keyword arguments to pass to the model's predict method
+
+        Returns:
+            numpy.ndarray:
+                Predicted labels
+        """
         return self.model.predict(*args, **kwargs)
 
     def predict_proba(self, *args, **kwargs):
+        """
+        Predict label probabilities
+        
+        Args:
+            *args:
+                Arguments to pass to the model's predict_proba method
+            **kwargs:
+                Keyword arguments to pass to the model's predict_proba method
+
+        Returns:
+            numpy.ndarray:
+        """
         return self.model.predict_proba(*args, **kwargs)
     
     def load(self, Model_Class, path_load=None):
+        """
+        Load a model from a file
+        
+        Args:
+            Model_Class (class):
+                Class of the model to be used for classification
+            path_load (str):
+                Path to load model from
+
+        Returns:
+            Classifier:
+                Classifier object
+        """
         super().load(path_load)
         self.model = Model_Class(*self._args, **self._kwargs)
         self.model.__dict__.update(self.model_dict)
+        return self
 
     def save_eval(self, data_splitter, training_tracker):
+        """
+        Save evaluation results to the training tracker
+
+        Args:
+            data_splitter (DataSplitter):
+                DataSplitter object
+            training_tracker (TrainingTracker):
+                TrainingTracker object
+
+        Returns:
+            TrainingTracker:
+                TrainingTracker object
+        """
         y_train_preds = self.model.predict(data_splitter.features_train).astype(int)
         y_train_true = data_splitter.labels_train
         y_val_preds = self.model.predict(data_splitter.features_val).astype(int)
