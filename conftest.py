@@ -33,12 +33,12 @@ def dir_data_test():
     )
     return dir_data_test
 
-def download_data_test_zip(dir_data_test):
+def download_data_test_zip(directory):
     """
     Downloads the test data if it does not exist.
     If the data exists, check its hash.
     """
-    path_save = str(Path(dir_data_test) / 'data_test.zip')
+    path_save = str(Path(directory) / 'data_test.zip')
     roicat.helpers.download_file(
         url=r'https://github.com/RichieHakim/ROICaT/raw/main/tests/data_test.zip', 
         path_save=path_save, 
