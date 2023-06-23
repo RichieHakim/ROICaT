@@ -1,7 +1,6 @@
 import copy
 import os
 from typing import List, Tuple, Union, Optional, Dict, Any, Callable, Iterable
-
 import copy
 import os
 
@@ -331,3 +330,382 @@ def display_cropped_cluster_ims(
         plt.figure(figsize=(40,1))
         plt.imshow(sf, cmap='gray')
         plt.axis('off')
+
+
+def select_region_scatterPlot(
+    data: np.ndarray, 
+    images_overlay: Optional[np.ndarray] = None, 
+    idx_images_overlay: Optional[np.ndarray] = None, 
+    size_images_overlay: Optional[float] = None,
+    frac_overlap_allowed: float = 0.5,
+    image_overlay_raster_size: Optional[Tuple[int, int]] = None,
+    path: Optional[str] = None, 
+    figsize: Tuple[int, int] = (300, 300),
+    alpha_points: float = 0.5,
+    size_points: float = 1,
+    color_points: Union[str, List[str]] = 'k',
+) -> Tuple[Callable, object, str]:
+    """
+    Selects a region of a scatter plot and returns the indices of the points in
+    that region.
+
+    Args:
+        data (np.ndarray): 
+            Input data to create a scatterplot. The shape must be *(n_samples,
+            2)*.
+        images_overlay (np.ndarray, optional): 
+            A 3D array of grayscale images or a 4D array of RGB images, where
+            the first dimension is the number of images. (Default is ``None``)
+        idx_images_overlay (np.ndarray, optional): 
+            A vector of data indices corresponding to each image in
+            images_overlay. The shape must be *(n_images,)*. (Default is
+            ``None``)
+        size_images_overlay (float, optional): 
+            Size of each overlay image. The unit is relative to each axis. This
+            value scales the resolution of the overlay raster. (Default is
+            ``None``)
+        frac_overlap_allowed (float, optional): 
+            Fraction of overlap allowed between the selected region and the
+            overlay images. This is only used when size_images_overlay is
+            ``None``. (Default is 0.5)
+        image_overlay_raster_size (Tuple[int, int], optional): 
+            Size of the rasterized image overlay in pixels. If ``None``, the
+            size will be set to figsize. (Default is ``None``)
+        path (str, optional): 
+            Temporary file path to save the selected indices. (Default is
+            ``None``)
+        figsize (Tuple[int, int], optional): 
+            Size of the figure in pixels. (Default is (300, 300))
+        alpha_points (float, optional): 
+            Alpha value of the scatter plot points. (Default is 0.5)
+        size_points (float, optional): 
+            Size of the scatter plot points. (Default is 1)
+        color_points (Union[str, List[str]], optional): 
+            Color of the scatter plot points. If a list, it must be the same
+            length as data.shape[0] and the values must be valid holoviews color
+            names. (Default is 'k')
+
+    Returns:
+        (Tuple[Callable, object, str]): tuple containing:
+            fn_get_indices (Callable):
+                Function that returns the indices of the selected points.
+            layout (object):
+                Holoviews layout object.
+            path_tempfile (str):
+                Path to the temporary file that saves the selected indices.
+                
+    Example:
+    	.. highlight:: python
+    	.. code-block:: python
+    	
+            fn_get_indices, layout, path_tempfile = select_region_scatterPlot(data)
+    """
+    import holoviews as hv
+    import numpy as np
+    import xxhash
+
+    import tempfile
+    try:
+        from IPython.display import display
+    except:
+        print('Warning: Could not import IPython.display. Cannot display plot.')
+        return None, None
+
+    hv.extension('bokeh')
+
+    assert isinstance(data, np.ndarray), 'data must be a numpy array'
+    assert data.ndim == 2, 'data must have 2 dimensions'
+    assert data.shape[1] == 2, 'data must have 2 columns'
+
+    ## Ingest inputs
+    if images_overlay is not None:
+        assert isinstance(images_overlay, np.ndarray), 'images_overlay must be a numpy array'
+        assert (images_overlay.ndim == 3) or (images_overlay.ndim == 4), 'images_overlay must have 3 or 4 dimensions'
+        assert images_overlay.shape[0] == idx_images_overlay.shape[0], 'images_overlay must have the same number of images as idx_images_overlay'
+
+    if image_overlay_raster_size is None:
+        image_overlay_raster_size = figsize
+
+    # Declare some points, set alpha, size, color
+    if isinstance(color_points, str):
+        color_points = np.array([color_points] * data.shape[0])
+    elif isinstance(color_points, list):
+        color_points = np.array(color_points)
+    else:
+        assert isinstance(color_points, np.ndarray), 'color_points must be a string, list, or numpy array'
+        assert color_points.shape[0] == data.shape[0], 'color_points must be the same length as data.shape[0]. If a numpy array, the first dimension must be the same length as data.shape[0]'
+    _, idx_unique, inverse_unique = np.unique(np.array([xxhash.xxh64(x).hexdigest() for x in color_points]), return_index=True, return_inverse=True)
+    color_points_unique = color_points[idx_unique]
+
+    points = hv.Points([])
+    for ii,c in enumerate(color_points_unique):
+        p = hv.Points(data[inverse_unique==ii])
+        p.opts(
+            alpha=alpha_points,
+            size=size_points,
+            color=c if isinstance(c, str) else tuple(c),
+            tools=['lasso_select', 'box_select'],
+            width=figsize[0],
+            height=figsize[1],
+        )
+        points *= p
+
+    # Declare points as source of selection stream
+    selection = hv.streams.Selection1D(source=points)
+
+    path_tempFile = tempfile.gettempdir() + '/indices.csv' if path is None else path
+
+    # Write function that uses the selection indices to slice points and compute stats
+    def callback(index):
+        ## Save the indices to a temporary file.
+        ## First delete the file if it already exists.
+        if os.path.exists(path_tempFile):
+            os.remove(path_tempFile)
+        ## Then save the indices to the file. Open in a protected way that blocks other threads from opening it
+        with open(path_tempFile, 'w') as f:
+            f.write(','.join([str(i) for i in index]))
+
+        return points
+        
+    selection.param.watch_values(callback, 'index')
+    layout = points.opts(
+        tools=['lasso_select', 'box_select'],
+        width=figsize[0],
+        height=figsize[1],
+    )
+
+    # If images are provided, overlay them on the points
+    def norm_img(image):
+        """
+        Normalize 2D grayscale image
+        """        
+        normalized_image = (image - np.min(image)) / np.max(image)
+        return normalized_image
+
+    if images_overlay is not None and idx_images_overlay is not None:
+        min_emb = np.nanmin(data, axis=0)  ## shape (2,)
+        max_emb = np.nanmax(data, axis=0)  ## shape (2,)
+        range_emb = max_emb - min_emb  ## shape (2,)
+        aspect_ratio_ims = (range_emb[1] / range_emb[0])  ## shape (1,)
+        lims_canvas = ((min_emb - range_emb*0.05), (max_emb + range_emb*0.05))  ## ( shape (2,)(mins), shape (2,)(maxs) )
+        range_canvas = lims_canvas[1] - lims_canvas[0]  ## shape (2,)
+
+        n_ims = images_overlay.shape[0] if images_overlay is not None else 0
+
+        if size_images_overlay is None:
+            import sklearn
+            min_image_distance = sklearn.neighbors.NearestNeighbors(
+                n_neighbors=2, 
+                algorithm='auto', 
+                metric='euclidean'
+            ).fit(
+                data[idx_images_overlay]
+            ).kneighbors_graph(
+                data[idx_images_overlay], 
+                n_neighbors=2,
+                mode='distance'
+            )
+            min_image_distance.eliminate_zeros()
+            min_image_distance = np.nanmin(min_image_distance.data)
+            size_images_overlay = float(min_image_distance) * (1 + frac_overlap_allowed)
+            print(f'Using size_images_overlay = {size_images_overlay}')
+
+        assert isinstance(size_images_overlay, (int, float, np.ndarray)), 'size_images_overlay must be an int, float, or shape (2,) numpy array'
+        if isinstance(size_images_overlay, (int, float)):
+            size_images_overlay = np.array([size_images_overlay / aspect_ratio_ims, size_images_overlay])
+        assert size_images_overlay.shape == (2,), 'size_images_overlay must be an int, float, or shape (2,) numpy array'
+        
+        # Create a large canvas to hold all the images
+        iors = image_overlay_raster_size
+        canvas = np.zeros((iors[0], iors[1],4))
+
+        interp_0 = scipy.interpolate.interp1d(
+            x=np.linspace(lims_canvas[0][0], lims_canvas[1][0], num=iors[0], endpoint=False),
+            y=np.linspace(0,iors[0],num=iors[0], endpoint=False),
+        )
+        interp_1 = scipy.interpolate.interp1d(
+            x=np.linspace(lims_canvas[0][1], lims_canvas[1][1], num=iors[1], endpoint=False),
+            y=np.linspace(0,iors[1],num=iors[1], endpoint=False),
+        )
+           
+        for image, idx in zip(images_overlay, idx_images_overlay):
+            sz_im_0 = int((size_images_overlay[0] / range_canvas[0]) * iors[0])
+            sz_im_1 = int((size_images_overlay[1] / range_canvas[1]) * iors[1])
+            im_interp = scipy.interpolate.RegularGridInterpolator(
+                points=(
+                    np.linspace(0, images_overlay.shape[1], num=images_overlay.shape[1], endpoint=False),
+                    np.linspace(0, images_overlay.shape[2], num=images_overlay.shape[2], endpoint=False),
+                ),
+                values=image,
+                bounds_error=False,
+                fill_value=0,
+            )(np.stack(np.meshgrid(
+                np.linspace(0, images_overlay.shape[1], num=sz_im_0, endpoint=False),
+                np.linspace(0, images_overlay.shape[2], num=sz_im_1, endpoint=False),
+            ), axis=-1))
+
+            image_rgb = np.stack([norm_img(im_interp), norm_img(im_interp), norm_img(im_interp)], axis=-1) if im_interp.ndim == 2 else im_interp
+
+            x1 = int(interp_0(data[idx,0]) - sz_im_0 / 2)
+            y1 = int(interp_1(data[idx,1]) - sz_im_1 / 2)
+            x2 = int(interp_0(data[idx,0]) + sz_im_0 / 2)
+            y2 = int(interp_1(data[idx,1]) + sz_im_1 / 2)
+            
+            assert x1 >= 0 and x2 <= iors[0] and y1 >= 0 and y2 <= iors[1], f'Image is out of bounds of canvas: y1={y1}, y2={y2}, x1={x1}, x2={x2}, sz_im_0={sz_im_0}, sz_im_1={sz_im_1}, iors={iors}'
+            
+            canvas[y1:y2, x1:x2,:3] = image_rgb
+            canvas[y1:y2, x1:x2,3] = 1
+        
+        canvas = np.flipud(canvas)
+
+        # Now create a single hv.RGB object
+        imo = hv.RGB(canvas, bounds=(lims_canvas[0][0], lims_canvas[0][1], lims_canvas[1][0], lims_canvas[1][1]))
+
+
+        ## Set bounds of the plot
+        layout = layout.redim.range(x=(lims_canvas[0][0], lims_canvas[1][0]), y=(lims_canvas[0][1], lims_canvas[1][1]))
+
+        layout *= imo
+
+    ## start layout with lasso tool active
+    layout = layout.opts(
+        active_tools=[
+            'lasso_select', 
+            'wheel_zoom',
+        ]
+    )
+
+    # Display plot
+    display(layout)
+
+    def fn_get_indices():
+        if os.path.exists(path_tempFile):
+            with open(path_tempFile, 'r') as f:
+                indices = f.read().split(',')
+            indices = [int(i) for i in indices if i != ''] if len(indices) > 0 else None
+            return indices
+        else:
+            return None
+
+    return fn_get_indices, layout, path_tempFile
+
+
+def get_spread_out_points(
+    data: np.ndarray, 
+    n_ims: int = 1000, 
+    dist_im_to_point: float = 0.3, 
+    border_frac: float = 0.05, 
+    device: str = 'cpu',
+) -> np.ndarray:
+    """
+    Given a set of points, returns the indices of a subset of points that are
+    spread out. Intended to be used to overlay images on a scatter plot of
+    points.
+    RH 2023
+
+    Args:
+        data (np.ndarray): 
+            Array containing the points to be spread out. Shape: *(N, 2)*
+        n_ims (int): 
+            Number of indices to return corresponding to the number of images to
+            be displayed. (Default is *1000*)
+        dist_im_to_point (float): 
+            Minimum distance between an image and its nearest point. Images with
+            a minimum distance to a point greater than this value will be
+            discarded. (Default is *0.3*)
+        border_frac (float): 
+            Fraction of the range of the data to add as a border around the
+            points. (Default is *0.05*)
+        device (str): 
+            Device to use for torch operations. (Default is 'cpu')
+
+    Returns:
+        (np.ndarray): 
+            idx_images_overlay (np.ndarray):
+                Array containing the indices of the points to overlay images on.
+                Shape: *(n_ims,)*
+    """
+    import torch
+    DEVICE = device
+
+    min_data = np.nanmin(data, axis=0)  ## shape (2,)
+    max_data = np.nanmax(data, axis=0)  ## shape (2,)
+    range_data = max_data - min_data  ## shape (2,)
+    lims_canvas = ((min_data - range_data*border_frac), (max_data + range_data*border_frac))  ## ([
+    
+    sz_im = (range_data / (n_ims**0.5))
+    
+    grid_canvas = np.meshgrid(
+        np.linspace(lims_canvas[0][0], lims_canvas[1][0], int(n_ims**0.5)),
+        np.linspace(lims_canvas[0][1], lims_canvas[1][1], int(n_ims**0.5)),
+        indexing='xy',
+    )
+    grid_canvas_flat = np.vstack([g.reshape(-1) for g in grid_canvas]).T
+
+    dist_grid_to_imIdx = torch.as_tensor(data, device=DEVICE, dtype=torch.float32)[:,None,:] - \
+        torch.as_tensor(grid_canvas_flat, device=DEVICE, dtype=torch.float32)[None,:,:]
+    distNorm_grid_to_imIdx = torch.linalg.norm(dist_grid_to_imIdx, dim=2)
+    distMin_grid_to_imIdx = torch.min(distNorm_grid_to_imIdx, dim=0)
+    max_dist = (np.min(sz_im))*dist_im_to_point
+    idx_good = distMin_grid_to_imIdx.values < max_dist
+    idx_images_overlay = distMin_grid_to_imIdx.indices[idx_good]
+
+    return idx_images_overlay
+
+
+def display_labeled_ROIs(
+    images: np.ndarray,
+    labels: Union[np.ndarray, Dict[str, Any]],
+    max_images_per_label: int = 10,
+    figsize: Tuple[int, int] = (10, 3),
+    fontsize: int = 25,
+    shuffle: bool = True,
+) -> None:
+    """
+    Displays a grid of images, each row corresponding to a label, and each image
+    is a randomly selected image from that label.
+    RH 2023
+
+    Args:
+        images (np.ndarray): 
+            Array of images. Shape: *(num_images, height, width)* or
+            *(num_images, height, width, num_channels)*
+        labels (Union[np.ndarray, Dict[str, Any]]): 
+            If dict, it must contain keys 'index' and 'label'. If ndarray, it
+            must be a 1D array of labels.
+        max_images_per_label (int): 
+            Maximum number of images to display per label. (Default is *10*)
+        figsize (Tuple[int, int]): 
+            Size of the figure. (Default is *(10, 3)*)
+        fontsize (int): 
+            Font size of the labels. (Default is *25*)
+        shuffle (bool): 
+            If ``True``, the order of the images will be shuffled. (Default is
+            ``True``)
+    """
+    import random
+
+    if isinstance(labels, (np.ndarray, list)):
+        print(f'labels is a {type(labels)}. Converting to a labels_dict by assuming that image indices are the same as the indices in labels.')
+        labels_dict = {
+            'index': np.arange(len(labels)),
+            'label': labels,
+        }
+    elif isinstance(labels, dict):
+        labels_dict = labels
+    else:
+        raise Exception(f'labels must be a list, np.ndarray, or dict. Got {type(labels)}.')
+
+    for l in np.unique(labels_dict['label']):
+        idx_l = np.where(labels_dict['label']==l)[0]
+        idx_l = random.sample(list(idx_l), len(idx_l)) if shuffle else idx_l
+        n_l = min(len(idx_l), max_images_per_label)
+
+        fig, axs = helpers.plot_image_grid(
+            images=images[labels['index'][idx_l]],
+            # images=images[idx_l],
+            labels=labels['index'][idx_l],
+            grid_shape=(1, n_l),
+            kwargs_subplots={'figsize': figsize}
+        );
+        fig.text(0,0.4, l, fontdict={'size': fontsize});
