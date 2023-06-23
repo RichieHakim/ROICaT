@@ -7,14 +7,15 @@ import numpy as np
 import torch
 import roicat
 from torch import nn
-from sklearn.metrics import confusion_matrix
 from collections import defaultdict
-from sklearn.metrics import accuracy_score
+import sklearn.metrics
 import pandas as pd
 from tqdm import tqdm, trange
 import warnings
 import h5py
 import sklearn
+import scipy.special
+import pickle
 
 activation_lookup = {
                'relu': nn.ReLU,
@@ -249,7 +250,7 @@ class Datasplit():
         return list(sss.split(features, labels))[0]
 
 
-class TrainingTracker():
+class ModelResults():
     """
     Helper class to track training progress and performance
     JZ 2023
@@ -268,7 +269,7 @@ class TrainingTracker():
                 Dictionary to store timing information
         """
         self.directory_save = directory_save
-        self.filename_results = str((Path(directory_save) / 'results_training.csv').resolve())
+        self.filename_results = str((Path(directory_save) / 'results_training').resolve())
         self.filename_timing = str((Path(directory_save) / 'results_timing.json').resolve())
         self.filename_params_realtime = str((Path(directory_save) / 'params_realtime.json').resolve())
         self.filename_model = str((Path(directory_save) / 'model.npy').resolve())
@@ -291,8 +292,12 @@ class TrainingTracker():
             value (any):
                 Value to add to training tracker associated with the given key & epoch
         """
-        self.data[key] = self.data.get(key, {})
-        self.data[key][epoch] = value
+        if epoch is not None:
+            self.data[key] = self.data.get(key, {})
+            self.data[key][epoch] = value
+        else:
+            assert key not in self.data, "JZ Error: Key already exists in training tracker"
+            self.data[key] = value
     
     def add_confusion_matrix(self, epoch, confusion_matrix_id, labels, predictions):
         """
@@ -307,7 +312,7 @@ class TrainingTracker():
             predictions (np.array):
                 Predictions to use in the calculation of the confusion matrix
         """
-        self.append(epoch, confusion_matrix_id, confusion_matrix(labels, predictions, normalize='true').T)
+        self.append(epoch, confusion_matrix_id, sklearn.metrics.confusion_matrix(labels, predictions, normalize='true').T.tolist())
 
     def add_loss(self, epoch, loss_id, loss_value):
         """
@@ -335,9 +340,9 @@ class TrainingTracker():
             predictions (np.array):
                 Predictions to use in the calculation of the accuracy
         """
-        self.append(epoch, accuracy_id, accuracy_score(labels,
-                                                       predictions,
-                                                       sample_weight=self.get_balanced_sample_weights(labels, class_weights=self.class_weights)))
+        self.append(epoch, accuracy_id, sklearn.metrics.accuracy_score(labels,
+                                                                       predictions,
+                                                                       sample_weight=self.get_balanced_sample_weights(labels, class_weights=self.class_weights)))
 
     def check_convergence(self, key):
         """
@@ -351,12 +356,17 @@ class TrainingTracker():
     def save_results(self):
         """
         Save training tracker results to file(s).
-        Note: Results DataFrame is saved to a CSV file based on self.filename_results and timing information is saved to a JSON file based on self.filename_timing
         """
         print('Saving results: ', self.filename_results, self.filename_timing)
-        df = pd.DataFrame(self.data)
-        df.to_csv(self.filename_results)
-
+        # df = pd.DataFrame(self.data)
+        # df.to_csv(self.filename_results)
+        try:
+            with open(self.filename_results + '.json', 'w') as f:
+                json.dump(self.data, f)
+        except:
+            with open(self.filename_results + '.pkl', 'w') as f:
+                pickle.dump(self.data, f)
+        
         if self.tictoc:
             with open(self.filename_timing, 'w') as f:
                 json.dump(self.tictoc, f)
@@ -374,7 +384,7 @@ class TrainingTracker():
         """
         print(f'{self.tictoc=}')
         print(f'{self.model=}')
-        print(pd.DataFrame(self.data))
+        print(f'{self.data=}')
 
     def get_balanced_class_weights(self, labels):
         """
@@ -521,13 +531,13 @@ def merge_dict_to_hdf5_file(file_path, data_dict):
 #     return Classifier
 
 
-class Classifier(roicat.util.ROICaT_Module):
+class LogisticRegression(roicat.util.ROICaT_Module):
     """
     Classifier class for training and evaluating classifiers
 
     JZ 2023
     """
-    def __init__(self, Model_Class, verbose=False, path_load=None, *args, **kwargs):
+    def __init__(self, coef=None, intercept=None, path_load=None, verbose=False, model_dict={}):
         """
         Initialize classifier
         Args:
@@ -542,34 +552,21 @@ class Classifier(roicat.util.ROICaT_Module):
             **kwargs:
                 Keyword arguments to pass to the model class
         """
-        super(roicat.util.ROICaT_Module).__init__()
-        self.model_dict = {}
-        self._args = args
-        self._kwargs = kwargs
-
-        if path_load is not None:
-            self.load(Model_Class, path_load=path_load);
-        else:
-            self.model = Model_Class(*args, **kwargs)
-            self.model_dict.update(self.model.__dict__)
-            self.__dict__.update(self.model.__dict__);
-        self._verbose = verbose
-
-    def fit(self, *args, **kwargs):
-        """
-        Fit the model
+        assert (coef is not None and intercept is not None) ^ (path_load is not None), "JZ: Exactly one of (coef and intercept) or path_load must be specified"
         
-        Args:
-            *args:
-                Arguments to pass to the model's fit method
-            **kwargs:
-                Keyword arguments to pass to the model's fit method
-        """
-        self.model.fit(*args, **kwargs);
-        self.model_dict.update(self.model.__dict__);
-        self.__dict__.update(self.model.__dict__);
+        # print(coef, intercept, path_load)
+        
+        super(roicat.util.ROICaT_Module).__init__()
+        
+        if path_load is None:
+            self.model_dict = model_dict
+            self._coef = coef
+            self._intercept = intercept
+            self._verbose = verbose
+        else:
+            self.load(path_load)
 
-    def predict(self, *args, **kwargs):
+    def predict(self, x):
         """
         Predict labels
 
@@ -583,24 +580,24 @@ class Classifier(roicat.util.ROICaT_Module):
             numpy.ndarray:
                 Predicted labels
         """
-        return self.model.predict(*args, **kwargs)
+        return np.argmax(self.predict_proba(x), axis=1)
 
-    def predict_proba(self, *args, **kwargs):
+    def predict_proba(self, x):
         """
-        Predict label probabilities
+        Predict label probabilities. (Requires model to have been loaded.)
         
         Args:
-            *args:
-                Arguments to pass to the model's predict_proba method
-            **kwargs:
-                Keyword arguments to pass to the model's predict_proba method
+            x (numpy.ndarray):
+                Data for which to predict probabilities using self._coef
 
         Returns:
             numpy.ndarray:
         """
-        return self.model.predict_proba(*args, **kwargs)
+        if self._coef is None:
+            raise ValueError('No model loaded')
+        return scipy.special.softmax(np.dot(x, self._coef.T) + self._intercept, axis=1)
     
-    def load(self, Model_Class, path_load=None):
+    def load(self, path_load=None):
         """
         Load a model from a file
         
@@ -615,8 +612,6 @@ class Classifier(roicat.util.ROICaT_Module):
                 Classifier object
         """
         super().load(path_load)
-        self.model = Model_Class(*self._args, **self._kwargs)
-        self.model.__dict__.update(self.model_dict)
         return self
 
     def save_eval(self, data_splitter, training_tracker):
@@ -633,24 +628,24 @@ class Classifier(roicat.util.ROICaT_Module):
             TrainingTracker:
                 TrainingTracker object
         """
-        y_train_preds = self.model.predict(data_splitter.features_train).astype(int)
+        y_train_preds = self.predict(data_splitter.features_train).astype(int)
         y_train_true = data_splitter.labels_train
-        y_val_preds = self.model.predict(data_splitter.features_val).astype(int)
+        y_val_preds = self.predict(data_splitter.features_val).astype(int)
         y_val_true = data_splitter.labels_val
-        y_test_preds = self.model.predict(data_splitter.features_test).astype(int)
+        y_test_preds = self.predict(data_splitter.features_test).astype(int)
         y_test_true = data_splitter.labels_test
 
         # Save training loop results from current epoch for training set
-        training_tracker.add_accuracy(0, 'accuracy_training', y_train_true, y_train_preds) # Generating training loss
-        training_tracker.add_confusion_matrix(0, 'confusionMatrix_training', y_train_true, y_train_preds) # Generating confusion matrix
+        training_tracker.add_accuracy(None, 'accuracy_training', y_train_true, y_train_preds) # Generating training loss
+        training_tracker.add_confusion_matrix(None, 'confusionMatrix_training', y_train_true, y_train_preds) # Generating confusion matrix
 
         # Save training loop results from current epoch for validation set
-        training_tracker.add_accuracy(0, 'accuracy_val', y_val_true, y_val_preds) # Generating validation accuracy
-        training_tracker.add_confusion_matrix(0, 'confusionMatrix_val', y_val_true, y_val_preds) # Generating validation confusion matrix
+        training_tracker.add_accuracy(None, 'accuracy_val', y_val_true, y_val_preds) # Generating validation accuracy
+        training_tracker.add_confusion_matrix(None, 'confusionMatrix_val', y_val_true, y_val_preds) # Generating validation confusion matrix
 
         # Save training loop results from current epoch for test set
-        training_tracker.add_accuracy(0, 'accuracy_test', y_test_true, y_test_preds) # Generating test accuracy
-        training_tracker.add_confusion_matrix(0, 'confusionMatrix_test', y_test_true, y_test_preds) # Generating test confusion matrix
+        training_tracker.add_accuracy(None, 'accuracy_test', y_test_true, y_test_preds) # Generating test accuracy
+        training_tracker.add_confusion_matrix(None, 'confusionMatrix_test', y_test_true, y_test_preds) # Generating test confusion matrix
 
         training_tracker.save_results() # TODO: JZ, ADJUST RESULTS SAVING TO SAVE CONFUSION MATRICES AS NOT A DATAFRAME CSV
         training_tracker.print_results()
