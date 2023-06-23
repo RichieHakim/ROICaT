@@ -4,33 +4,6 @@ from pathlib import Path
 from distutils.core import setup
 import copy
 
-## Dependencies: core requirements
-# deps_core = [
-#     "einops==0.6.1",
-#     "hdbscan==0.8.29",
-#     "jupyter==1.0.0",
-#     "kymatio==0.3.0",
-#     "matplotlib==3.7.1",
-#     "natsort==8.3.1",
-#     "numpy==1.24.3",
-#     "opencv_contrib_python==4.7.0.72",
-#     "optuna==3.1.1",
-#     "paramiko==3.1.0",
-#     "Pillow==9.5.0",
-#     "pytest==7.3.1",
-#     "scikit_learn==1.2.2",
-#     "scipy==1.10.1",
-#     "seaborn==0.12.2",
-#     "sparse==0.14.0",
-#     "tqdm==4.65.0",
-#     "umap-learn==0.5.3",
-#     "xxhash==3.2.0",
-
-#     "torch==2.0.1",
-#     "torchvision==0.15.2",
-#     "torchaudio==2.0.2",
-# ]
-
 dir_parent = Path(__file__).parent
 
 def read_requirements():
@@ -59,14 +32,14 @@ deps_all_latest = copy.deepcopy(deps_names)
 ## Make different versions of dependencies
 ### Also pull out the version number from the requirements (specified in deps_all_dict values).
 deps_core = [deps_all_dict[dep] for dep in [
-    'einops',
     'jupyter',
     'matplotlib',
+    'mat73',
     'natsort',
     'numpy',
-    'paramiko',
     'Pillow',
     'pytest',
+    'PyYAML',
     'scikit_learn',
     'scipy',
     'seaborn',
@@ -76,11 +49,16 @@ deps_core = [deps_all_dict[dep] for dep in [
     'torch',
     'torchvision',
     'torchaudio',
+    'psutil',
+    'py-cpuinfo',
+    'GPUtil',
 ]]
 
 deps_classification = [deps_all_dict[dep] for dep in [
     'opencv_contrib_python',
     'umap-learn',
+    'bokeh',
+    'holoviews[recommended]',
 ]] + deps_core
 
 deps_tracking = [deps_all_dict[dep] for dep in [
@@ -117,6 +95,7 @@ setup(
     license='LICENSE',
     description='A library for classifying and tracking ROIs.',
     long_description=readme,
+    long_description_content_type="text/markdown",
     url='https://github.com/RichieHakim/ROICaT',
 
     packages=[

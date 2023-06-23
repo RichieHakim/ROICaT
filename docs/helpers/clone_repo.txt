@@ -1,0 +1,2 @@
+git clone http://github.com/RichieHakim/ROICaT
+cd path/to/ROICaT/dir

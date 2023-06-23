@@ -1,6 +1,5 @@
-# import sparse
-# import torch
-# import spconv.pytorch as spconv
+from typing import Union, List, Tuple, Optional
+
 import scipy.sparse
 import numpy as np
 from tqdm import tqdm
@@ -9,28 +8,47 @@ from .. import helpers, util
     
 class ROI_Blurrer(util.ROICaT_Module):
     """
-    Class for blurring ROIs.
+    Blurs the Region of Interest (ROI).
     RH 2022
 
     Args:
-        frame_shape (tuple):
-            The shape of the frame/FOV.
-            frame_shape[0] * frame_shape[1]
-                must equal the length of a single flattened/
-                sparse spatialFootprint.
+        frame_shape (Tuple[int, int]):
+            The shape of the frame/Field Of View (FOV). Product of
+            ``frame_shape[0]`` and ``frame_shape[1]`` must equal the length of a
+            single flattened/sparse spatialFootprint. (Default is *(512, 512)*)
         kernel_halfWidth (int):
-            The half-width of the cosine kernel to use
-                for convolutional blurring.
+            The half-width of the cosine kernel to use for convolutional
+            blurring. (Default is *2*)
+        plot_kernel (bool):
+            Whether to plot an image of the kernel. (Default is ``False``)
+        verbose (bool):
+            Whether to print the convolutional blurring operation progress.
+            (Default is ``True``)
+
+    Attributes:
+        frame_shape (Tuple[int, int]):
+            The shape of the frame/Field Of View (FOV). Product of
+            ``frame_shape[0]`` and ``frame_shape[1]`` must equal the length of a
+            single flattened/sparse spatialFootprint.
+        kernel_halfWidth (int):
+            The half-width of the cosine kernel to use for convolutional
+            blurring.
         plot_kernel (bool):
             Whether to plot an image of the kernel.
+        verbose (bool):
+            Whether to print the convolutional blurring operation progress.
     """
     def __init__(
-        self,
-        frame_shape=(512, 512),
-        kernel_halfWidth=2,
-        plot_kernel=False,
-        verbose=True,
+        self, 
+        frame_shape: Tuple[int, int] = (512, 512),
+        kernel_halfWidth: int = 2,
+        plot_kernel: bool = False,
+        verbose: bool = True,
     ):
+        """
+        Initializes the ROI_Blurrer with the given frame shape, kernel half-width, 
+        plot kernel and verbosity setting.
+        """
         ## Imports
         super().__init__()
 
@@ -61,15 +79,19 @@ class ROI_Blurrer(util.ROICaT_Module):
 
     def blur_ROIs(
         self,
-        spatialFootprints,
-    ):
+        spatialFootprints: List[object],
+    ) -> List[object]:
         """
-        Method to blur the ROIs.
+        Blurs the Region of Interest (ROI).
 
         Args:
-            spatialFootprints (list):
-                A list of sparse matrices corresponding to
-                 spatial footprints from each session.
+            spatialFootprints (List[object]): 
+                A list of sparse matrices corresponding to spatial footprints from each session.
+
+        Returns:
+            (List[object]): 
+                ROIs_blurred (List[object]):
+                    A list of blurred ROI spatial footprints.
         """
         print('Performing convolution for blurring') if self._verbose else None
         if self._width == 0:
@@ -82,10 +104,16 @@ class ROI_Blurrer(util.ROICaT_Module):
                         mode='same',
                     ) for sf in spatialFootprints
             ]
+        return self.ROIs_blurred
     
-    def get_ROIsBlurred_maxIntensityProjection(self):
+    def get_ROIsBlurred_maxIntensityProjection(self) -> List[object]:
         """
-        Returns the max intensity projection of the ROIs.
+        Calculates the maximum intensity projection of the ROIs.
+
+        Returns:
+            (List[object]): 
+                ims (List[object]):
+                    The maximum intensity projection of the ROIs.
         """
         ims = [(rois.multiply(rois.max(1).power(-1))).max(0).toarray().reshape(self._frame_shape[0], self._frame_shape[1]) for rois in self.ROIs_blurred]
         return ims

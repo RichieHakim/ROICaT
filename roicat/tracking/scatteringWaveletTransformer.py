@@ -1,4 +1,5 @@
 import gc
+from typing import Any, Dict, Tuple
 
 import torch
 import numpy as np
@@ -8,27 +9,40 @@ from .. import helpers, util
 
 class SWT(util.ROICaT_Module):
     """
-    Class for performing scattering wavelet transform
-     using the kymatio library.
+    Performs scattering wavelet transform using the kymatio library.
     RH 2022
 
     Args:
-        kwargs_Scattering2D (dict):
+        kwargs_Scattering2D (Dict[str, Any]):
             The keyword arguments to pass to the Scattering2D class.
-            See the documentation for the kymatio's 
-                Scattering2D class for details.
-        image_shape (tuple):
-            The shape of the images to be transformed.
+            (Default is ``{'J': 2, 'L': 8}``)
+        image_shape (Tuple[int, int]):
+            The shape of the images to be transformed. 
+            (Default is ``(36,36)``)
         device (str):
-            The device to use for the transformation.
+            The device to use for the transformation. 
+            (Default is ``'cpu'``)
+        verbose (bool):
+            If ``True``, print statements will be outputted. 
+            (Default is ``True``)
+    
+    Example:
+        .. highlight:: python
+        .. code-block:: python
+
+            swt = SWT(kwargs_Scattering2D={'J': 2, 'L': 8}, image_shape=(36,36), device='cpu', verbose=True)
+            transformed_images = swt.transform(ROI_images, batch_size=100)
     """
     def __init__(
         self, 
-        kwargs_Scattering2D={'J': 2, 'L': 8}, 
-        image_shape=(36,36), 
-        device='cpu',
-        verbose=True,
+        kwargs_Scattering2D: Dict[str, Any] = {'J': 2, 'L': 8}, 
+        image_shape: Tuple[int, int] = (36,36), 
+        device: str = 'cpu',
+        verbose: bool = True,
     ):
+        """
+        Initializes the SWT with the given settings.
+        """
         ## Imports
         super().__init__()
 
@@ -39,25 +53,25 @@ class SWT(util.ROICaT_Module):
         self.swt = Scattering2D(shape=image_shape, **kwargs_Scattering2D).to(device)
         print('SWT initialized') if self._verbose else None
 
-    def transform(self, ROI_images, batch_size=100):
+    def transform(self, ROI_images: np.ndarray, batch_size: int = 100) -> np.ndarray:
         """
-        Transform the ROI images.
+        Transforms the ROI images.
 
         Args:
             ROI_images (np.ndarray):
-                The ROI images to transform.
-                shape: (n_ROIs, height, width)
-                One should probably concatenate ROI images
-                 across session for passing through here.
+                The ROI images to transform. 
+                One should probably concatenate ROI images across sessions for passing through here. 
+                *(n_ROIs, height, width)*
+            batch_size (int):
+                The batch size to use for the transformation. 
+                (Default is *100*)
 
         Returns:
-            latents (np.ndarray):
-                The transformed ROI images.
-                shape: (n_ROIs, latent_size)
+            (np.ndarray):
+                latents (np.ndarray):
+                    The transformed ROI images. *(n_ROIs, latent_size)*
         """
         print('Starting: SWT transform on ROIs') if self._verbose else None
-        # sfs = torch.as_tensor(np.ascontiguousarray(ROI_images[None,...]), device=self._device, dtype=torch.float32)
-        # self.latents = self.swt(sfs[None,...]).squeeze().cpu()
         def helper_swt(ims_batch):
             sfs = torch.as_tensor(np.ascontiguousarray(ims_batch[None,...]), device=self._device, dtype=torch.float32)
             out = self.swt(sfs[None,...]).squeeze().cpu()

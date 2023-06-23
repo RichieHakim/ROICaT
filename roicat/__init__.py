@@ -4,6 +4,7 @@ __all__ = [
     'model_training',
     'data_importing',
     'helpers',
+    'pipelines',
     'ROInet',
     'util',
     'visualization',
@@ -12,4 +13,4 @@ __all__ = [
 for pkg in __all__:
     exec('from . import ' + pkg)
 
-__version__ = '0.1.0'    
+__version__ = '1.1.0'    

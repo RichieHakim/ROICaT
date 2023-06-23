@@ -1,0 +1,146 @@
+Let's fix some documentation together. Your job is to do the following:
+- I am going to send you a piece of code; it will include a class or function definition, a docstring, and code. You will return a corrected defition and doctstring that follows a style guide / ruleset, not the code. You may be given multiple functions.
+
+Style guide / Ruleset:
+
+Function signature formatting:
+1. Each parameter should be on a separate line if there is more than one parameter.
+2. If a parameter has a default value, include it in the definition.
+3. Use type hints for all parameters and the return value. Use the typing module and style guide for type hints.
+
+In the docstring:
+1. The function/method description should be concise and clear.
+2. It is okay to include an author tag if it is already there. (i.e. 'RH 2021' at the end of the top method description)
+3. Use the Google style guide such that it is compatible with the Sphinx documentation style guide. In addition, use the following modifications: 
+    a) Use a new indented line for the start of the argument or return description for each argument.
+4. Use the following modifiers:
+    a) Bold for important words. Use double asterisks: **important**
+    b) Italics for array shapes, data types, and other special values. Use single asterisks: shape: *(n, m)*
+    c) Code formatting for code and potential argument inputs. Use double backticks: Default is ``None``. Default dtype is ``np.float64``. If ``True`` then ...
+5. When enumerating potential parameters in the Args section, use bullet points. Clearly state its name and a brief description. Use sphix syntax for bullet points, which is an asterisk followed by a space: * . It may be necessary to use a line break before the first bullet point and after the last bullet point (\n). Example:
+    Args:
+        opt (Union[str, None]):
+            Option for what to do. Either \n
+            * ``None``: Nothing will be returned.
+            * ``'a'``: Return the first thing.
+            * ``'b'``: Return the second thing. \n
+			(Default is ``'b'``)
+6. Use proper grammar, punctuation, spelling, and capitalization.
+7. Don't use unecessary line breaks or unnecessary words.
+8. Class docstrings should include the __init__ method and all class attributes. You are allow to move the __init__ method to the top of the class if it is not already there.
+9. If a function or method does not return anything (i.e., returns None), you can omit the Returns section in the docstring.
+10. If a function isn't outputting a variable, you can make up a variable name for the return.
+11. Add the default value of an argument to the end of the description of the argument in the docstring. Example:
+    Args:
+        opt (Union[str, None]):
+            Option for what to do. (Default is ``None``).
+12. If there is a single return, then the output should be like this:
+    Returns:
+        (type): 
+            varname1 (type):
+                Description.
+13. If there are multiple returns, then the output should be like this:
+    Returns:
+        (tuple): tuple containing:
+            varname1 (type):
+                Description.
+            varname1 (type):
+                Description.
+14. Do not change the names of any variables.
+15. Put commas after all the arguments in the definition, even the last one.
+16. If the type hint is something exotic (i.e. matplotlib.colors.LinearSegmentedColormap), then just use object. Note that torch.Tensor and scipy.sparse objects are not considered exotic.
+17. Example/Demo code can be provided if the call is complex (e.g. there are multiple returns or it is a class that needs to be called with multiple methods. No need for basic functions). 'Example:' should be placed after Args and Returns and be in a code block formatted like this:
+	Example:
+		.. highlight::python
+		.. code-block::python
+
+			example code block
+			new line of code
+18. Class attributes, if needed, should go after Args, Returns, and Example(s) blocks.
+19. Do not use (and remove any instances of) the convention where secondary lines in a docstring continued across lines uses any indentation. Example:
+	Convert this:
+		This is the start of this string
+		 and it continues after a space or
+			even maybe an indent.
+	Into this:
+		This is the start of this string
+		and it continues after a space or
+		even maybe an indent.
+20. Do not change function, class or argument names. This may break dependent code.
+
+EXAMPLES:
+
+class ImageLoader():
+    """
+    Loads images from a directory for image processing tasks. 
+    RH 2023
+
+    Attributes:
+        directory (str):
+            The directory path of the images.
+        preload (bool):
+            If set to ``True``, all images are loaded during initialization.
+            Otherwise, images are loaded on demand.
+
+    Args:
+        directory (str):
+            The directory where the images are located.
+        preload (bool):
+            Whether to load all images during initialization. 
+            (Default is ``False``)
+    """
+    def __init__(
+        self, 
+        directory: str, 
+        preload: bool = False,
+    ):
+        """
+        Initializes the ImageLoader with the given directory and preload setting.
+        """
+
+
+def test_function(
+    image: np.ndarray, 
+    grayscale: bool = False,
+    alg_ns: Optional[str] = None,
+    depth: int = 0, 
+) -> List[str]:
+    """
+    Calculates the average brightness of an image.
+
+    Args:
+        image (np.ndarray): 
+            The input image for which to calculate the brightness. 
+            Can be grayscale or RGB. (shape: *(H, W, [3])*)
+        grayscale (bool): 
+            Whether to convert the image to grayscale before calculating 
+            brightness. If ``False``, the average brightness of the RGB channels 
+            will be calculated. (Default is ``False``)
+        alg_ns (str): 
+            Algorithm to use for natural sorting. See ``natsort.ns`` or
+            https://natsort.readthedocs.io/en/4.0.4/ns_class.html/ for options.
+            Default is PATH. Other commons are INT, FLOAT, VERSION. (Default is
+            ``None``)
+        depth (int): 
+            Maximum folder depth to search. (Default is *0*). \n
+            * depth=0 means only search the outer directory. 
+            * depth=2 means search the outer directory and two levels of
+            subdirectories below it \n
+			(Default is '2')
+
+    Returns:
+        (List[str]): 
+            paths (List[str]): 
+                Paths to matched files and/or folders in the directory.
+                
+    Example:
+    	.. highlight:: python
+    	.. code-block:: python
+    	
+    		out = test_function(image)
+    """
+
+
+And here is the code to fix:
+
+
