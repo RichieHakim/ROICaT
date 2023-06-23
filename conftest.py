@@ -62,3 +62,24 @@ def array_hasher():
     from functools import partial
     import xxhash
     return partial(xxhash.xxh64_hexdigest, seed=0)
+
+@pytest.fixture(scope='session')
+def make_ROIs(
+    n_sessions=10,
+    max_rois_per_session=100,
+    size_im=(36,36)
+    ):
+    import numpy as np
+    import torch
+    import torchvision
+
+    roi_prototype = torch.zeros(size_im, dtype=torch.uint8)
+    roi_prototype[*torch.meshgrid(torch.arange(size_im[0]//2-8, size_im[0]//2+8), torch.arange(size_im[1]//2-8, size_im[1]//2+8), indexing='xy')] = 255
+    transforms = torch.nn.Sequential(*[
+        torchvision.transforms.RandomPerspective(distortion_scale=0.9, p=1.0),
+        torchvision.transforms.RandomAffine(0, scale=(2.0, 2.0))
+    ])
+    ROIs = [[transforms(torch.as_tensor(roi_prototype[None,:,:]))[0].numpy() for i_roi in range(max_rois_per_session)] for i_sesh in range(n_sessions)]
+    ROIs = [np.stack([roi for roi in ROIs_sesh if roi.sum() > 0], axis=0) for ROIs_sesh in ROIs]
+
+    return ROIs
