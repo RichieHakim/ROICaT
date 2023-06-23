@@ -1,7 +1,3 @@
-<div>
-    <img src="docs/media/favicon_grayOnWhite.png" alt="ROICaT" width="30"  align="Left"  style="margin-left: 20px; margin-right: 10px"/>
-</div>
-
 # ROICaT
 
 <div>
