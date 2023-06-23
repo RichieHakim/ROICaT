@@ -2,6 +2,7 @@ from pathlib import Path
 import warnings
 import copy
 from typing import Dict, Any, Optional, Union, List, Tuple, Callable, Iterable, Iterator, Type
+import datetime
 
 import importlib
 
@@ -21,143 +22,287 @@ def get_roicat_version() -> str:
     """
     return importlib.metadata.version('roicat')
 
-def make_params_default_tracking(dir_networkFiles: Optional[str] = None,) -> Dict:
-    """
-    Generates a dictionary of default parameters for a standard tracking
-    pipeline.
-
-    Args:
-        dir_networkFiles (Optional[str]):
-            Directory where the ROInet network files are stored. If ``None``,
-            uses the current directory. (Default is ``None``)
-
-    Returns:
-        (Dict):
-            params (Dict):
-                Dictionary of default parameters.
-    """
-    dir_networkFiles = str(Path.cwd() / 'network_files') if dir_networkFiles is None else dir_networkFiles
-
-    params = {
-        'paths': {
-            # 'dir_allOuterFolders': r"/home/rich/data/folder_containing_folders_containing_suite2p_output_files",  ## directory where directories containing below 'pathSuffixTo...' are
-            # 'pathSuffixToStat': 'stat.npy',  ## path suffix to where the stat.npy file is
-            # 'pathSuffixToOps': 'ops.npy',  ## path suffix to where the ops.npy file is
-            # 'dir_save': r'/home/rich/data/roicat_results/',  ## default: None. Directory to save output file to. If None then saves in dir_allOuterFolders.
-            # 'filenamePrefix_save': None,  ##  default: None. Filename prefix to save results to. If None then just uses the dir_allOuterFolders.name.
-        },
-        'importing': {
-            'data_verbose': True,  ## default: True. Whether to print out data importing information
-            'out_height_width': [36, 36],  ## default: [36,36]. Height and width of small cropped output images of each ROI. Check how large your ROIs are in pixels.
-            'max_footprint_width': 1025,  ## default: 1025. Maximum length of a spatial footprint. If you get an error during importing, try increasing this value.
-            'type_meanImg': 'meanImgE',  ## default: 'meanImgE'. Type of mean image to use for normalization. This is just a field in the ops.npy file.
-            'um_per_pixel': 2.0,  ## default: 1.0. Number of microns per pixel for the imaging dataset. Doesn't need to be exact. Used for resizing the ROIs. Check the images of the resized ROIs to tweak.
-            'new_or_old_suite2p': 'new',  ## default: 'new'. If using suite2p, this specifices whether the stat.npy file is in the old MATLAB format or new Python format.
-            'FOV_images': None,  ## default: None. Set to None if you want to use the images extracted from Suite2p
-            'centroid_method': 'centerOfMass',  ## default: 'centerOfMass'. Method to use for calculating the centroid of the ROI. 'centerOfMass' or 'median' available.
-            'FOV_height_width': None,  ## default: None. Set to None if you want to use the images extracted from Suite2p. Otherwise, set to [height, width] of the FOV.
-            'verbose': True,  ## default: True. Whether to print out importing information
-        },
-        'alignment': {
-            'do_phaseCorrReg': True,  ## default: True. If you are having issues with alignment due to big movements of the FOV. Try setting this to False.
-            'session_template': 0.5,  ## default: 0.5. Which session to use as a registration template. If input is float (ie 0.0, 0.5, 1.0, etc.), then it is the fractional position of the session to use; if input is int (ie 1, 2, 3), then it is the index of the session to use (0-indexed)
-            'use_CLAHE': True,  ## default: False. Whether or not to use 'Contrast Limited Adaptive Histogram Equalization'. Useful if params['importing']['type_meanImg'] is not a contrast enhanced image (like 'meanImgE' in Suite2p)
-            'CLAHE_nGrid': 10,  ## default 10. Unsed if 'use_CLAHE' is False. Defines how many blocks to split the FOV into to normalize the local contrast. See openCV's clahe function. Larger means more CLAHE.
-            'phaseCorr': {
-                'freq_highPass': 0.01,  ## default: 0.01. Spatial frequency upper-bound cut-off to use for phase correlation. Units in fraction of the height of the FOV. Spatial frequencies correlations higher than this will be set to zero.
-                'freq_lowPass': 0.3,  ## default: 0.3. Spatial frequency lower-bound cut-off to use for phase correlation. Units in fraction of the height of the FOV. Spatial frequencies correlations lower than this will be set to zero.
-                'template_method': 'sequential',  # default: 'sequential'. Either 'sequential' or 'image'. 'sequential' is better if there is significant drift over sessions. If 'sequential', then pcr.register(template=idx) where idx is the index of the image you want the shifts to be relative to. If 'image', then idx is FOVs[idx].
+def get_default_parameters(pipeline=None, path_defaults=None):
+    if path_defaults is not None:
+        defaults = helpers.yaml_load(path_defaults)
+    else:
+        defaults = {
+            'general' : {
+                'use_GPU': True,
+                'verbose': True,
             },
-            'nonrigid':{
-                'method': 'createOptFlow_DeepFlow',  ## default: 'createOptFlow_DeepFlow'. Method to use for creating optical flow. 'calcOpticalFlowFarneback' and 'createOptFlow_DeepFlow' available.
-                'kwargs_method': None,  ## default: None. Keyword arguments to pass to the cv2 optical flow method.
-                'template_method': 'sequential',  ## default: 'image'. Either 'sequential' or 'image'. 'sequential' is better if there is significant drift over sessions.
-                'return_sparse': True,  ## default: True. Whether to return a sparse matrix (True) or a dense matrix (False).
-                'normalize': True,  ## default: True. If True, normalize the spatial footprints to have a sum of 1.
+            'data_loading': {
+                'data_kind': 'suite2p',  ## Can be 'suite2p' or 'roiextractors'. See documentation and/or notebook on custom data loading for more details.
+                'dir_outer': None,  ## directory where directories containing below 'pathSuffixTo...' are
+                'um_per_pixel': 1.0,  ## Number of microns per pixel for the imaging dataset. Doesn't need to be exact. Used for resizing the ROIs. Check the images of the resized ROIs to tweak.
+                'suite2p': {
+                    'new_or_old_suite2p': 'new',  ## Can be 'new' or 'old'. 'new' is for the Python version of Suite2p, 'old' is for the MATLAB version.
+                    'type_meanImg': 'meanImgE',  ## Can be 'meanImg' or 'meanImgE'. 'meanImg' is the mean image of the dataset, 'meanImgE' is the mean image of the dataset after contrast enhancement.
+                },
             },
-        },
-        'blurring': {
-            'kernel_halfWidth': 2.0,  ## default: 2.0. Half-width of the cosine kernel used for blurring. Set value based on how much you think the ROIs move from session to session.
-            'plot_kernel': False,  ## default: False. Whether to plot the kernel used for blurring.
-        },
+            'alignment': {
+                'augment': {
+                    'roi_FOV_mixing_factor': 0.5,  ## default: 0.5. Fraction of the max intensity projection of ROIs that is added to the FOV image. 0.0 means only the FOV_images, larger values mean more of the ROIs are added.
+                    'use_CLAHE': True,  ## Whether or not to use 'Contrast Limited Adaptive Histogram Equalization'. Useful if params['importing']['type_meanImg'] is not a contrast enhanced image (like 'meanImgE' in Suite2p)
+                    'CLAHE_grid_size': 1,  ## Size of the grid for CLAHE. 1 means no grid, 2 means 2x2 grid, etc.
+                    'CLAHE_clipLimit': 1,  ## Clipping limit for CLAHE. Higher values mean more contrast.
+                    'CLAHE_normalize': True,  ## Whether or not to normalize the CLAHE image.
+                },
+                'fit_geometric': {
+                    'template': 0.5,  ## Which session to use as a registration template. If input is float (ie 0.0, 0.5, 1.0, etc.), then it is the fractional position of the session to use; if input is int (ie 1, 2, 3), then it is the index of the session to use (0-indexed)
+                    'template_method': 'sequential',  ## Can be 'sequential' or 'image'. If 'sequential', then the template is the FOV_image of the previous session. If 'image', then the template is the FOV_image of the session specified by 'template'.
+                    'mode_transform': 'homography',  ## Can be 'homography', 'affine', 'rigid', or 'translation'. See documentation for more details.
+                    'mask_borders': [50, 50, 50, 50],  ## Number of pixels to mask from the borders of the FOV_image. Useful for removing artifacts from the edges of the FOV_image.
+                    'n_iter': 50,  ## Number of iterations to run the registration algorithm. More iterations means more accurate registration, but longer run time.
+                    'termination_eps': 1e-09,  ## Termination criteria for the registration algorithm. See documentation for more details.
+                    'gaussFiltSize': 31,  ## Size of the gaussian filter used to smooth the FOV_image before registration. Larger values mean more smoothing.
+                    'auto_fix_gaussFilt_step': 10,  ## If the registration fails, then the gaussian filter size is reduced by this amount and the registration is tried again.
+                },
+                'fit_nonrigid': {
+                    'template': 0.5,  ## Which session to use as a registration template. If input is float (ie 0.0, 0.5, 1.0, etc.), then it is the fractional position of the session to use; if input is int (ie 1, 2, 3), then it is the index of the session to use (0-indexed)
+                    'template_method': 'image',  ## Can be 'sequential' or 'image'. If 'sequential', then the template is the FOV_image of the previous session. If 'image', then the template is the FOV_image of the session specified by 'template'.
+                    'mode_transform': 'createOptFlow_DeepFlow',  ## Can be 'createOptFlow_DeepFlow' or 'createOptFlow_Farneback'. See documentation for more details.
+                    'kwargs_mode_transform': None,  ## Keyword arguments for the mode_transform function. See documentation for more details.
+                },
+                'transform_ROIs': {
+                    'normalize': True,  ## If True, normalize the spatial footprints to have a sum of 1.
+                },
+            },
+            'blurring': {
+                'kernel_halfWidth': 2.0,  ## Half-width of the cosine kernel used for blurring. Set value based on how much you think the ROIs move from session to session.
+            },
+            'ROInet': {
+                'network': {
+                    'download_method': 'check_local_first',  ## Check to see if a model has already been downloaded to the location (will skip if hash matches)
+                    'download_url': 'https://osf.io/x3fd2/download',  ## URL of the model
+                    'download_hash': '7a5fb8ad94b110037785a46b9463ea94',  ## Hash of the model file
+                    'forward_pass_version': 'latent',  ## How the data is passed through the network
+                },
+                'dataloader': {
+                    'jit_script_transforms': False,  ## (advanced) Whether or not to use torch.jit.script to speed things up
+                    'batchSize_dataloader': 8,  ## (advanced) PyTorch dataloader batch_size
+                    'pinMemory_dataloader': True,  ## (advanced) PyTorch dataloader pin_memory
+                    'numWorkers_dataloader': -1,  ## (advanced) PyTorch dataloader num_workers. -1 is all cores.
+                    'persistentWorkers_dataloader': True,  ## (advanced) PyTorch dataloader persistent_workers
+                    'prefetchFactor_dataloader': 2,  ## (advanced) PyTorch dataloader prefetch_factor
+                },
+            },
+            'SWT': {
+                'kwargs_Scattering2D': {'J': 2, 'L': 12},  ## 'J' is the number of convolutional layers. 'L' is the number of wavelet angles.
+                'batch_size': 100,  ## Batch size for each iteration (smaller is less memory but slower)
+            },
+            'similarity_graph': {
+                'sparsification': {
+                    'n_workers': -1,  ## Number of CPU cores to use. -1 for all.
+                    'block_height': 128,  ## size of a block
+                    'block_width': 128,  ## size of a block
+                    'algorithm_nearestNeigbors_spatialFootprints': 'brute',  ## algorithm used to find the pairwise similarity for s_sf. ('brute' is slow but exact. See docs for others.)
+                },
+                'compute_similarity': {
+                    'spatialFootprint_maskPower': 1.0,  ##  An exponent to raise the spatial footprints to to care more or less about bright pixels
+                },
+                'normalization': {
+                    'k_max': 100,  ## Maximum number of nearest neighbors * n_sessions to consider for the normalizing distribution
+                    'k_min': 10,  ## Minimum number of nearest neighbors * n_sessions to consider for the normalizing distribution
+                    'algo_NN': 'kd_tree',  ## Nearest neighbors algorithm to use
+                },
+            },
+            'clustering': {
+                'automatic_mixing': {
+                    'n_bins': None,  ## Number of bins to use for the histograms of the distributions
+                    'smoothing_window_bins': None,  ## Number of bins to use to smooth the distributions
+                    'kwargs_findParameters': {
+                        'n_patience': 300,  ## Number of optimization epoch to wait for tol_frac to converge
+                        'tol_frac': 0.001,  ## Fractional change below which optimization will conclude
+                        'max_trials': 1200,  ## Max number of optimization epochs
+                        'max_duration': 60*10,  ## Max amount of time (in seconds) to allow optimization to proceed for
+                    },
+                    'bounds_findParameters': {
+                        'power_NN': [0., 5.],  ## Bounds for the exponent applied to s_NN
+                        'power_SWT': [0., 5.],  ## Bounds for the exponent applied to s_SWT
+                        'p_norm': [-5, 0],  ## Bounds for the p-norm p value (Minkowski) applied to mix the matrices
+                        'sig_NN_kwargs_mu': [0., 1.0],  ## Bounds for the sigmoid center for s_NN
+                        'sig_NN_kwargs_b': [0.00, 1.5],  ## Bounds for the sigmoid slope for s_NN
+                        'sig_SWT_kwargs_mu': [0., 1.0], ## Bounds for the sigmoid center for s_SWT
+                        'sig_SWT_kwargs_b': [0.00, 1.5],  ## Bounds for the sigmoid slope for s_SWT
+                    },
+                    'n_jobs_findParameters': -1,  ## Number of CPU cores to use (-1 is all cores)
+                },
+                'pruning': {
+                    'd_cutoff': None,  ## Optionally manually specify a distance cutoff
+                    'stringency': 1.0,  ## How to scale the d_cuttoff. This is a scalaing factor. Smaller numbers result in more pruning.
+                    'convert_to_probability': False,  ## Whether or not to convert the similarity matrix and distance matrix to a probability matrix
+                },
+                'cluster_method': {
+                    'method': 'automatic',  ## 'automatic', 'hdbscan', or 'sequential_hungarian'. 'automatic': selects which clustering algorithm to use (generally if n_sessions >=8 then hdbscan, else sequential_hungarian)
+                    'n_sessions_switch': 8, ## Number of sessions to switch from sequential_hungarian to hdbscan
+                },
+                'hdbscan': {
+                    'min_cluster_size': 2,  ## Minimum number of ROIs that can be considered a 'cluster'
+                    'n_iter_violationCorrection': 6,  ## Number of times to redo clustering sweep after removing violations
+                    'split_intraSession_clusters': True,  ## Whether or not to split clusters with ROIs from the same session
+                    'cluster_selection_method': 'leaf',  ## (advanced) Method of cluster selection for HDBSCAN (see hdbscan documentation)
+                    'd_clusterMerge': None,  ## Distance below which all ROIs are merged into a cluster
+                    'alpha': 0.999,  ## (advanced) Scalar applied to distance matrix in HDBSCAN (see hdbscan documentation)
+                    'discard_failed_pruning': True,  ## (advanced) Whether or not to set all ROIs that could be separated from clusters with ROIs from the same sessions to label=-1
+                    'n_steps_clusterSplit': 100,  ## (advanced) How finely to step through distances to remove violations
+                },
+                'sequential_hungarian': {
+                    'thresh_cost': 0.6, ## Threshold for the cost matrix. Lower numbers result in more clusters.
+                },
+            },
+            'results_saving': {
+                'dir_save': None,  ## Directory to save results to. If None, will not save.
+                'prefix_name_save': str(datetime.datetime.now().strftime("%Y%m%d_%H%M%S")),  ## Prefix to append to the saved files
+            },
+        }
+
+    params_specific = {}
+    params_specific['tracking'] = {
         'ROInet': {
-            'device': 'cpu',  ## default: 'cpu'. Device to use for SWT. Recommend using a GPU (device='cuda').
-            'hash_dict_true': {
-                'params': ('params.json', '68cf1bd47130f9b6d4f9913f86f0ccaa'),
-                'model': ('model.py', '61c85529b7aa33e0dfadb31ee253a7e1'),
-                'state_dict': ('ConvNext_tiny__1_0_best__simCLR.pth', '3287e001ff28d07ada2ae70aa7d0a4da'),
+            'network': {
+                'download_method': 'check_local_first',  ## Check to see if a model has already been downloaded to the location (will skip if hash matches)
+                'download_url': 'https://osf.io/x3fd2/download',  ## URL of the model
+                'download_hash': '7a5fb8ad94b110037785a46b9463ea94',  ## Hash of the model file
+                'forward_pass_version': 'latent',  ## How the data is passed through the network
             },
-            'dir_networkFiles': '/home/rich/Downloads/ROInet',  ## local directory where network files are stored
-            'download_from_gDrive': 'check_local_first',  ## default: 'check_local_first'. Whether to download the network files from Google Drive or to use the local files.
-            'gDriveID': '1D2Qa-YUNX176Q-wgboGflW0K6un7KYeN',  ## default: '1FCcPZUuOR7xG-hdO6Ei6mx8YnKysVsa8'. Google Drive ID of the network files.
-            'forward_pass_version': 'latent', # default: 'latent'. Leave as 'latent' for most things. Can be 'latent' (full pass through network), 'head' (output of the head layers), or 'base' (pass through just base layers)
-            'verbose': True,  ## default: True. Whether to print out ROInet information.
-            'pref_plot': False,  ## default: False. Whether to plot the ROI and the normalized ROI.
-            'batchSize_dataloader': 8,  ## default: 8. Number of images to use for each batch.
-            'pinMemory_dataloader': True,  ## default: True. Whether to pin the memory of the dataloader.
-            'persistentWorkers_dataloader': True,  ## default: True. Whether to use persistent workers for the dataloader.
-            'prefetchFactor_dataloader': 2,  ## default: 2. Number of prefetch factors to use for the dataloader.
-        },
-        'SWT': {
-            'kwargs_Scattering2D': {'J': 2, 'L': 2},  ## default: {'J': 2, 'L': 2}. Keyword arguments to pass to the kymatio Scattering2D function.
-            'device': 'cpu',  ## default: 'cpu'. Device to use for SWT. Recommend using a GPU (device='cuda').
-        }, 
-        'similarity': {
-            'spatialFootprint_maskPower': 1.0,  ## default: 1.0. This determines the power to take the ROI mask images to. Higher for more dependent on brightness, lower for more dependent on binary overlap.
-            'n_workers': -1,  ## default: -1. Number of workers to use for similarity. Set to -1 to use all available workers.
-            'block_height': 128,  ## default: 64. Maximum height of the FOV block bins to use for pairwise ROI similarity calculations. Use smaller values (16-64) if n_sessions is large (<12), else keep around (64-128)
-            'block_width': 128,  ## default: 64. Maximum width of the FOV block bins to use for pairwise ROI similarity calculations. Use smaller values (16-64) if n_sessions is large (<12), else keep around (64-128)
-            'algorithm_nearestNeigbors_spatialFootprints': 'brute',  ## default: 'brute'. Algorithm to use for nearest neighbors.
-            'verbose': True,  ## default: True. Whether to print out similarity information.
-            'normalization': {
-                'k_max': 4000,  ## default: 4000. Maximum kNN distance to use for building a distribution of pairwise similarities for each ROI.
-                'k_min': 150,  ## default: 150. Set around n_sessions*10. Minimum kNN distance to use for building a distribution of pairwise similarities for each ROI. 
-                'algo_NN': 'kd_tree',  ## default: 'kd_tree'. Algorithm to use for the nearest neighbors search across positional distances of different ROIs center positions. 'kd_tree' seems to be fastest. See sklearn nearest neighbor documentation for details.
-                'device': 'cpu',  ## default: 'cpu'. Device to use for SWT. Recommend using a GPU (device='cuda').
-            },
-        },
-        ## Cluster
-        'clustering': {
-            'plot_pref': True,
-            'auto_pruning':{
-                'n_bins': 50,  ## default: 50. Number of bins to use for estimating the distributions for 'different' and 'same' pairwise similarities
-                'find_parameters_automatically': True,  ## default: True. Use optuna automatic parameter searching to find the best values for 'kwargs_makeConjunctiveDistanceMatrix'
-                'n_jobs': -1, ## default: 2. Number of jobs to use for the optuna parameter search. Large values or -1 can result in high memory usage.
-                'kwargs_findParameters': {
-                    'n_patience': 100,
-                    'tol_frac': 0.05,
-                    'max_trials': 350,
-                    'max_duration': 60*10,
-                    'verbose': False,
-                },
-                'bounds_findParameters': {
-                    'power_SF': (0.3, 2),
-                    'power_NN': (0.2, 2),
-                    'power_SWT': (0.1, 1),
-                    'p_norm': (-5, 5),
-                    'sig_NN_kwargs_mu': (0, 0.5),
-                    'sig_NN_kwargs_b': (0.05, 2),
-                    'sig_SWT_kwargs_mu': (0, 0.5),
-                    'sig_SWT_kwargs_b': (0.05, 2),
-                },
-            },
-            'method': 'auto',  ## default: 'auto'. Can be 'hungarian', 'hdbscan', or 'auto'. If 'auto', then if n_sessions >=8 'hdbscan' will be used.
-            'hdbscan':{  ## Used only if 'method' is 'hdbscan'
-                'min_cluster_size': 2,  ## default: 2. Best practice is to keep at 2 because issues can occur otherwise. Just manually throw out clusters with fewer ROIs if needed.
-                'alpha': 0.999,  ## default: 0.999. Use slightly smaller values (~0.8) if you want bigger less conservative clusters. See hdbscan documentation: https://hdbscan.readthedocs.io/en/latest/parameter_selection.html
-                'd_clusterMerge': None,  ## default: None. Distance (mixed conjunctive distance) at which all samples less than this far apart are joined in clusters. If None, then set to mean + 1.0 std of the distribution. See 'cluster_selection_epsilon' in hdbscan documentation: https://hdbscan.readthedocs.io/en/latest/parameter_selection.html
-                'cluster_selection_method': 'leaf',  ## default: 'leaf'. 'leaf' is better for smaller homogeneous clusters, 'eom' is better for larger clusters of various densities. See hdbscan documentation: https://hdbscan.readthedocs.io/en/latest/parameter_selection.html
-                'split_intraSession_clusters': True,  ## default: True. Splits up clusters with multiple ROIs from the same session into multiple clusters.
-                'd_step': 0.01,  ## default: 0.03. Size of steps to take when splitting clusters with multiple ROIs from the same session. Smaller values give higher quality clusters.
-                'discard_failed_pruning': True,  ## default: Failsafe. If the splitting doesn't work for whatever reason, then just set all violating clusters to label=-1.
-                'n_iter_violationCorrection': 6,  ## default: 5. Number of times to iterate a correcting process to improve clusters. Warning: This can increase run time linearly for large datasets. Typically converges after around 5 iterations. If n_sessions is large (>30), consider increasing.
-            },
-            'hungarian': {
-                'thresh_cost': 0.6, ## default: 0.95. Threshold distance at which all clusters larger than this are discarded. Note that typically no change will occur after values > d_cutoff.
+            'dataloader': {
+                'jit_script_transforms': False,  ## (advanced) Whether or not to use torch.jit.script to speed things up
+                'batchSize_dataloader': 8,  ## (advanced) PyTorch dataloader batch_size
+                'pinMemory_dataloader': True,  ## (advanced) PyTorch dataloader pin_memory
+                'numWorkers_dataloader': -1,  ## (advanced) PyTorch dataloader num_workers. -1 is all cores.
+                'persistentWorkers_dataloader': True,  ## (advanced) PyTorch dataloader persistent_workers
+                'prefetchFactor_dataloader': 2,  ## (advanced) PyTorch dataloader prefetch_factor
             },
         },
     }
-    return params
+    params_specific['classification_inference'] = {
+        'ROInet': {
+            'network': {
+                'download_method': 'check_local_first',  ## Check to see if a model has already been downloaded to the location (will skip if hash matches)
+                'download_url': 'https://osf.io/c8m3b/download',  ## URL of the model
+                'download_hash': '357a8d9b630ec79f3e015d0056a4c2d5',  ## Hash of the model file
+                'forward_pass_version': 'head',  ## How the data is passed through the network
+            },
+            'dataloader': {
+                'jit_script_transforms': False,  ## (advanced) Whether or not to use torch.jit.script to speed things up
+                'batchSize_dataloader': 8,  ## (advanced) PyTorch dataloader batch_size
+                'pinMemory_dataloader': True,  ## (advanced) PyTorch dataloader pin_memory
+                'numWorkers_dataloader': -1,  ## (advanced) PyTorch dataloader num_workers. -1 is all cores.
+                'persistentWorkers_dataloader': True,  ## (advanced) PyTorch dataloader persistent_workers
+                'prefetchFactor_dataloader': 2,  ## (advanced) PyTorch dataloader prefetch_factor
+            },
+        },
+    }
+    params_specific['classification_training'] = {}
+    params_specific['classification_training']['ROInet'] = copy.deepcopy(params_specific['classification_inference']['ROInet'])
+
+    keys_specific = {}
+    keys_specific['tracking'] = [
+        'general',
+        'data_loading',
+        'alignment',
+        'blurring',
+        'ROInet',
+        'SWT',
+        'similarity_graph',
+        'clustering',
+        'results_saving',
+    ]
+    keys_specific['classification_inference'] = [
+        'general',
+        'data_loading',
+        'ROInet',
+        'results_saving',
+    ]
+
+    if pipeline is not None:
+        assert pipeline in ['tracking', 'classification_inference', 'classification_training']
+        out = copy.deepcopy({key: defaults[key] for key in keys_specific[pipeline]})
+        [helpers.deep_update_dict(out, [key], val, in_place=True) for key, val in params_specific[pipeline].items()]
+        [out.pop(key) for key in out.keys() if key not in keys_specific[pipeline]]
+    else:
+        out = copy.deepcopy(defaults)
+
+    return out
+
+def fill_in_params(
+    d: Dict, 
+    defaults: Dict,
+    verbose: bool = True,
+    hierarchy: List[str] = ['params'], 
+):
+    """
+    In-place. Fills in dictionary ``d`` with values from ``defaults`` if they
+    are missing. Works hierachically.
+    RH 2023
+
+    Args:
+        d (Dict):
+            Dictionary to fill in.
+            In-place.
+        defaults (Dict):
+            Dictionary of defaults.
+        verbose (bool):
+            Whether to print messages.
+        hierarchy (List[str]):
+            Used internally for recursion.
+            Hierarchy of keys to d.
+    """
+    from copy import deepcopy
+    for key in defaults:
+        if key not in d:
+            print(f"Parameter '{key}' not found in params dictionary: {' > '.join([f'{str(h)}' for h in hierarchy])}. Using default value: {defaults[key]}") if verbose else None
+            d.update({key: deepcopy(defaults[key])})
+        elif isinstance(defaults[key], dict):
+            assert isinstance(d[key], dict), f"Parameter '{key}' must be a dictionary."
+            fill_in_params(d[key], defaults[key], hierarchy=hierarchy+[key])
+            
+def check_keys_subset(d, default_dict, hierarchy=['defaults']):
+    """
+    Checks that the keys in d are all in default_dict. Raises an error if not.
+    RH 2023
+
+    Args:
+        d (Dict):
+            Dictionary to check.
+        default_dict (Dict):
+            Dictionary containing the keys to check against.
+        hierarchy (List[str]):
+            Used internally for recursion.
+            Hierarchy of keys to d.
+    """
+    default_keys = list(default_dict.keys())
+    for key in d.keys():
+        assert key in default_keys, f"Parameter '{key}' not found in defaults dictionary: {' > '.join([f'{str(h)}' for h in hierarchy])}."
+        if isinstance(d[key], dict):
+            check_keys_subset(d[key], default_dict[key], hierarchy=hierarchy+[key])
+
+def prepare_params(params, defaults, verbose=True):
+    """
+    Does the following:
+        * Checks that all keys in ``params`` are in ``defaults``.
+        * Fills in any missing keys in ``params`` with values from ``defaults``.
+        * Returns a deepcopy of the filled-in ``params``.
+
+    Args:
+        params (Dict):
+            Dictionary of parameters.
+        defaults (Dict):
+            Dictionary of defaults.
+        verbose (bool):
+            Whether to print messages.
+    """
+    from copy import deepcopy
+    ## Check inputs
+    assert isinstance(params, dict), f"p must be a dict. Got {type(params)} instead."
+    ## Make sure all the keys in p are valid
+    check_keys_subset(params, defaults)
+    ## Fill in any missing keys with defaults
+    params_out = deepcopy(params)
+    fill_in_params(params_out, defaults, verbose=verbose)
+
+    return params_out
 
 
 def system_info(verbose: bool = False,) -> Dict:

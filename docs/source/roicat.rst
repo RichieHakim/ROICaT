@@ -51,6 +51,14 @@ roicat.tracking.similarity\_graph module
    :show-inheritance:
 
 
+roicat.pipelines module
+-----------------------
+
+.. automodule:: roicat.pipelines
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 roicat.ROInet module
 --------------------
 

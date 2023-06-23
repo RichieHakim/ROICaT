@@ -23,6 +23,7 @@ import sparse
 from tqdm import tqdm
 import cv2
 import matplotlib.pyplot as plt
+import yaml
 
 """
 All of these are from basic_neural_processing_modules
@@ -895,89 +896,237 @@ def find_paths(
     return paths
 
 
-def prepare_filepath_for_saving(
-    path: str,
-    mkdir: bool = False,
-    allow_overwrite: bool = True,
-) -> None:
+def prepare_path(
+    path: str, 
+    mkdir: bool = False, 
+    exist_ok: bool = True,
+) -> str:
     """
-    Checks the validity of a file path. The function will verify that the parent
-    directory exists, is a directory, and the file can be overwritten if
-    necessary. 
-    RH 2022
+    Checks if a directory or file path is valid for different purposes: 
+    saving, loading, etc.
+    RH 2023
+
+    * If exists:
+        * If exist_ok=True: all good
+        * If exist_ok=False: raises error
+    * If doesn't exist:
+        * If file:
+            * If parent directory exists:
+                * All good
+            * If parent directory doesn't exist:
+                * If mkdir=True: creates parent directory
+                * If mkdir=False: raises error
+        * If directory:
+            * If mkdir=True: creates directory
+            * If mkdir=False: raises error
+            
+    RH 2023
 
     Args:
-        path (str):
-            Path to be checked. 
-        mkdir (bool):
-            Determines if the parent directory should be created if it does not
-            already exist. (Default is ``False``)
-        allow_overwrite (bool):
-            Determines if overwriting of an existing file is allowed. (Default
-            is ``True``)
+        path (str): 
+            Path to be checked.
+        mkdir (bool): 
+            If ``True``, creates parent directory if it does not exist. 
+            (Default is ``False``)
+        exist_ok (bool): 
+            If ``True``, allows overwriting of existing file. 
+            (Default is ``True``)
 
-    Raises:
-        AssertionError: 
-            If ``allow_overwrite`` is ``False`` and the file specified in
-            ``path`` already exists. If the parent directory of the file
-            specified in ``path`` does not exist. If the parent directory of the
-            file specified in ``path`` is not a directory.
+    Returns:
+        (str): 
+            path (str):
+                Resolved path.
     """
-    Path(path).parent.mkdir(parents=True, exist_ok=True) if mkdir else None
-    assert allow_overwrite or not Path(path).exists(), f'{path} already exists.'
-    assert Path(path).parent.exists(), f'{Path(path).parent} does not exist.'
-    assert Path(path).parent.is_dir(), f'{Path(path).parent} is not a directory.'
+    ## check if path is valid
+    try:
+        path_obj = Path(path).resolve()
+    except FileNotFoundError as e:
+        print(f'Invalid path: {path}')
+        raise e
+    
+    ## check if path object exists
+    flag_exists = path_obj.exists()
+
+    ## determine if path is a directory or file
+    if flag_exists:
+        flag_dirFileNeither = 'dir' if path_obj.is_dir() else 'file' if path_obj.is_file() else 'neither'  ## 'neither' should never happen since path.is_file() or path.is_dir() should be True if path.exists()
+        assert flag_dirFileNeither != 'neither', f'Path: {path} is neither a file nor a directory.'
+        assert exist_ok, f'{path} already exists and exist_ok=False.'
+    else:
+        flag_dirFileNeither = 'dir' if path_obj.suffix == '' else 'file'  ## rely on suffix to determine if path is a file or directory
+
+    ## if path exists and is a file or directory
+    # all good. If exist_ok=False, then this should have already been caught above.
+    
+    ## if path doesn't exist and is a file
+    ### if parent directory exists        
+    # all good
+    ### if parent directory doesn't exist
+    #### mkdir if mkdir=True and raise error if mkdir=False
+    if not flag_exists and flag_dirFileNeither == 'file':
+        if Path(path).parent.exists():
+            pass ## all good
+        elif mkdir:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+        else:
+            assert False, f'File: {path} does not exist, Parent directory: {Path(path).parent} does not exist, and mkdir=False.'
+        
+    ## if path doesn't exist and is a directory
+    ### mkdir if mkdir=True and raise error if mkdir=False
+    if not flag_exists and flag_dirFileNeither == 'dir':
+        if mkdir:
+            Path(path).mkdir(parents=True, exist_ok=True)
+        else:
+            assert False, f'{path} does not exist and mkdir=False.'
+
+    ## if path is neither a file nor a directory
+    ### raise error
+    if flag_dirFileNeither == 'neither':
+        assert False, f'{path} is neither a file nor a directory. This should never happen. Check this function for bugs.'
+
+    return str(path_obj)
+
+def prepare_filepath_for_saving(
+    filepath: str, 
+    mkdir: bool = False, 
+    allow_overwrite: bool = True
+) -> str:
+    """
+    Prepares a file path for saving a file. Ensures the file path is valid and has the necessary permissions. 
+
+    Args:
+        filepath (str): 
+            The file path to be prepared for saving.
+        mkdir (bool): 
+            If set to ``True``, creates parent directory if it does not exist. (Default is ``False``)
+        allow_overwrite (bool): 
+            If set to ``True``, allows overwriting of existing file. (Default is ``True``)
+
+    Returns:
+        (str): 
+            path (str): 
+                The prepared file path for saving.
+    """
+    return prepare_path(filepath, mkdir=mkdir, exist_ok=allow_overwrite)
+def prepare_filepath_for_loading(
+    filepath: str, 
+    must_exist: bool = True
+) -> str:
+    """
+    Prepares a file path for loading a file. Ensures the file path is valid and has the necessary permissions. 
+
+    Args:
+        filepath (str): 
+            The file path to be prepared for loading.
+        must_exist (bool): 
+            If set to ``True``, the file at the specified path must exist. (Default is ``True``)
+
+    Returns:
+        (str): 
+            path (str): 
+                The prepared file path for loading.
+    """
+    path = prepare_path(filepath, mkdir=False, exist_ok=must_exist)
+    if must_exist:
+        assert Path(path).is_file(), f'{path} is not a file.'
+    return path
+def prepare_directory_for_saving(
+    directory: str, 
+    mkdir: bool = False, 
+    exist_ok: bool = True
+) -> str:
+    """
+    Prepares a directory path for saving a file. This function is rarely used.
+
+    Args:
+        directory (str): 
+            The directory path to be prepared for saving.
+        mkdir (bool): 
+            If set to ``True``, creates parent directory if it does not exist. (Default is ``False``)
+        exist_ok (bool): 
+            If set to ``True``, allows overwriting of existing directory. (Default is ``True``)
+
+    Returns:
+        (str): 
+            path (str): 
+                The prepared directory path for saving.
+    """
+    return prepare_path(directory, mkdir=mkdir, exist_ok=exist_ok)
+def prepare_directory_for_loading(
+    directory: str, 
+    must_exist: bool = True
+) -> str:
+    """
+    Prepares a directory path for loading a file. This function is rarely used.
+
+    Args:
+        directory (str): 
+            The directory path to be prepared for loading.
+        must_exist (bool): 
+            If set to ``True``, the directory at the specified path must exist. (Default is ``True``)
+
+    Returns:
+        (str): 
+            path (str): 
+                The prepared directory path for loading.
+    """
+    path = prepare_path(directory, mkdir=False, exist_ok=must_exist)
+    if must_exist:
+        assert Path(path).is_dir(), f'{path} is not a directory.'
+    return path
 
 
 def pickle_save(
     obj: Any, 
-    path_save: str, 
+    filepath: str, 
     mode: str = 'wb', 
     zipCompress: bool = False, 
     mkdir: bool = False, 
     allow_overwrite: bool = True,
-    **kwargs_zipfile: Dict,
+    **kwargs_zipfile: Dict[str, Any],
 ) -> None:
     """
-    Saves an object to a pickle file with options for zipping and directory
-    creation. This function utilizes the ``pickle.dump`` method for object
-    serialization.
+    Saves an object to a pickle file using `pickle.dump`.
+    Allows for zipping of the file.
+
     RH 2022
 
     Args:
         obj (Any): 
-            The object to be saved.
-        path_save (str): 
-            The path to save the object.
+            The object to save.
+        filepath (str): 
+            The path to save the object to.
         mode (str): 
-            The mode to open the file. Options are: \n
-            * ``'wb'``: write binary
-            * ``'ab'``: append binary
-            * ``'xb'``: exclusive write binary. Raises FileExistsError if file
-              already exists. (Default is ``'wb'``)
+            The mode to open the file in. Options are: \n
+            * ``'wb'``: Write binary.
+            * ``'ab'``: Append binary.
+            * ``'xb'``: Exclusive write binary. Raises FileExistsError if the
+              file already exists. \n
+            (Default is ``'wb'``)
         zipCompress (bool): 
-            If ``True``, the pickle file is compressed using ``zipfile.ZipFile``
-            with the compression method specified in ``kwargs_zipfile`` or
-            ``zipfile.ZIP_DEFLATED`` if not specified. This method is useful for
-            saving redundant and/or sparse arrays objects. (Default is
-            ``False``)
+            If ``True``, compresses pickle file using zipfileCompressionMethod,
+            which is similar to ``savez_compressed`` in numpy (with
+            ``zipfile.ZIP_DEFLATED``). Useful for saving redundant and/or sparse
+            arrays objects. (Default is ``False``)
         mkdir (bool): 
-            If ``True``, creates the parent directory if it does not exist. (Default is ``False``)
+            If ``True``, creates parent directory if it does not exist. (Default
+            is ``False``)
         allow_overwrite (bool): 
-            If ``True``, allows overwriting of an existing file. (Default is ``True``)      
-        kwargs_zipfile (Dict): 
-            Dictionary of keyword arguments passed into ``zipfile.ZipFile``. 
-            If ``compression`` is not provided, ``zipfile.ZIP_DEFLATED`` is used by default.
-            See https://docs.python.org/3/library/zipfile.html#zipfile-objects for more options. 
-            Other options for 'compression' include: \n
-            * ``0`` or ``zipfile.ZIP_STORED``: No compression
-            * ``8`` or ``zipfile.ZIP_DEFLATED``: Usual zip compression
-            * ``12`` or ``zipfile.ZIP_BZIP2``: bzip2 compression (usually not as
-              good as ZIP_DEFLATED)
-            * ``14`` or ``zipfile.ZIP_LZMA``: lzma compression (usually better
-              than ZIP_DEFLATED but slower)
+            If ``True``, allows overwriting of existing file. (Default is
+            ``True``)
+        kwargs_zipfile (Dict[str, Any]): 
+            Keyword arguments that will be passed into `zipfile.ZipFile`.
+            compression=``zipfile.ZIP_DEFLATED`` by default.
+            See https://docs.python.org/3/library/zipfile.html#zipfile-objects.
+            Other options for 'compression' are (input can be either int or object): \n
+                * ``0``:  zipfile.ZIP_STORED (no compression)
+                * ``8``:  zipfile.ZIP_DEFLATED (usual zip compression)
+                * ``12``: zipfile.ZIP_BZIP2 (bzip2 compression) (usually not as
+                  good as ZIP_DEFLATED)
+                * ``14``: zipfile.ZIP_LZMA (lzma compression) (usually better
+                  than ZIP_DEFLATED but slower)
     """
-    prepare_filepath_for_saving(path_save, mkdir=mkdir, allow_overwrite=allow_overwrite)
+    path = prepare_filepath_for_saving(filepath, mkdir=mkdir, allow_overwrite=allow_overwrite)
 
     if len(kwargs_zipfile)==0:
         kwargs_zipfile = {
@@ -985,89 +1134,282 @@ def pickle_save(
         }
 
     if zipCompress:
-        with zipfile.ZipFile(path_save, 'w', **kwargs_zipfile) as f:
+        with zipfile.ZipFile(path, 'w', **kwargs_zipfile) as f:
             f.writestr('data', pickle.dumps(obj))
     else:
-        with open(path_save, mode) as f:
+        with open(path, mode) as f:
             pickle.dump(obj, f)
 
 def pickle_load(
-    filename: str, 
+    filepath: str, 
     zipCompressed: bool = False,
-    mode: str = 'rb'
+    mode: str = 'rb',
 ) -> Any:
     """
-    Loads a pickle file and optionally unzips it if required.
+    Loads an object from a pickle file.
     RH 2022
 
     Args:
-        filename (str):
+        filepath (str): 
             Path to the pickle file.
-        zipCompressed (bool):
-            If ``True``, the file is assumed to be a .zip file. This function
+        zipCompressed (bool): 
+            If ``True``, the file is assumed to be a .zip file. The function
             will first unzip the file, then load the object from the unzipped
-            file. (Default is ``False``)
-        mode (str):
-            Mode to open the file in. (Default is ``'rb'``)
+            file. 
+            (Default is ``False``)
+        mode (str): 
+            The mode to open the file in. (Default is ``'rb'``)
 
     Returns:
         (Any): 
-            obj (Any):
-                Object loaded from the pickle file.
+            obj (Any): 
+                The object loaded from the pickle file.
     """
+    path = prepare_filepath_for_loading(filepath, must_exist=True)
     if zipCompressed:
-        with zipfile.ZipFile(filename, 'r') as f:
+        with zipfile.ZipFile(path, 'r') as f:
             return pickle.loads(f.read('data'))
     else:
-        with open(filename, mode) as f:
+        with open(path, mode) as f:
             return pickle.load(f)
 
+def json_save(
+    obj: Any, 
+    filepath: str, 
+    indent: int = 4, 
+    mode: str = 'w', 
+    mkdir: bool = False, 
+    allow_overwrite: bool = True,
+) -> None:
+    """
+    Saves an object to a json file using `json.dump`.
+    RH 2022
+
+    Args:
+        obj (Any): 
+            The object to save.
+        filepath (str): 
+            The path to save the object to.
+        indent (int): 
+            Number of spaces for indentation in the output json file. (Default
+            is *4*)
+        mode (str): 
+            The mode to open the file in. Options are: \n
+            * ``'wb'``: Write binary.
+            * ``'ab'``: Append binary.
+            * ``'xb'``: Exclusive write binary. Raises FileExistsError if the
+              file already exists. \n
+            (Default is ``'w'``)
+        mkdir (bool): 
+            If ``True``, creates parent directory if it does not exist. (Default
+            is ``False``)
+        allow_overwrite (bool): 
+            If ``True``, allows overwriting of existing file. (Default is
+            ``True``)
+    """
+    import json
+    path = prepare_filepath_for_saving(filepath, mkdir=mkdir, allow_overwrite=allow_overwrite)
+    with open(path, mode) as f:
+        json.dump(obj, f, indent=indent)
+
+def json_load(
+    filepath: str, 
+    mode: str = 'r',
+) -> Any:
+    """
+    Loads an object from a json file.
+    RH 2022
+
+    Args:
+        filepath (str): 
+            Path to the json file.
+        mode (str): 
+            The mode to open the file in. (Default is ``'r'``)
+
+    Returns:
+        (Any): 
+            obj (Any): 
+                The object loaded from the json file.
+    """
+    import json
+    path = prepare_filepath_for_loading(filepath, must_exist=True)
+    with open(path, mode) as f:
+        return json.load(f)
+
+
+def yaml_save(
+    obj: object, 
+    filepath: str, 
+    indent: int = 4, 
+    mode: str = 'w', 
+    mkdir: bool = False, 
+    allow_overwrite: bool = True,
+) -> None:
+    """
+    Saves an object to a YAML file using the ``yaml.dump`` method.
+    RH 2022
+
+    Args:
+        obj (object): 
+            The object to be saved.
+        filepath (str): 
+            Path to save the object to.
+        indent (int): 
+            The number of spaces for indentation in the saved YAML file.
+            (Default is *4*)
+        mode (str): 
+            Mode to open the file in. \n
+            * ``'w'``: write (default)
+            * ``'wb'``: write binary
+            * ``'ab'``: append binary
+            * ``'xb'``: exclusive write binary. Raises ``FileExistsError`` if
+              file already exists. \n
+            (Default is ``'w'``)
+        mkdir (bool): 
+            If ``True``, creates the parent directory if it does not exist.
+            (Default is ``False``)
+        allow_overwrite (bool): 
+            If ``True``, allows overwriting of existing files. (Default is
+            ``True``)
+    """
+    path = prepare_filepath_for_saving(filepath, mkdir=mkdir, allow_overwrite=allow_overwrite)
+    with open(path, mode) as f:
+        yaml.dump(obj, f, indent=indent)
+
+def yaml_load(
+    filepath: str, 
+    mode: str = 'r', 
+    loader: object = yaml.FullLoader,
+) -> object:
+    """
+    Loads a YAML file.
+    RH 2022
+
+    Args:
+        filepath (str): 
+            Path to the YAML file to load.
+        mode (str): 
+            Mode to open the file in. (Default is ``'r'``)
+        loader (object): 
+            The YAML loader to use. \n
+            * ``yaml.FullLoader``: Loads the full YAML language. Avoids
+              arbitrary code execution. (Default for PyYAML 5.1+)
+            * ``yaml.SafeLoader``: Loads a subset of the YAML language, safely.
+              This is recommended for loading untrusted input.
+            * ``yaml.UnsafeLoader``: The original Loader code that could be
+              easily exploitable by untrusted data input.
+            * ``yaml.BaseLoader``: Only loads the most basic YAML. All scalars
+              are loaded as strings. \n
+            (Default is ``yaml.FullLoader``)
+
+    Returns:
+        (object): 
+            loaded_obj (object):
+                The object loaded from the YAML file.
+    """
+    path = prepare_filepath_for_loading(filepath, must_exist=True)
+    with open(path, mode) as f:
+        return yaml.load(f, Loader=loader)    
+
+def matlab_load(
+    filepath: str, 
+    simplify_cells: bool = True, 
+    kwargs_scipy: Dict = {}, 
+    kwargs_mat73: Dict = {}, 
+    verbose: bool = False
+) -> Dict:
+    """
+    Loads a matlab file. If the .mat file is not version 7.3, it uses
+    ``scipy.io.loadmat``. If the .mat file is version 7.3, it uses
+    ``mat73.loadmat``. RH 2023
+
+    Args:
+        filepath (str):
+            Path to the matlab file.
+        simplify_cells (bool): 
+            If set to ``True`` and file is not version 7.3, it simplifies cells
+            to numpy arrays. (Default is ``True``)
+        kwargs_scipy (Dict): 
+            Keyword arguments to pass to ``scipy.io.loadmat``. (Default is
+            ``{}``)
+        kwargs_mat73 (Dict): 
+            Keyword arguments to pass to ``mat73.loadmat``. (Default is ``{}``)
+        verbose (bool): 
+            If set to ``True``, it prints information about the file. (Default
+            is ``False``)
+
+    Returns:
+        (Dict): 
+            out (Dict):
+                The loaded matlab file content in a dictionary format.
+    """
+    path = prepare_filepath_for_loading(filepath, must_exist=True)
+    assert path.endswith('.mat'), 'File must be .mat file.'
+
+    try:
+        import scipy.io
+        out = scipy.io.loadmat(path, simplify_cells=simplify_cells, **kwargs_scipy)
+    except NotImplementedError as e:
+        print(f'File {path} is version 7.3. Loading with mat73.') if verbose else None
+        import mat73
+        out = mat73.loadmat(path, **kwargs_mat73)
+        print(f'Loaded {path} with mat73.') if verbose else None
+    return out
 
 def matlab_save(
-    obj: dict,
-    filepath: str,
+    obj: Dict, 
+    filepath: str, 
     mkdir: bool = False, 
     allow_overwrite: bool = True,
     clean_string: bool = True,
     list_to_objArray: bool = True,
     none_to_nan: bool = True,
-    kwargs_scipy_savemat: dict = {
+    kwargs_scipy_savemat: Dict = {
         'appendmat': True,
         'format': '5',
         'long_field_names': False,
         'do_compression': False,
         'oned_as': 'row',
-    },
+    }
 ):
     """
-    Saves data to a Matlab file using scipy.io.savemat. 
-    Additional functionality includes cleaning strings, 
-    converting lists to object arrays, and converting None to np.nan.
+    Saves data to a matlab file. It uses ``scipy.io.savemat`` and provides
+    additional functionality such as cleaning strings, converting lists to
+    object arrays, and converting None to np.nan.
     RH 2023
 
     Args:
-        obj (dict):
-            Data to be saved.
-        filepath (str):
-            Path to save the file to.
-        mkdir (bool):
-            If ``True``, makes directories as needed for the file path. 
+        obj (Dict): 
+            The data to save. This must be in dictionary format.
+        filepath (str): 
+            The path to save the file to.
+        mkdir (bool): 
+            If set to ``True``, creates parent directory if it does not exist.
             (Default is ``False``)
-        allow_overwrite (bool):
-            If ``True``, allows overwriting of existing files. 
-            (Default is ``True``)
-        clean_string (bool):
-            If ``True``, converts strings to bytes. 
-            (Default is ``True``)
-        list_to_objArray (bool):
-            If ``True``, converts lists to object arrays. 
-            (Default is ``True``)
-        none_to_nan (bool):
-            If ``True``, converts None values to np.nan. 
-            (Default is ``True``)
-        kwargs_scipy_savemat (dict):
-            Keyword arguments to pass to scipy.io.savemat. 
-            (Default is {'appendmat': True, 'format': '5', 'long_field_names': False, 'do_compression': False, 'oned_as': 'row'})
+        allow_overwrite (bool): 
+            If set to ``True``, allows overwriting of existing file. (Default is
+            ``True``)
+        clean_string (bool): 
+            If set to ``True``, converts strings to bytes. (Default is ``True``)
+        list_to_objArray (bool): 
+            If set to ``True``, converts lists to object arrays. (Default is
+            ``True``)
+        none_to_nan (bool): 
+            If set to ``True``, converts None to np.nan. (Default is ``True``)
+        kwargs_scipy_savemat (Dict): 
+            Keyword arguments to pass to ``scipy.io.savemat``. \n
+            * ``'appendmat'``: Whether to append .mat to the end of the given
+              filename, if it isn't already there.
+            * ``'format'``: The format of the .mat file. '4' for Matlab 4 .mat
+              files, '5' for Matlab 5 and above.
+            * ``'long_field_names'``: Whether to allow field names of up to 63
+              characters instead of the standard 31.
+            * ``'do_compression'``: Whether to compress matrices on write.
+            * ``'oned_as'``: Whether to save 1-D numpy arrays as row or column
+              vectors in the .mat file. 'row' or 'column'. \n
+            (Default is ``{'appendmat': True, 'format': '5', 'long_field_names':
+            False, 'do_compression': False, 'oned_as': 'row'}``)
+
     """
     import numpy as np
 
