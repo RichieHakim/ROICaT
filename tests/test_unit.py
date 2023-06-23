@@ -104,22 +104,27 @@ def test_data_suite2p(dir_data_test, array_hasher):
     ## Import class
     from roicat.data_importing import Data_suite2p
 
-    ## Get default parameters
-    params = util.make_params_default_tracking(dir_networkFiles=dir_data_test)
+    params = {
+        'data_loading': {
+            'data_kind': 'suite2p',  ## Can be 'suite2p' or 'roiextractors'. See documentation and/or notebook on custom data loading for more details.
+            'common': {
+                'um_per_pixel': 2.0,  ## Number of microns per pixel for the imaging dataset. Doesn't need to be exact. Used for resizing the ROIs. Check the images of the resized ROIs to tweak.
+                'centroid_method': 'centerOfMass', ## Can be 'centerOfMass' or 'median'.
+                'out_height_width': [36,36],  ## Height and width of the small ROI_images. Should generally be tuned slightly bigger than the largest ROIs. Leave if uncertain or if ROIs are small enough to fit in the default size.
+            },
+            'suite2p': {
+                'new_or_old_suite2p': 'new',  ## Can be 'new' or 'old'. 'new' is for the Python version of Suite2p, 'old' is for the MATLAB version.
+                'type_meanImg': 'meanImgE',  ## Can be 'meanImg' or 'meanImgE'. 'meanImg' is the mean image of the dataset, 'meanImgE' is the mean image of the dataset after contrast enhancement.
+            },
+        },
+    }
 
     ## Instantiate class with test data
     data = Data_suite2p(
         paths_statFiles=paths_stat,
         paths_opsFiles=paths_ops,
-        um_per_pixel=params['importing']['um_per_pixel'],
-        new_or_old_suite2p='new',
-        out_height_width=params['importing']['out_height_width'],
-        type_meanImg='meanImgE',
-        # FOV_images=None,
-        centroid_method=params['importing']['centroid_method'],
-        # class_labels=None,
-    #     FOV_height_width=(512, 1024),
         verbose=True,
+        **{**params['data_loading']['common'], **params['data_loading']['suite2p']},
     )
 
     ## Test that the class was instantiated correctly
@@ -131,7 +136,7 @@ def test_data_suite2p(dir_data_test, array_hasher):
     assert all([p == p2 for p, p2 in zip(data.paths_stat, paths_stat)]), 'ROICaT Error: data.paths_stat != paths_stat'
     assert all([isinstance(p, str) for p in data.paths_ops]), 'ROICaT Error: data.paths_ops.dtype != str'
     assert all([p == p2 for p, p2 in zip(data.paths_ops, paths_ops)]), 'ROICaT Error: data.paths_ops != paths_ops'
-    assert data.um_per_pixel == params['importing']['um_per_pixel'], 'ROICaT Error: data.um_per_pixel != params[importing][um_per_pixel]'
+    assert data.um_per_pixel == params['data_loading']['common']['um_per_pixel'], 'ROICaT Error: data.um_per_pixel != params[data_loading][common][um_per_pixel]'
     assert data.n_sessions == len(paths_stat), 'ROICaT Error: data.n_sessions != len(paths_stat)'
     ### Types
     #### Centroids are of integer type.
@@ -186,7 +191,7 @@ def test_data_suite2p(dir_data_test, array_hasher):
     assert data.FOV_width == 705, 'ROICaT Error: data_FOV_width != expected value.'
     assert array_hasher(data.FOV_images[0]) == '2e335e2116ee4cfc', 'ROICaT Error: data.FOV_images[0] != expected values. See code for expected values.'
     assert array_hasher(data.FOV_images[13]) == '597cc830474f1ff5', 'ROICaT Error: data.FOV_images[13] != expected values. See code for expected values.'
-    assert data.ROI_images[0].shape == tuple([300] + list(params['importing']['out_height_width'])), 'ROICaT Error: data.ROI_images.shape != (300, out_height_width[0], out_height_width[1])'
+    assert data.ROI_images[0].shape == tuple([300] + list(params['data_loading']['common']['out_height_width'])), 'ROICaT Error: data.ROI_images.shape != (300, out_height_width[0], out_height_width[1])'
     assert array_hasher(data.ROI_images[0]) == '04d986f3681778f0', 'ROICaT Error: data.ROI_images[0] != expected values. See code for expected values.'
     assert array_hasher(data.ROI_images[13]) == 'de5a2c2c8c34c43e', 'ROICaT Error: data.ROI_images[13] != expected values. See code for expected values.'
     assert data.spatialFootprints[0].shape[0] == 300, 'ROICaT Error: data.spatialFootprints.shape[0] != 300'

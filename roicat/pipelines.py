@@ -71,9 +71,8 @@ def pipeline_tracking(params: dict):
     data = roicat.data_importing.Data_suite2p(
         paths_statFiles=paths_allStat[:],
         paths_opsFiles=paths_allOps[:],
-        um_per_pixel=params['data_loading']['um_per_pixel'],  ## IMPORTANT PARAMETER
         verbose=VERBOSE,
-        **params['data_loading']['suite2p'],
+        **{**params['data_loading']['common'], **params['data_loading']['suite2p']},
     )
     assert data.check_completeness(verbose=False)['tracking'], f"Data object is missing attributes necessary for tracking."
 
