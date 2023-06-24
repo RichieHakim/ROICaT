@@ -1,5 +1,4 @@
 import json
-from bnpm import file_helpers
 from pathlib import Path
 from sklearn.model_selection import StratifiedShuffleSplit
 import copy
