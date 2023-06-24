@@ -14,7 +14,7 @@ import PIL
 from PIL import ImageTk
 import csv
 import warnings
-from typing import List, Dict, Tuple, Union, Optional, Any, Callable, Iterable, Sequence, Type
+from typing import List, Dict, Tuple, Union, Optional, Any, Callable, Iterable, Sequence, Type, Any
 
 import numpy as np
 import torch
@@ -327,6 +327,120 @@ def squeeze_integers(
     u_min = u.min()  ## get the smallest value
     u_s = arange(u_min, u_min + u.shape[0], dtype=u.dtype)  ## make consecutive numbers starting from the smallest value
     return u_s[inv]  ## return the indexed consecutive unique values
+
+
+######################################################################################################################################
+######################################################### OPTIMIZATION ###############################################################
+######################################################################################################################################
+
+class Convergence_checker_optuna:
+    """
+    Checks if the optuna optimization has converged.
+    RH 2023
+
+    Args:
+        n_patience (int): 
+            Number of trials to look back to check for convergence. 
+            Also the minimum number of trials that must be completed 
+            before starting to check for convergence. 
+            (Default is *10*)
+        tol_frac (float): 
+            Fractional tolerance for convergence. 
+            The best output value must change by less than this 
+            fractional amount to be considered converged. 
+            (Default is *0.05*)
+        max_trials (int): 
+            Maximum number of trials to run before stopping. 
+            (Default is *350*)
+        max_duration (float): 
+            Maximum number of seconds to run before stopping. 
+            (Default is *600*)
+        verbose (bool): 
+            If ``True``, print messages. 
+            (Default is ``True``)
+
+    Attributes:
+        bests (List[float]):
+            List to hold the best values obtained in the trials.
+        best (float):
+            Best value obtained among the trials. Initialized with infinity.
+
+    Example:
+        .. highlight:: python
+        .. code-block:: python
+
+            # Create a ConvergenceChecker instance
+            convergence_checker = ConvergenceChecker(
+                n_patience=15, 
+                tol_frac=0.01, 
+                max_trials=500, 
+                max_duration=60*20, 
+                verbose=True
+            )
+            
+            # Assume we have a study and trial objects from optuna
+            # Use the check method in the callback
+            study.optimize(objective, n_trials=100, callbacks=[convergence_checker.check])    
+    """
+    def __init__(
+        self, 
+        n_patience: int = 10, 
+        tol_frac: float = 0.05, 
+        max_trials: int = 350, 
+        max_duration: float = 60*10, 
+        verbose: bool = True,
+    ):
+        """
+        Initializes the ConvergenceChecker with the given parameters.
+        """
+        self.bests = []
+        self.best = np.inf
+        self.n_patience = n_patience
+        self.tol_frac = tol_frac
+        self.max_trials = max_trials
+        self.max_duration = max_duration
+        self.num_trial = 0
+        self.verbose = verbose
+        
+    def check(
+        self, 
+        study: object, 
+        trial: object,
+    ):
+        """
+        Checks if the optuna optimization has converged. This function should be
+        used as the callback function for the optuna study.
+
+        Args:
+            study (optuna.study.Study): 
+                Optuna study object.
+            trial (optuna.trial.FrozenTrial): 
+                Optuna trial object.
+        """
+        dur_first, dur_last = study.trials[0].datetime_complete, trial.datetime_complete
+        if (dur_first is not None) and (dur_last is not None):
+            duration = (dur_last - dur_first).total_seconds()
+        else:
+            duration = 0
+        
+        if trial.value < self.best:
+            self.best = trial.value
+        self.bests.append(self.best)
+            
+        bests_recent = np.unique(self.bests[-self.n_patience:])
+        if self.num_trial > self.n_patience and ((np.abs(bests_recent.max() - bests_recent.min())/np.abs(self.best)) < self.tol_frac):
+            print(f'Stopping. Convergence reached. Best value ({self.best*10000}) over last ({self.n_patience}) trials fractionally changed less than ({self.tol_frac})') if self.verbose else None
+            study.stop()
+        if self.num_trial >= self.max_trials:
+            print(f'Stopping. Trial number limit reached. num_trial={self.num_trial}, max_trials={self.max_trials}.') if self.verbose else None
+            study.stop()
+        if duration > self.max_duration:
+            print(f'Stopping. Duration limit reached. study.duration={duration}, max_duration={self.max_duration}.') if self.verbose else None
+            study.stop()
+            
+        if self.verbose:
+            print(f'Trial num: {self.num_trial}. Duration: {duration:.3f}s. Best value: {self.best:3e}. Current value:{trial.value:3e}') if self.verbose else None
+        self.num_trial += 1
 
 
 ######################################################################################################################################
