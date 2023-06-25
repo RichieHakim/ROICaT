@@ -51,6 +51,22 @@ roicat.tracking.similarity\_graph module
    :show-inheritance:
 
 
+Classification module
+---------------------
+
+.. automodule:: roicat.classification
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+roicat.classification.classifier module
+---------------------------------------
+
+.. automodule:: roicat.classification.classifier
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 roicat.pipelines module
 -----------------------
 
