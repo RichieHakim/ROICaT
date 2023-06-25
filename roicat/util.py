@@ -526,6 +526,7 @@ class ROICaT_Module:
             'time',
             'numpy',
             'scipy',
+            'sklearn',
         ]
         def is_library_allowed(obj):
             try:
