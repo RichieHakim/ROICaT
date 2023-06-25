@@ -24,10 +24,12 @@ import numpy as np
 
 import optuna
 import sklearn
+import sklearn.base
+import sklearn.model_selection
 
-from .. import helpers
+from .. import helpers, util
 
-class Autotuner_regression:
+class Autotuner_regression(util.ROICaT_Module):
     """
     A class for automatic hyperparameter tuning and training of a regression
     model.
@@ -73,7 +75,6 @@ class Autotuner_regression:
             If ``True``, ignore ConvergenceWarning during model fitting.
         verbose (bool):
             If ``True``, show progress bar and print running results.
-
     """
     def __init__(
         self, 
@@ -234,6 +235,48 @@ class Autotuner_regression:
 
         return self.model_best, self.best_params
     
+    def save_model(
+        self,
+        filepath: str='model.onnx',
+        allow_overwrite: bool=False,
+    ):
+        """
+        Uses ONNX to save the best model as a binary file.
+
+        Args:
+            path (str): 
+                The path to save the model to.
+        """
+        import datetime
+        try:
+            import onnx
+            import skl2onnx
+        except ImportError as e:
+            raise ImportError(f'You need to (pip) install ONNX and skl2onnx to use this method. {e}')
+        
+        ## Make sure we have what we need
+        assert self.model_best is not None, 'You need to fit the model first.'
+
+        # Convert the model to ONNX format
+        ## Prepare initial types
+        initial_types = skl2onnx.common.data_types.guess_data_type(self.X)[0][1]
+        initial_types.shape = tuple([None] + list(initial_types.shape[1:]))
+        initial_types = [('input', initial_types)]
+        ### Convert the model
+        model_onnx = skl2onnx.convert_sklearn(
+            model=self.model_best,
+            name=str(self.model_best.__class__),
+            initial_types=initial_types,
+            doc_string=f"Created by ROICaT Autotuner. Saved on {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.",
+        )
+        
+        # Save the model
+        helpers.prepare_filepath_for_saving(filepath=filepath, mkdir=True, allow_overwrite=allow_overwrite)
+        onnx.save(
+            proto=model_onnx,
+            f=filepath,
+        )
+
 
 class LossFucntion_CrossEntropy_CV():
     """
@@ -321,6 +364,7 @@ class LossFucntion_CrossEntropy_CV():
 class Auto_LogisticRegression(Autotuner_regression):
     """
     Implements automatic hyperparameter tuning for Logistic Regression.
+    RH 2023
 
     Args:
         X (np.ndarray):
@@ -487,3 +531,59 @@ class Auto_LogisticRegression(Autotuner_regression):
             catch_convergence_warnings=True,
             verbose=verbose,
         )
+
+    def evaluate_model(
+        self, 
+        model: Optional[sklearn.linear_model.LogisticRegression] = None, 
+        X: Optional[np.ndarray] = None, 
+        y: Optional[np.ndarray] = None,
+        sample_weight: Optional[List[float]] = None,
+    ) -> Tuple[float, np.array]:
+        """
+        Evaluates the given model on the given data. Makes label predictions,
+        then computes the accuracy and confusion matrix.
+
+        Args:
+            model (sklearn.linear_model.LogisticRegression):
+                A sklearn LogisticRegression model.
+                If None, then self.model_best is used.
+            X (np.ndarray):
+                The data to evaluate on.
+                If None, then self.X is used.
+            y (np.ndarray):
+                The labels to evaluate on.
+                If None, then self.y is used.
+            sample_weight (List[float]):
+                The sample weights to evaluate on.
+                If None, then self.sample_weight is used.
+
+        Returns:
+            (tuple): Tuple containing:
+                accuracy (float):
+                    The accuracy of the model on the given data.
+                confusion_matrix (np.array):
+                    The confusion matrix of the model on the given data.
+        """
+        model = self.model_best if model is None else model
+        X = self.X if X is None else X
+        y = self.y if y is None else y
+        sample_weight = self.sample_weight if sample_weight is None else sample_weight
+
+        y_pred = model.predict(X)
+        
+        accuracy = sklearn.metrics.accuracy_score(
+            y_true=y,
+            y_pred=y_pred,
+            sample_weight=sample_weight,
+            normalize=True,
+        )
+
+        confusion_matrix = sklearn.metrics.confusion_matrix(
+            y_true=y,
+            y_pred=y_pred,
+            sample_weight=sample_weight,
+            labels=self.classes,
+            normalize='true',
+        ).T
+
+        return accuracy, confusion_matrix
