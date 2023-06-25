@@ -21,11 +21,13 @@ from typing import Dict, Type, Any, Union, Optional, Callable, Tuple, List
 import functools
 
 import numpy as np
-
 import optuna
+
 import sklearn
 import sklearn.base
 import sklearn.model_selection
+import sklearn.metrics
+import sklearn.linear_model
 
 from .. import helpers, util
 
@@ -40,7 +42,7 @@ class Autotuner_regression(util.ROICaT_Module):
             A Scikit-Learn estimator class.
             Must have: \n
                 * Method: ``fit(X, y)``
-                * Method: ``predict_proba(X)`` \n
+                * Method: ``predict_proba(X)`` (for classifiers) or ``predict(X)`` (for continuous regressors) \n
         params (Dict[str, Dict[str, Any]]):
             A dictionary of hyperparameters with their names, types, and bounds.
         X (np.ndarray):
@@ -65,10 +67,15 @@ class Autotuner_regression(util.ROICaT_Module):
             The number of startup trials for the optuna pruner and sampler.
         kwargs_convergence (Dict[str, Union[int, float]]):
             Convergence settings for the optimization. Includes: \n
-                * ``'n_patience'`` (int): The number of trials to wait for convergence before stopping the optimization.
-                * ``'tol_frac'`` (float): The fractional tolerance for convergence. After ``n_patience`` trials, the optimization will stop if the loss has not improved by at least ``tol_frac``.
+                * ``'n_patience'`` (int): The number of trials to wait for
+                  convergence before stopping the optimization.
+                * ``'tol_frac'`` (float): The fractional tolerance for
+                  convergence. After ``n_patience`` trials, the optimization
+                  will stop if the loss has not improved by at least
+                  ``tol_frac``.
                 * ``'max_trials'`` (int): The maximum number of trials to run.
-                * ``'max_duration'`` (int): The maximum duration of the optimization in seconds. \n
+                * ``'max_duration'`` (int): The maximum duration of the
+                  optimization in seconds. \n
         sample_weight (Optional[np.ndarray]):
             Weights for the samples, equal to ones_like(y) if None.
         catch_convergence_warnings (bool):
@@ -172,8 +179,12 @@ class Autotuner_regression(util.ROICaT_Module):
             model.fit(X_train, y_train)
 
         # Transform the training data
-        y_pred_train = model.predict_proba(X_train)
-        y_pred_test = model.predict_proba(X_test)
+        if hasattr(model, 'predict_proba'):
+            y_pred_train = model.predict_proba(X_train)
+            y_pred_test = model.predict_proba(X_test)
+        elif hasattr(model, 'predict'):
+            y_pred_train = model.predict(X_train)
+            y_pred_test = model.predict(X_test)
 
         # Evaluate the classifier using the scoring method
         loss, loss_train, loss_test = self.fn_loss(
@@ -420,6 +431,32 @@ class Auto_LogisticRegression(Autotuner_regression):
             used.
         verbose (bool):
             Whether to print progress messages.
+
+    Demo:
+        .. code-block:: python
+
+            ## Initialize with NO TUNING. All parameters are fixed.
+            autoclassifier = Auto_LogisticRegression(
+                X, 
+                y, 
+                params_LogisticRegression={
+                    'C': 1e-14,
+                    'penalty': 'l2',
+                    'solver': 'lbfgs',
+                },
+            )
+
+            ## Initialize with TUNING 'C', 'penalty', and 'l1_ratio'. 'solver' is fixed.
+            autoclassifier = Auto_LogisticRegression(
+                X,
+                y,
+                params_LogisticRegression={
+                    'C': [1e-14, 1e3],
+                    'penalty': ['l1', 'l2', 'elasticnet'],
+                    'l1_ratio': [0.0, 1.0],
+                    'solver': 'lbfgs',
+                },
+            )
     """
 
     def __init__(
@@ -587,3 +624,34 @@ class Auto_LogisticRegression(Autotuner_regression):
         ).T
 
         return accuracy, confusion_matrix
+
+    def plot_C_curve(
+        self,
+    ):
+        """
+        Makes a scatter plot of C values vs loss values.
+        """
+        import matplotlib.pyplot as plt
+        results = {
+            'C': [t.params['C'] for t in self.study.trials], 
+            'value': [t.value for t in self.study.trials], 
+            'loss_train': self.loss_running_train, 
+            'loss_test': self.loss_running_test
+        }
+
+        plt.figure()
+        scatter = functools.partial(plt.scatter, x=results['C'], alpha=0.3, s=10)
+        scatter(y=results['loss_train'])
+        scatter(y=results['loss_test'])
+        scatter(y=results['value'])
+        plt.scatter(x=self.params_best['C'], y=self.loss_best, color='r', s=50, alpha=1)
+
+        plt.xlabel('C')
+        plt.ylabel('loss')
+        plt.xscale('log')
+        plt.legend([
+            'loss_train',
+            'loss_test',
+            'loss_withPenalty',
+            'best model',
+        ])
