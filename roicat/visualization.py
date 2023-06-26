@@ -381,9 +381,7 @@ def select_region_scatterPlot(
         size_points (float, optional): 
             Size of the scatter plot points. (Default is 1)
         color_points (Union[str, List[str]], optional): 
-            Color of the scatter plot points. If a list, it must be the same
-            length as data.shape[0] and the values must be valid holoviews color
-            names. (Default is 'k')
+            Color of the scatter plot points. Single color only.
 
     Returns:
         (Tuple[Callable, object, str]): tuple containing:
@@ -402,7 +400,6 @@ def select_region_scatterPlot(
     """
     import holoviews as hv
     import numpy as np
-    import xxhash
 
     import tempfile
     try:
@@ -427,28 +424,12 @@ def select_region_scatterPlot(
         image_overlay_raster_size = figsize
 
     # Declare some points, set alpha, size, color
-    if isinstance(color_points, str):
-        color_points = np.array([color_points] * data.shape[0])
-    elif isinstance(color_points, list):
-        color_points = np.array(color_points)
-    else:
-        assert isinstance(color_points, np.ndarray), 'color_points must be a string, list, or numpy array'
-        assert color_points.shape[0] == data.shape[0], 'color_points must be the same length as data.shape[0]. If a numpy array, the first dimension must be the same length as data.shape[0]'
-    _, idx_unique, inverse_unique = np.unique(np.array([xxhash.xxh64(x).hexdigest() for x in color_points]), return_index=True, return_inverse=True)
-    color_points_unique = color_points[idx_unique]
-
-    points = hv.Points([])
-    for ii,c in enumerate(color_points_unique):
-        p = hv.Points(data[inverse_unique==ii])
-        p.opts(
-            alpha=alpha_points,
-            size=size_points,
-            color=c if isinstance(c, str) else tuple(c),
-            tools=['lasso_select', 'box_select'],
-            width=figsize[0],
-            height=figsize[1],
-        )
-        points *= p
+    points = hv.Points(data)
+    points.opts(
+        alpha=alpha_points,
+        size=size_points,
+        color=color_points,
+    )
 
     # Declare points as source of selection stream
     selection = hv.streams.Selection1D(source=points)
@@ -709,3 +690,61 @@ def display_labeled_ROIs(
             kwargs_subplots={'figsize': figsize}
         );
         fig.text(0,0.4, l, fontdict={'size': fontsize});
+
+
+def plot_confusion_matrix(
+    confusion_matrix, 
+    class_names: List[str] = None, 
+    figsize: Tuple[int, int] = (4, 4),
+    n_decimals: int = 2,
+):
+    """
+    Plots a confusion matrix using seaborn.
+    RH 2023
+
+    Args:
+        confusion_matrix (np.ndarray): 
+            Array containing the confusion matrix. Shape: *(num_classes,
+            num_classes)*
+        class_names (list): 
+            List of class names. Length: *num_classes* If ``None``, the class
+            names will be the indices of the confusion matrix.
+        figsize (Tuple[int, int]): 
+            Size of the figure.
+        n_decimals (int):
+            Number of decimals to round the confusion matrix to.
+    """
+    import seaborn as sns
+    import matplotlib.pyplot as plt
+
+    ## Make plot
+    fig = plt.figure(figsize=figsize)
+    heatmap = sns.heatmap(
+        np.round(confusion_matrix, decimals=n_decimals), 
+        annot=True, 
+        annot_kws={"size": figsize[0]*4}, 
+        vmin=0.,
+        vmax=1., 
+        cmap=plt.get_cmap('gray'), 
+    )
+
+    ## Remove colormap
+    plt.gca().collections[0].colorbar.remove()
+    
+    ## Set tick labels
+    class_names = class_names if class_names is not None else np.arange(confusion_matrix.shape[0])
+    heatmap.yaxis.set_ticklabels(
+        class_names, 
+        rotation=0, 
+        ha='right', 
+        fontsize=figsize[0]*3
+    )
+    heatmap.xaxis.set_ticklabels(
+        class_names, 
+        rotation=45, 
+        ha='right', 
+        fontsize=figsize[0]*3
+    )
+
+    plt.ylabel('True label',      fontdict={'size': figsize[0]*2})
+    plt.xlabel('Predicted label', fontdict={'size': figsize[0]*2})
