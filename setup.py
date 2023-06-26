@@ -37,6 +37,7 @@ deps_core = [deps_all_dict[dep] for dep in [
     'mat73',
     'natsort',
     'numpy',
+    'optuna',
     'Pillow',
     'pytest',
     'PyYAML',
@@ -59,13 +60,15 @@ deps_classification = [deps_all_dict[dep] for dep in [
     'umap-learn',
     'bokeh',
     'holoviews[recommended]',
+    'skl2onnx',
+    'onnx',
+    'onnxruntime',
 ]] + deps_core
 
 deps_tracking = [deps_all_dict[dep] for dep in [
     'opencv_contrib_python',
     'hdbscan',
     'kymatio',
-    'optuna',
 ]] + deps_core
 
 print({
