@@ -1,0 +1,5 @@
+## Change the following files in GitHub language stats
+### '*.filesuffix linguist-vendored': ignored
+### '*.filesuffix linguist-detectable': detected as the language
+### '*.filesuffix linguist-language=Python': forced to be Python
+*.ipynb linguist-vendored
