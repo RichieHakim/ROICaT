@@ -35,19 +35,19 @@ We have found that ROICaT is capable of classifying cells with accuracy comparab
 **TRACKING:** 
 - [Interactive notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/tracking_interactive_notebook.ipynb)
 - [Google CoLab](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/tracking/tracking_interactive_notebook.ipynb)
-- (TODO) [demo script](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/tracking_scripted_notebook.ipynb)
+<!-- - (TODO) [script](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/tracking_scripted_notebook.ipynb) -->
   
 **CLASSIFICATION:**
 - [Interactive notebook - Drawing](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/classify_by_drawingSelection.ipynb)
 - [Google CoLab - Drawing](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/classification/classify_by_drawingSelection_colab.ipynb)
 - [Interactive notebook - Labeling](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/labeling_interactive.ipynb)
-- (TODO) [Interactive notebook - Train classifier]()
-- (TODO) [Interactive notebook - Inference with classifier]()
+- [Interactive notebook - Train classifier](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/classifier_train_interactive.ipynb)
+- [Interactive notebook - Inference with classifier](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/classifier_inference_interactive.ipynb)
 
 **OTHER:** 
 - [Custom data importing notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/other/demo_data_importing.ipynb)
-- Train a new ROInet model using the provided Jupyter Notebook [TODO: link].
 - Use the API to integrate ROICaT functions into your own code: [Documentation](https://roicat.readthedocs.io/en/latest/roicat.html).
+<!-- - Train a new ROInet model using the provided Jupyter Notebook [TODO: link]. -->
 
 # Installation
 ROICaT works on Windows, MacOS, and Linux. If you have any issues during the installation process, please make a [github issue](https://github.com/RichieHakim/ROICaT/issues) with the error.
