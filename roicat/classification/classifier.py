@@ -273,7 +273,7 @@ class Autotuner_regression(util.ROICaT_Module):
             import onnx
             import skl2onnx
         except ImportError as e:
-            raise ImportError(f'You need to (pip) install ONNX and skl2onnx to use this method. {e}')
+            raise ImportError(f'You need to (pip) install onnx and skl2onnx to use this method. {e}')
         
         ## Make sure we have what we need
         assert self.model_best is not None, 'You need to fit the model first.'
