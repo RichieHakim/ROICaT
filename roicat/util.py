@@ -414,7 +414,6 @@ def system_info(verbose: bool = False,) -> Dict:
     ## roicat
     import roicat
     import time
-    
     roicat_version = roicat.__version__
     roicat_fileDate = time.ctime(os.path.getctime(pkg_resources.get_distribution("roicat").location))
     roicat_stuff = {'version': roicat_version, 'date_installed': roicat_fileDate}
