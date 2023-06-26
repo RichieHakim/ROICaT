@@ -22,6 +22,7 @@ import functools
 
 import numpy as np
 import optuna
+import torch
 
 import sklearn
 import sklearn.base
@@ -185,6 +186,8 @@ class Autotuner_regression(util.ROICaT_Module):
         elif hasattr(model, 'predict'):
             y_pred_train = model.predict(X_train)
             y_pred_test = model.predict(X_test)
+        else:
+            raise ValueError('Model must have either a predict_proba or predict method.')
 
         # Evaluate the classifier using the scoring method
         loss, loss_train, loss_test = self.fn_loss(
@@ -248,15 +251,22 @@ class Autotuner_regression(util.ROICaT_Module):
     
     def save_model(
         self,
-        filepath: str='model.onnx',
+        filepath: Optional[str]=None,
         allow_overwrite: bool=False,
     ):
         """
         Uses ONNX to save the best model as a binary file.
 
         Args:
-            path (str): 
+            filepath (str): 
                 The path to save the model to.
+                If None, then the model will not be saved.
+            allow_overwrite (bool):
+                Whether to allow overwriting of existing files.
+
+        Returns:
+            (onnx.ModelProto):
+                The ONNX model.
         """
         import datetime
         try:
@@ -282,11 +292,13 @@ class Autotuner_regression(util.ROICaT_Module):
         )
         
         # Save the model
-        helpers.prepare_filepath_for_saving(filepath=filepath, mkdir=True, allow_overwrite=allow_overwrite)
-        onnx.save(
-            proto=model_onnx,
-            f=filepath,
-        )
+        if filepath is not None:
+            helpers.prepare_filepath_for_saving(filepath=filepath, mkdir=True, allow_overwrite=allow_overwrite)
+            onnx.save(
+                proto=model_onnx,
+                f=filepath,
+            )
+        return model_onnx
 
 
 class LossFucntion_CrossEntropy_CV():
@@ -476,9 +488,9 @@ class Auto_LogisticRegression(Autotuner_regression):
         },
         n_startup: int = 15,
         kwargs_convergence: Dict = {
-            'n_patience': 100,
+            'n_patience': 50,
             'tol_frac': 0.05,
-            'max_trials': 350,
+            'max_trials': 150,
             'max_duration': 60*10,
         }, 
         n_jobs_optuna: int = 1,
@@ -655,3 +667,81 @@ class Auto_LogisticRegression(Autotuner_regression):
             'loss_withPenalty',
             'best model',
         ])
+
+class Load_ONNX_model_sklearnLogisticRegression():
+
+    def __init__(
+        self,
+        path_or_bytes: str = 'path/to/model.onnx',
+        providers: List[str] =['CPUExecutionProvider'],
+    ) -> Callable:
+        """
+        Loads an ONNX model of an sklearn LogisticRegression model into a runtime
+        session.
+        RH 2023
+
+        Args:
+            path_or_bytes (Union[str, bytes]):
+                Either: \n
+                    * The filepath to the ONNX model.
+                    * The bytes of the ONNX model: model.SerializeToString(). \n
+        Returns:
+            (function):
+                A partial function that takes in a numpy array or torch Tensor and
+                passes it through the ONNX runtime session (model).
+        """
+        import onnxruntime
+        import onnx
+
+        ## load ONNX model first
+        if isinstance(path_or_bytes, str):
+            self.model = onnx.load(path_or_bytes)
+        elif isinstance(path_or_bytes, bytes):
+            self.model = onnx.load_model_from_string(path_or_bytes)
+        else:
+            raise ValueError(f'path_or_bytes must be either a string or bytes. This error should never be raised.')
+        
+        ## check if model is valid
+        onnx.checker.check_model(self.model)
+
+        ## create runtime session
+        self.session = onnxruntime.InferenceSession(
+            path_or_bytes=self.model.SerializeToString(),
+            providers=providers,
+        )
+        self.input_names = [in_i.name for in_i in self.session.get_inputs()]
+        self.output_names = [out_i.name for out_i in self.session.get_outputs()]
+
+
+    def __call__(self, X: Union[np.ndarray, torch.Tensor]):
+        """
+        Performs inference on the given data. Returns predictions and
+        probabilities.
+        RH 2023
+
+        Args:
+            X (Union[np.ndarray, torch.Tensor]):
+                The data to perform inference on.
+                shape: *(n_samples, n_features)*
+                dtype: float32
+        Returns:
+            (tuple): Tuple containing:
+                preds (np.ndarray):
+                    The predicted labels. \n
+                    shape: *(n_samples,)* \n
+                    dtype: int64 \n
+                proba (np.ndarray):
+                    The predicted probabilities. \n
+                    shape: *(n_samples, n_classes)* \n
+                    dtype: float32 \n
+        """
+        X = X.cpu().numpy() if isinstance(X, torch.Tensor) else X
+        outs = self.session.run(
+            output_names=self.output_names, 
+            input_feed={self.input_names[0]: X.astype(np.float32)}
+        )
+        preds = outs[0]
+        proba_dict = outs[1]
+        ## convert proba_dict to an array
+        proba = np.stack([np.array([r[key] for r in proba_dict], dtype=np.float32) for key in proba_dict[0].keys()], axis=1)
+        return preds, proba
