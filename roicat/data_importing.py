@@ -1540,7 +1540,7 @@ class Data_roiextractors(Data_roicat):
         ## Make class labels
         self.set_class_labels(labels=class_labels) if class_labels is not None else None
 
-    def _make_spatialFootprints(self, segObj: Any) -> scipy.sparse.csr.csr_matrix:
+    def _make_spatialFootprints(self, segObj: Any) -> scipy.sparse.csr_matrix:
         """
         Creates spatial footprints from the given roiextractors segmentation
         object.
@@ -1603,7 +1603,6 @@ def fix_paths(paths: Union[List[Union[str, pathlib.Path]], str, pathlib.Path]) -
     else:
         raise TypeError("path_files must be a list of str or list of pathlib.Path or a str or pathlib.Path")
     return [str(p) for p in paths_files]
-
 
 
 

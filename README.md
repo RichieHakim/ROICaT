@@ -1,7 +1,3 @@
-<div>
-    <img src="docs/media/favicon_grayOnWhite.png" alt="ROICaT" width="30"  align="Left"  style="margin-left: 20px; margin-right: 10px"/>
-</div>
-
 # ROICaT
 
 <div>
@@ -39,19 +35,19 @@ We have found that ROICaT is capable of classifying cells with accuracy comparab
 **TRACKING:** 
 - [Interactive notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/tracking_interactive_notebook.ipynb)
 - [Google CoLab](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/tracking/tracking_interactive_notebook.ipynb)
-- (TODO) [demo script](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/tracking_scripted_notebook.ipynb)
+<!-- - (TODO) [script](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/tracking_scripted_notebook.ipynb) -->
   
 **CLASSIFICATION:**
 - [Interactive notebook - Drawing](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/classify_by_drawingSelection.ipynb)
 - [Google CoLab - Drawing](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/classification/classify_by_drawingSelection_colab.ipynb)
 - [Interactive notebook - Labeling](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/labeling_interactive.ipynb)
-- (TODO) [Interactive notebook - Train classifier]()
-- (TODO) [Interactive notebook - Inference with classifier]()
+- [Interactive notebook - Train classifier](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/classifier_train_interactive.ipynb)
+- [Interactive notebook - Inference with classifier](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/classifier_inference_interactive.ipynb)
 
 **OTHER:** 
-- [Custom data importing notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/other/demo_custom_data_importing.ipynb)
-- Train a new ROInet model using the provided Jupyter Notebook [TODO: link].
-- Use the API to integrate ROICaT functions into your own code: [Documentation](https://roicat.readthedocs.io/en/latest/).
+- [Custom data importing notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/other/demo_data_importing.ipynb)
+- Use the API to integrate ROICaT functions into your own code: [Documentation](https://roicat.readthedocs.io/en/latest/roicat.html).
+<!-- - Train a new ROInet model using the provided Jupyter Notebook [TODO: link]. -->
 
 # Installation
 ROICaT works on Windows, MacOS, and Linux. If you have any issues during the installation process, please make a [github issue](https://github.com/RichieHakim/ROICaT/issues) with the error.
@@ -125,7 +121,7 @@ torch.cuda.is_available() = False
 If a CUDA version of PyTorch is installed but GPU is not available, make sure you have a [CUDA compatible NVIDIA GPU](https://developer.nvidia.com/cuda-gpus) and [drivers](https://developer.nvidia.com/cuda-toolkit-archive) that match the same version as the PyTorch CUDA version you choose. All CUDA 11.x versions are intercompatible, so if you have CUDA 11.8 drivers, you can install `torch==2.0.1+cu117`.
 
 # General workflow:
-- **Pass ROIs through ROInet:** Images of the ROIs are passed through a neural network and outputs a feature vector for each image describing what the ROI looks like.
+- **Pass ROIs through ROInet:** Images of the ROIs are passed through a neural network which outputs a feature vector for each image describing what the ROI looks like.
 -  **Classification:** The feature vectors can then be used to classify ROIs:
 - A simple classifier can be trained using user supplied labeled data (e.g. an array of images of ROIs and a corresponding array of labels for each ROI).
 - Alternatively, classification can be done by projecting the feature vectors into a lower-dimensional space using UMAP and then simply circling the region of space to classify the ROIs.

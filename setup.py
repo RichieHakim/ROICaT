@@ -32,14 +32,15 @@ deps_all_latest = copy.deepcopy(deps_names)
 ## Make different versions of dependencies
 ### Also pull out the version number from the requirements (specified in deps_all_dict values).
 deps_core = [deps_all_dict[dep] for dep in [
-    'einops',
     'jupyter',
     'matplotlib',
+    'mat73',
     'natsort',
     'numpy',
-    'paramiko',
+    'optuna',
     'Pillow',
     'pytest',
+    'PyYAML',
     'scikit_learn',
     'scipy',
     'seaborn',
@@ -59,13 +60,15 @@ deps_classification = [deps_all_dict[dep] for dep in [
     'umap-learn',
     'bokeh',
     'holoviews[recommended]',
+    'skl2onnx',
+    'onnx',
+    'onnxruntime',
 ]] + deps_core
 
 deps_tracking = [deps_all_dict[dep] for dep in [
     'opencv_contrib_python',
     'hdbscan',
     'kymatio',
-    'optuna',
 ]] + deps_core
 
 print({

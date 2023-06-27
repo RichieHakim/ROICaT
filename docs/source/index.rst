@@ -36,29 +36,21 @@ For detailed instructions, see :doc:`installation`
 
 1. **Recommended: Create a new conda environment**
 
-::
+.. literalinclude:: ../helpers/create_env.txt
 
-      conda create -n roicat python=3.11
-      conda activate roicat
-      pip install --upgrade pip
-
-You will need to activate the environment with ``conda activate roicat`` each time you want to use ROICaT.
+You will need to activate the environment with ``conda activate roicat`` each
+time you want to use ROICaT.
 
 2. **Install ROICaT**
    
-::
+.. literalinclude:: ../helpers/pip_install.txt
 
-      pip install --user roicat[all]
-      pip install git+https://github.com/RichieHakim/roiextractors
+Note: if you are using a zsh terminal, add quotes around the pip install
+command, i.e. ``pip install "roicat[all]"``
 
-Note: if you are using a zsh terminal, add quotes around the pip install command, i.e. ``pip install "roicat[all]"``
-
-1. **Clone the repo to get the scripts and notebooks**
+3. **Clone the repo to get the scripts and notebooks**
    
-::
-
-      git clone http://github.com/RichieHakim/ROICaT
-      cd path/to/ROICaT/dir
+.. literalinclude:: ../helpers/clone_repo.txt
 
 
 Indices and tables

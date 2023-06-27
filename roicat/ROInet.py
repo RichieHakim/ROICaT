@@ -336,7 +336,6 @@ class ROInet_embedder(util.ROICaT_Module):
                 X=torch.as_tensor(ROI_images_rs, device='cpu', dtype=torch.float32),
                 y=torch.as_tensor(torch.zeros(ROI_images_rs.shape[0]), device='cpu', dtype=torch.float32),
                 n_transforms=1,
-                class_weights=np.array([1]),
                 transform=self.transforms,
                 DEVICE='cpu',
                 dtype_X=torch.float32,

@@ -66,7 +66,7 @@ class ROI_graph(util.ROICaT_Module):
         overlapping_width_Multiplier: float = 0.0,
         algorithm_nearestNeigbors_spatialFootprints: str = 'brute',
         verbose: bool = True,
-        **kwargs_nearestNeigbors_spatialFootprints: dict,
+        kwargs_nearestNeigbors_spatialFootprints: dict = {},
     ):
         """
         Initializes the ROI_graph class with the given parameters.

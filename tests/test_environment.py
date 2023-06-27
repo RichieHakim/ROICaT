@@ -1,11 +1,4 @@
-import sys
-from pathlib import Path
-import re
-
 import warnings
-
-from roicat import visualization
-
 
 ######################################################################################################################################
 #################################################### TEST ROICAT MODULES #############################################################
@@ -18,54 +11,10 @@ def test_import_modules():
     This test expects a particular folder structure.
     """
     import roicat
-    from roicat import classification, tracking, model_training, data_importing, helpers, ROInet
-    # TODO: ## from roicat.classification import stuff
+    from roicat import classification, tracking, model_training, data_importing, helpers, ROInet, pipelines, visualization
+    from roicat.classification import classifier
     from roicat.tracking import alignment, blurring, clustering, scatteringWaveletTransformer, similarity_graph
-    from roicat.model_training import augmentation
-
-def test_system_versions():
-    """
-    Test system versions.
-    """
-    from roicat import util
-    util.system_info(verbose=True)
-    
-
-######################################################################################################################################
-################################################### TEST PACKAGE VERSIONS ############################################################
-######################################################################################################################################
-
-def test_torch(device='cuda', verbose=2):
-    """
-    Test to see if torch can do operations on GPU if CUDA is available.
-    RH 2022
-
-    Args:
-        device (str):
-            The device to use. Default is 'cuda'.
-        verbose (int):
-            If 0, do not print anything.
-            If 1, print warnings.
-            If 2, print all below and info.
-    """
-    import torch
-    version = torch.__version__
-    ## Check if CUDA is available
-    if torch.cuda.is_available():
-        print(f'RH: CUDA is available. Environment using PyTorch version: {version}') if verbose > 1 else None
-        arr = torch.rand(1000, 10).to(device)
-        arr2 = torch.rand(10, 1000).to(device)
-        arr3 = (arr @ arr2).mean().cpu().numpy()
-        print(f'RH: Torch can do basic operations on GPU. Environment using PyTorch version: {version}. Result of operations: {arr3}') if verbose > 1 else None
-
-    else:
-        warnings.warn(f'RH Warning: CUDA is not available. Environment using PyTorch version: {version}')
-        
-    ## Test CPU computations
-    arr = torch.rand(1000, 10)
-    arr2 = torch.rand(10, 1000)
-    arr3 = (arr @ arr2).mean().numpy()
-    print(f'RH: Torch can do basic operations on CPU. Environment using PyTorch version: {version}. Result of operations: {arr3}') if verbose > 1 else None
+    from roicat.model_training import augmentation, model
         
 
 ######################################################################################################################################

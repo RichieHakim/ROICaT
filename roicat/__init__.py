@@ -4,6 +4,7 @@ __all__ = [
     'model_training',
     'data_importing',
     'helpers',
+    'pipelines',
     'ROInet',
     'util',
     'visualization',

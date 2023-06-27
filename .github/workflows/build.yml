@@ -3,12 +3,12 @@ name: build
 on:
   # push:
   #   # branches: [ "main" ]
-  #   branches: [ "dev" ]
+    # branches: [ "dev" ]
     # branches: [ "main", "dev" ]
   pull_request:
     # branches: [ "main" ]
-    branches: [ "dev" ]    
-    # branches: [ "main", "dev" ]        
+    # branches: [ "dev" ]    
+    branches: [ "main", "dev" ]        
 
 permissions:
   contents: read
