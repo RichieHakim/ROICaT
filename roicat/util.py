@@ -30,6 +30,7 @@ def get_default_parameters(pipeline=None, path_defaults=None):
             'general' : {
                 'use_GPU': True,
                 'verbose': True,
+                'random_seed': None,
             },
             'data_loading': {
                 'data_kind': 'suite2p',  ## Can be 'suite2p' or 'roiextractors'. See documentation and/or notebook on custom data loading for more details.

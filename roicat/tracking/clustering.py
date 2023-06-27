@@ -105,7 +105,6 @@ class Clusterer(util.ROICaT_Module):
         self,
         n_bins: int = 50,
         smoothing_window_bins: int = 5,
-        find_parameters_automatically: bool = True,
         kwargs_findParameters: Dict[str, Union[int, float, bool]] = {
             'n_patience': 100,
             'tol_frac': 0.05,
@@ -124,6 +123,7 @@ class Clusterer(util.ROICaT_Module):
             'sig_SWT_kwargs_b': (0.05, 2),
         },
         n_jobs_findParameters: int = -1,
+        seed=None,
     ) -> Dict:
         """
         Find the optimal parameters for pruning the similarity graph.
@@ -151,9 +151,6 @@ class Clusterer(util.ROICaT_Module):
                 small number of bins makes finding the separation point more
                 noisy, and only slightly more accurate. Aim for 5-10% of the
                 number of bins. (Default is ``5``)
-            find_parameters_automatically (bool): 
-                If ``True``, the optimal parameters are found automatically.
-                (Default is ``True``)
             kwargs_findParameters (Dict[str, Union[int, float, bool]]): 
                 Keyword arguments for the Convergence_checker class __init__.
             bounds_findParameters (Dict[str, Tuple[float, float]]):
@@ -161,6 +158,9 @@ class Clusterer(util.ROICaT_Module):
             n_jobs_findParameters (int):
                 Number of jobs to use when finding the optimal parameters. If
                 -1, use all available cores.
+            seed (int):
+                Seed for the random number generator in the optuna sampler.
+                None: use a random seed.
 
         Returns:
             Dict:
@@ -171,6 +171,8 @@ class Clusterer(util.ROICaT_Module):
         import optuna
         self.bounds_findParameters = bounds_findParameters
 
+        self._seed = seed
+
         self.n_bins = max(min(self.s_sf.nnz // 30000, 1000), 30) if n_bins is None else n_bins
         self.smooth_window = self.n_bins // 10 if smoothing_window_bins is None else smoothing_window_bins
         # print(f'Pruning similarity graphs with {self.n_bins} bins and smoothing window {smoothing_window}...') if self._verbose else None
@@ -178,7 +180,10 @@ class Clusterer(util.ROICaT_Module):
         print('Finding mixing parameters using automated hyperparameter tuning...') if self._verbose else None
         optuna.logging.set_verbosity(optuna.logging.WARNING)
         self.checker = helpers.Convergence_checker_optuna(**kwargs_findParameters)
-        self.study = optuna.create_study(direction='minimize', sampler=optuna.samplers.TPESampler(n_startup_trials=kwargs_findParameters['n_patience']//2))
+        self.study = optuna.create_study(direction='minimize', sampler=optuna.samplers.TPESampler(
+            n_startup_trials=kwargs_findParameters['n_patience']//2,
+            seed=self._seed,
+        ))
         self.study.optimize(self._objectiveFn_distSameMagnitude, n_jobs=n_jobs_findParameters, callbacks=[self.checker.check])
 
         self.best_params = self.study.best_params.copy()
