@@ -298,9 +298,9 @@ def _set_random_seed(seed=None):
                 Random seed.
     """
     ### random seed (note that optuna requires a random seed to be set within the pipeline)
-    seed = int(np.random.randint(0, 2**32 - 1, dtype=np.uint32)) if seed is None else seed
-
     import numpy as np
+    seed = int(np.random.randint(0, 2**31 - 1, dtype=np.uint32)) if seed is None else seed
+
     np.random.seed(seed)
     import torch
     torch.manual_seed(seed)
