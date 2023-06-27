@@ -1540,7 +1540,7 @@ class Data_roiextractors(Data_roicat):
         ## Make class labels
         self.set_class_labels(labels=class_labels) if class_labels is not None else None
 
-    def _make_spatialFootprints(self, segObj: Any) -> scipy.sparse.csr.csr_matrix:
+    def _make_spatialFootprints(self, segObj: Any) -> scipy.sparse.csr_matrix:
         """
         Creates spatial footprints from the given roiextractors segmentation
         object.

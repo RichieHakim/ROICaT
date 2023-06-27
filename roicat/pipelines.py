@@ -41,6 +41,7 @@ def pipeline_tracking(params: dict):
     ## Prepare state variables
     VERBOSE = params['general']['verbose']
     DEVICE = roicat.helpers.set_device(use_GPU=params['general']['use_GPU'])
+    SEED = _set_random_seed(seed=params['general']['random_seed'])
 
     if params['data_loading']['data_kind'] == 'suite2p':
         assert params['data_loading']['dir_outer'] is not None, f"params['data_loading']['dir_outer'] must be specified if params['data_loading']['data_kind'] is 'suite2p'."
@@ -177,6 +178,7 @@ def pipeline_tracking(params: dict):
         s_sesh=sim.s_sesh,
     )
     kwargs_makeConjunctiveDistanceMatrix_best = clusterer.find_optimal_parameters_for_pruning(
+        seed=SEED,
         **params['clustering']['automatic_mixing'],
     )
     kwargs_mcdm_tmp = kwargs_makeConjunctiveDistanceMatrix_best  ## Use the optimized parameters
@@ -279,3 +281,32 @@ def pipeline_tracking(params: dict):
         )
     
     return results, run_data, params
+
+def _set_random_seed(seed=None):
+    """
+    Set random seed for reproducibility.
+    RH 2023
+
+    Args:
+        seed (int, optional):
+            Random seed.
+            If None, a random seed (spanning int32 integer range) is generated.
+
+    Returns:
+        (int):
+            seed (int):
+                Random seed.
+    """
+    ### random seed (note that optuna requires a random seed to be set within the pipeline)
+    seed = int(np.random.randint(0, 2**32 - 1, dtype=np.uint32)) if seed is None else seed
+
+    import numpy as np
+    np.random.seed(seed)
+    import torch
+    torch.manual_seed(seed)
+    import random
+    random.seed(seed)
+    import cv2
+    cv2.setRNGSeed(seed)
+    
+    return seed

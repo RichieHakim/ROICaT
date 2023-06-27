@@ -23,6 +23,29 @@ def get_roicat_version() -> str:
     return importlib.metadata.version('roicat')
 
 def get_default_parameters(pipeline=None, path_defaults=None):
+    """
+    This function returns a dictionary of parameters that can be used to run
+    different pipelines. RH 2023
+
+    Args:
+        pipeline (str):
+            The name of the pipeline to use. Options: \n
+                * 'tracking': Tracking pipeline. \n
+                * 'classification_inference': Classification inference pipeline
+                  (TODO). \n
+                * 'classification_training': Classification training pipeline
+                  (TODO). \n
+                * 'model_training': Model training pipeline (TODO). \n
+        path_defaults (str):
+            A path to a yaml file containing a parameters dictionary. The
+            parameters from the file will be loaded as is. If None, the default
+            parameters will be used.
+
+    Returns:
+        (dict):
+            params (dict):
+                A dictionary containing the default parameters.
+    """
     if path_defaults is not None:
         defaults = helpers.yaml_load(path_defaults)
     else:
@@ -30,6 +53,7 @@ def get_default_parameters(pipeline=None, path_defaults=None):
             'general' : {
                 'use_GPU': True,
                 'verbose': True,
+                'random_seed': None,
             },
             'data_loading': {
                 'data_kind': 'suite2p',  ## Can be 'suite2p' or 'roiextractors'. See documentation and/or notebook on custom data loading for more details.
@@ -414,7 +438,6 @@ def system_info(verbose: bool = False,) -> Dict:
     ## roicat
     import roicat
     import time
-    
     roicat_version = roicat.__version__
     roicat_fileDate = time.ctime(os.path.getctime(pkg_resources.get_distribution("roicat").location))
     roicat_stuff = {'version': roicat_version, 'date_installed': roicat_fileDate}

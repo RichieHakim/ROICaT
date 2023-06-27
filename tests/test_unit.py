@@ -20,55 +20,22 @@ import scipy.sparse
 
 from roicat import helpers, util
 
+
 ######################################################################################################################################
-##################################################### TEST core packages #############################################################
+############################################################ UTIL ####################################################################
 ######################################################################################################################################
 
-def test_core_packages():
+
+def test_system_info():
     """
-    Runs pytest on the core packages.
+    Test system versions.
     """
-    
-    corePackages = [
-        'numpy',
-        'scipy.sparse',
-        'matplotlib',
-        'sklearn',
-        'tqdm',
-        'umap',
-        'hdbscan',
-        'kymatio',
-        'cv2',
-        'sparse',
-        'optuna',
-    ]
+    from roicat import util
+    util.system_info(verbose=True)
 
-    torchPackages = [
-        'torch',
-        'torchvision',
-    ]
-
-    for pkg in corePackages + torchPackages:
-        try:
-            exec(f'import {pkg}')
-        except ModuleNotFoundError:
-            warnings.warn(f'RH Warning: {pkg} not found. Skipping tests.')
-
-    ## test numpy
-    np.random.seed(0)
-    arr1 = np.random.rand(1000, 10)
-    arr2 = np.random.rand(10, 1000)
-    arr3 = (arr1 @ arr2).mean()
-    assert np.allclose(arr3, 2.5, rtol=0.1), 'RH Error: numpy test failed.'
-
-    ## test scipy.sparse
-    arr1 = scipy.sparse.rand(1000, 10, density=0.1).tocoo().tocsr()
-    arr2 = scipy.sparse.rand(10, 1000, density=0.1).tocoo().tocsr()
-    arr3 = (arr1 @ arr2).mean()
-    assert np.allclose(arr3, 0.025, rtol=0.2), 'RH Error: scipy.sparse test failed.'
 
 ######################################################################################################################################
-################################################### TEST data_importing.py ###########################################################
+####################################################### DATA_IMPORTING ###############################################################
 ######################################################################################################################################
 
 def test_data_suite2p(dir_data_test, array_hasher):
