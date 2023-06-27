@@ -2184,11 +2184,18 @@ class ImageLabeler:
             self._root.bind('<Key-' + self._key_prev + '>', self.prev_img) if self._key_prev is not None else None
             self._root.bind('<Key-' + self._key_next + '>', self.next_img) if self._key_next is not None else None
 
+            self._root.protocol("WM_DELETE_WINDOW", self._on_closing)
+
             ## Start the session
             self.next_img()
             self._root.mainloop()
         except Exception as e:
             warnings.warn('Error initializing image labeler: ' + str(e))
+
+    def _on_closing(self):
+        from tkinter import messagebox
+        if messagebox.askokcancel("Quit", "Do you want to quit?"):
+            self.end_session(None)
 
     def __enter__(self):
         return self
