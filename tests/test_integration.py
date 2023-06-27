@@ -8,20 +8,31 @@ import multiprocessing as mp
 import numpy as np
 import scipy.sparse
 import roicat
-from roicat import helpers, ROInet, util
+from roicat import helpers, ROInet, pipelines, util
 
-# def test_pipeline_tracking_simple(dir_data_test, array_hasher):
-#     options = util.Options(options={})
-#     outputs = roicat.pipeline.tracking(options)
 
-#     util.compare_testing_outputs(output)
+def test_pipeline_tracking_simple(dir_data_test, array_hasher):
+    defaults = util.get_default_parameters(pipeline='tracking')
+    seed = {'general': {'random_seed': None}} #if None, random number
+    params_partial = {'data_loading': {'dir_outer': dir_data_test}}
+    params = util.prepare_params(params_partial, defaults)
+    results, run_data, params  = pipelines.pipeline_tracking(params)
+
+    #check that results fields are not empty
+    assert results['clusters'] != 0, "Error: clusters field is empty"
+    assert results['ROIs'] != 0, "Error: ROIs field is empty"
+    assert results['input_data'] != 0, "Error: input_data field is empty"
+    assert results['quality_metrics'] != 0, "Error: quality_metrics field is empty"
+    
+    assert len(results['clusters']['labels_dict']) == len(results['quality_metrics']['cluster_intra_means']), "Error: Cluster data is mismatched"
+    assert len(results['clusters']['labels_dict']) == results['clusters']['labels_bool_bySession'][0].shape[1], "Error: Cluster data is mismatched"
 
 def test_ROInet(make_ROIs, array_hasher):
     ROI_images = make_ROIs
-    size_im = (36,36)
+    size_im=(36,36)
     data_custom = roicat.data_importing.Data_roicat()
     data_custom.set_ROI_images(ROI_images, um_per_pixel=1.5)
-
+    
     DEVICE = helpers.set_device(use_GPU=True, verbose=True)
     dir_temp = tempfile.gettempdir()
 
@@ -50,12 +61,11 @@ def test_ROInet(make_ROIs, array_hasher):
     latents = roinet.generate_latents();
 
     ## Check shapes
-    assert dataloader.shape[0] == data_custom.n_roi_total 
-    assert dataloader.shape[1] == size_im[0]
-    assert dataloader.shape[2] == size_im[1]
-    assert latents.shape[0] == data_custom.n_roi_total #not sure if this is the only dim that is important
+    assert dataloader.shape[0] == data_custom.n_roi_total, "Error: dataloader shape is mismatched"
+    assert dataloader.shape[1] == size_im[0], "Error: dataloader shape does not match input image size"
+    assert dataloader.shape[2] == size_im[1], "Error: dataloader shape does not match input image size"
+    assert latents.shape[0] == data_custom.n_roi_total, "Error: latents shape does not match n_roi_total"
     
 
 
-    
     
