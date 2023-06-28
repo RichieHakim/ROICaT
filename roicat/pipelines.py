@@ -43,8 +43,8 @@ def pipeline_tracking(params: dict):
     DEVICE = roicat.helpers.set_device(use_GPU=params['general']['use_GPU'])
     SEED = _set_random_seed(seed=params['general']['random_seed'])
 
-    if params['data_loading']['data_kind'] == 'suite2p':
-        assert params['data_loading']['dir_outer'] is not None, f"params['data_loading']['dir_outer'] must be specified if params['data_loading']['data_kind'] is 'suite2p'."
+    if params['data_loading']['data_kind'] == 'data_suite2p':
+        assert params['data_loading']['dir_outer'] is not None, f"params['data_loading']['dir_outer'] must be specified if params['data_loading']['data_kind'] is 'data_suite2p'."
         paths_allStat = roicat.helpers.find_paths(
             dir_outer=params['data_loading']['dir_outer'],
             reMatch='stat.npy',
@@ -63,20 +63,29 @@ def pipeline_tracking(params: dict):
         params['data_loading']['paths_allStat'] = paths_allStat
         params['data_loading']['paths_allOps'] = paths_allOps
 
-    for method in ['caiman', 'roiextractors']:
-        if params['data_loading']['data_kind'] == method:
-            raise NotImplementedError(f"params['data_loading']['data_kind'] == '{method}' is not yet implemented.")
-
-
-    ## Import data
-    data = roicat.data_importing.Data_suite2p(
-        paths_statFiles=paths_allStat[:],
-        paths_opsFiles=paths_allOps[:],
-        verbose=VERBOSE,
-        **{**params['data_loading']['common'], **params['data_loading']['suite2p']},
-    )
-    assert data.check_completeness(verbose=False)['tracking'], f"Data object is missing attributes necessary for tracking."
-
+        ## Import data
+        data = roicat.data_importing.Data_suite2p(
+            paths_statFiles=paths_allStat[:],
+            paths_opsFiles=paths_allOps[:],
+            verbose=VERBOSE,
+            **{**params['data_loading']['common'], **params['data_loading']['data_suite2p']},
+        )
+        assert data.check_completeness(verbose=False)['tracking'], f"Data object is missing attributes necessary for tracking."
+    elif params['data_loading']['data_kind'] == 'roicat':
+        paths_allDataObjs = roicat.helpers.find_paths(
+            dir_outer=params['data_loading']['dir_outer'],
+            reMatch=params['data_loading']['data_roicat']['filename_search'],
+            depth=1,
+            find_files=True,
+            find_folders=False,
+            natsorted=True,
+        )[:]
+        assert len(paths_allDataObjs) == 1, f"ERROR: Found {len(paths_allDataObjs)} files matching the search pattern '{params['data_loading']['data_roicat']['filename_search']}' in '{params['data_loading']['dir_outer']}'. Exactly one file must be found."
+        
+        data = roicat.data_importing.Data_roicat()
+        data.load(path_load=paths_allDataObjs[0])
+    else:
+        raise NotImplementedError(f"params['data_loading']['data_kind'] == '{params['data_loading']['data_kind']}' is not yet implemented.")
 
     ## Alignment
     aligner = roicat.tracking.alignment.Aligner(verbose=True)
