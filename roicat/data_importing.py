@@ -1,5 +1,6 @@
 import pathlib
 from pathlib import Path
+import copy
 import warnings
 from typing import List, Optional, Union, Tuple, Dict, Any, Callable, Iterable
 
@@ -131,7 +132,7 @@ class Data_roicat(util.ROICaT_Module):
             ## Check if it is already set
             if hasattr(self, 'um_per_pixel'):
                 um_per_pixel = self.um_per_pixel
-            print("RH WARNING: No um_per_pixel provided. We recommend making an educated guess. Assuming 1.0 um per pixel. This will affect the embedding results.")
+            warnings.warn("RH WARNING: No um_per_pixel provided. We recommend making an educated guess. Assuming 1.0 um per pixel. This will affect the embedding results.")
             um_per_pixel = 1.0
 
         print(f"Starting: Importing ROI images") if self._verbose else None
@@ -354,8 +355,9 @@ class Data_roicat(util.ROICaT_Module):
             ## Check if it is already set
             if hasattr(self, 'um_per_pixel'):
                 um_per_pixel = self.um_per_pixel
-            print("RH WARNING: No um_per_pixel provided. We recommend making an educated guess. Assuming 1.0 um per pixel. This will affect the embedding results.")
-            um_per_pixel = 1.0
+            else:
+                warnings.warn("RH WARNING: No um_per_pixel provided. We recommend making an educated guess. Assuming 1.0 um per pixel. This will affect the embedding results.")
+                um_per_pixel = 1.0
 
         ## Check inputs
         if isinstance(spatialFootprints, list)==False:
@@ -386,11 +388,14 @@ class Data_roicat(util.ROICaT_Module):
 
         ## Check that attributes match if they already exist as an attribute
         if hasattr(self, 'n_sessions'):
-            assert self.n_sessions == n_sessions, f"n_sessions is already set to {self.n_sessions} but new value is {n_sessions}"
+            if self.n_sessions == n_sessions:
+                warnings.warn(f"RH WARNING: n_sessions is already set to {self.n_sessions} but new value is {n_sessions}")
         if hasattr(self, 'n_roi'):
-            assert self.n_roi == n_roi, f"n_roi is already set to {self.n_roi} but new value is {n_roi}"
+            if all([n == r for n, r in zip(self.n_roi, n_roi)])==False:
+                warnings.warn(f"RH WARNING: n_roi is already set to {self.n_roi} but new value is {n_roi}")
         if hasattr(self, 'n_roi_total'):
-            assert self.n_roi_total == n_roi_total, f"n_roi_total is already set to {self.n_roi_total} but new value is {n_roi_total}"
+            if self.n_roi_total != n_roi_total:
+                warnings.warn(f"RH WARNING: n_roi_total is already set to {self.n_roi_total} but new value is {n_roi_total}")
 
         ## Set attributes
         self.spatialFootprints = sf_all
@@ -432,7 +437,8 @@ class Data_roicat(util.ROICaT_Module):
 
         ## Check that attributes match if they already exist as an attribute
         if hasattr(self, 'n_sessions'):
-            assert self.n_sessions == n_sessions, f"n_sessions is already set to {self.n_sessions} but new value is {n_sessions}"
+            if self.n_sessions == n_sessions:
+                warnings.warn(f"RH WARNING: n_sessions is already set to {self.n_sessions} but new value is {n_sessions}")
 
         print(f"Completed: Set FOV_images for {len(FOV_images)} sessions successfully.") if self._verbose else None
 
@@ -459,6 +465,41 @@ class Data_roicat(util.ROICaT_Module):
         self.FOV_width = FOV_width
 
         print(f"Completed: Set FOV_height and FOV_width successfully.") if self._verbose else None
+
+    def get_maxIntensityProjection_spatialFootprints(
+        self, 
+        sf: Optional[List[scipy.sparse.csr_matrix]] = None,
+        normalize: bool = True,
+    ):
+        """
+        Returns the maximum intensity projection of the spatial footprints.
+
+        Args:
+            sf (List[scipy.sparse.csr_matrix]): 
+                List of spatial footprints, one for each session.
+            normalize (bool):
+                If True, normalizes the [min, max] range of each ROI to [0, 1]
+                before computing the maximum intensity projection.
+
+        Returns:
+            List[np.ndarray]: 
+                List of maximum intensity projections, one for each session.
+        """
+        if sf is None:
+            assert hasattr(self, 'spatialFootprints'), f"RH ERROR: spatialFootprints must be set as an attribute if not provided as an argument."
+            sf = copy.deepcopy(self.spatialFootprints)
+        else:
+            if isinstance(sf, list) == False:
+                sf = [sf]
+            assert all([isinstance(s, scipy.sparse.csr_matrix) for s in sf]), f"RH ERROR: All elements in sf must be scipy.sparse.csr_matrix objects."
+
+        assert hasattr(self, 'FOV_height'), f"RH ERROR: FOV_height must be set as an attribute."
+        assert hasattr(self, 'FOV_width'), f"RH ERROR: FOV_width must be set as an attribute."
+
+        if normalize:
+            sf = [s.multiply(s.max(axis=1).power(-1)) for s in sf]
+        mip = [(s).max(axis=0).reshape(self.FOV_height, self.FOV_width).toarray() for s in sf]
+        return mip
 
     def _checkValidity_spatialFootprints_and_FOVImages(
         self,
@@ -1605,4 +1646,72 @@ def fix_paths(paths: Union[List[Union[str, pathlib.Path]], str, pathlib.Path]) -
     return [str(p) for p in paths_files]
 
 
+def make_smaller_data(
+    data: Data_roicat,
+    n_ROIs: Optional[int] = 300,
+    n_sessions: Optional[int] = 10,
+    bounds_x: Tuple[int, int] = (200,400),
+    bounds_y: Tuple[int, int] = (200,400),
+) -> Data_roicat:
+    """
+    Reduces the size of a Data_roicat object by limiting the number of regions
+    of interest (ROIs) and sessions, and adjusting the bounds on the x and y
+    axes. This function is useful for making test datasets.
 
+    Args:
+        data (Data_roicat): 
+            The input data object of the ``Data_roicat`` type.
+        n_ROIs (Optional[int]): 
+            The number of regions of interest to include in the output data. If
+            ``None``, all ROIs will be included. 
+        n_sessions (Optional[int]): 
+            The number of sessions to include in the output data. If ``None``,
+            all sessions will be included.
+        bounds_x (Tuple[int, int]): 
+            The x-axis bounds for the output data. The bounds should be a tuple
+            of two integers.
+        bounds_y (Tuple[int, int]): 
+            The y-axis bounds for the output data. The bounds should be a tuple
+            of two integers.
+
+    Returns:
+        (Data_roicat): 
+            data_out (Data_roicat): 
+                The output data, which is a reduced version of the input data according to the specified parameters.
+    """
+    import sparse
+    data_out = copy.deepcopy(data)
+
+    n_sessions = min(n_sessions, len(data_out.spatialFootprints)) if n_sessions is not None else len(data_out.spatialFootprints)
+
+    d_height = data.FOV_height
+    d_width = data.FOV_width    
+    d_n_ROIs = [sf.shape[0] for sf in data.spatialFootprints[:n_sessions]]
+
+    data_out.set_FOV_images(FOV_images=[im[bounds_y[0]:bounds_y[1], bounds_x[0]:bounds_x[1]] \
+        for im in data.FOV_images[:n_sessions]])
+    n_ROIs_per_sesh = [min(n_ROIs, n) for n in d_n_ROIs] if n_ROIs is not None else d_n_ROIs
+
+    frame = np.zeros((d_height, d_width), dtype=np.bool_)
+    frame[bounds_y[0]:bounds_y[1], bounds_x[0]:bounds_x[1]] = True
+    frame_flat = frame.reshape(-1)
+
+    sf_tmp = [sf[:n] for sf, n in zip(data_out.spatialFootprints[:n_sessions], n_ROIs_per_sesh)]
+    good_rois = [np.array((sf.multiply(frame_flat[None,:])).sum(1) > 0).squeeze() \
+        for sf in sf_tmp]
+
+    sf_tmp = [sf[g,:] for sf, g in zip(sf_tmp, good_rois)]
+    data_out.set_spatialFootprints(
+        spatialFootprints=[sparse.COO(s).reshape(
+                shape=(s.shape[0], data.FOV_height, data.FOV_width)
+            )[:, bounds_y[0]:bounds_y[1], :][:, :, bounds_x[0]:bounds_x[1]].reshape(shape=(s.shape[0], -1)).tocsr() \
+            for s in sf_tmp
+        ],
+        um_per_pixel=data_out.um_per_pixel,
+    )
+
+    data_out._make_spatialFootprintCentroids()
+    data_out._transform_spatialFootprints_to_ROIImages()
+    data_out._make_session_bool()
+
+    return data_out
