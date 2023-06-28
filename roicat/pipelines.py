@@ -176,6 +176,7 @@ def pipeline_tracking(params: dict):
         s_NN_z=sim.s_NN_z,
         s_SWT_z=sim.s_SWT_z,
         s_sesh=sim.s_sesh,
+        verbose=VERBOSE,
     )
     kwargs_makeConjunctiveDistanceMatrix_best = clusterer.find_optimal_parameters_for_pruning(
         seed=SEED,

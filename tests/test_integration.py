@@ -13,8 +13,24 @@ from roicat import helpers, ROInet, pipelines, util
 
 def test_pipeline_tracking_simple(dir_data_test, array_hasher):
     defaults = util.get_default_parameters(pipeline='tracking')
-    seed = {'general': {'random_seed': None}} #if None, random number
-    params_partial = {'data_loading': {'dir_outer': dir_data_test}}
+    seed = 0
+    params_partial = {
+        'general': {
+            'random_seed': seed,
+        },
+        'data_loading': {
+            'dir_outer': dir_data_test,
+        },
+        'clustering': {
+            'automatic_mixing': {
+                'kwargs_findParameters': {
+                    'n_patience': 30,  ## Reduced number to speed up
+                    'max_trials': 100,  ## Reduced number to speed up
+                },
+                'n_jobs_findParameters': 1,  ## THIS IS CRITICAL TO ENSURE REPORDUCIBILITY. Parallelization prevents reproducibility.
+            },
+        },
+    }
     params = util.prepare_params(params_partial, defaults)
     results, run_data, params  = pipelines.pipeline_tracking(params)
 
@@ -26,6 +42,8 @@ def test_pipeline_tracking_simple(dir_data_test, array_hasher):
     
     assert len(results['clusters']['labels_dict']) == len(results['quality_metrics']['cluster_intra_means']), "Error: Cluster data is mismatched"
     assert len(results['clusters']['labels_dict']) == results['clusters']['labels_bool_bySession'][0].shape[1], "Error: Cluster data is mismatched"
+
+    assert array_hasher(results['clusters']['labels']) == '57be86439cf8dc69', "Error: Cluster data is mismatched"
 
 def test_ROInet(make_ROIs, array_hasher):
     ROI_images = make_ROIs
