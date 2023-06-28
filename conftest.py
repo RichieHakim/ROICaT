@@ -40,7 +40,7 @@ def download_data_test_zip(directory):
     """
     path_save = str(Path(directory) / 'data_test.zip')
     roicat.helpers.download_file(
-        url=r'https://github.com/RichieHakim/ROICaT/raw/main/tests/data_test.zip', 
+        url=r'https://github.com/RichieHakim/ROICaT/raw/dev/tests/data_test.zip', 
         path_save=path_save, 
         check_local_first=True, 
         check_hash=True, 
