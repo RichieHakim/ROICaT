@@ -388,7 +388,7 @@ class Data_roicat(util.ROICaT_Module):
 
         ## Check that attributes match if they already exist as an attribute
         if hasattr(self, 'n_sessions'):
-            if self.n_sessions == n_sessions:
+            if self.n_sessions != n_sessions:
                 warnings.warn(f"RH WARNING: n_sessions is already set to {self.n_sessions} but new value is {n_sessions}")
         if hasattr(self, 'n_roi'):
             if all([n == r for n, r in zip(self.n_roi, n_roi)])==False:
@@ -437,7 +437,7 @@ class Data_roicat(util.ROICaT_Module):
 
         ## Check that attributes match if they already exist as an attribute
         if hasattr(self, 'n_sessions'):
-            if self.n_sessions == n_sessions:
+            if self.n_sessions != n_sessions:
                 warnings.warn(f"RH WARNING: n_sessions is already set to {self.n_sessions} but new value is {n_sessions}")
 
         print(f"Completed: Set FOV_images for {len(FOV_images)} sessions successfully.") if self._verbose else None

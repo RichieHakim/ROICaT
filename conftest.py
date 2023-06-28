@@ -1,4 +1,5 @@
 from pathlib import Path
+import tempfile
 
 import pytest
 
@@ -23,7 +24,8 @@ def dir_data_test():
         4. Extract the test data.
         5. Return the path to the data directory.
     """
-    dir_data_test = str(Path('data_test/').resolve().absolute())
+    # dir_data_test = str(Path('data_test/').resolve().absolute())
+    dir_data_test = str((Path(tempfile.gettempdir()) / 'data_test').resolve().absolute())
     print(dir_data_test)
     path_data_test_zip = download_data_test_zip(dir_data_test)
     roicat.helpers.extract_zip(
@@ -45,7 +47,7 @@ def download_data_test_zip(directory):
         check_local_first=True, 
         check_hash=True, 
         hash_type='MD5', 
-        hash_hex=r'764d9b3fc481e078d1ef59373695ecce',
+        hash_hex=r'd7662fcbaa44b4d0ebcf86bbdc6daa66',
         mkdir=True,
         allow_overwrite=True,
         write_mode='wb',
