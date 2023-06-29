@@ -77,10 +77,16 @@ class Data_roicat(util.ROICaT_Module):
         spatialFootprints (List[object]): 
             A list of scipy.sparse.csr_matrix objects, each with shape *(n_roi,
             FOV_height*FOV_width)*. Each element represents an imaging session.
-        class_labels (List[np.ndarray]): 
+        class_labels_raw (List[np.ndarray]): 
             A list of numpy arrays, each with shape *(n_roi,)*, where each
             element is an integer. Each element of the list is an imaging
             session and each element of the numpy array is a class label.
+        class_labels_index (List[np.ndarray]): 
+            A list of numpy arrays, each with shape *(n_roi,)*, where each
+            element is an integer. Each element of the list is an imaging
+            session and each element of the numpy array is the index of the
+            class label obtained from passing the raw class label through
+            np.unique(*, return_inverse=True).
         um_per_pixel (float): 
             The conversion factor from pixels to microns. This is used to scale
             the ROI_images to a common size.
@@ -189,8 +195,8 @@ class Data_roicat(util.ROICaT_Module):
           self.ROI_images list. Each element is a numpy array of shape
           *(n_roi,)*.
 
-        * Sets the attributes: self.class_labels, self.n_classes,
-          self.n_class_labels, self.n_class_labels_total,
+        * Sets the attributes: self.class_labels_raw, self.class_labels_index,
+          self.n_classes, self.n_class_labels, self.n_class_labels_total,
           self.unique_class_labels. If any of these attributes are already set,
           they will verify the new values match the existing ones.
 
@@ -231,44 +237,44 @@ class Data_roicat(util.ROICaT_Module):
             extension = Path(path_labels[0]).suffix
             ## Load the labels
             if extension == '.npy':
-                self._class_labels_raw = [np.load(p, allow_pickle=True)[()] for p in path_labels]
+                self.class_labels_raw = [np.load(p, allow_pickle=True)[()] for p in path_labels]
             elif extension == '.pkl':
-                self._class_labels_raw = [helpers.pickle_load(p) for p in path_labels]
+                self.class_labels_raw = [helpers.pickle_load(p) for p in path_labels]
             else:
                 raise ValueError(f"File extension {extension} is not supported. Please use either .npy or .pkl")
             ## Check that if the inputs are dictionaries, we extract the labels
-            if isinstance(self._class_labels_raw[0], dict):
-                assert all(['labels' in l for l in self._class_labels_raw]), f"Found a dictionary in the .npy file. The dictionary should have a key 'labels' with a value of a numpy array of shape (n_roi,)."
-                self._class_labels_raw = [l['labels'] for l in self._class_labels_raw]
+            if isinstance(self.class_labels_raw[0], dict):
+                assert all(['labels' in l for l in self.class_labels_raw]), f"Found a dictionary in the .npy file. The dictionary should have a key 'labels' with a value of a numpy array of shape (n_roi,)."
+                self.class_labels_raw = [l['labels'] for l in self.class_labels_raw]
         else:
             assert labels is not None, f"Either labels or path_labels must be specified."
             assert isinstance(labels, str) == False, f"labels is a string. Did you mean to specify path_labels?"
-            self._class_labels_raw = labels
+            self.class_labels_raw = labels
 
         ## Convert to a list if it is not already
-        if isinstance(self._class_labels_raw, list) == False:
+        if isinstance(self.class_labels_raw, list) == False:
             print(f'Input labels is not a list. Wrapping it in a list.') if self._verbose else None
-            self._class_labels_raw = [self._class_labels_raw]
+            self.class_labels_raw = [self.class_labels_raw]
         ## Assert that all the elements are numpy arrays
-        assert all([isinstance(l, np.ndarray) for l in self._class_labels_raw]), f"labels should be a list of numpy arrays. First element of list is of type {type(self._class_labels_raw[0])}"
+        assert all([isinstance(l, np.ndarray) for l in self.class_labels_raw]), f"labels should be a list of numpy arrays. First element of list is of type {type(self.class_labels_raw[0])}"
         ## Assert that all the elements are 1D
-        assert all([l.ndim==1 for l in self._class_labels_raw]), f"labels should be a list of 1D numpy arrays. First element of list is of shape {self._class_labels_raw[0].shape}"
+        assert all([l.ndim==1 for l in self.class_labels_raw]), f"labels should be a list of 1D numpy arrays. First element of list is of shape {self.class_labels_raw[0].shape}"
 
         ## Define some variables
-        n_sessions = len(self._class_labels_raw)
-        labels_cat = np.concatenate(self._class_labels_raw, axis=0)
+        n_sessions = len(self.class_labels_raw)
+        labels_cat = np.concatenate(self.class_labels_raw, axis=0)
         labels_cat_squeezeInt = np.unique(labels_cat, return_inverse=True)[1].astype(np.int64)
         unique_class_labels = np.unique(labels_cat)
         if n_classes is not None:
             assert len(unique_class_labels) <= n_classes, f"RH ERROR: User provided n_classes={n_classes} but there are {len(unique_class_labels)} unique class labels in the provided class_labels." if self._verbose else None
         else:
             n_classes = len(unique_class_labels)
-        n_class_labels = [lbls.shape[0] for lbls in self._class_labels_raw]
+        n_class_labels = [lbls.shape[0] for lbls in self.class_labels_raw]
         n_class_labels_total = sum(n_class_labels)
         class_labels_squeezeInt = [labels_cat_squeezeInt[sum(n_class_labels[:ii]):sum(n_class_labels[:ii+1])] for ii in range(n_sessions)]
 
         ## Set attributes
-        self.class_labels = class_labels_squeezeInt
+        self.class_labels_index = class_labels_squeezeInt
         self.n_classes = n_classes
         self.n_class_labels = n_class_labels
         self.n_class_labels_total = n_class_labels_total
@@ -307,17 +313,17 @@ class Data_roicat(util.ROICaT_Module):
             verbose = self._verbose
 
         ## Check if class_labels and ROI_images exist
-        if not (hasattr(self, 'class_labels') and hasattr(self, 'ROI_images')):
-            print("Cannot check validity of class_labels and ROI_images because one or both do not exist as attributes.") if verbose else None
+        if not (hasattr(self, 'class_labels_index') and hasattr(self, 'ROI_images')):
+            print("Cannot check validity of class_labels_index and ROI_images because one or both do not exist as attributes.") if verbose else None
             return False
         ## Check num sessions
-        n_sessions_classLabels = len(self.class_labels)
+        n_sessions_classLabels = len(self.class_labels_index)
         n_sessions_ROIImages = len(self.ROI_images)
-        assert n_sessions_classLabels == n_sessions_ROIImages, f"RH ERROR: Number of sessions (list elements) in class_labels ({n_sessions_classLabels}) does not match number of sessions (list elements) in ROI_images ({n_sessions_ROIImages})."
+        assert n_sessions_classLabels == n_sessions_ROIImages, f"RH ERROR: Number of sessions (list elements) in class_labels_index ({n_sessions_classLabels}) does not match number of sessions (list elements) in ROI_images ({n_sessions_ROIImages})."
         ## Check num ROIs
-        n_ROIs_classLabels = [lbls.shape[0] for lbls in self.class_labels]
+        n_ROIs_classLabels = [lbls.shape[0] for lbls in self.class_labels_index]
         n_ROIs_ROIImages = [img.shape[0] for img in self.ROI_images]
-        assert all([l == r for l, r in zip(n_ROIs_classLabels, n_ROIs_ROIImages)]), f"RH ERROR: Number of ROIs in each session in class_labels ({n_ROIs_classLabels}) does not match number of ROIs in each session in ROI_images ({n_ROIs_ROIImages})."
+        assert all([l == r for l, r in zip(n_ROIs_classLabels, n_ROIs_ROIImages)]), f"RH ERROR: Number of ROIs in each session in class_labels_index ({n_ROIs_classLabels}) does not match number of ROIs in each session in ROI_images ({n_ROIs_ROIImages})."
         print(f"Labels and ROI Images match in shapes: Class labels and ROI images have the same number of sessions and the same number of ROIs in each session.") if verbose else None
         return True
 
@@ -539,7 +545,7 @@ class Data_roicat(util.ROICaT_Module):
         """
         completeness = {}
         keys_classification_inference = ['ROI_images', 'um_per_pixel']
-        keys_classification_training = ['ROI_images', 'um_per_pixel', 'class_labels']
+        keys_classification_training = ['ROI_images', 'um_per_pixel', 'class_labels_index']
         keys_tracking = ['ROI_images', 'um_per_pixel', 'spatialFootprints', 'FOV_images']
         
         ## Check classification inference:
@@ -550,7 +556,7 @@ class Data_roicat(util.ROICaT_Module):
             print(f"RH WARNING: Classification-Inference incomplete because following attributes are missing: {[key for key in keys_classification_inference if not hasattr(self, key)]}") if verbose else None
             completeness['classification_inference'] = False
         ## Check classification training:
-        ### ROI_images, um_per_pixel, class_labels
+        ### ROI_images, um_per_pixel, class_labels_index
         if all([hasattr(self, key) for key in keys_classification_training]):
             completeness['classification_training'] = True
         else:
@@ -754,7 +760,7 @@ class Data_roicat(util.ROICaT_Module):
             self.set_ROI_images: ['ROI_images', 'um_per_pixel'],
             self.set_spatialFootprints: ['spatialFootprints', 'um_per_pixel'],
             self.set_FOV_images: ['FOV_images'],
-            self.set_class_labels: ['class_labels'],
+            self.set_class_labels: ['class_labels_raw'],
         }
 
         methodKeys_all = list(set(sum(list(methods.values()), [])))
