@@ -41,7 +41,10 @@ def pipeline_tracking(params: dict):
     ## Prepare state variables
     VERBOSE = params['general']['verbose']
     DEVICE = roicat.helpers.set_device(use_GPU=params['general']['use_GPU'])
-    SEED = _set_random_seed(seed=params['general']['random_seed'])
+    SEED = _set_random_seed(
+        seed=params['general']['random_seed'],
+        deterministic=params['general']['random_seed'] is not None,
+    )
 
     if params['data_loading']['data_kind'] == 'data_suite2p':
         assert params['data_loading']['dir_outer'] is not None, f"params['data_loading']['dir_outer'] must be specified if params['data_loading']['data_kind'] is 'data_suite2p'."
@@ -292,7 +295,7 @@ def pipeline_tracking(params: dict):
     
     return results, run_data, params
 
-def _set_random_seed(seed=None):
+def _set_random_seed(seed=None, deterministic=False):
     """
     Set random seed for reproducibility.
     RH 2023
@@ -301,6 +304,8 @@ def _set_random_seed(seed=None):
         seed (int, optional):
             Random seed.
             If None, a random seed (spanning int32 integer range) is generated.
+        deterministic (bool, optional):
+            Whether to make packages deterministic.
 
     Returns:
         (int):
@@ -318,5 +323,11 @@ def _set_random_seed(seed=None):
     random.seed(seed)
     import cv2
     cv2.setRNGSeed(seed)
+
+    ## Make torch deterministic
+    torch.use_deterministic_algorithms(deterministic)
+    ## Make cudnn deterministic
+    torch.backends.cudnn.deterministic = deterministic
+    torch.backends.cudnn.benchmark = not deterministic
     
     return seed

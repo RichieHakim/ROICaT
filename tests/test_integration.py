@@ -11,11 +11,12 @@ import roicat
 from roicat import helpers, ROInet, pipelines, util
 
 
-def test_pipeline_tracking_simple(dir_data_test, check_items):
+def test_pipeline_tracking_simple(dir_data_test):
     defaults = util.get_default_parameters(pipeline='tracking')
     seed = 0
     params_partial = {
         'general': {
+            'use_GPU': False,
             'random_seed': seed,
         },
         'data_loading': {
@@ -58,12 +59,12 @@ def test_pipeline_tracking_simple(dir_data_test, check_items):
     print(f"Loading true run_data from {path_run_data_true}")
     run_data_true = helpers.pickle_load(path_run_data_true)
     print(f"run_data_true loaded. Checking equality")
-    check_items(
-        test=run_data, 
-        true=run_data_true, 
-        path=None,
+    checker = helpers.Equivalence_checker(
         kwargs_allclose={'rtol': 1e-5, 'equal_nan': True},
+        assert_mode=False,
     )
+    checks = checker(test=run_data, true=run_data_true)
+    print(checks)
     print(f"run_data equality check finished")
             
 # def test_ROInet(make_ROIs, array_hasher):
