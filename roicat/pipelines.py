@@ -318,5 +318,9 @@ def _set_random_seed(seed=None):
     random.seed(seed)
     import cv2
     cv2.setRNGSeed(seed)
+
+    # Set deterministic flag for CUDA operations in PyTorch
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
     
     return seed
