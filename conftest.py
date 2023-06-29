@@ -102,23 +102,29 @@ def check_items():
         kwargs_allclose: Optional[dict] = {'rtol': 1e-7, 'equal_nan': True},
     ) -> None:
         """
-        Checks if items in the test object match the corresponding items in the true object.
-        RH 2023
+        Checks if items in the test object match the corresponding items in the
+        true object. RH 2023
 
         Args:
-            test (Union[dict, list, tuple, set, np.ndarray, int, float, complex, str, bool, None]):
+            test (Union[dict, list, tuple, set, np.ndarray, int, float, complex,
+            str, bool, None]):
                 The object to check against the true object.
-            true (Union[dict, list, tuple, set, np.ndarray, int, float, complex, str, bool, None]):
-                The object that contains the true values to compare to the test object.
+            true (Union[dict, list, tuple, set, np.ndarray, int, float, complex,
+            str, bool, None]):
+                The object that contains the true values to compare to the test
+                object.
             path (Optional[List[str]]): 
-                List of strings that keeps track of the nested path during recursion. 
-                This is used for error reporting to show where a mismatch occurred. 
-                (Default is ``None``)
+                List of strings that keeps track of the nested path during
+                recursion. This is used for error reporting to show where a
+                mismatch occurred. (Default is ``None``)
 
         Raises:
-            KeyError: If a key in a dictionary object from true is not found in the test object.
-            ValueError: If there is a mismatch between the test and true objects. 
-                        The error message contains the path where the mismatch occurred.                    
+            KeyError: 
+                If a key in a dictionary object from true is not found in the
+                test object. \n
+            ValueError: 
+                If there is a mismatch between the test and true objects. The
+                error message contains the path where the mismatch occurred. \n                 
         """
         if path is None:
             path = []
