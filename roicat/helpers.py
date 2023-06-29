@@ -14,7 +14,7 @@ import PIL
 from PIL import ImageTk
 import csv
 import warnings
-from typing import List, Dict, Tuple, Union, Optional, Any, Callable, Iterable, Sequence, Type, Any
+from typing import List, Dict, Tuple, Union, Optional, Any, Callable, Iterable, Sequence, Type, Any, MutableMapping
 
 import numpy as np
 import torch
@@ -167,6 +167,38 @@ def deep_update_dict(
         helper_deep_update_dict(d, key, val)
         return d
         
+
+def flatten_dict(d: MutableMapping, parent_key: str = '', sep: str ='.') -> MutableMapping:
+    """
+    Flattens a dictionary of dictionaries into a single dictionary. NOTE: Turns
+    all keys into strings. Stolen from https://stackoverflow.com/a/6027615.
+    RH 2022
+
+    Args:
+        d (Dict):
+            Dictionary to flatten
+        parent_key (str):
+            Key to prepend to flattened keys IGNORE: USED INTERNALLY FOR
+            RECURSION
+        sep (str):
+            Separator to use between keys IGNORE: USED INTERNALLY FOR RECURSION
+
+    Returns:
+        (Dict):
+            flattened dictionary (dict):
+                Flat dictionary with the keys to deeper dictionaries joined by
+                the separator.
+    """
+
+    items = []
+    for k, v in d.items():
+        new_key = str(parent_key) + str(sep) + str(k) if parent_key else str(k)
+        if isinstance(v, MutableMapping):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
 
 ######################################################################################################################################
 ####################################################### MATH FUNCTIONS ###############################################################
@@ -4340,19 +4372,25 @@ class Equivalence_checker():
             Keyword arguments for the `numpy.allclose` function. (Default is
             ``{'rtol': 1e-7, 'equal_nan': True}``)
         assert_mode (bool): 
-            Whether to raise an assertion error if items are not close. (Default
-            is ``False``)
+            Whether to raise an assertion error if items are not close.
+        verbose (bool):
+            How much information to print out:
+                * ``False`` / ``0``: No information printed out.
+                * ``True`` / ``1``: Mismatched items only.
+                * ``2``: All items printed out.
     """
     def __init__(
         self,
         kwargs_allclose: Optional[dict] = {'rtol': 1e-7, 'equal_nan': True},
         assert_mode=False,
+        verbose=False,
     ) -> None:
         """
         Initializes the Allclose_checker.
         """
         self._kwargs_allclose = kwargs_allclose
         self._assert_mode = assert_mode
+        self._verbose = verbose
         
     def _checker(
         self, 
@@ -4380,9 +4418,24 @@ class Equivalence_checker():
                     Returns True if all elements in test and true are close.
                     Otherwise, returns False.
         """
-        out = np.allclose(test, true, **self._kwargs_allclose)
-        if self._assert_mode:
-            assert out, f"ERROR. Equivalence mismatch. Path: {path}"
+        try:
+            out = np.allclose(test, true, **self._kwargs_allclose)
+        except Exception as e:
+            out = None
+            warnings.warn(f"WARNING. Equivalence check failed. Path: {path}. Error: {e}") if self._verbose else None
+            
+        if out == False:
+            if self._assert_mode:
+                raise AssertionError(f"Equivalence check failed. Path: {path}.")
+            if self._verbose:
+                ## Come up with a way to describe the difference between the two values. Something like the following:
+                ### IF the arrays are numeric, then calculate the relative difference
+                if np.issubdtype(type(test), np.number) and np.issubdtype(type(true), np.number):
+                    diff = np.abs(test - true)
+                    r_diff = diff / np.abs(true)
+                    r_diff_mean, r_diff_max = r_diff.mean(), r_diff.max()
+                    print(f"Equivalence check failed. Path: {path}. Relative difference: mean={r_diff_mean}, max={r_diff_max}.") if self._verbose > 0 else None
+                
         return out
 
     def __call__(
@@ -4462,6 +4515,9 @@ class Equivalence_checker():
         ## N/A
         else:
             result = (None, 'not tested')
+
+        if self._verbose > 1:
+            print(f"{'.'.join(path)}: {result}")
 
         return result
 
