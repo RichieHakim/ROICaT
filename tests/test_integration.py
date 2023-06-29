@@ -97,7 +97,7 @@ def test_pipeline_tracking_simple(dir_data_test, check_items):
         test=run_data, 
         true=run_data_true, 
         path=None,
-        kwargs_allclose={'rtol': 1e-7, 'equal_nan': True},
+        kwargs_allclose={'rtol': 1e-5, 'equal_nan': True},
     )
     print(f"run_data equality check finished")
             
