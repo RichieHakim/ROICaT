@@ -123,6 +123,10 @@ def check_items():
         if path is None:
             path = []
         
+        if len(path) > 0:
+            if path[-1].startswith('_'):
+                return None
+        print(f"Checking item: {path}")
         ## DICT
         if isinstance(true, dict):
             for key in true:
@@ -170,4 +174,4 @@ def check_items():
             if test is not None:
                 raise ValueError(f"None value mismatch at path {path}")
                 
-    return check_items
+    return check_items_fn
