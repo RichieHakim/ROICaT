@@ -142,14 +142,14 @@ def check_items():
         ## NP.NDARRAY
         elif isinstance(true, np.ndarray):
             try:
-                np.testing.assert_allclose(test, true)
+                np.testing.assert_allclose(test, true, **kwargs_allclose)
             except AssertionError as e:
                 raise ValueError(f"Value mismatch at path {path}: {e}")
         ## NP.SCALAR
         elif np.isscalar(true):
             if isinstance(test, (int, float, complex, np.number)):
                 try:
-                    np.testing.assert_allclose(np.array(test), np.array(true))
+                    np.testing.assert_allclose(np.array(test), np.array(true), **kwargs_allclose)
                 except AssertionError as e:
                     raise ValueError(f"Numeric value mismatch at path {path}: {e}")
             else:
@@ -162,7 +162,7 @@ def check_items():
         ## NUMBER
         elif isinstance(true, (int, float, complex)):
             try:
-                np.testing.assert_allclose(np.array(test), np.array(true))
+                np.testing.assert_allclose(np.array(test), np.array(true), **kwargs_allclose)
             except AssertionError as e:
                 raise ValueError(f"Numeric value mismatch at path {path}: {e}")
         ## BOOL
