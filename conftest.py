@@ -91,77 +91,83 @@ def make_ROIs(
 
 
 @pytest.fixture(scope='session')
-def check_items(
-    test: Union[dict, list, tuple, set, np.ndarray, int, float, complex, str, bool, None], 
-    true: Union[dict, list, tuple, set, np.ndarray, int, float, complex, str, bool, None], 
-    path: Optional[List[str]] = None,
-    kwargs_allclose: Optional[dict] = {'rtol': 1e-7, 'equal_nan': True},
-) -> None:
+def check_items():
     """
-    Checks if items in the test object match the corresponding items in the true object.
-    RH 2023
-
-    Args:
-        test (Union[dict, list, tuple, set, np.ndarray, int, float, complex, str, bool, None]):
-            The object to check against the true object.
-        true (Union[dict, list, tuple, set, np.ndarray, int, float, complex, str, bool, None]):
-            The object that contains the true values to compare to the test object.
-        path (Optional[List[str]]): 
-            List of strings that keeps track of the nested path during recursion. 
-            This is used for error reporting to show where a mismatch occurred. 
-            (Default is ``None``)
-
-    Raises:
-        KeyError: If a key in a dictionary object from true is not found in the test object.
-        ValueError: If there is a mismatch between the test and true objects. 
-                    The error message contains the path where the mismatch occurred.                    
+    Returns a function that checks if items in the test object match the corresponding items in the true object.
     """
-    if path is None:
-        path = []
-    
-    ## DICT
-    if isinstance(true, dict):
-        for key in true:
-            if key not in test:
-                raise KeyError(f"Key {key} not found in test at path {path}")
-            check_items(test[key], true[key], path=path + [str(key)], kwargs_allclose=kwargs_allclose)
-    ## ITERATABLE
-    elif isinstance(true, (list, tuple, set)):
-        if len(true) != len(test):
-            raise ValueError(f"Length mismatch at path {path}")
-        for idx, (i, j) in enumerate(zip(test, true)):
-            check_items(i, j, path=path + [str(idx)], kwargs_allclose=kwargs_allclose)
-    ## NP.NDARRAY
-    elif isinstance(true, np.ndarray):
-        try:
-            np.testing.assert_allclose(test, true)
-        except AssertionError as e:
-            raise ValueError(f"Value mismatch at path {path}: {e}")
-    ## NP.SCALAR
-    elif np.isscalar(true):
-        if isinstance(test, (int, float, complex, np.number)):
+    def check_items_fn(
+        test: Union[dict, list, tuple, set, np.ndarray, int, float, complex, str, bool, None], 
+        true: Union[dict, list, tuple, set, np.ndarray, int, float, complex, str, bool, None], 
+        path: Optional[List[str]] = None,
+        kwargs_allclose: Optional[dict] = {'rtol': 1e-7, 'equal_nan': True},
+    ) -> None:
+        """
+        Checks if items in the test object match the corresponding items in the true object.
+        RH 2023
+
+        Args:
+            test (Union[dict, list, tuple, set, np.ndarray, int, float, complex, str, bool, None]):
+                The object to check against the true object.
+            true (Union[dict, list, tuple, set, np.ndarray, int, float, complex, str, bool, None]):
+                The object that contains the true values to compare to the test object.
+            path (Optional[List[str]]): 
+                List of strings that keeps track of the nested path during recursion. 
+                This is used for error reporting to show where a mismatch occurred. 
+                (Default is ``None``)
+
+        Raises:
+            KeyError: If a key in a dictionary object from true is not found in the test object.
+            ValueError: If there is a mismatch between the test and true objects. 
+                        The error message contains the path where the mismatch occurred.                    
+        """
+        if path is None:
+            path = []
+        
+        ## DICT
+        if isinstance(true, dict):
+            for key in true:
+                if key not in test:
+                    raise KeyError(f"Key {key} not found in test at path {path}")
+                check_items_fn(test[key], true[key], path=path + [str(key)], kwargs_allclose=kwargs_allclose)
+        ## ITERATABLE
+        elif isinstance(true, (list, tuple, set)):
+            if len(true) != len(test):
+                raise ValueError(f"Length mismatch at path {path}")
+            for idx, (i, j) in enumerate(zip(test, true)):
+                check_items_fn(i, j, path=path + [str(idx)], kwargs_allclose=kwargs_allclose)
+        ## NP.NDARRAY
+        elif isinstance(true, np.ndarray):
+            try:
+                np.testing.assert_allclose(test, true)
+            except AssertionError as e:
+                raise ValueError(f"Value mismatch at path {path}: {e}")
+        ## NP.SCALAR
+        elif np.isscalar(true):
+            if isinstance(test, (int, float, complex, np.number)):
+                try:
+                    np.testing.assert_allclose(np.array(test), np.array(true))
+                except AssertionError as e:
+                    raise ValueError(f"Numeric value mismatch at path {path}: {e}")
+            else:
+                if not test == true:
+                    raise ValueError(f"Value mismatch at path {path}")
+        ## STRING
+        elif isinstance(true, str):
+            if not test == true:
+                raise ValueError(f"String value mismatch at path {path}")
+        ## NUMBER
+        elif isinstance(true, (int, float, complex)):
             try:
                 np.testing.assert_allclose(np.array(test), np.array(true))
             except AssertionError as e:
                 raise ValueError(f"Numeric value mismatch at path {path}: {e}")
-        else:
-            if not test == true:
-                raise ValueError(f"Value mismatch at path {path}")
-    ## STRING
-    elif isinstance(true, str):
-        if not test == true:
-            raise ValueError(f"String value mismatch at path {path}")
-    ## NUMBER
-    elif isinstance(true, (int, float, complex)):
-        try:
-            np.testing.assert_allclose(np.array(test), np.array(true))
-        except AssertionError as e:
-            raise ValueError(f"Numeric value mismatch at path {path}: {e}")
-    ## BOOL
-    elif isinstance(true, bool):
-        if test != true:
-            raise ValueError(f"Boolean value mismatch at path {path}")
-    ## NONE
-    elif true is None:
-        if test is not None:
-            raise ValueError(f"None value mismatch at path {path}")
+        ## BOOL
+        elif isinstance(true, bool):
+            if test != true:
+                raise ValueError(f"Boolean value mismatch at path {path}")
+        ## NONE
+        elif true is None:
+            if test is not None:
+                raise ValueError(f"None value mismatch at path {path}")
+                
+    return check_items

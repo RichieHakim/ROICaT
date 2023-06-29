@@ -11,7 +11,7 @@ import roicat
 from roicat import helpers, ROInet, pipelines, util
 
 
-def test_pipeline_tracking_simple(dir_data_test, array_hasher):
+def test_pipeline_tracking_simple(dir_data_test, check_items):
     defaults = util.get_default_parameters(pipeline='tracking')
     seed = 0
     params_partial = {
@@ -92,12 +92,14 @@ def test_pipeline_tracking_simple(dir_data_test, array_hasher):
     path_run_data_true = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'run_data.pkl')
     print(f"Loading true run_data from {path_run_data_true}")
     run_data_true = helpers.pickle_load(path_run_data_true)
+    print(f"run_data_true loaded. Checking equality")
     check_items(
         test=run_data, 
         true=run_data_true, 
         path=None,
         kwargs_allclose={'rtol': 1e-7, 'equal_nan': True},
     )
+    print(f"run_data equality check finished")
             
 def test_ROInet(make_ROIs, array_hasher):
     ROI_images = make_ROIs
