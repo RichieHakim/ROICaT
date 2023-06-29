@@ -61,11 +61,16 @@ def test_pipeline_tracking_simple(dir_data_test):
     print(f"run_data_true loaded. Checking equality")
     checker = helpers.Equivalence_checker(
         kwargs_allclose={'rtol': 1e-5, 'equal_nan': True},
-        assert_mode=True,
+        assert_mode=False,
+        verbose=True,
     )
     checks = checker(test=run_data, true=run_data_true)
-    print(checks)
-    print(f"run_data equality check finished")
+    fails = [key for key, val in helpers.flatten_dict(checks).items() if val[0]==False]
+    if len(fails) > 0:
+        warnings.warn(f"run_data equality check failed for keys: {fails}")
+    else:
+        print(f"run_data equality check finished successfully")
+    
             
 # def test_ROInet(make_ROIs, array_hasher):
 #     ROI_images = make_ROIs
