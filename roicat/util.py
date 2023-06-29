@@ -86,7 +86,7 @@ def get_default_parameters(
                 'fit_geometric': {
                     'template': 0.5,  ## Which session to use as a registration template. If input is float (ie 0.0, 0.5, 1.0, etc.), then it is the fractional position of the session to use; if input is int (ie 1, 2, 3), then it is the index of the session to use (0-indexed)
                     'template_method': 'sequential',  ## Can be 'sequential' or 'image'. If 'sequential', then the template is the FOV_image of the previous session. If 'image', then the template is the FOV_image of the session specified by 'template'.
-                    'mode_transform': 'homography',  ## Can be 'homography', 'affine', 'rigid', or 'translation'. See documentation for more details.
+                    'mode_transform': 'homography',  ## Must be one of {'translation', 'affine', 'euclidean', 'homography'}. See documentation for more details.
                     'mask_borders': [50, 50, 50, 50],  ## Number of pixels to mask from the borders of the FOV_image. Useful for removing artifacts from the edges of the FOV_image.
                     'n_iter': 50,  ## Number of iterations to run the registration algorithm. More iterations means more accurate registration, but longer run time.
                     'termination_eps': 1e-09,  ## Termination criteria for the registration algorithm. See documentation for more details.
@@ -96,7 +96,7 @@ def get_default_parameters(
                 'fit_nonrigid': {
                     'template': 0.5,  ## Which session to use as a registration template. If input is float (ie 0.0, 0.5, 1.0, etc.), then it is the fractional position of the session to use; if input is int (ie 1, 2, 3), then it is the index of the session to use (0-indexed)
                     'template_method': 'image',  ## Can be 'sequential' or 'image'. If 'sequential', then the template is the FOV_image of the previous session. If 'image', then the template is the FOV_image of the session specified by 'template'.
-                    'mode_transform': 'createOptFlow_DeepFlow',  ## Can be 'createOptFlow_DeepFlow' or 'createOptFlow_Farneback'. See documentation for more details.
+                    'mode_transform': 'createOptFlow_DeepFlow',  ## Can be 'createOptFlow_DeepFlow' or 'calcOpticalFlowFarneback'. See documentation for more details.
                     'kwargs_mode_transform': None,  ## Keyword arguments for the mode_transform function. See documentation for more details.
                 },
                 'transform_ROIs': {
