@@ -61,7 +61,7 @@ def test_pipeline_tracking_simple(dir_data_test):
     print(f"run_data_true loaded. Checking equality")
     checker = helpers.Equivalence_checker(
         kwargs_allclose={'rtol': 1e-5, 'equal_nan': True},
-        assert_mode=False,
+        assert_mode=True,
     )
     checks = checker(test=run_data, true=run_data_true)
     print(checks)
