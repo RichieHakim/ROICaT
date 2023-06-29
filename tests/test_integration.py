@@ -87,7 +87,11 @@ def test_pipeline_tracking_simple(dir_data_test, array_hasher):
     #     for key_obj, (datatype, hash_val) in hashes_module.items():
     #         assert hash_vals_run[key_module][key_obj] == hash_val, f"Hash value mismatch for rundata['{key_module}']['{key_obj}']"        
 
-    run_data_true = helpers.pickle_load(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'run_data.pkl')
+    ## Check run_data equality
+    print(f"Checking run_data equality")
+    path_run_data_true = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'run_data.pkl')
+    print(f"Loading true run_data from {path_run_data_true}")
+    run_data_true = helpers.pickle_load(path_run_data_true)
     check_items(
         test=run_data, 
         true=run_data_true, 
