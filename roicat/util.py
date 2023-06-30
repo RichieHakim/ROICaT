@@ -299,7 +299,7 @@ def check_keys_subset(d, default_dict, hierarchy=['defaults']):
     default_keys = list(default_dict.keys())
     for key in d.keys():
         assert key in default_keys, f"Parameter '{key}' not found in defaults dictionary: {' > '.join([f'{str(h)}' for h in hierarchy])}."
-        if isinstance(d[key], dict):
+        if isinstance(default_dict[key], dict) and isinstance(d[key], dict):
             check_keys_subset(d[key], default_dict[key], hierarchy=hierarchy+[key])
 
 def prepare_params(params, defaults, verbose=True):
