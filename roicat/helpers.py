@@ -4430,12 +4430,14 @@ class Equivalence_checker():
             if self._verbose:
                 ## Come up with a way to describe the difference between the two values. Something like the following:
                 ### IF the arrays are numeric, then calculate the relative difference
-                if np.issubdtype(type(test), np.number) and np.issubdtype(type(true), np.number):
+                dtypes_numeric = (np.number, np.bool_, np.integer, np.floating, np.complexfloating)
+                if any([np.issubdtype(test.dtype, dtype) and np.issubdtype(true.dtype, dtype) for dtype in dtypes_numeric]):
                     diff = np.abs(test - true)
                     r_diff = diff / np.abs(true)
-                    r_diff_mean, r_diff_max = r_diff.mean(), r_diff.max()
-                    print(f"Equivalence check failed. Path: {path}. Relative difference: mean={r_diff_mean}, max={r_diff_max}.") if self._verbose > 0 else None
-                
+                    r_diff_mean, r_diff_max, any_nan = np.nanmean(r_diff), np.nanmax(r_diff), np.any(np.isnan(r_diff))
+                    print(f"Equivalence check failed. Path: {path}. Relative difference: mean={r_diff_mean}, max={r_diff_max}, any_nan={any_nan}") if self._verbose > 0 else None
+                else:
+                    print(f"Equivalence check failed. Path: {path}. Value is non-numerical.") if self._verbose > 0 else None
         return out
 
     def __call__(
@@ -4495,7 +4497,7 @@ class Equivalence_checker():
         ## NP.SCALAR
         elif np.isscalar(true):
             if isinstance(test, (int, float, complex, np.number)):
-                r = self._checker(test, true, path)
+                r = self._checker(np.array(test), np.array(true), path)
                 result = (r, 'equivalence')
             else:
                 result = (test == true, 'equivalence')
