@@ -357,7 +357,7 @@ class Aligner(util.ROICaT_Module):
                     'iterations': 7,
                     'poly_n': 7, 
                     'poly_sigma': 1.5,
-                    'flags': cv2.OPTFLOW_FARNEBACK_GAUSSIAN
+                    'flags': cv2.OPTFLOW_FARNEBACK_GAUSSIAN, ## = 256
                 } if kwargs_mode_transform is None else kwargs_mode_transform
                 flow_tmp = cv2.calcOpticalFlowFarneback(
                     prev=im_template,

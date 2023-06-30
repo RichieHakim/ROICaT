@@ -669,26 +669,28 @@ class Auto_LogisticRegression(Autotuner_regression):
         ])
 
 class Load_ONNX_model_sklearnLogisticRegression():
+    """
+    Loads an ONNX model of an sklearn LogisticRegression model into a runtime
+    session.
+    RH 2023
 
+    Args:
+        path_or_bytes (Union[str, bytes]):
+            Either: \n
+                * The filepath to the ONNX model.
+                * The bytes of the ONNX model: model.SerializeToString(). \n
+    Returns:
+        (function):
+            A partial function that takes in a numpy array or torch Tensor and
+            passes it through the ONNX runtime session (model).
+    """
     def __init__(
         self,
         path_or_bytes: str = 'path/to/model.onnx',
         providers: List[str] =['CPUExecutionProvider'],
     ) -> Callable:
         """
-        Loads an ONNX model of an sklearn LogisticRegression model into a runtime
-        session.
-        RH 2023
-
-        Args:
-            path_or_bytes (Union[str, bytes]):
-                Either: \n
-                    * The filepath to the ONNX model.
-                    * The bytes of the ONNX model: model.SerializeToString(). \n
-        Returns:
-            (function):
-                A partial function that takes in a numpy array or torch Tensor and
-                passes it through the ONNX runtime session (model).
+        Initializes the runtime session.
         """
         import onnxruntime
         import onnx

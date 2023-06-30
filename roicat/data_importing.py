@@ -1,5 +1,6 @@
 import pathlib
 from pathlib import Path
+import copy
 import warnings
 from typing import List, Optional, Union, Tuple, Dict, Any, Callable, Iterable
 
@@ -76,10 +77,16 @@ class Data_roicat(util.ROICaT_Module):
         spatialFootprints (List[object]): 
             A list of scipy.sparse.csr_matrix objects, each with shape *(n_roi,
             FOV_height*FOV_width)*. Each element represents an imaging session.
-        class_labels (List[np.ndarray]): 
+        class_labels_raw (List[np.ndarray]): 
             A list of numpy arrays, each with shape *(n_roi,)*, where each
             element is an integer. Each element of the list is an imaging
             session and each element of the numpy array is a class label.
+        class_labels_index (List[np.ndarray]): 
+            A list of numpy arrays, each with shape *(n_roi,)*, where each
+            element is an integer. Each element of the list is an imaging
+            session and each element of the numpy array is the index of the
+            class label obtained from passing the raw class label through
+            np.unique(*, return_inverse=True).
         um_per_pixel (float): 
             The conversion factor from pixels to microns. This is used to scale
             the ROI_images to a common size.
@@ -131,7 +138,7 @@ class Data_roicat(util.ROICaT_Module):
             ## Check if it is already set
             if hasattr(self, 'um_per_pixel'):
                 um_per_pixel = self.um_per_pixel
-            print("RH WARNING: No um_per_pixel provided. We recommend making an educated guess. Assuming 1.0 um per pixel. This will affect the embedding results.")
+            warnings.warn("RH WARNING: No um_per_pixel provided. We recommend making an educated guess. Assuming 1.0 um per pixel. This will affect the embedding results.")
             um_per_pixel = 1.0
 
         print(f"Starting: Importing ROI images") if self._verbose else None
@@ -188,8 +195,8 @@ class Data_roicat(util.ROICaT_Module):
           self.ROI_images list. Each element is a numpy array of shape
           *(n_roi,)*.
 
-        * Sets the attributes: self.class_labels, self.n_classes,
-          self.n_class_labels, self.n_class_labels_total,
+        * Sets the attributes: self.class_labels_raw, self.class_labels_index,
+          self.n_classes, self.n_class_labels, self.n_class_labels_total,
           self.unique_class_labels. If any of these attributes are already set,
           they will verify the new values match the existing ones.
 
@@ -230,44 +237,44 @@ class Data_roicat(util.ROICaT_Module):
             extension = Path(path_labels[0]).suffix
             ## Load the labels
             if extension == '.npy':
-                self._class_labels_raw = [np.load(p, allow_pickle=True)[()] for p in path_labels]
+                self.class_labels_raw = [np.load(p, allow_pickle=True)[()] for p in path_labels]
             elif extension == '.pkl':
-                self._class_labels_raw = [helpers.pickle_load(p) for p in path_labels]
+                self.class_labels_raw = [helpers.pickle_load(p) for p in path_labels]
             else:
                 raise ValueError(f"File extension {extension} is not supported. Please use either .npy or .pkl")
             ## Check that if the inputs are dictionaries, we extract the labels
-            if isinstance(self._class_labels_raw[0], dict):
-                assert all(['labels' in l for l in self._class_labels_raw]), f"Found a dictionary in the .npy file. The dictionary should have a key 'labels' with a value of a numpy array of shape (n_roi,)."
-                self._class_labels_raw = [l['labels'] for l in self._class_labels_raw]
+            if isinstance(self.class_labels_raw[0], dict):
+                assert all(['labels' in l for l in self.class_labels_raw]), f"Found a dictionary in the .npy file. The dictionary should have a key 'labels' with a value of a numpy array of shape (n_roi,)."
+                self.class_labels_raw = [l['labels'] for l in self.class_labels_raw]
         else:
             assert labels is not None, f"Either labels or path_labels must be specified."
             assert isinstance(labels, str) == False, f"labels is a string. Did you mean to specify path_labels?"
-            self._class_labels_raw = labels
+            self.class_labels_raw = labels
 
         ## Convert to a list if it is not already
-        if isinstance(self._class_labels_raw, list) == False:
+        if isinstance(self.class_labels_raw, list) == False:
             print(f'Input labels is not a list. Wrapping it in a list.') if self._verbose else None
-            self._class_labels_raw = [self._class_labels_raw]
+            self.class_labels_raw = [self.class_labels_raw]
         ## Assert that all the elements are numpy arrays
-        assert all([isinstance(l, np.ndarray) for l in self._class_labels_raw]), f"labels should be a list of numpy arrays. First element of list is of type {type(self._class_labels_raw[0])}"
+        assert all([isinstance(l, np.ndarray) for l in self.class_labels_raw]), f"labels should be a list of numpy arrays. First element of list is of type {type(self.class_labels_raw[0])}"
         ## Assert that all the elements are 1D
-        assert all([l.ndim==1 for l in self._class_labels_raw]), f"labels should be a list of 1D numpy arrays. First element of list is of shape {self._class_labels_raw[0].shape}"
+        assert all([l.ndim==1 for l in self.class_labels_raw]), f"labels should be a list of 1D numpy arrays. First element of list is of shape {self.class_labels_raw[0].shape}"
 
         ## Define some variables
-        n_sessions = len(self._class_labels_raw)
-        labels_cat = np.concatenate(self._class_labels_raw, axis=0)
+        n_sessions = len(self.class_labels_raw)
+        labels_cat = np.concatenate(self.class_labels_raw, axis=0)
         labels_cat_squeezeInt = np.unique(labels_cat, return_inverse=True)[1].astype(np.int64)
         unique_class_labels = np.unique(labels_cat)
         if n_classes is not None:
             assert len(unique_class_labels) <= n_classes, f"RH ERROR: User provided n_classes={n_classes} but there are {len(unique_class_labels)} unique class labels in the provided class_labels." if self._verbose else None
         else:
             n_classes = len(unique_class_labels)
-        n_class_labels = [lbls.shape[0] for lbls in self._class_labels_raw]
+        n_class_labels = [lbls.shape[0] for lbls in self.class_labels_raw]
         n_class_labels_total = sum(n_class_labels)
         class_labels_squeezeInt = [labels_cat_squeezeInt[sum(n_class_labels[:ii]):sum(n_class_labels[:ii+1])] for ii in range(n_sessions)]
 
         ## Set attributes
-        self.class_labels = class_labels_squeezeInt
+        self.class_labels_index = class_labels_squeezeInt
         self.n_classes = n_classes
         self.n_class_labels = n_class_labels
         self.n_class_labels_total = n_class_labels_total
@@ -306,17 +313,17 @@ class Data_roicat(util.ROICaT_Module):
             verbose = self._verbose
 
         ## Check if class_labels and ROI_images exist
-        if not (hasattr(self, 'class_labels') and hasattr(self, 'ROI_images')):
-            print("Cannot check validity of class_labels and ROI_images because one or both do not exist as attributes.") if verbose else None
+        if not (hasattr(self, 'class_labels_index') and hasattr(self, 'ROI_images')):
+            print("Cannot check validity of class_labels_index and ROI_images because one or both do not exist as attributes.") if verbose else None
             return False
         ## Check num sessions
-        n_sessions_classLabels = len(self.class_labels)
+        n_sessions_classLabels = len(self.class_labels_index)
         n_sessions_ROIImages = len(self.ROI_images)
-        assert n_sessions_classLabels == n_sessions_ROIImages, f"RH ERROR: Number of sessions (list elements) in class_labels ({n_sessions_classLabels}) does not match number of sessions (list elements) in ROI_images ({n_sessions_ROIImages})."
+        assert n_sessions_classLabels == n_sessions_ROIImages, f"RH ERROR: Number of sessions (list elements) in class_labels_index ({n_sessions_classLabels}) does not match number of sessions (list elements) in ROI_images ({n_sessions_ROIImages})."
         ## Check num ROIs
-        n_ROIs_classLabels = [lbls.shape[0] for lbls in self.class_labels]
+        n_ROIs_classLabels = [lbls.shape[0] for lbls in self.class_labels_index]
         n_ROIs_ROIImages = [img.shape[0] for img in self.ROI_images]
-        assert all([l == r for l, r in zip(n_ROIs_classLabels, n_ROIs_ROIImages)]), f"RH ERROR: Number of ROIs in each session in class_labels ({n_ROIs_classLabels}) does not match number of ROIs in each session in ROI_images ({n_ROIs_ROIImages})."
+        assert all([l == r for l, r in zip(n_ROIs_classLabels, n_ROIs_ROIImages)]), f"RH ERROR: Number of ROIs in each session in class_labels_index ({n_ROIs_classLabels}) does not match number of ROIs in each session in ROI_images ({n_ROIs_ROIImages})."
         print(f"Labels and ROI Images match in shapes: Class labels and ROI images have the same number of sessions and the same number of ROIs in each session.") if verbose else None
         return True
 
@@ -354,8 +361,9 @@ class Data_roicat(util.ROICaT_Module):
             ## Check if it is already set
             if hasattr(self, 'um_per_pixel'):
                 um_per_pixel = self.um_per_pixel
-            print("RH WARNING: No um_per_pixel provided. We recommend making an educated guess. Assuming 1.0 um per pixel. This will affect the embedding results.")
-            um_per_pixel = 1.0
+            else:
+                warnings.warn("RH WARNING: No um_per_pixel provided. We recommend making an educated guess. Assuming 1.0 um per pixel. This will affect the embedding results.")
+                um_per_pixel = 1.0
 
         ## Check inputs
         if isinstance(spatialFootprints, list)==False:
@@ -386,11 +394,14 @@ class Data_roicat(util.ROICaT_Module):
 
         ## Check that attributes match if they already exist as an attribute
         if hasattr(self, 'n_sessions'):
-            assert self.n_sessions == n_sessions, f"n_sessions is already set to {self.n_sessions} but new value is {n_sessions}"
+            if self.n_sessions != n_sessions:
+                warnings.warn(f"RH WARNING: n_sessions is already set to {self.n_sessions} but new value is {n_sessions}")
         if hasattr(self, 'n_roi'):
-            assert self.n_roi == n_roi, f"n_roi is already set to {self.n_roi} but new value is {n_roi}"
+            if all([n == r for n, r in zip(self.n_roi, n_roi)])==False:
+                warnings.warn(f"RH WARNING: n_roi is already set to {self.n_roi} but new value is {n_roi}")
         if hasattr(self, 'n_roi_total'):
-            assert self.n_roi_total == n_roi_total, f"n_roi_total is already set to {self.n_roi_total} but new value is {n_roi_total}"
+            if self.n_roi_total != n_roi_total:
+                warnings.warn(f"RH WARNING: n_roi_total is already set to {self.n_roi_total} but new value is {n_roi_total}")
 
         ## Set attributes
         self.spatialFootprints = sf_all
@@ -432,7 +443,8 @@ class Data_roicat(util.ROICaT_Module):
 
         ## Check that attributes match if they already exist as an attribute
         if hasattr(self, 'n_sessions'):
-            assert self.n_sessions == n_sessions, f"n_sessions is already set to {self.n_sessions} but new value is {n_sessions}"
+            if self.n_sessions != n_sessions:
+                warnings.warn(f"RH WARNING: n_sessions is already set to {self.n_sessions} but new value is {n_sessions}")
 
         print(f"Completed: Set FOV_images for {len(FOV_images)} sessions successfully.") if self._verbose else None
 
@@ -459,6 +471,41 @@ class Data_roicat(util.ROICaT_Module):
         self.FOV_width = FOV_width
 
         print(f"Completed: Set FOV_height and FOV_width successfully.") if self._verbose else None
+
+    def get_maxIntensityProjection_spatialFootprints(
+        self, 
+        sf: Optional[List[scipy.sparse.csr_matrix]] = None,
+        normalize: bool = True,
+    ):
+        """
+        Returns the maximum intensity projection of the spatial footprints.
+
+        Args:
+            sf (List[scipy.sparse.csr_matrix]): 
+                List of spatial footprints, one for each session.
+            normalize (bool):
+                If True, normalizes the [min, max] range of each ROI to [0, 1]
+                before computing the maximum intensity projection.
+
+        Returns:
+            List[np.ndarray]: 
+                List of maximum intensity projections, one for each session.
+        """
+        if sf is None:
+            assert hasattr(self, 'spatialFootprints'), f"RH ERROR: spatialFootprints must be set as an attribute if not provided as an argument."
+            sf = copy.deepcopy(self.spatialFootprints)
+        else:
+            if isinstance(sf, list) == False:
+                sf = [sf]
+            assert all([isinstance(s, scipy.sparse.csr_matrix) for s in sf]), f"RH ERROR: All elements in sf must be scipy.sparse.csr_matrix objects."
+
+        assert hasattr(self, 'FOV_height'), f"RH ERROR: FOV_height must be set as an attribute."
+        assert hasattr(self, 'FOV_width'), f"RH ERROR: FOV_width must be set as an attribute."
+
+        if normalize:
+            sf = [s.multiply(s.max(axis=1).power(-1)) for s in sf]
+        mip = [(s).max(axis=0).reshape(self.FOV_height, self.FOV_width).toarray() for s in sf]
+        return mip
 
     def _checkValidity_spatialFootprints_and_FOVImages(
         self,
@@ -498,7 +545,7 @@ class Data_roicat(util.ROICaT_Module):
         """
         completeness = {}
         keys_classification_inference = ['ROI_images', 'um_per_pixel']
-        keys_classification_training = ['ROI_images', 'um_per_pixel', 'class_labels']
+        keys_classification_training = ['ROI_images', 'um_per_pixel', 'class_labels_index']
         keys_tracking = ['ROI_images', 'um_per_pixel', 'spatialFootprints', 'FOV_images']
         
         ## Check classification inference:
@@ -509,7 +556,7 @@ class Data_roicat(util.ROICaT_Module):
             print(f"RH WARNING: Classification-Inference incomplete because following attributes are missing: {[key for key in keys_classification_inference if not hasattr(self, key)]}") if verbose else None
             completeness['classification_inference'] = False
         ## Check classification training:
-        ### ROI_images, um_per_pixel, class_labels
+        ### ROI_images, um_per_pixel, class_labels_index
         if all([hasattr(self, key) for key in keys_classification_training]):
             completeness['classification_training'] = True
         else:
@@ -713,7 +760,7 @@ class Data_roicat(util.ROICaT_Module):
             self.set_ROI_images: ['ROI_images', 'um_per_pixel'],
             self.set_spatialFootprints: ['spatialFootprints', 'um_per_pixel'],
             self.set_FOV_images: ['FOV_images'],
-            self.set_class_labels: ['class_labels'],
+            self.set_class_labels: ['class_labels_raw'],
         }
 
         methodKeys_all = list(set(sum(list(methods.values()), [])))
@@ -1605,4 +1652,72 @@ def fix_paths(paths: Union[List[Union[str, pathlib.Path]], str, pathlib.Path]) -
     return [str(p) for p in paths_files]
 
 
+def make_smaller_data(
+    data: Data_roicat,
+    n_ROIs: Optional[int] = 300,
+    n_sessions: Optional[int] = 10,
+    bounds_x: Tuple[int, int] = (200,400),
+    bounds_y: Tuple[int, int] = (200,400),
+) -> Data_roicat:
+    """
+    Reduces the size of a Data_roicat object by limiting the number of regions
+    of interest (ROIs) and sessions, and adjusting the bounds on the x and y
+    axes. This function is useful for making test datasets.
 
+    Args:
+        data (Data_roicat): 
+            The input data object of the ``Data_roicat`` type.
+        n_ROIs (Optional[int]): 
+            The number of regions of interest to include in the output data. If
+            ``None``, all ROIs will be included. 
+        n_sessions (Optional[int]): 
+            The number of sessions to include in the output data. If ``None``,
+            all sessions will be included.
+        bounds_x (Tuple[int, int]): 
+            The x-axis bounds for the output data. The bounds should be a tuple
+            of two integers.
+        bounds_y (Tuple[int, int]): 
+            The y-axis bounds for the output data. The bounds should be a tuple
+            of two integers.
+
+    Returns:
+        (Data_roicat): 
+            data_out (Data_roicat): 
+                The output data, which is a reduced version of the input data according to the specified parameters.
+    """
+    import sparse
+    data_out = copy.deepcopy(data)
+
+    n_sessions = min(n_sessions, len(data_out.spatialFootprints)) if n_sessions is not None else len(data_out.spatialFootprints)
+
+    d_height = data.FOV_height
+    d_width = data.FOV_width    
+    d_n_ROIs = [sf.shape[0] for sf in data.spatialFootprints[:n_sessions]]
+
+    data_out.set_FOV_images(FOV_images=[im[bounds_y[0]:bounds_y[1], bounds_x[0]:bounds_x[1]] \
+        for im in data.FOV_images[:n_sessions]])
+    n_ROIs_per_sesh = [min(n_ROIs, n) for n in d_n_ROIs] if n_ROIs is not None else d_n_ROIs
+
+    frame = np.zeros((d_height, d_width), dtype=np.bool_)
+    frame[bounds_y[0]:bounds_y[1], bounds_x[0]:bounds_x[1]] = True
+    frame_flat = frame.reshape(-1)
+
+    sf_tmp = [sf[:n] for sf, n in zip(data_out.spatialFootprints[:n_sessions], n_ROIs_per_sesh)]
+    good_rois = [np.array((sf.multiply(frame_flat[None,:])).sum(1) > 0).squeeze() \
+        for sf in sf_tmp]
+
+    sf_tmp = [sf[g,:] for sf, g in zip(sf_tmp, good_rois)]
+    data_out.set_spatialFootprints(
+        spatialFootprints=[sparse.COO(s).reshape(
+                shape=(s.shape[0], data.FOV_height, data.FOV_width)
+            )[:, bounds_y[0]:bounds_y[1], :][:, :, bounds_x[0]:bounds_x[1]].reshape(shape=(s.shape[0], -1)).tocsr() \
+            for s in sf_tmp
+        ],
+        um_per_pixel=data_out.um_per_pixel,
+    )
+
+    data_out._make_spatialFootprintCentroids()
+    data_out._transform_spatialFootprints_to_ROIImages()
+    data_out._make_session_bool()
+
+    return data_out

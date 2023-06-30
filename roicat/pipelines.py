@@ -41,9 +41,13 @@ def pipeline_tracking(params: dict):
     ## Prepare state variables
     VERBOSE = params['general']['verbose']
     DEVICE = roicat.helpers.set_device(use_GPU=params['general']['use_GPU'])
+    SEED = _set_random_seed(
+        seed=params['general']['random_seed'],
+        deterministic=params['general']['random_seed'] is not None,
+    )
 
-    if params['data_loading']['data_kind'] == 'suite2p':
-        assert params['data_loading']['dir_outer'] is not None, f"params['data_loading']['dir_outer'] must be specified if params['data_loading']['data_kind'] is 'suite2p'."
+    if params['data_loading']['data_kind'] == 'data_suite2p':
+        assert params['data_loading']['dir_outer'] is not None, f"params['data_loading']['dir_outer'] must be specified if params['data_loading']['data_kind'] is 'data_suite2p'."
         paths_allStat = roicat.helpers.find_paths(
             dir_outer=params['data_loading']['dir_outer'],
             reMatch='stat.npy',
@@ -62,20 +66,29 @@ def pipeline_tracking(params: dict):
         params['data_loading']['paths_allStat'] = paths_allStat
         params['data_loading']['paths_allOps'] = paths_allOps
 
-    for method in ['caiman', 'roiextractors']:
-        if params['data_loading']['data_kind'] == method:
-            raise NotImplementedError(f"params['data_loading']['data_kind'] == '{method}' is not yet implemented.")
-
-
-    ## Import data
-    data = roicat.data_importing.Data_suite2p(
-        paths_statFiles=paths_allStat[:],
-        paths_opsFiles=paths_allOps[:],
-        verbose=VERBOSE,
-        **{**params['data_loading']['common'], **params['data_loading']['suite2p']},
-    )
-    assert data.check_completeness(verbose=False)['tracking'], f"Data object is missing attributes necessary for tracking."
-
+        ## Import data
+        data = roicat.data_importing.Data_suite2p(
+            paths_statFiles=paths_allStat[:],
+            paths_opsFiles=paths_allOps[:],
+            verbose=VERBOSE,
+            **{**params['data_loading']['common'], **params['data_loading']['data_suite2p']},
+        )
+        assert data.check_completeness(verbose=False)['tracking'], f"Data object is missing attributes necessary for tracking."
+    elif params['data_loading']['data_kind'] == 'roicat':
+        paths_allDataObjs = roicat.helpers.find_paths(
+            dir_outer=params['data_loading']['dir_outer'],
+            reMatch=params['data_loading']['data_roicat']['filename_search'],
+            depth=1,
+            find_files=True,
+            find_folders=False,
+            natsorted=True,
+        )[:]
+        assert len(paths_allDataObjs) == 1, f"ERROR: Found {len(paths_allDataObjs)} files matching the search pattern '{params['data_loading']['data_roicat']['filename_search']}' in '{params['data_loading']['dir_outer']}'. Exactly one file must be found."
+        
+        data = roicat.data_importing.Data_roicat()
+        data.load(path_load=paths_allDataObjs[0])
+    else:
+        raise NotImplementedError(f"params['data_loading']['data_kind'] == '{params['data_loading']['data_kind']}' is not yet implemented.")
 
     ## Alignment
     aligner = roicat.tracking.alignment.Aligner(verbose=True)
@@ -175,8 +188,10 @@ def pipeline_tracking(params: dict):
         s_NN_z=sim.s_NN_z,
         s_SWT_z=sim.s_SWT_z,
         s_sesh=sim.s_sesh,
+        verbose=VERBOSE,
     )
     kwargs_makeConjunctiveDistanceMatrix_best = clusterer.find_optimal_parameters_for_pruning(
+        seed=SEED,
         **params['clustering']['automatic_mixing'],
     )
     kwargs_mcdm_tmp = kwargs_makeConjunctiveDistanceMatrix_best  ## Use the optimized parameters
@@ -279,3 +294,40 @@ def pipeline_tracking(params: dict):
         )
     
     return results, run_data, params
+
+def _set_random_seed(seed=None, deterministic=False):
+    """
+    Set random seed for reproducibility.
+    RH 2023
+
+    Args:
+        seed (int, optional):
+            Random seed.
+            If None, a random seed (spanning int32 integer range) is generated.
+        deterministic (bool, optional):
+            Whether to make packages deterministic.
+
+    Returns:
+        (int):
+            seed (int):
+                Random seed.
+    """
+    ### random seed (note that optuna requires a random seed to be set within the pipeline)
+    import numpy as np
+    seed = int(np.random.randint(0, 2**31 - 1, dtype=np.uint32)) if seed is None else seed
+
+    np.random.seed(seed)
+    import torch
+    torch.manual_seed(seed)
+    import random
+    random.seed(seed)
+    import cv2
+    cv2.setRNGSeed(seed)
+
+    ## Make torch deterministic
+    torch.use_deterministic_algorithms(deterministic)
+    ## Make cudnn deterministic
+    torch.backends.cudnn.deterministic = deterministic
+    torch.backends.cudnn.benchmark = not deterministic
+    
+    return seed

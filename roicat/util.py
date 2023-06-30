@@ -22,7 +22,34 @@ def get_roicat_version() -> str:
     """
     return importlib.metadata.version('roicat')
 
-def get_default_parameters(pipeline=None, path_defaults=None):
+def get_default_parameters(
+    pipeline='tracking', 
+    path_defaults=None
+):
+    """
+    This function returns a dictionary of parameters that can be used to run
+    different pipelines. RH 2023
+
+    Args:
+        pipeline (str):
+            The name of the pipeline to use. Options: \n
+                * 'tracking': Tracking pipeline. \n
+                * 'classification_inference': Classification inference pipeline
+                  (TODO). \n
+                * 'classification_training': Classification training pipeline
+                  (TODO). \n
+                * 'model_training': Model training pipeline (TODO). \n
+        path_defaults (str):
+            A path to a yaml file containing a parameters dictionary. The
+            parameters from the file will be loaded as is. If None, the default
+            parameters will be used.
+
+    Returns:
+        (dict):
+            params (dict):
+                A dictionary containing the default parameters.
+    """
+
     if path_defaults is not None:
         defaults = helpers.yaml_load(path_defaults)
     else:
@@ -30,18 +57,22 @@ def get_default_parameters(pipeline=None, path_defaults=None):
             'general' : {
                 'use_GPU': True,
                 'verbose': True,
+                'random_seed': None,
             },
             'data_loading': {
-                'data_kind': 'suite2p',  ## Can be 'suite2p' or 'roiextractors'. See documentation and/or notebook on custom data loading for more details.
+                'data_kind': 'suite2p',  ## Can be 'suite2p', 'roiextractors', or 'roicat'. See documentation and/or notebook on custom data loading for more details.
                 'dir_outer': None,  ## directory where directories containing below 'pathSuffixTo...' are
                 'common': {
                     'um_per_pixel': 1.0,  ## Number of microns per pixel for the imaging dataset. Doesn't need to be exact. Used for resizing the ROIs. Check the images of the resized ROIs to tweak.
                     'centroid_method': 'centerOfMass', ## Can be 'centerOfMass' or 'median'.
                     'out_height_width': [36,36],  ## Height and width of the small ROI_images. Should generally be tuned slightly bigger than the largest ROIs. Leave if uncertain or if ROIs are small enough to fit in the default size.
                 },
-                'suite2p': {
+                'data_suite2p': {              
                     'new_or_old_suite2p': 'new',  ## Can be 'new' or 'old'. 'new' is for the Python version of Suite2p, 'old' is for the MATLAB version.
                     'type_meanImg': 'meanImgE',  ## Can be 'meanImg' or 'meanImgE'. 'meanImg' is the mean image of the dataset, 'meanImgE' is the mean image of the dataset after contrast enhancement.
+                },
+                'data_roicat': {
+                    'filename_search': r'data_roicat.pkl',  ## Name stem of the single file (as a regex search string) in 'dir_outer' to look for. The files should be saved Data_roicat object.
                 },
             },
             'alignment': {
@@ -55,7 +86,7 @@ def get_default_parameters(pipeline=None, path_defaults=None):
                 'fit_geometric': {
                     'template': 0.5,  ## Which session to use as a registration template. If input is float (ie 0.0, 0.5, 1.0, etc.), then it is the fractional position of the session to use; if input is int (ie 1, 2, 3), then it is the index of the session to use (0-indexed)
                     'template_method': 'sequential',  ## Can be 'sequential' or 'image'. If 'sequential', then the template is the FOV_image of the previous session. If 'image', then the template is the FOV_image of the session specified by 'template'.
-                    'mode_transform': 'homography',  ## Can be 'homography', 'affine', 'rigid', or 'translation'. See documentation for more details.
+                    'mode_transform': 'homography',  ## Must be one of {'translation', 'affine', 'euclidean', 'homography'}. See documentation for more details.
                     'mask_borders': [50, 50, 50, 50],  ## Number of pixels to mask from the borders of the FOV_image. Useful for removing artifacts from the edges of the FOV_image.
                     'n_iter': 50,  ## Number of iterations to run the registration algorithm. More iterations means more accurate registration, but longer run time.
                     'termination_eps': 1e-09,  ## Termination criteria for the registration algorithm. See documentation for more details.
@@ -65,7 +96,7 @@ def get_default_parameters(pipeline=None, path_defaults=None):
                 'fit_nonrigid': {
                     'template': 0.5,  ## Which session to use as a registration template. If input is float (ie 0.0, 0.5, 1.0, etc.), then it is the fractional position of the session to use; if input is int (ie 1, 2, 3), then it is the index of the session to use (0-indexed)
                     'template_method': 'image',  ## Can be 'sequential' or 'image'. If 'sequential', then the template is the FOV_image of the previous session. If 'image', then the template is the FOV_image of the session specified by 'template'.
-                    'mode_transform': 'createOptFlow_DeepFlow',  ## Can be 'createOptFlow_DeepFlow' or 'createOptFlow_Farneback'. See documentation for more details.
+                    'mode_transform': 'createOptFlow_DeepFlow',  ## Can be 'createOptFlow_DeepFlow' or 'calcOpticalFlowFarneback'. See documentation for more details.
                     'kwargs_mode_transform': None,  ## Keyword arguments for the mode_transform function. See documentation for more details.
                 },
                 'transform_ROIs': {
@@ -161,72 +192,61 @@ def get_default_parameters(pipeline=None, path_defaults=None):
             },
         }
 
-    params_specific = {}
-    params_specific['tracking'] = {
-        'ROInet': {
-            'network': {
-                'download_method': 'check_local_first',  ## Check to see if a model has already been downloaded to the location (will skip if hash matches)
-                'download_url': 'https://osf.io/x3fd2/download',  ## URL of the model
-                'download_hash': '7a5fb8ad94b110037785a46b9463ea94',  ## Hash of the model file
-                'forward_pass_version': 'latent',  ## How the data is passed through the network
-            },
-            'dataloader': {
-                'jit_script_transforms': False,  ## (advanced) Whether or not to use torch.jit.script to speed things up
-                'batchSize_dataloader': 8,  ## (advanced) PyTorch dataloader batch_size
-                'pinMemory_dataloader': True,  ## (advanced) PyTorch dataloader pin_memory
-                'numWorkers_dataloader': -1,  ## (advanced) PyTorch dataloader num_workers. -1 is all cores.
-                'persistentWorkers_dataloader': True,  ## (advanced) PyTorch dataloader persistent_workers
-                'prefetchFactor_dataloader': 2,  ## (advanced) PyTorch dataloader prefetch_factor
-            },
-        },
+    ## Pipeline specific parameters
+    ### prepare the different modules for each pipeline
+    keys_pipeline = {
+        'tracking': [
+            'general',
+            'data_loading',
+            'alignment',
+            'blurring',
+            'ROInet',
+            'SWT',
+            'similarity_graph',
+            'clustering',
+            'results_saving',
+        ],
+        'classification_inference': [
+            'general',
+            'data_loading',
+            'ROInet',
+            'results_saving',
+        ],
+        'classification_training': [
+            'general',
+            'data_loading',
+            'ROInet',
+            'results_saving',
+        ],
     }
-    params_specific['classification_inference'] = {
-        'ROInet': {
-            'network': {
-                'download_method': 'check_local_first',  ## Check to see if a model has already been downloaded to the location (will skip if hash matches)
-                'download_url': 'https://osf.io/c8m3b/download',  ## URL of the model
-                'download_hash': '357a8d9b630ec79f3e015d0056a4c2d5',  ## Hash of the model file
-                'forward_pass_version': 'head',  ## How the data is passed through the network
-            },
-            'dataloader': {
-                'jit_script_transforms': False,  ## (advanced) Whether or not to use torch.jit.script to speed things up
-                'batchSize_dataloader': 8,  ## (advanced) PyTorch dataloader batch_size
-                'pinMemory_dataloader': True,  ## (advanced) PyTorch dataloader pin_memory
-                'numWorkers_dataloader': -1,  ## (advanced) PyTorch dataloader num_workers. -1 is all cores.
-                'persistentWorkers_dataloader': True,  ## (advanced) PyTorch dataloader persistent_workers
-                'prefetchFactor_dataloader': 2,  ## (advanced) PyTorch dataloader prefetch_factor
-            },
-        },
-    }
-    params_specific['classification_training'] = {}
-    params_specific['classification_training']['ROInet'] = copy.deepcopy(params_specific['classification_inference']['ROInet'])
 
-    keys_specific = {}
-    keys_specific['tracking'] = [
-        'general',
-        'data_loading',
-        'alignment',
-        'blurring',
-        'ROInet',
-        'SWT',
-        'similarity_graph',
-        'clustering',
-        'results_saving',
-    ]
-    keys_specific['classification_inference'] = [
-        'general',
-        'data_loading',
-        'ROInet',
-        'results_saving',
-    ]
-
-    if pipeline is not None:
-        assert pipeline in ['tracking', 'classification_inference', 'classification_training']
-        out = copy.deepcopy({key: defaults[key] for key in keys_specific[pipeline]})
-        [helpers.deep_update_dict(out, [key], val, in_place=True) for key, val in params_specific[pipeline].items()]
-        [out.pop(key) for key in out.keys() if key not in keys_specific[pipeline]]
+    ### prepare pipeline specific parameters
+    if pipeline == 'tracking':
+        out = copy.deepcopy({key: defaults[key] for key in keys_pipeline[pipeline]})
+        out['ROInet']['network'] = {
+            'download_method': 'check_local_first',  ## Check to see if a model has already been downloaded to the location (will skip if hash matches)
+            'download_url': 'https://osf.io/x3fd2/download',  ## URL of the model
+            'download_hash': '7a5fb8ad94b110037785a46b9463ea94',  ## Hash of the model file
+            'forward_pass_version': 'latent',  ## How the data is passed through the network
+        }
+    elif pipeline == 'classification_inference':
+        out = copy.deepcopy({key: defaults[key] for key in keys_pipeline[pipeline]})
+        out['ROInet']['network'] = {
+            'download_method': 'check_local_first',  ## Check to see if a model has already been downloaded to the location (will skip if hash matches)
+            'download_url': 'https://osf.io/c8m3b/download',  ## URL of the model
+            'download_hash': '357a8d9b630ec79f3e015d0056a4c2d5',  ## Hash of the model file
+            'forward_pass_version': 'head',  ## How the data is passed through the network
+        }
+    elif pipeline == 'classification_training':
+        out = copy.deepcopy({key: defaults[key] for key in keys_pipeline[pipeline]})
+        out['ROInet']['network'] = {
+            'download_method': 'check_local_first',  ## Check to see if a model has already been downloaded to the location (will skip if hash matches)
+            'download_url': 'https://osf.io/c8m3b/download',  ## URL of the model
+            'download_hash': '357a8d9b630ec79f3e015d0056a4c2d5',  ## Hash of the model file
+            'forward_pass_version': 'head',  ## How the data is passed through the network
+        }
     else:
-        out = copy.deepcopy(defaults)
+        raise NotImplementedError(f'pipeline={pipeline}, which is not implemented or not recognized. Should be one of: {list(keys_pipeline.keys())}')
 
     return out
 
@@ -279,7 +299,7 @@ def check_keys_subset(d, default_dict, hierarchy=['defaults']):
     default_keys = list(default_dict.keys())
     for key in d.keys():
         assert key in default_keys, f"Parameter '{key}' not found in defaults dictionary: {' > '.join([f'{str(h)}' for h in hierarchy])}."
-        if isinstance(d[key], dict):
+        if isinstance(default_dict[key], dict) and isinstance(d[key], dict):
             check_keys_subset(d[key], default_dict[key], hierarchy=hierarchy+[key])
 
 def prepare_params(params, defaults, verbose=True):
@@ -445,37 +465,6 @@ def system_info(verbose: bool = False,) -> Dict:
     return versions
 
 
-def download_data_test_zip(dir_data_test: str,) -> str:
-    """
-    Downloads the test data if it does not exist and checks its hash. If the
-    data already exists, it only checks the hash.
-
-    Args:
-        dir_data_test (str):
-            Directory to download the zip file into.
-
-    Returns:
-        (str): 
-            path_save (str):
-                Path to the downloaded data_test.zip file.
-    """
-    path_save = str(Path(dir_data_test) / 'data_test.zip')
-    helpers.download_file(
-        url=r'https://github.com/RichieHakim/ROICaT/raw/main/tests/data_test.zip', 
-        path_save=path_save, 
-        check_local_first=True, 
-        check_hash=True, 
-        hash_type='MD5', 
-        hash_hex=r'764d9b3fc481e078d1ef59373695ecce',
-        mkdir=True,
-        allow_overwrite=True,
-        write_mode='wb',
-        verbose=True,
-        chunk_size=1024,
-    )
-    return path_save
-
-
 class ROICaT_Module:
     """
     Super class for ROICaT modules.
@@ -586,7 +575,6 @@ class ROICaT_Module:
         self, 
         path_save: Union[str, Path],
         save_as_serializable_dict: bool = False,
-        compress: bool = False,
         allow_overwrite: bool = False,
     ) -> None:
         """
@@ -600,8 +588,6 @@ class ROICaT_Module:
                 cannot be used to re-instantiate the object. If ``True``, save the object 
                 as a serializable dictionary. If ``False``, save the object as a Data_roicat 
                 object. (Default is ``False``)
-            compress (bool): 
-                If ``True``, compress the pickle file. (Default is ``False``)
             allow_overwrite (bool): 
                 If ``True``, allow overwriting of existing file. (Default is ``False``)
 
@@ -613,8 +599,7 @@ class ROICaT_Module:
 
         helpers.pickle_save(
             obj=self.serializable_dict if save_as_serializable_dict else self,
-            path_save=path_save,
-            zipCompress=compress,
+            filepath=path_save,
             mkdir=True,
             allow_overwrite=allow_overwrite,
         )

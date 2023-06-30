@@ -14,7 +14,7 @@ import PIL
 from PIL import ImageTk
 import csv
 import warnings
-from typing import List, Dict, Tuple, Union, Optional, Any, Callable, Iterable, Sequence, Type, Any
+from typing import List, Dict, Tuple, Union, Optional, Any, Callable, Iterable, Sequence, Type, Any, MutableMapping
 
 import numpy as np
 import torch
@@ -167,6 +167,38 @@ def deep_update_dict(
         helper_deep_update_dict(d, key, val)
         return d
         
+
+def flatten_dict(d: MutableMapping, parent_key: str = '', sep: str ='.') -> MutableMapping:
+    """
+    Flattens a dictionary of dictionaries into a single dictionary. NOTE: Turns
+    all keys into strings. Stolen from https://stackoverflow.com/a/6027615.
+    RH 2022
+
+    Args:
+        d (Dict):
+            Dictionary to flatten
+        parent_key (str):
+            Key to prepend to flattened keys IGNORE: USED INTERNALLY FOR
+            RECURSION
+        sep (str):
+            Separator to use between keys IGNORE: USED INTERNALLY FOR RECURSION
+
+    Returns:
+        (Dict):
+            flattened dictionary (dict):
+                Flat dictionary with the keys to deeper dictionaries joined by
+                the separator.
+    """
+
+    items = []
+    for k, v in d.items():
+        new_key = str(parent_key) + str(sep) + str(k) if parent_key else str(k)
+        if isinstance(v, MutableMapping):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
 
 ######################################################################################################################################
 ####################################################### MATH FUNCTIONS ###############################################################
@@ -2184,11 +2216,18 @@ class ImageLabeler:
             self._root.bind('<Key-' + self._key_prev + '>', self.prev_img) if self._key_prev is not None else None
             self._root.bind('<Key-' + self._key_next + '>', self.next_img) if self._key_next is not None else None
 
+            self._root.protocol("WM_DELETE_WINDOW", self._on_closing)
+
             ## Start the session
             self.next_img()
             self._root.mainloop()
         except Exception as e:
             warnings.warn('Error initializing image labeler: ' + str(e))
+
+    def _on_closing(self):
+        from tkinter import messagebox
+        if messagebox.askokcancel("Quit", "Do you want to quit?"):
+            self.end_session(None)
 
     def __enter__(self):
         return self
@@ -4307,6 +4346,182 @@ def compute_cluster_similarity_matrices(
     cs_max = (s_big_conj - s_big_diag).max(axis=(2,3))
 
     return cs_mean, cs_max.todense(), cs_min
+
+
+######################################################################################################################################
+########################################################## TESTING ###################################################################
+######################################################################################################################################
+
+
+class Equivalence_checker():
+    """
+    Class for checking if all items are equivalent or allclose (almost equal) in
+    two complex data structures. Can check nested lists, dicts, and other data
+    structures. Can also optionally assert (raise errors) if all items are not
+    equivalent. 
+    RH 2023
+
+    Attributes:
+        _kwargs_allclose (Optional[dict]): 
+            Keyword arguments for the `numpy.allclose` function.
+        _assert_mode (bool):
+            Whether to raise an assertion error if items are not close.
+
+    Args:
+        kwargs_allclose (Optional[dict]): 
+            Keyword arguments for the `numpy.allclose` function. (Default is
+            ``{'rtol': 1e-7, 'equal_nan': True}``)
+        assert_mode (bool): 
+            Whether to raise an assertion error if items are not close.
+        verbose (bool):
+            How much information to print out:
+                * ``False`` / ``0``: No information printed out.
+                * ``True`` / ``1``: Mismatched items only.
+                * ``2``: All items printed out.
+    """
+    def __init__(
+        self,
+        kwargs_allclose: Optional[dict] = {'rtol': 1e-7, 'equal_nan': True},
+        assert_mode=False,
+        verbose=False,
+    ) -> None:
+        """
+        Initializes the Allclose_checker.
+        """
+        self._kwargs_allclose = kwargs_allclose
+        self._assert_mode = assert_mode
+        self._verbose = verbose
+        
+    def _checker(
+        self, 
+        test: Any,
+        true: Any, 
+        path: Optional[List[str]] = None,
+        ) -> bool:
+        """
+        Compares the test and true values using numpy's allclose function.
+
+        Args:
+            test (Union[dict, list, tuple, set, np.ndarray, int, float, complex,
+            str, bool, None]): 
+                Test value to compare.
+            true (Union[dict, list, tuple, set, np.ndarray, int, float, complex,
+            str, bool, None]): 
+                True value to compare.
+            path (Optional[List[str]]): 
+                The path of the data structure that is currently being compared.
+                (Default is ``None``)
+
+        Returns:
+            (bool): 
+                result (bool): 
+                    Returns True if all elements in test and true are close.
+                    Otherwise, returns False.
+        """
+        try:
+            out = np.allclose(test, true, **self._kwargs_allclose)
+        except Exception as e:
+            out = None
+            warnings.warn(f"WARNING. Equivalence check failed. Path: {path}. Error: {e}") if self._verbose else None
+            
+        if out == False:
+            if self._assert_mode:
+                raise AssertionError(f"Equivalence check failed. Path: {path}.")
+            if self._verbose:
+                ## Come up with a way to describe the difference between the two values. Something like the following:
+                ### IF the arrays are numeric, then calculate the relative difference
+                dtypes_numeric = (np.number, np.bool_, np.integer, np.floating, np.complexfloating)
+                if any([np.issubdtype(test.dtype, dtype) and np.issubdtype(true.dtype, dtype) for dtype in dtypes_numeric]):
+                    diff = np.abs(test - true)
+                    r_diff = diff / np.abs(true)
+                    r_diff_mean, r_diff_max, any_nan = np.nanmean(r_diff), np.nanmax(r_diff), np.any(np.isnan(r_diff))
+                    print(f"Equivalence check failed. Path: {path}. Relative difference: mean={r_diff_mean}, max={r_diff_max}, any_nan={any_nan}") if self._verbose > 0 else None
+                else:
+                    print(f"Equivalence check failed. Path: {path}. Value is non-numerical.") if self._verbose > 0 else None
+        return out
+
+    def __call__(
+        self,
+        test: Union[dict, list, tuple, set, np.ndarray, int, float, complex, str, bool, None], 
+        true: Union[dict, list, tuple, set, np.ndarray, int, float, complex, str, bool, None], 
+        path: Optional[List[str]] = None,
+    ) -> Dict[str, Tuple[bool, str]]:
+        """
+        Compares the test and true values and returns the comparison result.
+        Handles various data types including dictionaries, iterables,
+        np.ndarray, scalars, strings, numbers, bool, and None.
+
+        Args:
+            test (Union[dict, list, tuple, set, np.ndarray, int, float, complex,
+            str, bool, None]): 
+                Test value to compare.
+            true (Union[dict, list, tuple, set, np.ndarray, int, float, complex,
+            str, bool, None]): 
+                True value to compare.
+            path (Optional[List[str]]): 
+                The path of the data structure that is currently being compared.
+                (Default is ``None``)
+
+        Returns:
+            Dict[Tuple[bool, str]]: 
+                result Dict[Tuple[bool, str]]: 
+                    The comparison result as a dictionary or a tuple depending
+                    on the data types of test and true.
+        """
+        if path is None:
+            path = ['']
+
+        if len(path) > 0:
+            if path[-1].startswith('_'):
+                return (None, 'excluded from testing')
+
+        ## DICT
+        if isinstance(true, dict):
+            result = {}
+            for key in true:
+                if key not in test:
+                    result[str(key)] = (False, 'key not found')
+                else:
+                    result[str(key)] = self.__call__(test[key], true[key], path=path + [str(key)])
+        ## ITERATABLE
+        elif isinstance(true, (list, tuple, set)):
+            if len(true) != len(test):
+                result = (False, 'length_mismatch')
+            result = {}
+            for idx, (i, j) in enumerate(zip(test, true)):
+                result[str(idx)] = self.__call__(i, j, path=path + [str(idx)])
+        ## NP.NDARRAY
+        elif isinstance(true, np.ndarray):
+            r = self._checker(test, true, path)
+            result = (r, 'equivalence')
+        ## NP.SCALAR
+        elif np.isscalar(true):
+            if isinstance(test, (int, float, complex, np.number)):
+                r = self._checker(np.array(test), np.array(true), path)
+                result = (r, 'equivalence')
+            else:
+                result = (test == true, 'equivalence')
+        ## STRING
+        elif isinstance(true, str):
+            result = (test == true, 'equivalence')
+        ## NUMBER
+        elif isinstance(true, (int, float, complex)):
+            r = self._checker(test, true, path)
+            result = (result, 'equivalence')
+        ## BOOL
+        elif isinstance(true, bool):
+            result = (test == true, 'equivalence')
+        ## NONE
+        elif true is None:
+            result = (test is None, 'equivalence')
+        ## N/A
+        else:
+            result = (None, 'not tested')
+
+        if self._verbose > 1:
+            print(f"{'.'.join(path)}: {result}")
+
+        return result
 
 
 ######################################################################################################################################
