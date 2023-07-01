@@ -49,191 +49,6 @@ import warnings
 
 from . import util, helpers
 
-class Resizer_ROI_images(util.ROICaT_Module):
-    """
-    Class for resizing ROIs.
-    JZ, RH 2023
-
-    Args:
-        ROI_images (np.ndarray): 
-            Array of ROIs to resize. Shape should be (nROIs, height,
-            width).
-        um_per_pixel (float): 
-            Size of a pixel in microns.
-        verbose (bool): 
-            If True, print out extra information. (Default is ``False``)
-    """
-    def __init__(self, ROI_images: np.ndarray, um_per_pixel: float, verbose: bool=True):
-        self._verbose = verbose
-
-        print('Starting: resizing ROIs') if self._verbose else None
-        self.ROI_images_rs = self.resize_ROIs(ROI_images, um_per_pixel)
-        print('Completed: resizing ROIs') if self._verbose else None
-
-    def plot_resized_comparison(self, ROI_images_cat: np.ndarray):
-        """
-        Plot a comparison of the ROI sizes before and after resizing.
-
-        Args:
-            ROI_images_cat (np.ndarray):
-                Array of ROIs to resize. Shape should be (nROIs, height,
-                width).
-        """
-        fig, axs = plt.subplots(2,1, figsize=(7,10))
-        axs[0].plot(np.mean(ROI_images_cat > 0, axis=(1,2)))
-        axs[0].plot(scipy.signal.savgol_filter(np.mean(ROI_images_cat > 0, axis=(1,2)), 501, 3))
-        axs[0].set_xlabel('ROI number');
-        axs[0].set_ylabel('mean npix');
-        axs[0].set_title('ROI sizes raw')
-
-        axs[1].plot(np.mean(self.ROI_images_rs > 0, axis=(1,2)))
-        axs[1].plot(scipy.signal.savgol_filter(np.mean(self.ROI_images_rs > 0, axis=(1,2)), 501, 3))
-        axs[1].set_xlabel('ROI number');
-        axs[1].set_ylabel('mean npix');
-        axs[1].set_title('ROI sizes resized')
-
-    @classmethod
-    def resize_ROIs(
-        cls,
-        ROI_images: np.ndarray,  # Array of shape (n_rois, height, width)
-        um_per_pixel: float,
-    ) -> np.ndarray:
-        """
-        Resizes the ROI (Region of Interest) images to prepare them for pass
-        through network.
-
-        Args:
-            ROI_images (np.ndarray): 
-                The ROI images to resize. Array of shape *(n_rois, height,
-                width)*.
-            um_per_pixel (float): 
-                The number of microns per pixel. This value is used to rescale
-                the ROI images so that they occupy a standard region of the
-                image frame.
-
-        Returns:
-            (np.ndarray): 
-                ROI_images_rs (np.ndarray): 
-                    The resized ROI images.
-        """        
-        scale_forRS = 0.7 * um_per_pixel  ## hardcoded for now sorry
-        return np.stack([resize_affine(img, scale=scale_forRS, clamp_range=True) for img in ROI_images], axis=0)
-
-
-class Dataloader_ROInet(util.ROICaT_Module):
-    """
-    Class for creating a dataloader for the ROInet network.
-    JZ, RH 2023
-        
-    Args:
-        ROI_images (np.ndarray):
-            Array of ROIs to resize. Shape should be (nROIs, height,
-            width).
-        nan_to_num (bool): 
-            Whether to replace NaNs with a specific value. (Default is
-            ``True``)
-        nan_to_num_val (float): 
-            The value to replace NaNs with. (Default is *0.0*)
-        pref_plot (bool): 
-            If ``True``, plots the sizes of the ROI images before and after
-            normalization. (Default is ``False``)
-        batchSize_dataloader (int): 
-            The batch size to use for the DataLoader. (Default is *8*)
-        pinMemory_dataloader (bool): 
-            If ``True``, pins the memory of the DataLoader, as per PyTorch's
-            best practices. (Default is ``True``)
-        numWorkers_dataloader (int): 
-            The number of worker processes for data loading. (Default is
-            *-1*)
-        persistentWorkers_dataloader (bool): 
-            If ``True``, uses persistent worker processes. (Default is
-            ``True``)
-        prefetchFactor_dataloader (int): 
-            The prefetch factor for data loading. (Default is *2*)
-        transforms (Optional[Callable]): 
-            The transforms to use for the DataLoader. If ``None``, the
-            function will only scale dynamic range (to 0-1), resize (to
-            img_size_out dimensions), and tile channels (to 3) as a minimum
-            to pass images through the network. (Default is ``None``)
-        img_size_out (Tuple[int, int]): 
-            The image output dimensions of DataLoader if transforms is
-            ``None``. (Default is *(224, 224)*)
-        jit_script_transforms (bool): 
-            If ``True``, converts the transforms pipeline into a TorchScript
-            pipeline, potentially improving calculation speed but can cause
-            problems with multiprocessing. (Default is ``False``)
-        verbose (bool):
-            If ``True``, print out extra information. (Default is ``True``)
-    """
-    def __init__(
-            self,
-            ROI_images: np.ndarray,
-            nan_to_num: bool = True,
-            nan_to_num_val: float = 0.0,
-            batchSize_dataloader: int = 8,
-            pinMemory_dataloader: bool = True,
-            numWorkers_dataloader: int = -1,
-            persistentWorkers_dataloader: bool = True,
-            prefetchFactor_dataloader: int = 2,
-            transforms: Optional[Callable] = None,
-            img_size_out: Tuple[int, int] = (224, 224),
-            jit_script_transforms: bool = False,
-            verbose: bool = True,
-        ):
-        self._verbose = verbose
-
-        ### Check if any NaNs
-        if np.any(np.isnan(ROI_images)):
-            warnings.warn('ROICaT WARNING: NaNs detected. You should consider removing remove these before passing to the network. Using nan_to_num arguments.')
-        if np.any(np.isinf(ROI_images)):
-            warnings.warn('ROICaT WARNING: Infs detected. You should consider removing these before passing to the network.')
-        ## Check if any images in any of the sessions are all zeros
-        if np.any(np.all(ROI_images==0, axis=(1,2))):
-            warnings.warn('ROICaT WARNING: Image(s) with all zeros detected. These can pass through the network, but may give weird results.')
-
-        ROI_images = np.nan_to_num(ROI_images, nan=nan_to_num_val)
-        numWorkers_dataloader = mp.cpu_count() if numWorkers_dataloader == -1 else numWorkers_dataloader
-
-        transforms = torch.nn.Sequential(
-            ScaleDynamicRange(scaler_bounds=(0,1)),
-            torchvision.transforms.Resize(
-                size=img_size_out,
-                interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
-                antialias=True,
-            ),
-            TileChannels(dim=0, n_channels=3),
-        ) if transforms is None else transforms
-
-        if jit_script_transforms:
-            if numWorkers_dataloader > 0:
-                warnings.warn("\n\nWarning: Converting transforms to a jit-based script has been known to cause issues on Windows when numWorkers_dataloader > 0. If self.generate_latents() raises an Exception similar to 'Tried to serialize object __torch__.torch.nn.modules.container.Sequential which does not have a __getstate__ method defined!' consider setting numWorkers_dataloader=0 or jit_script_transforms=False.\n")
-            self.transforms = torch.jit.script(transforms)
-        else:
-            self.transforms = transforms
-        
-        print(f'Defined image transformations: {transforms}') if self._verbose else None
-        self.dataset = dataset_simCLR(
-                X=torch.as_tensor(ROI_images, device='cpu', dtype=torch.float32),
-                y=torch.as_tensor(torch.zeros(ROI_images.shape[0]), device='cpu', dtype=torch.float32),
-                n_transforms=1,
-                transform=self.transforms,
-                DEVICE='cpu',
-                dtype_X=torch.float32,
-            )
-        print(f'Defined dataset') if self._verbose else None
-        self.dataloader = torch.utils.data.DataLoader(
-                self.dataset,
-                batch_size=batchSize_dataloader,
-                shuffle=False,
-                drop_last=False,
-                pin_memory=pinMemory_dataloader,
-                num_workers=numWorkers_dataloader,
-                persistent_workers=persistentWorkers_dataloader,
-                prefetch_factor=prefetchFactor_dataloader,
-        )
-        print(f'Defined dataloader') if self._verbose else None
-
-
 class ROInet_embedder(util.ROICaT_Module):
     """
     Class for loading the ROInet model, preparing data for it, and running it.
@@ -310,6 +125,8 @@ class ROInet_embedder(util.ROICaT_Module):
 
         self._device = device
         self._verbose = verbose
+
+
         self._dir_networkFiles = dir_networkFiles
         self._download_url = download_url
 
@@ -456,30 +273,118 @@ class ROInet_embedder(util.ROICaT_Module):
 
                 dataloader = generate_dataloader(ROI_images)
         """
-        ROI_images = np.concatenate(ROI_images, axis=0)
-        roi_resizer = Resizer_ROI_images(ROI_images, um_per_pixel, verbose=self._verbose)
-        roi_resizer.plot_resized_comparison(ROI_images) if pref_plot else None
-        self.ROI_images_rs = roi_resizer.ROI_images_rs
+        ## Remove NaNs
+        ### Check if any NaNs
+        if np.any([np.any(np.isnan(roi)) for roi in ROI_images]):
+            warnings.warn('ROICaT WARNING: NaNs detected. You should consider removing remove these before passing to the network. Using nan_to_num arguments.')
+        if np.any([np.any(np.isinf(roi)) for roi in ROI_images]):
+            warnings.warn('ROICaT WARNING: Infs detected. You should consider removing these before passing to the network.')
+        ## Check if any images in any of the sessions are all zeros
+        if np.any([np.any(np.all(rois==0, axis=(1,2))) for rois in ROI_images]):
+            warnings.warn('ROICaT WARNING: Image(s) with all zeros detected. These can pass through the network, but may give weird results.')
+        if nan_to_num:
+            ROI_images = [np.nan_to_num(rois, nan=nan_to_num_val) for rois in ROI_images]
 
-        dataloader_generator = Dataloader_ROInet(
-            ROI_images,
-            nan_to_num,
-            nan_to_num_val,
-            batchSize_dataloader,
-            pinMemory_dataloader,
-            numWorkers_dataloader,
-            persistentWorkers_dataloader,
-            prefetchFactor_dataloader,
-            transforms,
-            img_size_out,
-            jit_script_transforms,
-            self._verbose,
+        if numWorkers_dataloader == -1:
+            numWorkers_dataloader = mp.cpu_count()
+
+        print('Starting: resizing ROIs') if self._verbose else None
+        
+        sf_rs = [self.resize_ROIs(rois, um_per_pixel) for rois in ROI_images]
+        
+        ROI_images_cat = np.concatenate(ROI_images, axis=0)
+        ROI_images_rs = np.concatenate(sf_rs, axis=0)
+
+        print('Completed: resizing ROIs') if self._verbose else None
+
+        if pref_plot:
+            fig, axs = plt.subplots(2,1, figsize=(7,10))
+            axs[0].plot(np.mean(ROI_images_cat > 0, axis=(1,2)))
+            axs[0].plot(scipy.signal.savgol_filter(np.mean(ROI_images_cat > 0, axis=(1,2)), 501, 3))
+            axs[0].set_xlabel('ROI number');
+            axs[0].set_ylabel('mean npix');
+            axs[0].set_title('ROI sizes raw')
+
+            axs[1].plot(np.mean(ROI_images_rs > 0, axis=(1,2)))
+            axs[1].plot(scipy.signal.savgol_filter(np.mean(ROI_images_rs > 0, axis=(1,2)), 501, 3))
+            axs[1].set_xlabel('ROI number');
+            axs[1].set_ylabel('mean npix');
+            axs[1].set_title('ROI sizes resized')
+
+        if transforms is None:
+            transforms = torch.nn.Sequential(
+                ScaleDynamicRange(scaler_bounds=(0,1)),
+                torchvision.transforms.Resize(
+                    size=img_size_out,
+                    interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
+                    antialias=True,
+                ),
+                TileChannels(dim=0, n_channels=3),
+            )
+
+        if jit_script_transforms:
+            if numWorkers_dataloader > 0:
+                warnings.warn("\n\nWarning: Converting transforms to a jit-based script has been known to cause issues on Windows when numWorkers_dataloader > 0. If self.generate_latents() raises an Exception similar to 'Tried to serialize object __torch__.torch.nn.modules.container.Sequential which does not have a __getstate__ method defined!' consider setting numWorkers_dataloader=0 or jit_script_transforms=False.\n")
+
+            self.transforms = torch.jit.script(transforms)
+        else:
+            self.transforms = transforms
+        
+        print(f'Defined image transformations: {transforms}') if self._verbose else None
+
+        self.dataset = dataset_simCLR(
+                X=torch.as_tensor(ROI_images_rs, device='cpu', dtype=torch.float32),
+                y=torch.as_tensor(torch.zeros(ROI_images_rs.shape[0]), device='cpu', dtype=torch.float32),
+                n_transforms=1,
+                transform=self.transforms,
+                DEVICE='cpu',
+                dtype_X=torch.float32,
+            )
+        print(f'Defined dataset') if self._verbose else None
+
+        self.dataloader = torch.utils.data.DataLoader(
+                self.dataset,
+                batch_size=batchSize_dataloader,
+                shuffle=False,
+                drop_last=False,
+                pin_memory=pinMemory_dataloader,
+                num_workers=numWorkers_dataloader,
+                persistent_workers=persistentWorkers_dataloader,
+                prefetch_factor=prefetchFactor_dataloader,
         )
-        self.transforms = dataloader_generator.transforms
-        self.dataset = dataloader_generator.dataset
-        self.dataloader = dataloader_generator.dataloader
-        self.ROI_images_rs = roi_resizer.ROI_images_rs
-        return self.ROI_images_rs
+
+        print(f'Defined dataloader') if self._verbose else None
+
+        self.ROI_images_rs = ROI_images_rs
+        return ROI_images_rs
+
+    @classmethod
+    def resize_ROIs(
+        cls,
+        ROI_images: np.ndarray,  # Array of shape (n_rois, height, width)
+        um_per_pixel: float,
+    ) -> np.ndarray:
+        """
+        Resizes the ROI (Region of Interest) images to prepare them for pass
+        through network.
+
+        Args:
+            ROI_images (np.ndarray): 
+                The ROI images to resize. Array of shape *(n_rois, height,
+                width)*.
+            um_per_pixel (float): 
+                The number of microns per pixel. This value is used to rescale
+                the ROI images so that they occupy a standard region of the
+                image frame.
+
+        Returns:
+            (np.ndarray): 
+                ROI_images_rs (np.ndarray): 
+                    The resized ROI images.
+        """        
+        scale_forRS = 0.7 * um_per_pixel  ## hardcoded for now sorry
+        return np.stack([resize_affine(img, scale=scale_forRS, clamp_range=True) for img in ROI_images], axis=0)
+
 
     def generate_latents(self) -> torch.Tensor:
         """
