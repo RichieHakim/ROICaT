@@ -978,7 +978,8 @@ def find_paths(
     find_folders: bool = False, 
     depth: int = 0, 
     natsorted: bool = True, 
-    alg_ns: Optional[str] = None
+    alg_ns: Optional[str] = None,
+    verbose: bool = False,
 ) -> List[str]:
     """
     Searches for files and/or folders recursively in a directory using a regex
@@ -1010,6 +1011,8 @@ def find_paths(
             https://natsort.readthedocs.io/en/4.0.4/ns_class.html/ for options.
             Default is PATH. Other commons are INT, FLOAT, VERSION. (Default is
             ``None``)
+        verbose (bool):
+            Whether to print the paths found. (Default is ``False``)
 
     Returns:
         (List[str]): 
@@ -1027,12 +1030,14 @@ def find_paths(
             if os.path.isdir(path):
                 if find_folders:
                     if re.search(reMatch, path) is not None:
+                        print(f'Found folder: {path}') if verbose else None
                         paths.append(path)
                 if depth < depth_end:
                     paths += get_paths_recursive_inner(path, depth_end, depth=depth+1)
             else:
                 if find_files:
                     if re.search(reMatch, path) is not None:
+                        print(f'Found file: {path}') if verbose else None
                         paths.append(path)
         return paths
 
