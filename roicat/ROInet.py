@@ -183,15 +183,15 @@ class Dataloader_ROInet(util.ROICaT_Module):
         self._verbose = verbose
 
         ### Check if any NaNs
-        if np.any([np.any(np.isnan(roi)) for roi in ROI_images]):
+        if np.any(np.isnan(ROI_images)):
             warnings.warn('ROICaT WARNING: NaNs detected. You should consider removing remove these before passing to the network. Using nan_to_num arguments.')
-        if np.any([np.any(np.isinf(roi)) for roi in ROI_images]):
+        if np.any(np.isinf(ROI_images)):
             warnings.warn('ROICaT WARNING: Infs detected. You should consider removing these before passing to the network.')
         ## Check if any images in any of the sessions are all zeros
-        if np.any([np.any(np.all(rois==0, axis=(1,2))) for rois in ROI_images]):
+        if np.any(np.all(ROI_images==0, axis=(1,2))):
             warnings.warn('ROICaT WARNING: Image(s) with all zeros detected. These can pass through the network, but may give weird results.')
 
-        ROI_images = [np.nan_to_num(rois, nan=nan_to_num_val) for rois in ROI_images] if nan_to_num else ROI_images
+        ROI_images = np.nan_to_num(ROI_images, nan=nan_to_num_val)
         numWorkers_dataloader = mp.cpu_count() if numWorkers_dataloader == -1 else numWorkers_dataloader
 
         transforms = torch.nn.Sequential(
