@@ -181,7 +181,7 @@ class Clusterer(util.ROICaT_Module):
 
         print('Finding mixing parameters using automated hyperparameter tuning...') if self._verbose else None
         optuna.logging.set_verbosity(optuna.logging.WARNING)
-        self.checker = helpers.Convergence_checker_optuna(verbose=self._verbose >=2, **kwargs_findParameters)
+        self.checker = helpers.Convergence_checker_optuna(verbose=self._verbose>=2, **kwargs_findParameters)
         self.study = optuna.create_study(direction='minimize', sampler=optuna.samplers.TPESampler(
             n_startup_trials=kwargs_findParameters['n_patience']//2,
             seed=self._seed,
@@ -1134,10 +1134,10 @@ class Clusterer(util.ROICaT_Module):
         import sklearn
         # if sklearn.__version__ < '1.3':
         ## Warn that current version is memory intensive and will be improved when sklearn 1.3 is released
-        warnings.warn("Current version of silhouette samples calculation is memory intensive and will be improved when sklearn 1.3 is released.")
+        # warnings.warn("Current version of silhouette samples calculation is memory intensive and will be improved when sklearn 1.3 is released.")
         import sparse
-        d_dense = sparse.COO(dist_mat.copy().tocsr())
-        d_dense.fill_value = (d_dense.max() - d_dense.min()) * 1000
+        d_dense = sparse.COO(dist_mat.astype(np.float16).copy().tocsr())
+        d_dense.fill_value = (d_dense.max() - d_dense.min()) * 10
         d_dense = d_dense.todense()
         np.fill_diagonal(d_dense, 0)
         rs_sil = sklearn.metrics.silhouette_samples(X=d_dense, labels=labels, metric='precomputed')
