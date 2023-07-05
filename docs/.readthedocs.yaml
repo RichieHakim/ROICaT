@@ -7,8 +7,8 @@ version: 2
 
 # Set the version of Python and other tools you might need
 build:
-  image: testing
   os: ubuntu-22.04
+  # image: testing
   tools:
     python: "3.11"
 
