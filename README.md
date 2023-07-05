@@ -12,7 +12,7 @@
 - Discussion forum: [https://groups.google.com/g/roicat_support](https://groups.google.com/g/roicat_support)
 - Technical support: [Github Issues](https://github.com/RichieHakim/ROICaT/issues)
 
-## **R**egion **O**f **I**nterest **C**lassification **a**nd **T**racking
+## **R**egion **O**f **I**nterest **C**lassification **a**nd **T**racking ᗢ
 A simple-to-use Python package for automatically classifying images of cells and tracking them across imaging sessions/planes.
 <div>
     <img src="docs/media/tracking_FOV_clusters_rich.gif" alt="tracking_FOV_clusters_rich"  width="400"  align="right" style="margin-left: 20px"/>
