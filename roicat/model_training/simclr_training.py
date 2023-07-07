@@ -56,30 +56,56 @@ list_transforms = [
 
 # Create dataset / dataloader
 
+ROI_images = np.concatenate(data.ROI_images, axis=0)
+roi_resizer = roicat.ROInet.Resizer_ROI_images(ROI_images,
+                                               dict_params['um_per_pixel'],
+                                               dict_params['nan_to_num'],
+                                               dict_params['nan_to_num_val'],
+                                               verbose=dict_params['verbose'])
+ROI_images_rs = roi_resizer.ROI_images_rs
+dataloader_generator = roicat.ROInet.Dataloader_ROInet(
+    ROI_images_rs,
+    dict_params['batchSize_dataloader'],
+    dict_params['pinMemory_dataloader'],
+    dict_params['numWorkers_dataloader'],
+    dict_params['persistentWorkers_dataloader'],
+    dict_params['prefetchFactor_dataloader'],
+    torch.nn.Sequential(*list_transforms), # TODO: Replace with actual transforms / unpacking the *args list comprehension version
+    dict_params['img_size_out'],
+    dict_params['jit_script_transforms'],
+    dict_params['verbose'],
+)
 
-# Load pretrained weights, freeze all layers
+##### ***** Bundle Together *****
+[[[[[
+    # Load pretrained weights, freeze all layers
 
+    ### TODO: JZ: Download convnext from online source
+    ### Freeze untrained layers
+    ### Freeze untrained layers
 
-# Chop model off at layer _, pool output, add linear layer unfrozen, flatten
+    # Chop model off at layer _, pool output, add linear layer unfrozen, flatten
 
+    # Loop through parameters and freeze/unfreeze relevant layers
 
-# Loop through parameters and freeze/unfreeze relevant layers
-
-
-# Model to device, prep_contrast, define forward
-
+    # Model to device, prep_contrast, define forward
+]]]]]
 
 # Save relevant pre-training parameters to JSON
+##### TODO
 
 
 # Specify criterion, optimizer, scheduler, learning rate, etc.
+##### TODO
 
 
 # Loop through epochs, batches, etc. if loss becomes NaNs, don't save the network and stop training. Otherwise, save the network as an onnx file.
+##### TODO
 
 
 # Save model, optimizer, scheduler, etc. to dir_save
+##### TODO
 
 
 # Save training loss to dir_save
-
+##### TODO
