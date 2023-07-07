@@ -1,4 +1,5 @@
 # Imports
+import argparse
 import sys
 import os
 import numpy as np
@@ -15,97 +16,100 @@ import math
 import argparse
 import pickle
 import roicat
+import scipy.sparse
+import simclr_training_helpers as sth
 
-# Pull from sys.argv tuple dir_data (numpy file), filepath_params (JSON), and dir_save from sys.argv
 path_script = sys.argv[0]
-dir_data = sys.argv[1]
-filepath_params = sys.argv[2]
-dir_save = sys.argv[3]
+
+## Argparse --directory_data, --path_params, --directory_save
+parser = argparse.ArgumentParser(
+    prog='ROICaT SimCLR Training',
+    description='This script runs the basic fit pipeline for a self-supervised ROI model using a json file containing the parameters.',
+)
+parser.add_argument(
+    '--directory_data',
+    '-d',
+    required=True,
+    metavar='',
+    type=str,
+    default='/Users/josh/analysis/data/classification/stat_s2p_backup',
+    help='Path to raw ROI data to be used to train the model.',
+)
+parser.add_argument(
+    '--path_params',
+    '-p',
+    required=True,
+    metavar='',
+    type=str,
+    default='/Users/josh/analysis/outputs/ROICaT/simclr_training/simclr_params.json',
+    help='Path to json file containing parameters.',
+)
+parser.add_argument(
+    '--directory_save',
+    '-s',
+    required=False,
+    metavar='',
+    type=str,
+    default='/Users/josh/analysis/outputs/ROICaT/simclr_training',
+    help="Directory into which final model and evaluations should be saved.",
+)
+args = parser.parse_args()
+directory_data = args.directory_data
+filepath_params = args.path_params
+directory_save = args.directory_save
 
 # Load parameters from JSON
 with open(filepath_params) as f:
     dict_params = json.load(f)
 
+list_filepaths_data = [os.path.join(directory_data, filename) for filename in os.listdir(directory_data)]
+
 # Load data from dir_data into Data object... or load from saved Data object
-ROI_images = [roicat.helpers.load_ROI_images(filepath_ROI_images) for filepath_ROI_images in dict_params['list_filepaths_ROI_images']]
+ROI_sparse_all = [scipy.sparse.load_npz(filepath_ROI_images) for filepath_ROI_images in list_filepaths_data]
+ROI_images = [torch.as_tensor(sf_sparse.toarray().reshape(sf_sparse.shape[0], 36,36), dtype=torch.float32) for sf_sparse in ROI_sparse_all]
+
 data = roicat.data_importing.Data_roicat();
 data.set_ROI_images(
     ROI_images=ROI_images,
-    um_per_pixel=2.5,
-);
-### Alternatively: Load in premade / serializeable dict version of Data object
-
-assert np.all(~np.isnan(data.ROI_images[0])), "JZ Error: NaNs Exist in ROI images"
-assert np.all(np.sum(np.abs(data.ROI_images[0]), axis=[-1, -2]) != 0), "JZ Error: All zero images exist in ROI images"
-
-# Create torch sequential of Data Augmentations
-
-### TODO: Replace with actually used augmentations
-### TODO: Replace with the automatic getattribute dunder expansion of the params dict
-list_transforms = [
-    torchvision.transforms.RandomHorizontalFlip(p=0.5),
-    torchvision.transforms.RandomVerticalFlip(p=0.5),
-    torchvision.transforms.RandomRotation(degrees=180),
-    torchvision.transforms.RandomAffine(degrees=180, translate=(0.1, 0.1), scale=(0.9, 1.1), shear=10, resample=False, fillcolor=0),
-    torchvision.transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.1),
-    torchvision.transforms.GaussianBlur(kernel_size=5, sigma=(0.1, 2.0)),
-    torchvision.transforms.RandomErasing(p=0.5, scale=(0.02, 0.33), ratio=(0.3, 3.3), value=0, inplace=False),
-    torchvision.transforms.ToTensor(),
-    torchvision.transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-];
-
-# Create dataset / dataloader
-
-ROI_images = np.concatenate(data.ROI_images, axis=0)
-roi_resizer = roicat.ROInet.Resizer_ROI_images(ROI_images,
-                                               dict_params['um_per_pixel'],
-                                               dict_params['nan_to_num'],
-                                               dict_params['nan_to_num_val'],
-                                               verbose=dict_params['verbose'])
-ROI_images_rs = roi_resizer.ROI_images_rs
-dataloader_generator = roicat.ROInet.Dataloader_ROInet(
-    ROI_images_rs,
-    dict_params['batchSize_dataloader'],
-    dict_params['pinMemory_dataloader'],
-    dict_params['numWorkers_dataloader'],
-    dict_params['persistentWorkers_dataloader'],
-    dict_params['prefetchFactor_dataloader'],
-    torch.nn.Sequential(*list_transforms), # TODO: Replace with actual transforms / unpacking the *args list comprehension version
-    dict_params['img_size_out'],
-    dict_params['jit_script_transforms'],
-    dict_params['verbose'],
+    um_per_pixel=dict_params['data']['um_per_pixel'],
 )
 
-##### ***** Bundle Together *****
-[[[[[
-    # Load pretrained weights, freeze all layers
+# Create dataset / dataloader
+ROI_images_rs = roicat.ROInet.Resizer_ROI_images(
+    np.concatenate(data.ROI_images, axis=0),
+    dict_params['data']['um_per_pixel'],
+    dict_params['data']['nan_to_num'],
+    dict_params['data']['nan_to_num_val'],
+    dict_params['data']['verbose']
+).ROI_images_rs
 
-    ### TODO: JZ: Download convnext from online source
-    ### Freeze untrained layers
-    ### Freeze untrained layers
+dataloader = roicat.ROInet.Dataloader_ROInet(
+    ROI_images_rs,
+    dict_params['dataloader']['batchSize_dataloader'],
+    dict_params['dataloader']['pinMemory_dataloader'],
+    dict_params['dataloader']['numWorkers_dataloader'],
+    dict_params['dataloader']['persistentWorkers_dataloader'],
+    dict_params['dataloader']['prefetchFactor_dataloader'],
+    torch.nn.Sequential(*dict_params['dataloader']['list_transforms']), # TODO: Replace with actual transforms / unpacking the *args list comprehension version
+    dict_params['dataloader']['img_size_out'],
+    dict_params['dataloader']['jit_script_transforms'],
+    dict_params['dataloader']['verbose'],
+).dataloader
 
-    # Chop model off at layer _, pool output, add linear layer unfrozen, flatten
-
-    # Loop through parameters and freeze/unfreeze relevant layers
-
-    # Model to device, prep_contrast, define forward
-]]]]]
-
-# Save relevant pre-training parameters to JSON
-##### TODO
-
+# Create Model
+model = sth.Simclr_Model(
+    dict_params['model']['hyperparameters'],
+    dict_params['model']['filepath_model'],
+)
 
 # Specify criterion, optimizer, scheduler, learning rate, etc.
-##### TODO
-
+trainer = sth.Simclr_Trainer(
+    data,
+    model,
+    dict_params['trainer']['hyperparameters'],
+    directory_save
+)
 
 # Loop through epochs, batches, etc. if loss becomes NaNs, don't save the network and stop training. Otherwise, save the network as an onnx file.
 ##### TODO
-
-
-# Save model, optimizer, scheduler, etc. to dir_save
-##### TODO
-
-
-# Save training loss to dir_save
-##### TODO
+trainer.train()
