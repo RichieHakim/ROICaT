@@ -83,6 +83,15 @@ class Autotuner_regression(util.ROICaT_Module):
             If ``True``, ignore ConvergenceWarning during model fitting.
         verbose (bool):
             If ``True``, show progress bar and print running results.
+
+    Example:
+        .. highlight:: python
+        .. code-block:: python
+    
+        params = {
+            'C':             {'type': 'real',        'kwargs': {'log': True, 'low': 1e-4, 'high': 1e4}},
+            'penalty':       {'type': 'categorical', 'kwargs': {'choices': ['l1', 'l2']}},
+        }
     """
     def __init__(
         self, 
