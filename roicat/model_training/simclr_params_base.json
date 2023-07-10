@@ -1,0 +1,91 @@
+{
+    "data": {
+        "um_per_pixel": 1.0,
+        "nan_to_num": false,
+        "nan_to_num_val": 0.0,
+        "verbose": true
+    },
+    "dataloader": {
+        "batchSize_dataloader": 1024,
+        "pinMemory_dataloader": true,
+        "numWorkers_dataloader": 4,
+        "persistentWorkers_dataloader": true,
+        "prefetchFactor_dataloader": 1,
+        "img_size_out": [224,224],
+        "jit_script_transforms": true,
+        "verbose": true,
+
+        "shuffle": true,
+        "drop_last": true,
+        
+
+        
+
+
+
+        "transforms_invariant": {
+            "Random_occlusion": {
+                "prob":0.5,
+                "size": [0.4, 0.45]
+            },
+            
+            "Scale_image_sum": {"sum_val":1, "epsilon":1e-9, "min_sub": true},
+            "AddPoissonNoise": {"scaler_bounds": [1778.27941004, 5623.4132519], "prob":0.4, "base":1000, "scaling":"log"},
+            "Horizontal_stripe_scale": {"alpha_min_max": [0.5, 1], "im_size": [36,36], "prob":0.3},
+            "Horizontal_stripe_shift": {"alpha_min_max": [1  , 2], "im_size": [36,36], "prob":0.3},
+            "RandomHorizontalFlip": {"p":0.0},
+            "RandomAffine": {
+                "degrees": [-15,15],
+                "translate": [0.02, 0.02],
+                "scale": [0.9, 1.1],
+                "shear": [-2, 2, -2, 2],
+                "interpolation":"bilinear",
+                "fill":0, 
+                "fillcolor": null, 
+                "resample": null
+            },
+            "AddGaussianNoise": {"mean":0, "std":0.0003, "prob":0.4},
+            "ScaleDynamicRange": {"scaler_bounds": [0,1], "epsilon":1e-9},
+            "WarpPoints": {
+                "r":[0.1, 0.2],
+                "cx":[-0.3, 0.3],
+                "cy":[-0.3, 0.3], 
+                "dx":[-0.1, 0.1], 
+                "dy":[-0.1, 0.1], 
+                "n_warps":2,
+                "prob":0.5,
+                "img_size_in":[36, 36],
+                "img_size_out":[224,224]
+            },
+            "TileChannels": {"dim":0, "n_channels":3}
+        }
+    },
+    "model": {
+        "torchvision_model": "convnext_tiny",
+        "fileName_save_model": "ConvNext_tiny__1_0_best__simCLR",
+        "head_pool_method": "AdaptiveAvgPool2d",
+        "head_pool_method_kwargs": {"output_size": 1},
+
+        "pre_head_fc_sizes": [256],
+        "post_head_fc_sizes": [128],
+        "hyperparameters": "",
+        "filepath_model": "",
+
+        "block_to_unfreeze": "5.6",
+        "n_block_toInclude": 7,
+        "head_nonlinearity": "GELU",
+        "head_nonlinearity_kwargs": {},
+    },
+    "trainer": {
+        "n_epochs": 9999999,
+        "useGPU_training": true,
+        "inner_batch_size": 256,
+        "lr": 0.01,
+        "penalty_orthogonality":1.00,
+        "weight_decay": 0.1,
+        "gamma": 1.0000,
+        "temperature": 0.03,
+        "l2_alpha": 0.0000,
+
+    }   
+}

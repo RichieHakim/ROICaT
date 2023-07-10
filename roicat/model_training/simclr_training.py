@@ -58,6 +58,10 @@ directory_data = args.directory_data
 filepath_params = args.path_params
 directory_save = args.directory_save
 
+
+### Global preferences
+# device_train = torch_helpers.set_device(use_GPU=params['useGPU_dataloader'])
+
 # Load parameters from JSON
 with open(filepath_params) as f:
     dict_params = json.load(f)
@@ -73,6 +77,9 @@ data.set_ROI_images(
     ROI_images=ROI_images,
     um_per_pixel=dict_params['data']['um_per_pixel'],
 )
+### Data import preferences
+# params['paths']['path_data_training']
+
 
 # Create dataset / dataloader
 ROI_images_rs = roicat.ROInet.Resizer_ROI_images(
@@ -82,6 +89,7 @@ ROI_images_rs = roicat.ROInet.Resizer_ROI_images(
     dict_params['data']['nan_to_num_val'],
     dict_params['data']['verbose']
 ).ROI_images_rs
+### Resizing preferences
 
 dataloader = roicat.ROInet.Dataloader_ROInet(
     ROI_images_rs,
@@ -90,65 +98,43 @@ dataloader = roicat.ROInet.Dataloader_ROInet(
     dict_params['dataloader']['numWorkers_dataloader'],
     dict_params['dataloader']['persistentWorkers_dataloader'],
     dict_params['dataloader']['prefetchFactor_dataloader'],
-    torch.nn.Sequential(*dict_params['dataloader']['list_transforms']), # TODO: Replace with actual transforms / unpacking the *args list comprehension version
-    dict_params['dataloader']['img_size_out'],
+    torch.nn.Sequential(
+        *[roicat.model_training.augmentation.__dict__[key](**params) for key,params in dict_params['transforms_invariant'].items()]
+    ), # Converting dictionary of transforms to torch.nn.Sequential object
+    tuple(dict_params['dataloader']['img_size_out']),
     dict_params['dataloader']['jit_script_transforms'],
     dict_params['dataloader']['verbose'],
 ).dataloader
+### DataLoader preferences
+# params['useGPU_training']
+# transforms = torch.nn.Sequential(
+#     *[augmentation.__dict__[key](**params) for key,params in params['augmentation'].items()]
+# )
+# scripted_transforms = torch.jit.script(transforms)
+# dataloader_train = torch.utils.data.DataLoader(
+#     dataset_train,
+#     **params['dataloader_kwargs']
+# )
+# image_out_size = list(dataset_train[0][0][0].shape)
+# data_dim = tuple([1] + list(image_out_size))
+
+
 
 # Create Model
 model = sth.Simclr_Model(
     dict_params['model']['hyperparameters'],
     dict_params['model']['filepath_model'],
 )
-
-# Specify criterion, optimizer, scheduler, learning rate, etc.
-trainer = sth.Simclr_Trainer(
-    data,
-    model,
-    dict_params['trainer']['hyperparameters'],
-    directory_save
-)
-
-# Loop through epochs, batches, etc. if loss becomes NaNs, don't save the network and stop training. Otherwise, save the network as an onnx file.
-##### TODO
-trainer.train()
-
-
-
-
-
-
-
-
-
-# # Params usages
-# device_train = torch_helpers.set_device(use_GPU=params['useGPU_training'], verbose=False)
-# sf_sparse = scipy.sparse.load_npz(params['paths']['path_data_training'])
-# transforms = torch.nn.Sequential(
-#     *[augmentation.__dict__[key](**params) for key,params in params['augmentation'].items()]
-# )
-# scripted_transforms = torch.jit.script(transforms)
-# device_dataloader = torch_helpers.set_device(use_GPU=params['useGPU_dataloader'])
-# dataloader_train = torch.utils.data.DataLoader(
-#     dataset_train,
-#     **params['dataloader_kwargs']
-# )
+### Model preferences
 
 # base_model_frozen = torchvision.models.__dict__[params['torchvision_model']](pretrained=True)
 # for param in base_model_frozen.parameters():
 #     param.requires_grad = False
 
-
 # model_chopped = torch.nn.Sequential(list(base_model_frozen.children())[0][:params['n_block_toInclude']])  ## 0.
 # model_chopped_pooled = torch.nn.Sequential(model_chopped, torch.nn.__dict__[params['head_pool_method']](**params['head_pool_method_kwargs']), torch.nn.Flatten())  ## 1.
 
-# image_out_size = list(dataset_train[0][0][0].shape)
-# data_dim = tuple([1] + list(image_out_size))
-
-# ## 2. , 3.
 # model = ModelTackOn(
-# #     model_chopped.to('cpu'),
 #     model_chopped_pooled.to('cpu'),
 #     base_model_frozen.to('cpu'),
 #     data_dim=data_dim,
@@ -158,8 +144,6 @@ trainer.train()
 #     nonlinearity=params['head_nonlinearity'],
 #     kwargs_nonlinearity=params['head_nonlinearity_kwargs'],
 # )
-# model.train();
-
 
 # mnp = [name for name, param in model.named_parameters()]  ## 'model named parameters'
 # mnp_blockNums = [name[name.find('.'):name.find('.')+8] for name in mnp]  ## pulls out the numbers just after the model name
@@ -178,30 +162,34 @@ trainer.train()
 
 # names_layers_requiresGrad = [( param.requires_grad , name ) for name,param in list(model.named_parameters())]
 
-# # names_layers_requiresGrad
-
-
-
-# model.to(device_train)
-# model.prep_contrast()
 # model.forward = model.forward_latent
+
+
+# Specify criterion, optimizer, scheduler, learning rate, etc.
+trainer = sth.Simclr_Trainer(
+    data,
+    model,
+    dict_params['trainer']['hyperparameters'],
+    directory_save
+)
+### Trainer preferences
 
 # from torch.nn import CrossEntropyLoss
 # from torch.optim import Adam
 
+# model.train();
+# model.to(device_train)
+# model.prep_contrast()
+
 # criterion = [CrossEntropyLoss()]
+# criterion = [_.to(device_train) for _ in criterion]
 # optimizer = Adam(
 #     model.parameters(), 
 #     lr=params['lr'],
-# #     lr=1*10**-2,
 # )
 # scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer,
 #                                                    gamma=params['gamma'],
-# #                                                    gamma=1,
 #                                                   )
-
-# criterion = [_.to(device_train) for _ in criterion]
-
 
 # losses_train, losses_val = [], [np.nan]
 # for epoch in tqdm(range(params['n_epochs'])):
@@ -238,3 +226,10 @@ trainer.train()
 #     ## save model
 #     if params['prefs']['saveModelIteratively']:
 #         torch.save(model.state_dict(), path_saveModel)
+
+
+
+# Loop through epochs, batches, etc. if loss becomes NaNs, don't save the network and stop training. Otherwise, save the network as an onnx file.
+##### TODO
+trainer.train()
+
