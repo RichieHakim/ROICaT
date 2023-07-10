@@ -1,18 +1,18 @@
 {
     "data": {
         "um_per_pixel": 1.0,
-        "nan_to_num": false,
+        "nan_to_num": true,
         "nan_to_num_val": 0.0,
         "verbose": true
     },
     "dataloader": {
         "batchSize_dataloader": 1024,
-        "pinMemory_dataloader": true,
-        "numWorkers_dataloader": 4,
-        "persistentWorkers_dataloader": true,
-        "prefetchFactor_dataloader": 1,
+        "pinMemory_dataloader": false,
+        "numWorkers_dataloader": 0,
+        "persistentWorkers_dataloader": false,
+        "prefetchFactor_dataloader": 0,
         "img_size_out": [224,224],
-        "jit_script_transforms": true,
+        "jit_script_transforms": false,
         "shuffle_dataloader": true,
         "drop_last_dataloader": true,
         "verbose": true,
@@ -66,18 +66,17 @@
         "block_to_unfreeze": "5.6",
         "n_block_toInclude": 7,
         "head_nonlinearity": "GELU",
-        "head_nonlinearity_kwargs": {},
+        "head_nonlinearity_kwargs": {}
     },
     "trainer": {
         "n_epochs": 9999999,
-        "useGPU_training": true,
+        "device_train": "cpu",
         "inner_batch_size": 256,
-        "lr": 0.01,
+        "learning_rate": 0.01,
         "penalty_orthogonality":1.00,
         "weight_decay": 0.1,
         "gamma": 1.0000,
         "temperature": 0.03,
-        "l2_alpha": 0.0000,
-
+        "l2_alpha": 0.0000
     }   
 }

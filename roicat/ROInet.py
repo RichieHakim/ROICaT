@@ -231,16 +231,23 @@ class Dataloader_ROInet(util.ROICaT_Module):
                 dtype_X=torch.float32,
             )
         print(f'Defined dataset') if self._verbose else None
-        self.dataloader = torch.utils.data.DataLoader(
-                self.dataset,
-                batch_size=batchSize_dataloader,
-                shuffle=shuffle,
-                drop_last=drop_last,
-                pin_memory=pinMemory_dataloader,
-                num_workers=numWorkers_dataloader,
-                persistent_workers=persistentWorkers_dataloader,
-                prefetch_factor=prefetchFactor_dataloader,
+
+        dataloader_kwargs = dict(
+            batch_size=batchSize_dataloader,
+            shuffle=shuffle,
+            drop_last=drop_last,
+            pin_memory=pinMemory_dataloader,
+            num_workers=numWorkers_dataloader,
+            persistent_workers=persistentWorkers_dataloader
         )
+        if prefetchFactor_dataloader is not None:
+            if numWorkers_dataloader > 0:
+                dataloader_kwargs['prefetch_factor'] = prefetchFactor_dataloader
+            else:
+                warnings.warn(f'prefetchFactor_dataloader is ignored when numWorkers_dataloader == 0. Setting numWorkers_dataloader > 0 will allow prefetchFactor_dataloader to be used.')
+            
+        
+        self.dataloader = torch.utils.data.DataLoader(self.dataset, **dataloader_kwargs)
         print(f'Defined dataloader') if self._verbose else None
 
 

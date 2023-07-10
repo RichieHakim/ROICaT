@@ -15,18 +15,188 @@ import math
 import argparse
 import pickle
 import roicat
+import tqdm
+from functools import partial
+import training
 
 from torch.nn import CrossEntropyLoss
 from torch.optim import Adam
 
 
-class Attachment_Blocks(torch.nn.Module):
-    def __init__(self, attachment_block, slice_point, base_model, n_block_toInclude):
-        super(Attachment_Blocks, self).__init__()
-        self.attachment_block = attachment_block
-        self.slice_point = slice_point
-        self.base_model = base_model
-        self.n_block_toInclude
+def log_fn(log_str, log_file):
+    """
+    Write a string to a log file
+    
+    Args:
+        log_str (str):
+            String to be written to the log file
+        log_file (str):
+            Path to the log file
+    """
+    with open(log_file, 'a') as f:
+        f.write(log_str + '\n')
+
+# class Attachment_Blocks(torch.nn.Module):
+#     def __init__(self, attachment_block, slice_point, base_model, n_block_toInclude):
+#         super(Attachment_Blocks, self).__init__()
+#         self.attachment_block = attachment_block
+#         self.slice_point = slice_point
+#         self.base_model = base_model
+#         self.n_block_toInclude
+
+def get_nums_from_string(string_with_nums):
+    """
+    Return the numbers from a string as an int
+    RH 2021-2022
+
+    Args:
+        string_with_nums (str):
+            String with numbers in it
+    
+    Returns:
+        nums (int):
+            The numbers from the string    
+            If there are no numbers, return None.        
+    """
+    idx_nums = [ii in str(np.arange(10)) for ii in string_with_nums]
+    
+    nums = []
+    for jj, val in enumerate(idx_nums):
+        if val:
+            nums.append(string_with_nums[jj])
+    if not nums:
+        return None
+    nums = int(''.join(nums))
+    return nums
+
+class ModelTackOn(torch.nn.Module):
+    def __init__(
+        self, 
+        base_model, 
+        un_modified_model,
+        data_dim=(1,3,36,36), 
+        pre_head_fc_sizes=[100], 
+        post_head_fc_sizes=[100], 
+        classifier_fc_sizes=None, 
+        nonlinearity='relu', 
+        kwargs_nonlinearity={},
+    ):
+            super(ModelTackOn, self).__init__()
+            self.base_model = base_model
+            final_base_layer = list(un_modified_model.children())[-1]
+            
+            self.data_dim = data_dim
+
+            self.pre_head_fc_lst = []
+            self.post_head_fc_lst = []
+            self.classifier_fc_lst = []
+                
+            self.nonlinearity = nonlinearity
+            self.kwargs_nonlinearity = kwargs_nonlinearity
+
+            self.init_prehead(final_base_layer, pre_head_fc_sizes)
+            self.init_posthead(pre_head_fc_sizes[-1], post_head_fc_sizes)
+            if classifier_fc_sizes is not None:
+                self.init_classifier(pre_head_fc_sizes[-1], classifier_fc_sizes)
+            
+    def init_prehead(self, prv_layer, pre_head_fc_sizes):
+        for i, pre_head_fc in enumerate(pre_head_fc_sizes):
+            if i == 0:
+                in_features = self.base_model(torch.rand(*(self.data_dim))).data.squeeze().shape[0]  ## RH EDIT
+            else:
+                in_features = pre_head_fc_sizes[i - 1]
+            fc_layer = torch.nn.Linear(in_features=in_features, out_features=pre_head_fc)
+            self.add_module(f'PreHead_{i}', fc_layer)
+            self.pre_head_fc_lst.append(fc_layer)
+
+            non_linearity = torch.nn.__dict__[self.nonlinearity](**self.kwargs_nonlinearity)
+            self.add_module(f'PreHead_{i}_NonLinearity', non_linearity)
+            self.pre_head_fc_lst.append(non_linearity)
+
+    def init_posthead(self, prv_size, post_head_fc_sizes):
+        for i, post_head_fc in enumerate(post_head_fc_sizes):
+            if i == 0:
+                in_features = prv_size
+            else:
+                in_features = post_head_fc_sizes[i - 1]
+            fc_layer = torch.nn.Linear(in_features=in_features, out_features=post_head_fc)
+            self.add_module(f'PostHead_{i}', fc_layer)
+            self.post_head_fc_lst.append(fc_layer)
+
+            non_linearity = torch.nn.__dict__[self.nonlinearity](**self.kwargs_nonlinearity)    
+            self.add_module(f'PostHead_{i}_NonLinearity', non_linearity)
+            self.pre_head_fc_lst.append(non_linearity)
+    
+    def init_classifier(self, prv_size, classifier_fc_sizes):
+            for i, classifier_fc in enumerate(classifier_fc_sizes):
+                if i == 0:
+                    in_features = prv_size
+                else:
+                    in_features = classifier_fc_sizes[i - 1]
+            fc_layer = torch.nn.Linear(in_features=in_features, out_features=classifier_fc)
+            self.add_module(f'Classifier_{i}', fc_layer)
+            self.classifier_fc_lst.append(fc_layer)
+
+    def reinit_classifier(self):
+        for i_layer, layer in enumerate(self.classifier_fc_lst):
+            layer.reset_parameters()
+    
+    def forward_classifier(self, X):
+        interim = self.base_model(X)
+        interim = self.get_head(interim)
+        interim = self.classify(interim)
+        return interim
+
+    def forward_latent(self, X):
+        interim = self.base_model(X)
+        interim = self.get_head(interim)
+        interim = self.get_latent(interim)
+        return interim
+
+
+    def get_head(self, base_out):
+        head = base_out
+        for pre_head_layer in self.pre_head_fc_lst:
+          head = pre_head_layer(head)
+        return head
+
+    def get_latent(self, head):
+        latent = head
+        for post_head_layer in self.post_head_fc_lst:
+            latent = post_head_layer(latent)
+        return latent
+
+    def classify(self, head):
+        logit = head
+        for classifier_layer in self.classifier_fc_lst:
+            logit = classifier_layer(logit)
+        return logit
+
+    def set_pre_head_grad(self, requires_grad=True):
+        for layer in self.pre_head_fc_lst:
+            for param in layer.parameters():
+                param.requires_grad = requires_grad
+                
+    def set_post_head_grad(self, requires_grad=True):
+        for layer in self.post_head_fc_lst:
+            for param in layer.parameters():
+                param.requires_grad = requires_grad
+
+    def set_classifier_grad(self, requires_grad=True):
+        for layer in self.classifier_fc_lst:
+            for param in layer.parameters():
+                param.requires_grad = requires_grad
+
+    def prep_contrast(self):
+        self.set_pre_head_grad(requires_grad=True)
+        self.set_post_head_grad(requires_grad=True)
+        self.set_classifier_grad(requires_grad=False)
+
+    def prep_classifier(self):
+        self.set_pre_head_grad(requires_grad=False)
+        self.set_post_head_grad(requires_grad=False)
+        self.set_classifier_grad(requires_grad=True)
+
 
 
 
@@ -44,11 +214,20 @@ class Simclr_Model():
             self,
             filepath_model, # Set filepath to save model
             base_model=None, # Freeze base_model
-            slice_point=None, # Slice off the model at the slice_point and only keep the prior blocks
-            attachment_block=None, # Add the attachment blocks to the end of the base_model
+            # slice_point=None, # Slice off the model at the slice_point and only keep the prior blocks
+
+            head_pool_method=None,
+            head_pool_method_kwargs=None,
+            pre_head_fc_sizes=None,
+            post_head_fc_sizes=None,
+            head_nonlinearity=None,
+            head_nonlinearity_kwargs=None,
+
+            # attachment_block=None, # Add the attachment blocks to the end of the base_model
             block_to_unfreeze=None, # Unfreeze the model at and beyond the unfreeze_point
             n_block_toInclude=None, # Unfreeze the model at and beyond the unfreeze_point
-            forward_version=None, # Set version of the forward pass to use
+            image_out_size=None, # Set the size of the output image
+
             load_model=False, # Whether the model should be loaded from the filepath_model (or otherwise saved to it)
             ):
         # If loading model, load it from onnx, otherwise create one from scratch using the other parameters
@@ -57,136 +236,121 @@ class Simclr_Model():
         else:
             self.create_model(
                 base_model=base_model,
-                slice_point=slice_point,
-                attachment_block=attachment_block,
+                # slice_point=slice_point,
+
+                head_pool_method=head_pool_method,
+                head_pool_method_kwargs=head_pool_method_kwargs,
+                pre_head_fc_sizes=pre_head_fc_sizes,
+                post_head_fc_sizes=post_head_fc_sizes,
+                head_nonlinearity=head_nonlinearity,
+                head_nonlinearity_kwargs=head_nonlinearity_kwargs,
+                
+                # attachment_block=attachment_block,
                 block_to_unfreeze=block_to_unfreeze,
                 n_block_toInclude=n_block_toInclude,
-                forward_version=forward_version,
+
+                image_out_size=image_out_size,
                 )
             
     def create_model(
             self,
             base_model=None, # Freeze base_model
-            slice_point=None, # Slice off the model at the slice_point and only keep the prior blocks
-            attachment_block=None, # Add the attachment blocks to the end of the base_model
+            # slice_point=None, # Slice off the model at the slice_point and only keep the prior blocks
+            
+            head_pool_method=None,
+            head_pool_method_kwargs=None,
+            pre_head_fc_sizes=None,
+            post_head_fc_sizes=None,
+            head_nonlinearity=None,
+            head_nonlinearity_kwargs=None,
+            
+            # attachment_block=None, # Add the attachment blocks to the end of the base_model
             block_to_unfreeze=None, # Unfreeze the model at and beyond the unfreeze_point
             n_block_toInclude=None, # Unfreeze the model at and beyond the unfreeze_point
-            forward_version=None, # Set version of the forward pass to use
+            image_out_size=None,
             ):
-        # Load base model
-        if base_model is None:
-            base_model = torchvision.models.resnet18(pretrained=True)
-        self.base_model = base_model
+            
+        ## Model preferences
 
-        # Freeze base model
-        for param in self.base_model.parameters():
+        base_model_frozen = base_model
+        for param in base_model_frozen.parameters():
             param.requires_grad = False
 
-        # Slice off base model
-        if slice_point is None:
-            slice_point = 0
-        self.slice_point = slice_point
-        self.base_model = torch.nn.Sequential(list(self.base_model.children())[0][:self.slice_point])
+        model_chopped = torch.nn.Sequential(list(base_model_frozen.children())[0][:n_block_toInclude])  ## 0.
+        model_chopped_pooled = torch.nn.Sequential(model_chopped, torch.nn.__dict__[head_pool_method](**head_pool_method_kwargs), torch.nn.Flatten())  ## 1.
 
-        # Add attachment blocks
-        if attachment_block is None:
-            attachment_block = torch.nn.Sequential()
-        self.attachment_block = attachment_block
-        self.base_model = torch.nn.Sequential(self.base_model, self.attachment_block)
+        data_dim = tuple([1] + list(image_out_size))
+        self.model = ModelTackOn(
+            model_chopped_pooled.to('cpu'),
+            base_model_frozen.to('cpu'),
+            data_dim=data_dim,
+            pre_head_fc_sizes=pre_head_fc_sizes,
+            post_head_fc_sizes=post_head_fc_sizes,
+            classifier_fc_sizes=None,
+            nonlinearity=head_nonlinearity,
+            kwargs_nonlinearity=head_nonlinearity_kwargs,
+        )
 
-        # Unfreeze model
-        if block_to_unfreeze is None:
-            block_to_unfreeze = 0
-        self.block_to_unfreeze = block_to_unfreeze
-        self.n_block_toInclude = n_block_toInclude
-        self.base_model = torch.nn.Sequential(list(self.base_model.children())[0][:self.block_to_unfreeze])
+        mnp = [name for name, param in self.model.named_parameters()]  ## 'model named parameters'
+        mnp_blockNums = [name[name.find('.'):name.find('.')+8] for name in mnp]  ## pulls out the numbers just after the model name
+        mnp_nums = [get_nums_from_string(name) for name in mnp_blockNums]  ## converts them to numbers
+        block_to_freeze_nums = get_nums_from_string(block_to_unfreeze)  ## converts the input parameter specifying the block to freeze into a number for comparison
 
-        # Set forward version
-        if forward_version is None:
-            forward_version = 0
-        self.forward_version = forward_version
+        m_baseName = mnp[0][:mnp[0].find('.')]
 
-        # Set model to device
-        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        self.base_model = self.base_model.to(self.device)
+        for ii, (name, param) in enumerate(self.model.named_parameters()):
+            if m_baseName in name:
+        #         print(name)
+                if mnp_nums[ii] < block_to_freeze_nums:
+                    param.requires_grad = False
+                elif mnp_nums[ii] >= block_to_freeze_nums:
+                    param.requires_grad = True
 
-        # Prep contrast
-        self.contrast = roicat.model_training.contrastive_learning.ContrastiveLearning(
-            base_model=self.base_model,
-            device=self.device,
-            )
-        
-    def forward(self, x):
-        if self.forward_version == 0:
-            return self.forward_v0(x)
-        else:
-            raise ValueError('forward_version not recognized')
-        
-    def forward_v0(self, x):
-        return self.contrast.forward(x)
+        names_layers_requiresGrad = [( param.requires_grad , name ) for name,param in list(self.model.named_parameters())]
+
+        self.model.forward = self.model.forward_latent
     
-
-    def save_onnx(self, filepath_model):
+    def save_onnx(self, filepath_model=None):
         pass
-    def load_onnx(self, filepath_model):
+
+    def load_onnx(self, filepath_model=None):
         pass
-    
-    ### Model preferences
-
-    # base_model_frozen = base_model
-    # for param in base_model_frozen.parameters():
-    #     param.requires_grad = False
-
-    # model_chopped = torch.nn.Sequential(list(base_model_frozen.children())[0][:params['n_block_toInclude']])  ## 0.
-    # model_chopped_pooled = torch.nn.Sequential(model_chopped, torch.nn.__dict__[params['head_pool_method']](**params['head_pool_method_kwargs']), torch.nn.Flatten())  ## 1.
-
-    # data_dim = tuple([1] + list(image_out_size))
-    # model = ModelTackOn(
-    #     model_chopped_pooled.to('cpu'),
-    #     base_model_frozen.to('cpu'),
-    #     data_dim=data_dim,
-    #     pre_head_fc_sizes=params['pre_head_fc_sizes'], 
-    #     post_head_fc_sizes=params['post_head_fc_sizes'], 
-    #     classifier_fc_sizes=None,
-    #     nonlinearity=params['head_nonlinearity'],
-    #     kwargs_nonlinearity=params['head_nonlinearity_kwargs'],
-    # )
-
-    # mnp = [name for name, param in model.named_parameters()]  ## 'model named parameters'
-    # mnp_blockNums = [name[name.find('.'):name.find('.')+8] for name in mnp]  ## pulls out the numbers just after the model name
-    # mnp_nums = [path_helpers.get_nums_from_string(name) for name in mnp_blockNums]  ## converts them to numbers
-    # block_to_freeze_nums = path_helpers.get_nums_from_string(params['block_to_unfreeze'])  ## converts the input parameter specifying the block to freeze into a number for comparison
-
-    # m_baseName = mnp[0][:mnp[0].find('.')]
-
-    # for ii, (name, param) in enumerate(model.named_parameters()):
-    #     if m_baseName in name:
-    # #         print(name)
-    #         if mnp_nums[ii] < block_to_freeze_nums:
-    #             param.requires_grad = False
-    #         elif mnp_nums[ii] >= block_to_freeze_nums:
-    #             param.requires_grad = True
-
-    # names_layers_requiresGrad = [( param.requires_grad , name ) for name,param in list(model.named_parameters())]
-
-    # model.forward = model.forward_latent
 
 
 class Simclr_Trainer():
     def __init__(
             self,
-            data,
-            model,
-            
-            learning_rate,
+            dataloader,
+            model_container,
+                    
+            n_epochs=9999999,
+            device_train='cuda:0',
+            inner_batch_size=256,
+            learning_rate=0.01,
+            penalty_orthogonality=1.00,
+            weight_decay=0.1,
+            gamma=1.0000,
+            temperature=0.03,
+            l2_alpha=0.0000,
 
+            path_saveLog=None
             ):
-        pass
-
+        self.dataloader = dataloader
+        self.model_container = model_container
+        self.n_epochs = n_epochs
+        self.device_train = device_train
+        self.inner_batch_size = inner_batch_size
+        self.learning_rate = learning_rate
+        self.penalty_orthogonality = penalty_orthogonality
+        self.weight_decay = weight_decay
+        self.gamma = gamma
+        self.temperature = temperature
+        self.l2_alpha = l2_alpha
+        self.path_saveLog = path_saveLog
 
     # def train(self, train_loader, val_loader, params):
     #     # Set model to training mode
-    #     self.base_model.train()
+    #     self.model_container.model.train()
 
     #     # Set optimizer
     #     optimizer = Adam(self.base_model.parameters(), lr=params['lr'], weight_decay=params['weight_decay'])
@@ -215,53 +379,67 @@ class Simclr_Trainer():
     # Save model, optimizer, scheduler, etc. to dir_save
     # Save training loss to dir_save
 
+    def train(self):
+        self.model_container.model.train();
+        self.model_container.model.to(self.device_train)
+        self.model_container.model.prep_contrast()
 
-    # model.train();
-    # model.to(device_train)
-    # model.prep_contrast()
-
-    # criterion = [CrossEntropyLoss()]
-    # criterion = [_.to(device_train) for _ in criterion]
-    # optimizer = Adam(
-    #     model.parameters(), 
-    #     lr=params['lr'],
-    # )
-    # scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer,
-    #                                                    gamma=params['gamma'],
-    #                                                   )
-
-    # losses_train, losses_val = [], [np.nan]
-    # for epoch in tqdm(range(params['n_epochs'])):
-
-    #     print(f'epoch: {epoch}')
+        criterion = [CrossEntropyLoss()]
+        criterion = [_.to(self.device_train) for _ in criterion]
+        optimizer = Adam(
+            self.model_container.model.parameters(), 
+            lr=self.learning_rate,
+        )
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer,
+                                                        gamma=self.gamma,
+                                                        )
         
-    #     losses_train = training.epoch_step(
-    #         dataloader_train, 
-    #         model, 
-    #         optimizer, 
-    #         criterion,
-    #         scheduler=scheduler,
-    #         temperature=params['temperature'],
-    #         # l2_alpha,
-    #         penalty_orthogonality=params['penalty_orthogonality'],
-    #         mode='semi-supervised',
-    #         loss_rolling_train=losses_train, 
-    #         loss_rolling_val=losses_val,
-    #         device=device_train, 
-    #         inner_batch_size=params['inner_batch_size'],
-    #         verbose=2,
-    #         verbose_update_period=1,
-    #         log_function=partial(write_to_log, path_log=path_saveLog),
-    # )
-        
-    #     ## save loss stuff
-    #     if params['prefs']['saveLogs']:
-    #         np.save(path_saveLoss, losses_train)
-        
-    #     ## if loss becomes NaNs, don't save the network and stop training
-    #     if torch.isnan(torch.as_tensor(losses_train[-1])):
-    #         break
+        self.dataloader
+        self.model_container
+        self.n_epochs
+        self.device_train
+        self.inner_batch_size
+        self.learning_rate
+        self.penalty_orthogonality
+        self.weight_decay
+        self.gamma
+        self.temperature
+        self.l2_alpha
+        self.path_saveLog
+
+        losses_train, losses_val = [], [np.nan]
+        for epoch in tqdm.tqdm(range(self.n_epochs)):
+
+            print(f'epoch: {epoch}')
             
-    #     ## save model
-    #     if params['prefs']['saveModelIteratively']:
-    #         torch.save(model.state_dict(), path_saveModel)
+            log_function = partial(log_fn, path_log=self.path_saveLog) if self.path_saveLog is not None else lambda x: None
+
+            losses_train = training.epoch_step(
+                self.dataloader, 
+                self.model_container.model, 
+                optimizer, 
+                criterion,
+                scheduler=scheduler,
+                temperature=self.temperature,
+                # l2_alpha,
+                penalty_orthogonality=self.penalty_orthogonality,
+                mode='semi-supervised',
+                loss_rolling_train=losses_train, 
+                loss_rolling_val=losses_val,
+                device=self.device_train, 
+                inner_batch_size=self.inner_batch_size,
+                verbose=2,
+                verbose_update_period=1,
+                log_function=partial(log_fn, path_log=self.path_saveLog),
+            )
+            
+            ## save loss stuff
+            if self.path_saveLog is not None:
+                np.save(self.path_saveLoss, losses_train)
+            
+            ## if loss becomes NaNs, don't save the network and stop training
+            if torch.isnan(torch.as_tensor(losses_train[-1])):
+                break
+            
+            ## save model
+            self.model_container.save_onnx()
