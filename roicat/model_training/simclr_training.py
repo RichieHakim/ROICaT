@@ -32,7 +32,7 @@ parser.add_argument(
     required=True,
     metavar='',
     type=str,
-    default='/Users/josh/analysis/data/classification/stat_s2p_backup',
+    default='/Users/josh/analysis/data/ROICaT/simclr_training/sf_sparse_36x36_20220503.npz',
     help='Path to raw ROI data to be used to train the model.',
 )
 parser.add_argument(
@@ -41,7 +41,7 @@ parser.add_argument(
     required=True,
     metavar='',
     type=str,
-    default='/Users/josh/analysis/outputs/ROICaT/simclr_training/simclr_params.json',
+    default='/Users/josh/analysis/github_repos/ROICaT/roicat/model_training/simclr_params_base.json',
     help='Path to json file containing parameters.',
 )
 parser.add_argument(
@@ -113,3 +113,128 @@ trainer = sth.Simclr_Trainer(
 # Loop through epochs, batches, etc. if loss becomes NaNs, don't save the network and stop training. Otherwise, save the network as an onnx file.
 ##### TODO
 trainer.train()
+
+
+
+
+
+
+
+
+
+# # Params usages
+# device_train = torch_helpers.set_device(use_GPU=params['useGPU_training'], verbose=False)
+# sf_sparse = scipy.sparse.load_npz(params['paths']['path_data_training'])
+# transforms = torch.nn.Sequential(
+#     *[augmentation.__dict__[key](**params) for key,params in params['augmentation'].items()]
+# )
+# scripted_transforms = torch.jit.script(transforms)
+# device_dataloader = torch_helpers.set_device(use_GPU=params['useGPU_dataloader'])
+# dataloader_train = torch.utils.data.DataLoader(
+#     dataset_train,
+#     **params['dataloader_kwargs']
+# )
+
+# base_model_frozen = torchvision.models.__dict__[params['torchvision_model']](pretrained=True)
+# for param in base_model_frozen.parameters():
+#     param.requires_grad = False
+
+
+# model_chopped = torch.nn.Sequential(list(base_model_frozen.children())[0][:params['n_block_toInclude']])  ## 0.
+# model_chopped_pooled = torch.nn.Sequential(model_chopped, torch.nn.__dict__[params['head_pool_method']](**params['head_pool_method_kwargs']), torch.nn.Flatten())  ## 1.
+
+# image_out_size = list(dataset_train[0][0][0].shape)
+# data_dim = tuple([1] + list(image_out_size))
+
+# ## 2. , 3.
+# model = ModelTackOn(
+# #     model_chopped.to('cpu'),
+#     model_chopped_pooled.to('cpu'),
+#     base_model_frozen.to('cpu'),
+#     data_dim=data_dim,
+#     pre_head_fc_sizes=params['pre_head_fc_sizes'], 
+#     post_head_fc_sizes=params['post_head_fc_sizes'], 
+#     classifier_fc_sizes=None,
+#     nonlinearity=params['head_nonlinearity'],
+#     kwargs_nonlinearity=params['head_nonlinearity_kwargs'],
+# )
+# model.train();
+
+
+# mnp = [name for name, param in model.named_parameters()]  ## 'model named parameters'
+# mnp_blockNums = [name[name.find('.'):name.find('.')+8] for name in mnp]  ## pulls out the numbers just after the model name
+# mnp_nums = [path_helpers.get_nums_from_string(name) for name in mnp_blockNums]  ## converts them to numbers
+# block_to_freeze_nums = path_helpers.get_nums_from_string(params['block_to_unfreeze'])  ## converts the input parameter specifying the block to freeze into a number for comparison
+
+# m_baseName = mnp[0][:mnp[0].find('.')]
+
+# for ii, (name, param) in enumerate(model.named_parameters()):
+#     if m_baseName in name:
+# #         print(name)
+#         if mnp_nums[ii] < block_to_freeze_nums:
+#             param.requires_grad = False
+#         elif mnp_nums[ii] >= block_to_freeze_nums:
+#             param.requires_grad = True
+
+# names_layers_requiresGrad = [( param.requires_grad , name ) for name,param in list(model.named_parameters())]
+
+# # names_layers_requiresGrad
+
+
+
+# model.to(device_train)
+# model.prep_contrast()
+# model.forward = model.forward_latent
+
+# from torch.nn import CrossEntropyLoss
+# from torch.optim import Adam
+
+# criterion = [CrossEntropyLoss()]
+# optimizer = Adam(
+#     model.parameters(), 
+#     lr=params['lr'],
+# #     lr=1*10**-2,
+# )
+# scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer,
+#                                                    gamma=params['gamma'],
+# #                                                    gamma=1,
+#                                                   )
+
+# criterion = [_.to(device_train) for _ in criterion]
+
+
+# losses_train, losses_val = [], [np.nan]
+# for epoch in tqdm(range(params['n_epochs'])):
+
+#     print(f'epoch: {epoch}')
+    
+#     losses_train = training.epoch_step(
+#         dataloader_train, 
+#         model, 
+#         optimizer, 
+#         criterion,
+#         scheduler=scheduler,
+#         temperature=params['temperature'],
+#         # l2_alpha,
+#         penalty_orthogonality=params['penalty_orthogonality'],
+#         mode='semi-supervised',
+#         loss_rolling_train=losses_train, 
+#         loss_rolling_val=losses_val,
+#         device=device_train, 
+#         inner_batch_size=params['inner_batch_size'],
+#         verbose=2,
+#         verbose_update_period=1,
+#         log_function=partial(write_to_log, path_log=path_saveLog),
+# )
+    
+#     ## save loss stuff
+#     if params['prefs']['saveLogs']:
+#         np.save(path_saveLoss, losses_train)
+    
+#     ## if loss becomes NaNs, don't save the network and stop training
+#     if torch.isnan(torch.as_tensor(losses_train[-1])):
+#         break
+        
+#     ## save model
+#     if params['prefs']['saveModelIteratively']:
+#         torch.save(model.state_dict(), path_saveModel)
