@@ -13,16 +13,10 @@
         "prefetchFactor_dataloader": 1,
         "img_size_out": [224,224],
         "jit_script_transforms": true,
+        "shuffle_dataloader": true,
+        "drop_last_dataloader": true,
         "verbose": true,
-
-        "shuffle": true,
-        "drop_last": true,
         
-
-        
-
-
-
         "transforms_invariant": {
             "Random_occlusion": {
                 "prob":0.5,
@@ -62,14 +56,12 @@
     },
     "model": {
         "torchvision_model": "convnext_tiny",
-        "fileName_save_model": "ConvNext_tiny__1_0_best__simCLR",
+        "filepath_model": "/Users/josh/analysis/outputs/ROICaT/simclr_training/models/ConvNext_tiny__1_0_best__simCLR",
         "head_pool_method": "AdaptiveAvgPool2d",
         "head_pool_method_kwargs": {"output_size": 1},
 
         "pre_head_fc_sizes": [256],
         "post_head_fc_sizes": [128],
-        "hyperparameters": "",
-        "filepath_model": "",
 
         "block_to_unfreeze": "5.6",
         "n_block_toInclude": 7,

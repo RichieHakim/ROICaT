@@ -103,67 +103,35 @@ dataloader = roicat.ROInet.Dataloader_ROInet(
     ), # Converting dictionary of transforms to torch.nn.Sequential object
     tuple(dict_params['dataloader']['img_size_out']),
     dict_params['dataloader']['jit_script_transforms'],
+    dict_params['dataloader']['shuffle_dataloader'],
+    dict_params['dataloader']['drop_last_dataloader'],
     dict_params['dataloader']['verbose'],
 ).dataloader
-### DataLoader preferences
-# params['useGPU_training']
-# transforms = torch.nn.Sequential(
-#     *[augmentation.__dict__[key](**params) for key,params in params['augmentation'].items()]
-# )
-# scripted_transforms = torch.jit.script(transforms)
-# dataloader_train = torch.utils.data.DataLoader(
-#     dataset_train,
-#     **params['dataloader_kwargs']
-# )
-# image_out_size = list(dataset_train[0][0][0].shape)
-# data_dim = tuple([1] + list(image_out_size))
-
-
 
 # Create Model
 model = sth.Simclr_Model(
-    dict_params['model']['hyperparameters'],
-    dict_params['model']['filepath_model'],
+    dict_params['model']['filepath_model'], # Set filepath to/from which to save/load model
+    base_model=torchvision.models.__dict__[dict_params['model']['torchvision_model']](pretrained=True),
+    # Freeze base_model
+    slice_point=dict_params['model']['slice_point'],
+    # Slice off the model at the slice_point and only keep the prior blocks
+    attachment_block=sth.Attachment_Blocks(
+        dict_params['model']['head_pool_method'],
+        dict_params['model']['head_pool_method_kwargs'],
+        dict_params['model']['pre_head_fc_sizes'],
+        dict_params['model']['post_head_fc_sizes'],
+        dict_params['model']['head_nonlinearity'],
+        dict_params['model']['head_nonlinearity_kwargs'],
+        ),
+    # Add the attachment blocks to the end of the base_model
+    block_to_unfreeze=dict_params['model']['block_to_unfreeze'],
+    n_block_toInclude=dict_params['model']['n_block_toInclude'],
+    # Unfreeze the model at and beyond the unfreeze_point
+    forward_version=dict_params['model']['forward_version'],
+    # Set version of the forward pass to use
+    load_model=False,
+    
 )
-### Model preferences
-
-# base_model_frozen = torchvision.models.__dict__[params['torchvision_model']](pretrained=True)
-# for param in base_model_frozen.parameters():
-#     param.requires_grad = False
-
-# model_chopped = torch.nn.Sequential(list(base_model_frozen.children())[0][:params['n_block_toInclude']])  ## 0.
-# model_chopped_pooled = torch.nn.Sequential(model_chopped, torch.nn.__dict__[params['head_pool_method']](**params['head_pool_method_kwargs']), torch.nn.Flatten())  ## 1.
-
-# model = ModelTackOn(
-#     model_chopped_pooled.to('cpu'),
-#     base_model_frozen.to('cpu'),
-#     data_dim=data_dim,
-#     pre_head_fc_sizes=params['pre_head_fc_sizes'], 
-#     post_head_fc_sizes=params['post_head_fc_sizes'], 
-#     classifier_fc_sizes=None,
-#     nonlinearity=params['head_nonlinearity'],
-#     kwargs_nonlinearity=params['head_nonlinearity_kwargs'],
-# )
-
-# mnp = [name for name, param in model.named_parameters()]  ## 'model named parameters'
-# mnp_blockNums = [name[name.find('.'):name.find('.')+8] for name in mnp]  ## pulls out the numbers just after the model name
-# mnp_nums = [path_helpers.get_nums_from_string(name) for name in mnp_blockNums]  ## converts them to numbers
-# block_to_freeze_nums = path_helpers.get_nums_from_string(params['block_to_unfreeze'])  ## converts the input parameter specifying the block to freeze into a number for comparison
-
-# m_baseName = mnp[0][:mnp[0].find('.')]
-
-# for ii, (name, param) in enumerate(model.named_parameters()):
-#     if m_baseName in name:
-# #         print(name)
-#         if mnp_nums[ii] < block_to_freeze_nums:
-#             param.requires_grad = False
-#         elif mnp_nums[ii] >= block_to_freeze_nums:
-#             param.requires_grad = True
-
-# names_layers_requiresGrad = [( param.requires_grad , name ) for name,param in list(model.named_parameters())]
-
-# model.forward = model.forward_latent
-
 
 # Specify criterion, optimizer, scheduler, learning rate, etc.
 trainer = sth.Simclr_Trainer(
@@ -173,59 +141,6 @@ trainer = sth.Simclr_Trainer(
     directory_save
 )
 ### Trainer preferences
-
-# from torch.nn import CrossEntropyLoss
-# from torch.optim import Adam
-
-# model.train();
-# model.to(device_train)
-# model.prep_contrast()
-
-# criterion = [CrossEntropyLoss()]
-# criterion = [_.to(device_train) for _ in criterion]
-# optimizer = Adam(
-#     model.parameters(), 
-#     lr=params['lr'],
-# )
-# scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer,
-#                                                    gamma=params['gamma'],
-#                                                   )
-
-# losses_train, losses_val = [], [np.nan]
-# for epoch in tqdm(range(params['n_epochs'])):
-
-#     print(f'epoch: {epoch}')
-    
-#     losses_train = training.epoch_step(
-#         dataloader_train, 
-#         model, 
-#         optimizer, 
-#         criterion,
-#         scheduler=scheduler,
-#         temperature=params['temperature'],
-#         # l2_alpha,
-#         penalty_orthogonality=params['penalty_orthogonality'],
-#         mode='semi-supervised',
-#         loss_rolling_train=losses_train, 
-#         loss_rolling_val=losses_val,
-#         device=device_train, 
-#         inner_batch_size=params['inner_batch_size'],
-#         verbose=2,
-#         verbose_update_period=1,
-#         log_function=partial(write_to_log, path_log=path_saveLog),
-# )
-    
-#     ## save loss stuff
-#     if params['prefs']['saveLogs']:
-#         np.save(path_saveLoss, losses_train)
-    
-#     ## if loss becomes NaNs, don't save the network and stop training
-#     if torch.isnan(torch.as_tensor(losses_train[-1])):
-#         break
-        
-#     ## save model
-#     if params['prefs']['saveModelIteratively']:
-#         torch.save(model.state_dict(), path_saveModel)
 
 
 

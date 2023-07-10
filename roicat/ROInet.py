@@ -177,6 +177,12 @@ class Dataloader_ROInet(util.ROICaT_Module):
             If ``True``, converts the transforms pipeline into a TorchScript
             pipeline, potentially improving calculation speed but can cause
             problems with multiprocessing. (Default is ``False``)
+        shuffle (bool):
+            If ``True``, shuffles the data. Should be set to ``True`` for
+            SimCLR training. (Default is ``False``)
+        drop_last (bool):
+            If ``True``, drops the last batch if it is not full. Should be
+            set to ``True`` for SimCLR training. (Default is ``False``)
         verbose (bool):
             If ``True``, print out extra information. (Default is ``True``)
     """
@@ -191,6 +197,8 @@ class Dataloader_ROInet(util.ROICaT_Module):
             transforms: Optional[Callable] = None,
             img_size_out: Tuple[int, int] = (224, 224),
             jit_script_transforms: bool = False,
+            shuffle: bool = False,
+            drop_last: bool = False,
             verbose: bool = True,
         ):
         self._verbose = verbose
@@ -226,8 +234,8 @@ class Dataloader_ROInet(util.ROICaT_Module):
         self.dataloader = torch.utils.data.DataLoader(
                 self.dataset,
                 batch_size=batchSize_dataloader,
-                shuffle=False,
-                drop_last=False,
+                shuffle=shuffle,
+                drop_last=drop_last,
                 pin_memory=pinMemory_dataloader,
                 num_workers=numWorkers_dataloader,
                 persistent_workers=persistentWorkers_dataloader,
