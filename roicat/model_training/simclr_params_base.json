@@ -34,9 +34,7 @@
                 "scale": [0.9, 1.1],
                 "shear": [-2, 2, -2, 2],
                 "interpolation":"bilinear",
-                "fill":0, 
-                "fillcolor": null, 
-                "resample": null
+                "fill":0
             },
             "AddGaussianNoise": {"mean":0, "std":0.0003, "prob":0.4},
             "ScaleDynamicRange": {"scaler_bounds": [0,1], "epsilon":1e-9},

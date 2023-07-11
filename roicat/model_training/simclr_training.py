@@ -17,7 +17,7 @@ import argparse
 import pickle
 import roicat
 import scipy.sparse
-import simclr_training_helpers as sth
+from roicat.model_training import simclr_training_helpers as sth
 
 path_script = sys.argv[0]
 

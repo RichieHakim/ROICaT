@@ -17,7 +17,7 @@ import pickle
 import roicat
 import tqdm
 from functools import partial
-import training
+from roicat.model_training import training
 
 from torch.nn import CrossEntropyLoss
 from torch.optim import Adam
