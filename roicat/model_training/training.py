@@ -74,7 +74,7 @@ def train_step_simCLR(
     torch.cuda.empty_cache()
     
     # logits, labels = info_nce_loss(features, batch_size=X_train_batch.shape[0]/2, n_views=2, temperature=temperature, DEVICE=X_train_batch.device)
-    logits, labels = richs_contrastive_matrix(features, batch_size=X_train_batch.shape[0]/2, n_views=2, temperature=temperature, DEVICE=X_train_batch.device)
+    logits, labels = richs_contrastive_matrix(features, batch_size=X_train_batch.shape[0]/2, n_views=2, temperature=temperature, DEVICE=X_train_batch.device) #### FOR RICH - THIS IS THE LINE IN QUESTION. I THINK "/2" NEEDS TO BE REMOVED FROM "X_train_batch.shape[0]/2"
     pos_over_neg = (torch.mean(logits[:,0]) / torch.mean(logits[:,1:])).item()
     # loss_unreduced_train = criterion(logits, labels)
 
