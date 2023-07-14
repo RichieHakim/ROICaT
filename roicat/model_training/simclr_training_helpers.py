@@ -367,15 +367,26 @@ class Simclr_Model():
             # Create example data
             x = torch.ones((1, 3, 224, 224))
 
-            out_torch_original = self.model(x)
+            self.model.prep_contrast()
+            self.model.eval()
+            out_torch_original = self.model(x).detach().numpy()
             
             model_loaded = self.load_onnx(self.filepath_model, inplace=False)
-            out_torch_loaded = model_loaded(x)
+            # model_loaded.prep_contrast()
+            model_loaded.eval()
+            out_torch_loaded = model_loaded(x).detach().numpy()
 
             # Check the Onnx output against PyTorch
-            print(torch.max(torch.abs(out_torch_original - out_torch_loaded.detach().numpy())))
-            assert np.allclose(out_torch_original, out_torch_loaded.detach().numpy(), atol=1.e-7), "The outputs from the saved and loaded models are different."
+            print(np.max(np.abs(out_torch_original - out_torch_loaded)))
+            assert np.allclose(out_torch_original, out_torch_loaded, atol=1.e-7), "The outputs from the saved and loaded models are different."
             print('Saved ONNX model is valid.')
+
+
+            self.model.prep_contrast()
+            self.model.train()
+
+            # model_loaded.prep_contrast()
+            model_loaded.train()
 
 
     def load_onnx(
