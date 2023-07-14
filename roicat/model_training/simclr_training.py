@@ -83,29 +83,30 @@ data.set_ROI_images(
 
 # Create dataset / dataloader
 ROI_images_rs = roicat.ROInet.Resizer_ROI_images(
-    np.concatenate(data.ROI_images, axis=0),
-    dict_params['data']['um_per_pixel'],
-    dict_params['data']['nan_to_num'],
-    dict_params['data']['nan_to_num_val'],
-    dict_params['data']['verbose']
+    ROI_images=np.concatenate(data.ROI_images, axis=0),
+    um_per_pixel=dict_params['data']['um_per_pixel'],
+    nan_to_num=dict_params['data']['nan_to_num'],
+    nan_to_num_val=dict_params['data']['nan_to_num_val'],
+    verbose=dict_params['data']['verbose']
 ).ROI_images_rs
 ### Resizing preferences
 
 dataloader_generator = roicat.ROInet.Dataloader_ROInet(
     ROI_images_rs,
-    dict_params['dataloader']['batchSize_dataloader'],
-    dict_params['dataloader']['pinMemory_dataloader'],
-    dict_params['dataloader']['numWorkers_dataloader'],
-    dict_params['dataloader']['persistentWorkers_dataloader'],
-    dict_params['dataloader']['prefetchFactor_dataloader'],
-    torch.nn.Sequential(
+    batchSize_dataloader=dict_params['dataloader']['batchSize_dataloader'],
+    pinMemory_dataloader=dict_params['dataloader']['pinMemory_dataloader'],
+    numWorkers_dataloader=dict_params['dataloader']['numWorkers_dataloader'],
+    persistentWorkers_dataloader=dict_params['dataloader']['persistentWorkers_dataloader'],
+    prefetchFactor_dataloader=dict_params['dataloader']['prefetchFactor_dataloader'],
+    transforms=torch.nn.Sequential(
         *[roicat.model_training.augmentation.__dict__[key](**params) for key,params in dict_params['dataloader']['transforms_invariant'].items()]
     ), # Converting dictionary of transforms to torch.nn.Sequential object
-    tuple(dict_params['dataloader']['img_size_out']),
-    dict_params['dataloader']['jit_script_transforms'],
-    dict_params['dataloader']['shuffle_dataloader'],
-    dict_params['dataloader']['drop_last_dataloader'],
-    dict_params['dataloader']['verbose'],
+    n_transforms=2,
+    img_size_out=tuple(dict_params['dataloader']['img_size_out']),
+    jit_script_transforms=dict_params['dataloader']['jit_script_transforms'],
+    shuffle_dataloader=dict_params['dataloader']['shuffle_dataloader'],
+    drop_last_dataloader=dict_params['dataloader']['drop_last_dataloader'],
+    verbose=dict_params['dataloader']['verbose'],
 )
 
 dataloader = dataloader_generator.dataloader
@@ -113,7 +114,7 @@ image_out_size = list(dataloader_generator.dataset[0][0][0].shape)
 
 # Create Model
 model_container = sth.Simclr_Model(
-    dict_params['model']['filepath_model'], # Set filepath to/from which to save/load model
+    filepath_model=dict_params['model']['filepath_model'], # Set filepath to/from which to save/load model
     base_model=torchvision.models.__dict__[dict_params['model']['torchvision_model']](pretrained=True),
     # Freeze base_model
     # slice_point=dict_params['model']['slice_point'],
@@ -141,8 +142,8 @@ model_container = sth.Simclr_Model(
 
 # Specify criterion, optimizer, scheduler, learning rate, etc.
 trainer = sth.Simclr_Trainer(
-    dataloader,
-    model_container,
+    dataloader=dataloader,
+    model_container=model_container,
     
     n_epochs=dict_params['trainer']['n_epochs'],
     device_train=dict_params['trainer']['device_train'],

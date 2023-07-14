@@ -54,7 +54,7 @@
     },
     "model": {
         "torchvision_model": "convnext_tiny",
-        "filepath_model": "/Users/josh/analysis/outputs/ROICaT/simclr_training/models/ConvNext_tiny__1_0_best__simCLR",
+        "filepath_model": "/Users/josh/analysis/outputs/ROICaT/simclr_training/models/ConvNext_tiny__1_0_best__simCLR.onnx",
         "head_pool_method": "AdaptiveAvgPool2d",
         "head_pool_method_kwargs": {"output_size": 1},
 

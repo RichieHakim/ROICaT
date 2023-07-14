@@ -18,9 +18,12 @@ import roicat
 import tqdm
 from functools import partial
 from roicat.model_training import training
+from typing import Optional, List, Tuple, Union, Dict, Any
 
 from torch.nn import CrossEntropyLoss
 from torch.optim import Adam
+
+
 
 
 def log_fn(log_str, log_file):
@@ -251,6 +254,7 @@ class Simclr_Model():
 
                 image_out_size=image_out_size,
                 )
+            self.filepath_model = filepath_model
             
     def create_model(
             self,
@@ -310,11 +314,98 @@ class Simclr_Model():
 
         self.model.forward = self.model.forward_latent
     
-    def save_onnx(self, filepath_model=None):
-        pass
+    def save_onnx(
+        self,
+        # filepath_model: Optional[str]=None,
+        allow_overwrite: bool=False,
+        check_load_onnx_valid: bool=False,
+    ):
+        """
+        Uses ONNX to save the best model as a binary file.
 
-    def load_onnx(self, filepath_model=None):
-        pass
+        Args:
+            filepath (str): 
+                The path to save the model to.
+                If None, then the model will not be saved.
+            allow_overwrite (bool):
+                Whether to allow overwriting of existing files.
+
+        Returns:
+            (onnx.ModelProto):
+                The ONNX model.
+        """
+        import datetime
+        try:
+            import onnx
+        except ImportError as e:
+            raise ImportError(f'You need to (pip) install onnx to use this method. {e}')
+        
+        ## Make sure we have what we need
+        assert self.model is not None, 'You need to fit the model first.'
+
+        # Convert the model to ONNX format
+        ## Prepare initial types
+
+        # torch.onnx.export
+        torch.onnx.export(
+            self.model,
+            (torch.ones(8, 3, 224, 224),),
+            self.filepath_model, # "onnx.pb",
+            input_names=["x"],
+            output_names=["latents"],
+            dynamic_axes={
+                # dict value: manually named axes
+                "x": {0: "batch"},
+                # list value: automatic names
+                "latents": [0],
+            }
+        )
+        
+        if check_load_onnx_valid:
+            print('Checking ONNX model...')
+            import onnxruntime as ort
+            # Create example data
+            x = torch.ones((1, 3, 224, 224))
+
+            out_torch_original = self.model(x)
+            
+            model_loaded = self.load_onnx(self.filepath_model, inplace=False)
+            out_torch_loaded = model_loaded(x)
+
+            # Check the Onnx output against PyTorch
+            print(torch.max(torch.abs(out_torch_original - out_torch_loaded.detach().numpy())))
+            assert np.allclose(out_torch_original, out_torch_loaded.detach().numpy(), atol=1.e-7), "The outputs from the saved and loaded models are different."
+            print('Saved ONNX model is valid.')
+
+
+    def load_onnx(
+            self,
+            filepath_model=None,
+            inplace=True,
+            ):
+        
+        try:
+            import onnx
+            import torch
+            import onnx2torch
+        except ImportError as e:
+            raise ImportError(f'You need to (pip) install onnx and skl2onnx to use this method. {e}')
+        
+        """
+        Initializes the runtime session.
+        """
+
+        ## load ONNX model first
+        if isinstance(filepath_model, str):
+            model = onnx2torch.convert(filepath_model)
+        else:
+            raise ValueError(f'path_or_bytes must be either a string or bytes. This error should never be raised.')
+        
+        if inplace:
+            self.model = model
+        else:
+            return model
+
 
 
 class Simclr_Trainer():
@@ -430,7 +521,7 @@ class Simclr_Trainer():
                 inner_batch_size=self.inner_batch_size,
                 verbose=2,
                 verbose_update_period=1,
-                log_function=partial(log_fn, path_log=self.path_saveLog),
+                log_function=log_function,
             )
             
             ## save loss stuff
@@ -442,4 +533,4 @@ class Simclr_Trainer():
                 break
             
             ## save model
-            self.model_container.save_onnx()
+            self.model_container.save_onnx(allow_overwrite=True, check_load_onnx_valid=True)
