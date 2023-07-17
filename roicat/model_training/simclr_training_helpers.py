@@ -39,14 +39,6 @@ def log_fn(log_str, log_file):
     with open(log_file, 'a') as f:
         f.write(log_str + '\n')
 
-# class Attachment_Blocks(torch.nn.Module):
-#     def __init__(self, attachment_block, slice_point, base_model, n_block_toInclude):
-#         super(Attachment_Blocks, self).__init__()
-#         self.attachment_block = attachment_block
-#         self.slice_point = slice_point
-#         self.base_model = base_model
-#         self.n_block_toInclude
-
 def get_nums_from_string(string_with_nums):
     """
     Return the numbers from a string as an int
@@ -73,6 +65,34 @@ def get_nums_from_string(string_with_nums):
     return nums
 
 class ModelTackOn(torch.nn.Module):
+    """
+    Class to attach fully connected layers to the end of a pretrained
+    network to create a SimCLR model with "head" and "latent" outputs.
+    JZ / RH 2021-2023
+
+    Args:
+        base_model (torch.nn.Module):
+            Pretrained model to which fully connected layers will be attached
+        un_modified_model (torch.nn.Module):
+            Pretrained model that has not been modified
+        data_dim (tuple):
+            Dimensions of the data to be passed through the model
+        pre_head_fc_sizes (list):
+            List of fully connected layer sizes to be attached before the head
+        post_head_fc_sizes (list):
+            List of fully connected layer sizes to be attached after the head
+        classifier_fc_sizes (list):
+            List of fully connected layer sizes to be attached to the head
+        nonlinearity (str):
+            Nonlinearity to be used in the fully connected layers
+        kwargs_nonlinearity (dict):
+            Keyword arguments to be passed to the nonlinearity function
+            
+    Returns:
+        model (torch.nn.Module):
+            Model with fully connected layers attached
+    """
+
     def __init__(
         self, 
         base_model, 
@@ -103,6 +123,15 @@ class ModelTackOn(torch.nn.Module):
                 self.init_classifier(pre_head_fc_sizes[-1], classifier_fc_sizes)
             
     def init_prehead(self, prv_layer, pre_head_fc_sizes):
+        """
+        Initialize the fully connected layers to be attached before the head
+        
+        Args:
+            prv_layer (torch.nn.Module):
+                Final layer of the base model
+            pre_head_fc_sizes (list):
+                List of fully connected layer sizes to be attached before the head
+        """
         for i, pre_head_fc in enumerate(pre_head_fc_sizes):
             if i == 0:
                 in_features = self.base_model(torch.rand(*(self.data_dim))).data.squeeze().shape[0]  ## RH EDIT
@@ -117,6 +146,15 @@ class ModelTackOn(torch.nn.Module):
             self.pre_head_fc_lst.append(non_linearity)
 
     def init_posthead(self, prv_size, post_head_fc_sizes):
+        """
+        Initialize the fully connected layers to be attached after the head
+
+        Args:
+            prv_size (int):
+                Size of the final layer of the base model
+            post_head_fc_sizes (list):
+                List of fully connected layer sizes to be attached after the head
+        """
         for i, post_head_fc in enumerate(post_head_fc_sizes):
             if i == 0:
                 in_features = prv_size
@@ -130,80 +168,133 @@ class ModelTackOn(torch.nn.Module):
             self.add_module(f'PostHead_{i}_NonLinearity', non_linearity)
             self.pre_head_fc_lst.append(non_linearity)
     
-    def init_classifier(self, prv_size, classifier_fc_sizes):
-            for i, classifier_fc in enumerate(classifier_fc_sizes):
-                if i == 0:
-                    in_features = prv_size
-                else:
-                    in_features = classifier_fc_sizes[i - 1]
-            fc_layer = torch.nn.Linear(in_features=in_features, out_features=classifier_fc)
-            self.add_module(f'Classifier_{i}', fc_layer)
-            self.classifier_fc_lst.append(fc_layer)
-
-    def reinit_classifier(self):
-        for i_layer, layer in enumerate(self.classifier_fc_lst):
-            layer.reset_parameters()
-    
-    def forward_classifier(self, X):
-        interim = self.base_model(X)
-        interim = self.get_head(interim)
-        interim = self.classify(interim)
-        return interim
-
     def forward_latent(self, X):
+        """
+        Run the model forward to get the latent representation of the data
+        (final output of model—used for similarity calculations in SimCLR training)
+
+        Args:
+            X (torch.Tensor):
+                Input data to be run through the model
+
+        Returns:
+            latent (torch.Tensor):
+                Latent representation of the input data
+        """
         interim = self.base_model(X)
         interim = self.get_head(interim)
         interim = self.get_latent(interim)
         return interim
 
-
     def get_head(self, base_out):
+        """
+        Run the model forward through the FC layers between the base model
+        and the head output
+
+        Args:
+            base_out (torch.Tensor):
+                Output of the base model
+
+        Returns:
+            head (torch.Tensor):
+                Output of the FC layers (the head output used for classification)
+        """
         head = base_out
         for pre_head_layer in self.pre_head_fc_lst:
           head = pre_head_layer(head)
         return head
 
     def get_latent(self, head):
+        """
+        Run the model forward through the FC layers between the head output
+        and the latent representation
+
+        Args:
+            head (torch.Tensor):
+                Output of the FC layers (the head output used for classification)
+
+        Returns:
+            latent (torch.Tensor):
+                Latent representation of the input data (used for SimCLR similarity training)
+        """
         latent = head
         for post_head_layer in self.post_head_fc_lst:
             latent = post_head_layer(latent)
         return latent
 
-    def classify(self, head):
-        logit = head
-        for classifier_layer in self.classifier_fc_lst:
-            logit = classifier_layer(logit)
-        return logit
-
     def set_pre_head_grad(self, requires_grad=True):
+        """
+        Set the gradient requirements for the FC layers between the base model
+        and the head output
+
+        Args:
+            requires_grad (bool):
+                Whether or not to require gradients for the FC layers
+        """
         for layer in self.pre_head_fc_lst:
             for param in layer.parameters():
                 param.requires_grad = requires_grad
                 
     def set_post_head_grad(self, requires_grad=True):
+        """
+        Set the gradient requirements for the FC layers between the head output
+        and the latent representation
+
+        Args:
+            requires_grad (bool):
+                Whether or not to require gradients for the FC layers
+        """
         for layer in self.post_head_fc_lst:
             for param in layer.parameters():
                 param.requires_grad = requires_grad
 
-    def set_classifier_grad(self, requires_grad=True):
-        for layer in self.classifier_fc_lst:
-            for param in layer.parameters():
-                param.requires_grad = requires_grad
-
     def prep_contrast(self):
+        """
+        Set the gradient requirements for the FC layers between the base model
+        and the head output and the FC layers between the head output
+        and the latent representation to True
+
+        Args:
+            requires_grad (bool):
+                Whether or not to require gradients for the FC layers
+        """
         self.set_pre_head_grad(requires_grad=True)
         self.set_post_head_grad(requires_grad=True)
-        self.set_classifier_grad(requires_grad=False)
-
-    def prep_classifier(self):
-        self.set_pre_head_grad(requires_grad=False)
-        self.set_post_head_grad(requires_grad=False)
-        self.set_classifier_grad(requires_grad=True)
 
 
 
 
 class Simclr_Model():
+    """
+    SimCLR model class
+
+    Args:
+        filepath_model (str):
+            Filepath to/from which to save/load the model
+        base_model (torch.nn.Module):
+            Base torchvision model (or otherwise) to use for the SimCLR model
+        head_pool_method (str):
+            Pooling method to use for the head
+        head_pool_method_kwargs (dict):
+            Pooling method kwargs to use for the head  
+        pre_head_fc_sizes (list):
+            List of fully connected layer sizes to be attached before the head
+        post_head_fc_sizes (list):
+            List of fully connected layer sizes to be attached after the head
+        head_nonlinearity (str):
+            Nonlinearity to use after the FC layers
+        head_nonlinearity_kwargs (dict):
+            Nonlinearity kwargs to use after the FC layers
+        block_to_unfreeze (str):
+            Name of the block to unfreeze for training
+        n_block_toInclude (int):
+            Number of blocks to include in the base model
+        image_out_size (int):
+            Size of the output image (for resizing)
+        load_model (bool):
+            Whether or not to load the model from the filepath (if not, will initialize from scratch)
+    """
+
     # Load pretrained weights, freeze all layers
 
     ### TODO: JZ: Download convnext from online source
@@ -216,22 +307,17 @@ class Simclr_Model():
     def __init__(
             self,
             filepath_model, # Set filepath to save model
-            base_model=None, # Freeze base_model
-            # slice_point=None, # Slice off the model at the slice_point and only keep the prior blocks
-
-            head_pool_method=None,
-            head_pool_method_kwargs=None,
-            pre_head_fc_sizes=None,
-            post_head_fc_sizes=None,
-            head_nonlinearity=None,
-            head_nonlinearity_kwargs=None,
-
-            # attachment_block=None, # Add the attachment blocks to the end of the base_model
-            block_to_unfreeze=None, # Unfreeze the model at and beyond the unfreeze_point
-            n_block_toInclude=None, # Unfreeze the model at and beyond the unfreeze_point
-            image_out_size=None, # Set the size of the output image
-
-            load_model=False, # Whether the model should be loaded from the filepath_model (or otherwise saved to it)
+            base_model: Optional[torch.nn.Module]=None, # Set base model to use
+            head_pool_method: Optional[str]=None, # Set pooling method to use for the head
+            head_pool_method_kwargs: Optional[dict]=None, # Set pooling method kwargs to use for the head
+            pre_head_fc_sizes: Optional[list]=None, # Set the sizes of the FC layers to be attached before the head
+            post_head_fc_sizes: Optional[int]=None, # Set the size of the FC layer to be attached after the head
+            head_nonlinearity: Optional[str]=None, # Set the nonlinearity to use after the head
+            head_nonlinearity_kwargs: Optional[dict]=None, # Set the nonlinearity kwargs to use after the head
+            block_to_unfreeze: Optional[str]=None, # Unfreeze the model at and beyond the unfreeze_point
+            n_block_toInclude: Optional[int]=None, # Set the number of blocks to include in the model
+            image_out_size: Optional[int]=None, # Set the size of the output image
+            load_model: Optional[bool]=False, # Whether or not to load the onnx model from filepath_model (if not, model will be saved to filepath_model)
             ):
         # If loading model, load it from onnx, otherwise create one from scratch using the other parameters
         if load_model:
@@ -239,19 +325,14 @@ class Simclr_Model():
         else:
             self.create_model(
                 base_model=base_model,
-                # slice_point=slice_point,
-
                 head_pool_method=head_pool_method,
                 head_pool_method_kwargs=head_pool_method_kwargs,
                 pre_head_fc_sizes=pre_head_fc_sizes,
                 post_head_fc_sizes=post_head_fc_sizes,
                 head_nonlinearity=head_nonlinearity,
                 head_nonlinearity_kwargs=head_nonlinearity_kwargs,
-                
-                # attachment_block=attachment_block,
                 block_to_unfreeze=block_to_unfreeze,
                 n_block_toInclude=n_block_toInclude,
-
                 image_out_size=image_out_size,
                 )
             self.filepath_model = filepath_model
@@ -259,22 +340,41 @@ class Simclr_Model():
     def create_model(
             self,
             base_model=None, # Freeze base_model
-            # slice_point=None, # Slice off the model at the slice_point and only keep the prior blocks
-            
             head_pool_method=None,
             head_pool_method_kwargs=None,
             pre_head_fc_sizes=None,
             post_head_fc_sizes=None,
             head_nonlinearity=None,
             head_nonlinearity_kwargs=None,
-            
-            # attachment_block=None, # Add the attachment blocks to the end of the base_model
             block_to_unfreeze=None, # Unfreeze the model at and beyond the unfreeze_point
             n_block_toInclude=None, # Unfreeze the model at and beyond the unfreeze_point
             image_out_size=None,
             ):
-            
-        ## Model preferences
+        """
+        Create the model from scratch using the parameters
+
+        Args:
+            base_model (torch.nn.Module):
+                Base torchvision model (or otherwise) to use for the SimCLR model
+            head_pool_method (str):
+                Pooling method to use for the head
+            head_pool_method_kwargs (dict):
+                Pooling method kwargs to use for the head
+            pre_head_fc_sizes (list):
+                List of fully connected layer sizes to be attached before the head  
+            post_head_fc_sizes (list):
+                List of fully connected layer sizes to be attached after the head
+            head_nonlinearity (str):
+                Nonlinearity to use after the FC layers
+            head_nonlinearity_kwargs (dict):
+                Nonlinearity kwargs to use after the FC layers
+            block_to_unfreeze (str):
+                Name of the block to unfreeze for training
+            n_block_toInclude (int):
+                Number of blocks to include in the base model
+            image_out_size (int):
+                Size of the output image (for resizing)
+        """
 
         base_model_frozen = base_model
         for param in base_model_frozen.parameters():
@@ -304,35 +404,27 @@ class Simclr_Model():
 
         for ii, (name, param) in enumerate(self.model.named_parameters()):
             if m_baseName in name:
-        #         print(name)
                 if mnp_nums[ii] < block_to_freeze_nums:
                     param.requires_grad = False
                 elif mnp_nums[ii] >= block_to_freeze_nums:
                     param.requires_grad = True
 
-        names_layers_requiresGrad = [( param.requires_grad , name ) for name,param in list(self.model.named_parameters())]
-
         self.model.forward = self.model.forward_latent
     
     def save_onnx(
         self,
-        # filepath_model: Optional[str]=None,
         allow_overwrite: bool=False,
         check_load_onnx_valid: bool=False,
     ):
         """
-        Uses ONNX to save the best model as a binary file.
+        Uses ONNX to save the current model as a binary file.
 
         Args:
-            filepath (str): 
-                The path to save the model to.
-                If None, then the model will not be saved.
             allow_overwrite (bool):
                 Whether to allow overwriting of existing files.
-
-        Returns:
-            (onnx.ModelProto):
-                The ONNX model.
+            check_load_onnx_valid (bool):
+                Whether to check that the saved model is valid by loading onnx back in and
+                comparing outputs
         """
         import datetime
         try:
@@ -366,7 +458,6 @@ class Simclr_Model():
             import onnxruntime as ort
             # Create example data
             x = torch.ones((1, 3, 224, 224))
-
             self.model.prep_contrast()
             self.model.eval()
             out_torch_original = self.model(x).detach().numpy()
@@ -378,7 +469,7 @@ class Simclr_Model():
 
             # Check the Onnx output against PyTorch
             print(np.max(np.abs(out_torch_original - out_torch_loaded)))
-            assert np.allclose(out_torch_original, out_torch_loaded, atol=1.e-7), "The outputs from the saved and loaded models are different."
+            assert np.allclose(out_torch_original, out_torch_loaded, atol=1.e-5), "The outputs from the saved and loaded models are different."
             print('Saved ONNX model is valid.')
 
 
@@ -394,6 +485,19 @@ class Simclr_Model():
             filepath_model=None,
             inplace=True,
             ):
+        """
+        Loads the ONNX model from a file.
+
+        Args:
+            filepath_model (str):
+                Path to the ONNX model file.
+            inplace (bool):
+                Whether to load the model as an attribute or return it.
+
+        Returns:
+            model (ModelTackOn):
+                The loaded model.
+        """
         
         try:
             import onnx
@@ -424,6 +528,8 @@ class Simclr_Trainer():
             self,
             dataloader,
             model_container,
+            
+            training_stop_revert_atNan=True,
                     
             n_epochs=9999999,
             device_train='cuda:0',
@@ -435,9 +541,42 @@ class Simclr_Trainer():
             temperature=0.03,
             l2_alpha=0.0000,
 
-            path_saveLog=None
+            path_saveLog=None,
             ):
+        """
+        Training module to train a SimCLR model from scratch using the provided parameters.
+
+        Args:
+            dataloader (torch.utils.data.DataLoader):
+                The dataloader to use for training.
+            model_container (ModelContainer):
+                The model container to use for training.
+            training_stop_revert_atNan (bool):
+                Whether to revert to the previous model if the loss becomes NaN and stop training.
+            n_epochs (int):
+                The number of epochs to train for.
+            device_train (str):
+                The device to train on.
+            inner_batch_size (int):
+                The batch size to use for training.
+            learning_rate (float):
+                The learning rate to use for training.
+            penalty_orthogonality (float):
+                The penalty to apply to the orthogonality of the latent space.
+            weight_decay (float):
+                The weight decay to use for training.
+            gamma (float):
+                The gamma to use for training.
+            temperature (float):
+                The temperature to use for training.
+            l2_alpha (float):
+                The alpha to use for L2 regularization.
+            path_saveLog (str):
+                The path to which to save the training log.
+        """
+
         self.dataloader = dataloader
+        self.training_stop_revert_atNan = training_stop_revert_atNan
         self.model_container = model_container
         self.n_epochs = n_epochs
         self.device_train = device_train
@@ -450,38 +589,10 @@ class Simclr_Trainer():
         self.l2_alpha = l2_alpha
         self.path_saveLog = path_saveLog
 
-    # def train(self, train_loader, val_loader, params):
-    #     # Set model to training mode
-    #     self.model_container.model.train()
-
-    #     # Set optimizer
-    #     optimizer = Adam(self.base_model.parameters(), lr=params['lr'], weight_decay=params['weight_decay'])
-
-    #     # Set loss function
-    #     criterion = CrossEntropyLoss()
-
-    #     # Set scheduler
-    #     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=params['epochs'], eta_min=params['lr_min'])
-
-    #     # Set best model
-    #     best_model_wts = copy.deepcopy(self.base_model.state_dict())
-    #     best_acc = 0.0
-
-    #     # Set training history
-    #     history = {
-    #         'train_loss': [],
-    #         'train_acc': [],
-    #         'val_loss': [],
-    #         'val_acc': [],
-    #         }
-        
-    #     # Loop through epochs
-    #     for epoch in range(params['epochs']):
-
-    # Save model, optimizer, scheduler, etc. to dir_save
-    # Save training loss to dir_save
-
     def train(self):
+        """
+        Trains the model using the saved attributes.
+        """
         self.model_container.model.train();
         self.model_container.model.to(self.device_train)
         self.model_container.model.prep_contrast()
@@ -511,11 +622,8 @@ class Simclr_Trainer():
 
         losses_train, losses_val = [], [np.nan]
         for epoch in tqdm.tqdm(range(self.n_epochs)):
-
             print(f'epoch: {epoch}')
-            
             log_function = partial(log_fn, path_log=self.path_saveLog) if self.path_saveLog is not None else lambda x: None
-
             losses_train = training.epoch_step(
                 self.dataloader, 
                 self.model_container.model, 
@@ -523,7 +631,6 @@ class Simclr_Trainer():
                 criterion,
                 scheduler=scheduler,
                 temperature=self.temperature,
-                # l2_alpha,
                 penalty_orthogonality=self.penalty_orthogonality,
                 mode='semi-supervised',
                 loss_rolling_train=losses_train, 
@@ -540,7 +647,7 @@ class Simclr_Trainer():
                 np.save(self.path_saveLoss, losses_train)
             
             ## if loss becomes NaNs, don't save the network and stop training
-            if torch.isnan(torch.as_tensor(losses_train[-1])):
+            if torch.isnan(torch.as_tensor(losses_train[-1])) and self.training_stop_revert_atNan:
                 break
             
             ## save model

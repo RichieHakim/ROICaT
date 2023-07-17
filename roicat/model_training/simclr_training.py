@@ -18,10 +18,11 @@ import pickle
 import roicat
 import scipy.sparse
 from roicat.model_training import simclr_training_helpers as sth
+from pathlib import Path
 
 path_script = sys.argv[0]
 
-## Argparse --directory_data, --path_params, --directory_save
+# Parse arguments for data directory, parameters, and save directory
 parser = argparse.ArgumentParser(
     prog='ROICaT SimCLR Training',
     description='This script runs the basic fit pipeline for a self-supervised ROI model using a json file containing the parameters.',
@@ -53,35 +54,41 @@ parser.add_argument(
     default='/Users/josh/analysis/outputs/ROICaT/simclr_training',
     help="Directory into which final model and evaluations should be saved.",
 )
+parser.add_argument(
+    '--test_option',
+    '-t',
+    required=False,
+    metavar='',
+    type=bool,
+    default=True,
+    help="Whether to run the script in test mode (True) or not (False). Reduces number of training examples to 3000.",
+)
 args = parser.parse_args()
 directory_data = args.directory_data
 filepath_params = args.path_params
 directory_save = args.directory_save
+test_option = args.test_option
 
 
-### Global preferences
-# device_train = torch_helpers.set_device(use_GPU=params['useGPU_dataloader'])
-
-# Load parameters from JSON
+# Load paths from directory_data and parameters from JSON
+list_filepaths_data = [Path(os.path.join(directory_data, filename)) for filename in os.listdir(directory_data)]
 with open(filepath_params) as f:
     dict_params = json.load(f)
 
-list_filepaths_data = [os.path.join(directory_data, filename) for filename in os.listdir(directory_data)]
-
-# Load data from dir_data into Data object... or load from saved Data object
-ROI_sparse_all = [scipy.sparse.load_npz(filepath_ROI_images) for filepath_ROI_images in list_filepaths_data]
+# Load data from dir_data into Data object
+ROI_sparse_all = [scipy.sparse.load_npz(filepath_ROI_images) for filepath_ROI_images in list_filepaths_data if filepath_ROI_images.suffix == '.npz']
 ROI_images = [sf_sparse.toarray().reshape(sf_sparse.shape[0], 36,36).astype(np.float32) for sf_sparse in ROI_sparse_all]
-
 data = roicat.data_importing.Data_roicat();
+
+if test_option:
+    ROI_images = [ROI_images[0][:3000]]
+
 data.set_ROI_images(
-    ROI_images=[ROI_images[0][:3000]],
+    ROI_images=ROI_images,
     um_per_pixel=dict_params['data']['um_per_pixel'],
 )
-### Data import preferences
-# params['paths']['path_data_training']
 
-
-# Create dataset / dataloader
+# Create dataset / dataloader for SimCLR training
 ROI_images_rs = roicat.ROInet.Resizer_ROI_images(
     ROI_images=np.concatenate(data.ROI_images, axis=0),
     um_per_pixel=dict_params['data']['um_per_pixel'],
@@ -89,8 +96,6 @@ ROI_images_rs = roicat.ROInet.Resizer_ROI_images(
     nan_to_num_val=dict_params['data']['nan_to_num_val'],
     verbose=dict_params['data']['verbose']
 ).ROI_images_rs
-### Resizing preferences
-
 dataloader_generator = roicat.ROInet.Dataloader_ROInet(
     ROI_images_rs,
     batchSize_dataloader=dict_params['dataloader']['batchSize_dataloader'],
@@ -108,35 +113,21 @@ dataloader_generator = roicat.ROInet.Dataloader_ROInet(
     drop_last_dataloader=dict_params['dataloader']['drop_last_dataloader'],
     verbose=dict_params['dataloader']['verbose'],
 )
-
 dataloader = dataloader_generator.dataloader
-image_out_size = list(dataloader_generator.dataset[0][0][0].shape)
 
 # Create Model
 model_container = sth.Simclr_Model(
     filepath_model=dict_params['model']['filepath_model'], # Set filepath to/from which to save/load model
     base_model=torchvision.models.__dict__[dict_params['model']['torchvision_model']](pretrained=True),
-    # Freeze base_model
-    # slice_point=dict_params['model']['slice_point'],
-    # Slice off the model at the slice_point and only keep the prior blocks
-    
-    
-    # attachment_block=sth.Attachment_Blocks(
     head_pool_method=dict_params['model']['head_pool_method'],
     head_pool_method_kwargs=dict_params['model']['head_pool_method_kwargs'],
     pre_head_fc_sizes=dict_params['model']['pre_head_fc_sizes'],
     post_head_fc_sizes=dict_params['model']['post_head_fc_sizes'],
     head_nonlinearity=dict_params['model']['head_nonlinearity'],
     head_nonlinearity_kwargs=dict_params['model']['head_nonlinearity_kwargs'],
-    # ),
-
-
-    # Add the attachment blocks to the end of the base_model
     block_to_unfreeze=dict_params['model']['block_to_unfreeze'],
     n_block_toInclude=dict_params['model']['n_block_toInclude'],
-    # Unfreeze the model at and beyond the unfreeze_point
-    image_out_size=image_out_size,
-    # Set version of the forward pass to use
+    image_out_size=list(dataloader_generator.dataset[0][0][0].shape),
     load_model=False,
 )
 
@@ -144,7 +135,6 @@ model_container = sth.Simclr_Model(
 trainer = sth.Simclr_Trainer(
     dataloader=dataloader,
     model_container=model_container,
-    
     n_epochs=dict_params['trainer']['n_epochs'],
     device_train=dict_params['trainer']['device_train'],
     inner_batch_size=dict_params['trainer']['inner_batch_size'],
@@ -156,6 +146,6 @@ trainer = sth.Simclr_Trainer(
     l2_alpha=dict_params['trainer']['l2_alpha'],
 )
 
-# Loop through epochs, batches, etc. if loss becomes NaNs, don't save the network and stop training. Otherwise, save the network as an onnx file.
-##### TODO
+# Loop through epochs, batches, etc. if loss becomes NaNs, don't save the network and stop training.
+# Otherwise, save the network as an onnx file.
 trainer.train()
