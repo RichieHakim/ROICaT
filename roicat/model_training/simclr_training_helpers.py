@@ -68,7 +68,7 @@ class ModelTackOn(torch.nn.Module):
     """
     Class to attach fully connected layers to the end of a pretrained
     network to create a SimCLR model with "head" and "latent" outputs.
-    JZ / RH 2021-2023
+    JZ, RH 2021-2023
 
     Args:
         base_model (torch.nn.Module):
@@ -81,8 +81,6 @@ class ModelTackOn(torch.nn.Module):
             List of fully connected layer sizes to be attached before the head
         post_head_fc_sizes (list):
             List of fully connected layer sizes to be attached after the head
-        classifier_fc_sizes (list):
-            List of fully connected layer sizes to be attached to the head
         nonlinearity (str):
             Nonlinearity to be used in the fully connected layers
         kwargs_nonlinearity (dict):
@@ -95,13 +93,12 @@ class ModelTackOn(torch.nn.Module):
 
     def __init__(
         self, 
-        base_model, 
-        un_modified_model,
-        data_dim=(1,3,36,36), 
-        pre_head_fc_sizes=[100], 
-        post_head_fc_sizes=[100], 
-        classifier_fc_sizes=None, 
-        nonlinearity='relu', 
+        base_model: torch.nn.Module, 
+        un_modified_model: torch.nn.Module,
+        data_dim: Tuple[int, int, int, int]=(1,3,36,36),
+        pre_head_fc_sizes: List[int]=[100],
+        post_head_fc_sizes: List[int]=[100], 
+        nonlinearity: str='relu', 
         kwargs_nonlinearity={},
     ):
             super(ModelTackOn, self).__init__()
@@ -112,15 +109,12 @@ class ModelTackOn(torch.nn.Module):
 
             self.pre_head_fc_lst = []
             self.post_head_fc_lst = []
-            self.classifier_fc_lst = []
                 
             self.nonlinearity = nonlinearity
             self.kwargs_nonlinearity = kwargs_nonlinearity
 
             self.init_prehead(final_base_layer, pre_head_fc_sizes)
             self.init_posthead(pre_head_fc_sizes[-1], post_head_fc_sizes)
-            if classifier_fc_sizes is not None:
-                self.init_classifier(pre_head_fc_sizes[-1], classifier_fc_sizes)
             
     def init_prehead(self, prv_layer, pre_head_fc_sizes):
         """
@@ -294,19 +288,10 @@ class Simclr_Model():
         load_model (bool):
             Whether or not to load the model from the filepath (if not, will initialize from scratch)
     """
-
-    # Load pretrained weights, freeze all layers
-
-    ### TODO: JZ: Download convnext from online source
-    ### Freeze untrained layers
-
-    # Chop model off at layer _, pool output, add linear layer unfrozen, flatten
-    # Loop through parameters and freeze/unfreeze relevant layers
-    # Model to device, prep_contrast, define forward
-
     def __init__(
             self,
             filepath_model, # Set filepath to save model
+            load_model: bool=False, # Whether or not to load the onnx model from filepath_model (if not, model will be saved to filepath_model)
             base_model: Optional[torch.nn.Module]=None, # Set base model to use
             head_pool_method: Optional[str]=None, # Set pooling method to use for the head
             head_pool_method_kwargs: Optional[dict]=None, # Set pooling method kwargs to use for the head
@@ -317,7 +302,6 @@ class Simclr_Model():
             block_to_unfreeze: Optional[str]=None, # Unfreeze the model at and beyond the unfreeze_point
             n_block_toInclude: Optional[int]=None, # Set the number of blocks to include in the model
             image_out_size: Optional[int]=None, # Set the size of the output image
-            load_model: Optional[bool]=False, # Whether or not to load the onnx model from filepath_model (if not, model will be saved to filepath_model)
             ):
         # If loading model, load it from onnx, otherwise create one from scratch using the other parameters
         if load_model:
@@ -390,7 +374,6 @@ class Simclr_Model():
             data_dim=data_dim,
             pre_head_fc_sizes=pre_head_fc_sizes,
             post_head_fc_sizes=post_head_fc_sizes,
-            classifier_fc_sizes=None,
             nonlinearity=head_nonlinearity,
             kwargs_nonlinearity=head_nonlinearity_kwargs,
         )
@@ -441,7 +424,7 @@ class Simclr_Model():
         # torch.onnx.export
         torch.onnx.export(
             self.model,
-            (torch.ones(8, 3, 224, 224),),
+            (torch.ones(1, 3, 224, 224),),
             self.filepath_model, # "onnx.pb",
             input_names=["x"],
             output_names=["latents"],
@@ -529,19 +512,19 @@ class Simclr_Trainer():
             dataloader,
             model_container,
             
-            training_stop_revert_atNan=True,
+            training_stop_revert_atNan = True,
                     
-            n_epochs=9999999,
-            device_train='cuda:0',
-            inner_batch_size=256,
-            learning_rate=0.01,
-            penalty_orthogonality=1.00,
-            weight_decay=0.1,
-            gamma=1.0000,
-            temperature=0.03,
-            l2_alpha=0.0000,
+            n_epochs = 9999999,
+            device_train: str = 'cuda:0',
+            inner_batch_size: int = 256,
+            learning_rate: float = 0.01,
+            penalty_orthogonality: float = 1.00,
+            weight_decay: float = 0.1,
+            gamma: float = 1.0000,
+            temperature: float = 0.03,
+            l2_alpha: float = 0.0000,
 
-            path_saveLog=None,
+            path_saveLog: Optional[str] = None,
             ):
         """
         Training module to train a SimCLR model from scratch using the provided parameters.
@@ -597,8 +580,8 @@ class Simclr_Trainer():
         self.model_container.model.to(self.device_train)
         self.model_container.model.prep_contrast()
 
-        criterion = [CrossEntropyLoss()]
-        criterion = [_.to(self.device_train) for _ in criterion]
+        criteria = [CrossEntropyLoss()]
+        criteria = [criterion.to(self.device_train) for criterion in criteria]
         optimizer = Adam(
             self.model_container.model.parameters(), 
             lr=self.learning_rate,
@@ -620,19 +603,19 @@ class Simclr_Trainer():
         self.l2_alpha
         self.path_saveLog
 
+        log_function = partial(log_fn, path_log=self.path_saveLog) if self.path_saveLog is not None else lambda x: None
+
         losses_train, losses_val = [], [np.nan]
         for epoch in tqdm.tqdm(range(self.n_epochs)):
             print(f'epoch: {epoch}')
-            log_function = partial(log_fn, path_log=self.path_saveLog) if self.path_saveLog is not None else lambda x: None
             losses_train = training.epoch_step(
                 self.dataloader, 
                 self.model_container.model, 
                 optimizer, 
-                criterion,
+                criteria,
                 scheduler=scheduler,
                 temperature=self.temperature,
                 penalty_orthogonality=self.penalty_orthogonality,
-                mode='semi-supervised',
                 loss_rolling_train=losses_train, 
                 loss_rolling_val=losses_val,
                 device=self.device_train, 

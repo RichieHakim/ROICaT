@@ -57,46 +57,22 @@ def train_step_simCLR(
 
     double_sample_weights = torch.tile(sample_weights.reshape(-1), (2,))
     contrastive_matrix_sample_weights = torch.cat((torch.ones(1, device=X_train_batch.device), double_sample_weights), dim=0)
-    # semi_double_sample_weights = torch.cat((sample_weights, sample_weights[1:]), dim=0)
-    # print(sample_weights)
-    # print(y_train_batch)
-
-    # print(sample_weights.dtype)
-
+    
     optimizer.zero_grad()
 
-    
     if inner_batch_size is None:
         features = model.forward(X_train_batch)
     else:
         features = torch.cat([model.forward(sub_batch) for sub_batch in make_batches(X_train_batch, batch_size=inner_batch_size)], dim=0)
     
     torch.cuda.empty_cache()
-    
-    # logits, labels = info_nce_loss(features, batch_size=X_train_batch.shape[0]/2, n_views=2, temperature=temperature, DEVICE=X_train_batch.device)
+
     logits, labels = richs_contrastive_matrix(features, batch_size=X_train_batch.shape[0]/2, n_views=2, temperature=temperature, DEVICE=X_train_batch.device) #### FOR RICH - THIS IS THE LINE IN QUESTION. I THINK "/2" NEEDS TO BE REMOVED FROM "X_train_batch.shape[0]/2"
     pos_over_neg = (torch.mean(logits[:,0]) / torch.mean(logits[:,1:])).item()
-    # loss_unreduced_train = criterion(logits, labels)
-
-    # print('contrastive_matrix_sample_weights', contrastive_matrix_sample_weights)
 
     loss_unreduced_train = torch.nn.functional.cross_entropy(logits, labels, weight=contrastive_matrix_sample_weights, reduction='none')
-    # loss_unreduced_train = torch.nn.functional.cross_entropy(logits, labels, reduction='none')
     loss_train = (loss_unreduced_train.float() @ double_sample_weights.float()) / double_sample_weights.float().sum()
-    # print(loss_unreduced_train[:100])
-    # print(double_sample_weights[:100])
-    # print(contrastive_matrix_sample_weights[:100])
-    # plt.figure()
-    # plt.imshow(logits[:,:20].cpu().detach(), aspect='auto', interpolation='none')
-
-    # print('double_sample_weights', double_sample_weights)
-
-    # loss_orthogonality = off_diagonal((features.T @ features)/(X_train_batch.shape[0]-1)).pow_(2).sum().div(features.shape[1])
-    # loss_orthogonality = torch.abs(torch.corrcoef(features.T) * (1 - torch.eye(features.shape[1], device=features.device))).mean()
     loss_orthogonality = off_diagonal(torch.corrcoef(features.T)).pow_(2).sum().div(features.shape[1])
-    # print(loss_train)
-    # print(loss_orthogonality)
-    # print(penalty_orthogonality * loss_orthogonality)
     loss = loss_train + penalty_orthogonality * loss_orthogonality
 
 
@@ -126,27 +102,9 @@ def off_diagonal(x):
 def L2_reg(model):
     penalized_params = util.get_trainable_parameters(model)
     penalty = 0
-    for ii,param in enumerate(penalized_params):
+    for ii, param in enumerate(penalized_params):
         penalty += torch.sum(param**2)
     return penalty
-
-def train_step_classifier( X_train_batch, y_train_batch, 
-                model, optimizer, criterion, scheduler,
-                L2_alpha
-                ):
-        penalized_params = util.get_trainable_parameters(model)
-        optimizer.zero_grad()
-
-        y_hat = model.forward_classifier(X_train_batch)
-        loss_train = criterion[0](y_hat, y_train_batch)
-        loss_train_with_reg = loss_train + L2_alpha*L2_reg(model)  # TODO: check if this is correct
-
-        loss_train_with_reg.backward()
-        optimizer.step()
-        scheduler.step()
-
-        return loss_train_with_reg.item()
-
 
 def epoch_step( dataloader, 
                 model, 
@@ -154,9 +112,7 @@ def epoch_step( dataloader,
                 criterion, 
                 scheduler=None, 
                 temperature=0.5,
-                L2_alpha=0.0, # TODO: implement for simCLR
                 penalty_orthogonality=0,
-                mode='semi-supervised',
                 loss_rolling_train=[], 
                 loss_rolling_val=[],
                 device='cpu', 
@@ -166,7 +122,7 @@ def epoch_step( dataloader,
                 verbose=False,
                 verbose_update_period=100,
                 log_function=print,
-               
+                
                 X_val=None,
                 y_val=None
                 ):
@@ -219,41 +175,29 @@ def epoch_step( dataloader,
         log_function(f'Iter: {batch}/{n_batches}, loss_train: {loss_train:.{precis}}, loss_val: {loss_val:.{precis}}, pos_over_neg: {pos_over_neg} lr: {learning_rate:.{precis}}')
 
     for i_batch, (X_batch, y_batch, idx_batch, sample_weights) in enumerate(dataloader):
-
-        # for param in util.get_trainable_parameters(model):
-        #     print(torch.linalg.norm(param))
-
         X_batch = torch.cat(X_batch, dim=0)
         X_batch = X_batch.to(device)
         y_batch = y_batch.to(device)
         
         # Get batch weights
-        if mode == 'semi-supervised':
-            loss, pos_over_neg = train_step_simCLR(
-                X_batch, 
-                y_batch, 
-                model, 
-                optimizer, 
-                criterion, 
-                scheduler, 
-                temperature, 
-                sample_weights=torch.as_tensor(sample_weights, device=device),
-                penalty_orthogonality=penalty_orthogonality,
-                inner_batch_size=inner_batch_size,
-                ) # Needs to take in weights
-        elif mode == 'supervised':
-            loss = train_step_classifier(X_batch, y_batch, model, optimizer, criterion, scheduler, L2_alpha=L2_alpha)
+        loss, pos_over_neg = train_step_simCLR(
+            X_batch, 
+            y_batch, 
+            model, 
+            optimizer, 
+            criterion, 
+            scheduler, 
+            temperature, 
+            sample_weights=torch.as_tensor(sample_weights, device=device),
+            penalty_orthogonality=penalty_orthogonality,
+            inner_batch_size=inner_batch_size,
+            ) # Needs to take in weights
         loss_rolling_train.append(loss)
         # if False and do_validation:
         #     loss = validation_Object.get_predictions()
         #     loss_rolling_val.append(loss)
         if verbose>0:
             if i_batch%verbose_update_period == 0:
-
-                # if do_validation:
-                #     loss_val = criterion[0](model(X_val), y_val)
-                #     loss_rolling_val.append(loss_val)
-                    
                 print_info( batch=i_batch,
                             n_batches=len( dataloader),
                             loss_train=loss_rolling_train[-1],
@@ -261,56 +205,7 @@ def epoch_step( dataloader,
                             pos_over_neg=pos_over_neg,
                             learning_rate=scheduler.get_last_lr()[0],
                             precis=5)
-        # if verbose>0:
-        #     print('Here a')
-        #     if i_batch%verbose_update_period == 0:
-        #         print('Here b')
-        #         print_info( batch=i_batch,
-        #                     n_batches=len( dataloader),
-        #                     loss_train=loss_rolling_train[-1],
-        #                     loss_val=loss_rolling_val[-1],
-        #                     learning_rate=scheduler.get_last_lr()[0],
-        #                     precis=5)
-        
-#         del X_batch, y_batch
-#         gc.collect()
-#         torch.cuda.empty_cache()
-#         gc.collect()
-#         torch.cuda.empty_cache()
-#         gc.collect()
-#         torch.cuda.empty_cache()
-        
     return loss_rolling_train
-
-class validation_Obj():
-    """
-    NOT IMPLEMENTED YET
-    """
-    def __init__(   self, 
-                    X_val, 
-                    y_val, 
-                    model,
-                    criterion,
-                    DEVICE='cpu',
-                    dtype_X=torch.float32,
-                    dtype_y=torch.int64):
-
-        self.X_val = torch.as_tensor(X_val, dtype=dtype_X, device=DEVICE)[:,None,...] # first dim will be subsampled from. Shape: (n_samples, n_channels, height, width)
-        self.y_val = torch.as_tensor(y_val, dtype=dtype_y, device=DEVICE) # first dim will be subsampled from.
-        self.model = model
-        self.criterion = criterion
-
-    # def get_predictions(self):
-    #     with torch.no_grad():
-    #         ### NOT IMPLEMENTED YET ###
-    #         self.X_val_transformed = 
-    #         features = self.model(self.X_val)
-        
-    #         logits, labels = info_nce_loss(features)
-    #         loss = self.criterion(logits, labels)
-
-    #         return loss.item()
-
 
 # # from https://github.com/sthalles/SimCLR/blob/1848fc934ad844ae630e6c452300433fe99acfd9/simclr.py
 def info_nce_loss(features, batch_size, n_views=2, temperature=0.5, DEVICE='cpu'):
