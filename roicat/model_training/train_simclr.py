@@ -7,14 +7,9 @@ import torch
 import torchvision
 from PIL import Image
 import matplotlib.pyplot as plt
-import time
-import copy
 import json
-import random
 import pandas as pd
-import math
 import argparse
-import pickle
 import roicat
 import scipy.sparse
 from roicat.model_training import simclr_training_helpers as sth

@@ -6,16 +6,9 @@ import torch
 import torchvision
 from PIL import Image
 import matplotlib.pyplot as plt
-import time
-import copy
-import json
-import random
 import pandas as pd
-import math
-import argparse
-import pickle
 import roicat
-import tqdm
+from roicat.model_training import simclr_training_helpers as sth
 from sklearn.decomposition import PCA
 from functools import partial
 from roicat.model_training import training
@@ -396,8 +389,8 @@ class Simclr_Model():
 
         mnp = [name for name, param in self.model.named_parameters()]  ## 'model named parameters'
         mnp_blockNums = [name[name.find('.'):name.find('.')+8] for name in mnp]  ## pulls out the numbers just after the model name
-        mnp_nums = [get_nums_from_string(name) for name in mnp_blockNums]  ## converts them to numbers
-        block_to_freeze_nums = get_nums_from_string(block_to_unfreeze)  ## converts the input parameter specifying the block to freeze into a number for comparison
+        mnp_nums = [sth.get_nums_from_string(name) for name in mnp_blockNums]  ## converts them to numbers
+        block_to_freeze_nums = sth.get_nums_from_string(block_to_unfreeze)  ## converts the input parameter specifying the block to freeze into a number for comparison
 
         m_baseName = mnp[0][:mnp[0].find('.')]
 
@@ -527,3 +520,4 @@ class Simclr_Model():
             self.model = model
         else:
             return model
+
