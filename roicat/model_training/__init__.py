@@ -1,7 +1,8 @@
 __all__ = [
     'augmentation',
+    'model',
     'simclr_training_helpers',
-    'training'
+    'train_simclr'
 ]
 
 for pkg in __all__:

@@ -1,31 +1,22 @@
 # Imports
-import sys
-import os
 import numpy as np
 import torch
-import torchvision
 from PIL import Image
 import matplotlib.pyplot as plt
-import time
-import copy
-import json
-import random
-import pandas as pd
-import math
-import argparse
-import pickle
-import roicat
 import tqdm
+
+import torch
+import torch.cuda
+from torch.autograd import Variable
+
+from sklearn.metrics import accuracy_score
 from sklearn.decomposition import PCA
+
 from functools import partial
 from roicat.model_training import training
 from typing import Optional, List, Tuple, Union, Dict, Any
-
 from torch.nn import CrossEntropyLoss
 from torch.optim import Adam
-
-
-
 
 def log_fn(log_str, log_file):
     """
@@ -64,512 +55,6 @@ def get_nums_from_string(string_with_nums):
         return None
     nums = int(''.join(nums))
     return nums
-
-class ModelTackOn(torch.nn.Module):
-    """
-    Class to attach fully connected layers to the end of a pretrained
-    network to create a SimCLR model with "head" and "latent" outputs.
-    JZ, RH 2021-2023
-
-    Args:
-        base_model (torch.nn.Module):
-            Pretrained model to which fully connected layers will be attached
-        un_modified_model (torch.nn.Module):
-            Pretrained model that has not been modified
-        data_dim (tuple):
-            Dimensions of the data to be passed through the model
-        pre_head_fc_sizes (list):
-            List of fully connected layer sizes to be attached before the head
-        post_head_fc_sizes (list):
-            List of fully connected layer sizes to be attached after the head
-        nonlinearity (str):
-            Nonlinearity to be used in the fully connected layers
-        kwargs_nonlinearity (dict):
-            Keyword arguments to be passed to the nonlinearity function
-            
-    Returns:
-        model (torch.nn.Module):
-            Model with fully connected layers attached
-    """
-
-    def __init__(
-        self, 
-        base_model: torch.nn.Module, 
-        un_modified_model: torch.nn.Module,
-        data_dim: Tuple[int, int, int, int]=(1,3,36,36),
-        pre_head_fc_sizes: List[int]=[100],
-        post_head_fc_sizes: List[int]=[100], 
-        nonlinearity: str='relu', 
-        kwargs_nonlinearity={},
-        non_singular_pca_size=None,
-    ):
-        super(ModelTackOn, self).__init__()
-        self.base_model = base_model
-        final_base_layer = list(un_modified_model.children())[-1]
-        
-        self.data_dim = data_dim
-        self.non_singular_pca_size = non_singular_pca_size
-
-        self.pre_head_fc_lst = []
-        self.post_head_fc_lst = []
-            
-        self.nonlinearity = nonlinearity
-        self.kwargs_nonlinearity = kwargs_nonlinearity
-
-        self.init_prehead(final_base_layer, pre_head_fc_sizes)
-        self.init_posthead(pre_head_fc_sizes[-1], post_head_fc_sizes)
-        
-        self.pca_layer = torch.nn.Sequential(
-            torch.nn.Linear(pre_head_fc_sizes[-1], pre_head_fc_sizes[-1]),
-            torch.nn.Linear(pre_head_fc_sizes[-1], pre_head_fc_sizes[-1], bias=False)
-        )
-        self.pca_layer[0].weight = torch.nn.Parameter(torch.tensor(np.eye(pre_head_fc_sizes[-1],),dtype=torch.float32))
-        self.pca_layer[0].bias = torch.nn.Parameter(torch.tensor(np.zeros(pre_head_fc_sizes[-1],),dtype=torch.float32))
-        self.pca_layer[1].weight = torch.nn.Parameter(torch.tensor(np.eye(pre_head_fc_sizes[-1],),dtype=torch.float32))
-        # self.pca_layer[1].bias = torch.nn.Parameter(torch.tensor(np.zeros(pre_head_fc_sizes[-1],),dtype=torch.float32))
-            
-    def init_prehead(self, prv_layer, pre_head_fc_sizes):
-        """
-        Initialize the fully connected layers to be attached before the head
-        
-        Args:
-            prv_layer (torch.nn.Module):
-                Final layer of the base model
-            pre_head_fc_sizes (list):
-                List of fully connected layer sizes to be attached before the head
-        """
-        for i, pre_head_fc in enumerate(pre_head_fc_sizes):
-            if i == 0:
-                in_features = self.base_model(torch.rand(*(self.data_dim))).data.squeeze().shape[0]  ## RH EDIT
-            else:
-                in_features = pre_head_fc_sizes[i - 1]
-            fc_layer = torch.nn.Linear(in_features=in_features, out_features=pre_head_fc)
-            self.add_module(f'PreHead_{i}', fc_layer)
-            self.pre_head_fc_lst.append(fc_layer)
-
-            non_linearity = torch.nn.__dict__[self.nonlinearity](**self.kwargs_nonlinearity)
-            self.add_module(f'PreHead_{i}_NonLinearity', non_linearity)
-            self.pre_head_fc_lst.append(non_linearity)
-
-    def init_posthead(self, prv_size, post_head_fc_sizes):
-        """
-        Initialize the fully connected layers to be attached after the head
-
-        Args:
-            prv_size (int):
-                Size of the final layer of the base model
-            post_head_fc_sizes (list):
-                List of fully connected layer sizes to be attached after the head
-        """
-        for i, post_head_fc in enumerate(post_head_fc_sizes):
-            if i == 0:
-                in_features = prv_size
-            else:
-                in_features = post_head_fc_sizes[i - 1]
-            fc_layer = torch.nn.Linear(in_features=in_features, out_features=post_head_fc)
-            self.add_module(f'PostHead_{i}', fc_layer)
-            self.post_head_fc_lst.append(fc_layer)
-
-            non_linearity = torch.nn.__dict__[self.nonlinearity](**self.kwargs_nonlinearity)    
-            self.add_module(f'PostHead_{i}_NonLinearity', non_linearity)
-            self.pre_head_fc_lst.append(non_linearity)
-    
-    def forward_latent(self, X):
-        """
-        Run the model forward to get the latent representation of the data
-        (final output of model—used for similarity calculations in SimCLR training)
-
-        Args:
-            X (torch.Tensor):
-                Input data to be run through the model
-
-        Returns:
-            latent (torch.Tensor):
-                Latent representation of the input data
-        """
-        interim = self.base_model(X)
-        head = self.get_head(interim)
-        latent = self.get_latent(head)
-        return latent
-
-    def forward_head(self, X):
-        """
-        Run the model forward to get the head output of the model (used for training PCA layers)
-
-        Args:
-            X (torch.Tensor):
-                Input data to be run through the model
-
-        Returns:
-            latent (torch.Tensor):
-                Latent representation of the input data
-        """
-        interim = self.base_model(X)
-        head = self.get_head(interim)
-        return head
-
-    def forward_head_pca(self, X):
-        """
-        Run the model forward to get the head output of the model, passed through a pre-fit PCA layer
-        (used for classification)
-
-        Args:
-            X (torch.Tensor):
-                Input data to be run through the model
-
-        Returns:
-            head_pca (torch.Tensor):
-                Head output of the model, passed through a pre-fit PCA layer
-        """
-        interim = self.base_model(X)
-        head = self.get_head(interim)
-        head_pca = self.pca_layer(head)[...,:self.non_singular_pca_size] if self.non_singular_pca_size is not None else self.pca_layer(head)
-        return head_pca
-
-    def get_head(self, base_out):
-        """
-        Run the model forward through the FC layers between the base model
-        and the head output
-
-        Args:
-            base_out (torch.Tensor):
-                Output of the base model
-
-        Returns:
-            head (torch.Tensor):
-                Output of the FC layers (the head output used for classification)
-        """
-        interim = base_out
-        for pre_head_layer in self.pre_head_fc_lst:
-            interim = pre_head_layer(interim)
-        head = interim
-        return head
-
-    def get_latent(self, head):
-        """
-        Run the model forward through the FC layers between the head output
-        and the latent representation
-
-        Args:
-            head (torch.Tensor):
-                Output of the FC layers (the head output used for classification)
-
-        Returns:
-            latent (torch.Tensor):
-                Latent representation of the input data (used for SimCLR similarity training)
-        """
-        interim = head
-        for post_head_layer in self.post_head_fc_lst:
-            interim = post_head_layer(interim)
-        latent = interim
-        return latent
-
-    def set_pca_head_grad(self, requires_grad=False):
-        """
-        Set the gradient requirements for the PCA output head layers built on the head
-
-        Args:
-            requires_grad (bool):
-                Whether or not to require gradients for the FC layers
-        """
-        for param in self.pca_layer.parameters():
-            param.requires_grad = requires_grad
-    
-    def set_pre_head_grad(self, requires_grad=True):
-        """
-        Set the gradient requirements for the FC layers between the base model
-        and the head output
-
-        Args:
-            requires_grad (bool):
-                Whether or not to require gradients for the FC layers
-        """
-        for layer in self.pre_head_fc_lst:
-            for param in layer.parameters():
-                param.requires_grad = requires_grad
-                
-    def set_post_head_grad(self, requires_grad=True):
-        """
-        Set the gradient requirements for the FC layers between the head output
-        and the latent representation
-
-        Args:
-            requires_grad (bool):
-                Whether or not to require gradients for the FC layers
-        """
-        for layer in self.post_head_fc_lst:
-            for param in layer.parameters():
-                param.requires_grad = requires_grad
-
-    def prep_contrast(self):
-        """
-        Set the gradient requirements for the FC layers between the base model
-        and the head output and the FC layers between the head output
-        and the latent representation to True
-
-        Args:
-            requires_grad (bool):
-                Whether or not to require gradients for the FC layers
-        """
-        self.set_pre_head_grad(requires_grad=True)
-        self.set_post_head_grad(requires_grad=True)
-        self.set_pca_head_grad(requires_grad=False)
-
-class Simclr_Model():
-    """
-    SimCLR model class
-
-    Args:
-        filepath_model (str):
-            Filepath to/from which to save/load the model
-        base_model (torch.nn.Module):
-            Base torchvision model (or otherwise) to use for the SimCLR model
-        head_pool_method (str):
-            Pooling method to use for the head
-        head_pool_method_kwargs (dict):
-            Pooling method kwargs to use for the head  
-        pre_head_fc_sizes (list):
-            List of fully connected layer sizes to be attached before the head
-        post_head_fc_sizes (list):
-            List of fully connected layer sizes to be attached after the head
-        head_nonlinearity (str):
-            Nonlinearity to use after the FC layers
-        head_nonlinearity_kwargs (dict):
-            Nonlinearity kwargs to use after the FC layers
-        block_to_unfreeze (str):
-            Name of the block to unfreeze for training
-        n_block_toInclude (int):
-            Number of blocks to include in the base model
-        image_out_size (int):
-            Size of the output image (for resizing)
-        load_model (bool):
-            Whether or not to load the model from the filepath (if not, will initialize from scratch)
-    """
-    def __init__(
-            self,
-            filepath_model, # Set filepath to save model
-            load_model: bool=False, # Whether or not to load the onnx model from filepath_model (if not, model will be saved to filepath_model)
-            base_model: Optional[torch.nn.Module]=None, # Set base model to use
-            head_pool_method: Optional[str]=None, # Set pooling method to use for the head
-            head_pool_method_kwargs: Optional[dict]=None, # Set pooling method kwargs to use for the head
-            pre_head_fc_sizes: Optional[list]=None, # Set the sizes of the FC layers to be attached before the head
-            post_head_fc_sizes: Optional[int]=None, # Set the size of the FC layer to be attached after the head
-            head_nonlinearity: Optional[str]=None, # Set the nonlinearity to use after the head
-            head_nonlinearity_kwargs: Optional[dict]=None, # Set the nonlinearity kwargs to use after the head
-            block_to_unfreeze: Optional[str]=None, # Unfreeze the model at and beyond the unfreeze_point
-            n_block_toInclude: Optional[int]=None, # Set the number of blocks to include in the model
-            image_out_size: Optional[int]=None, # Set the size of the output image
-            ):
-        # If loading model, load it from onnx, otherwise create one from scratch using the other parameters
-        if load_model:
-            self.load_onnx(filepath_model)
-        else:
-            self.create_model(
-                base_model=base_model,
-                head_pool_method=head_pool_method,
-                head_pool_method_kwargs=head_pool_method_kwargs,
-                pre_head_fc_sizes=pre_head_fc_sizes,
-                post_head_fc_sizes=post_head_fc_sizes,
-                head_nonlinearity=head_nonlinearity,
-                head_nonlinearity_kwargs=head_nonlinearity_kwargs,
-                block_to_unfreeze=block_to_unfreeze,
-                n_block_toInclude=n_block_toInclude,
-                image_out_size=image_out_size,
-                )
-            self.filepath_model = filepath_model
-            
-    def create_model(
-            self,
-            base_model=None, # Freeze base_model
-            head_pool_method=None,
-            head_pool_method_kwargs=None,
-            pre_head_fc_sizes=None,
-            post_head_fc_sizes=None,
-            head_nonlinearity=None,
-            head_nonlinearity_kwargs=None,
-            block_to_unfreeze=None, # Unfreeze the model at and beyond the unfreeze_point
-            n_block_toInclude=None, # Unfreeze the model at and beyond the unfreeze_point
-            image_out_size=None,
-            ):
-        """
-        Create the model from scratch using the parameters
-
-        Args:
-            base_model (torch.nn.Module):
-                Base torchvision model (or otherwise) to use for the SimCLR model
-            head_pool_method (str):
-                Pooling method to use for the head
-            head_pool_method_kwargs (dict):
-                Pooling method kwargs to use for the head
-            pre_head_fc_sizes (list):
-                List of fully connected layer sizes to be attached before the head  
-            post_head_fc_sizes (list):
-                List of fully connected layer sizes to be attached after the head
-            head_nonlinearity (str):
-                Nonlinearity to use after the FC layers
-            head_nonlinearity_kwargs (dict):
-                Nonlinearity kwargs to use after the FC layers
-            block_to_unfreeze (str):
-                Name of the block to unfreeze for training
-            n_block_toInclude (int):
-                Number of blocks to include in the base model
-            image_out_size (int):
-                Size of the output image (for resizing)
-        """
-
-        base_model_frozen = base_model
-        for param in base_model_frozen.parameters():
-            param.requires_grad = False
-
-        model_chopped = torch.nn.Sequential(list(base_model_frozen.children())[0][:n_block_toInclude])  ## 0.
-        model_chopped_pooled = torch.nn.Sequential(model_chopped, torch.nn.__dict__[head_pool_method](**head_pool_method_kwargs), torch.nn.Flatten())  ## 1.
-
-        data_dim = tuple([1] + list(image_out_size))
-        self.model = ModelTackOn(
-            model_chopped_pooled.to('cpu'),
-            base_model_frozen.to('cpu'),
-            data_dim=data_dim,
-            pre_head_fc_sizes=pre_head_fc_sizes,
-            post_head_fc_sizes=post_head_fc_sizes,
-            nonlinearity=head_nonlinearity,
-            kwargs_nonlinearity=head_nonlinearity_kwargs,
-        )
-
-        mnp = [name for name, param in self.model.named_parameters()]  ## 'model named parameters'
-        mnp_blockNums = [name[name.find('.'):name.find('.')+8] for name in mnp]  ## pulls out the numbers just after the model name
-        mnp_nums = [get_nums_from_string(name) for name in mnp_blockNums]  ## converts them to numbers
-        block_to_freeze_nums = get_nums_from_string(block_to_unfreeze)  ## converts the input parameter specifying the block to freeze into a number for comparison
-
-        m_baseName = mnp[0][:mnp[0].find('.')]
-
-        for ii, (name, param) in enumerate(self.model.named_parameters()):
-            if m_baseName in name:
-                if mnp_nums[ii] < block_to_freeze_nums:
-                    param.requires_grad = False
-                elif mnp_nums[ii] >= block_to_freeze_nums:
-                    param.requires_grad = True
-
-        self.model.forward = self.model.forward_latent
-    
-    def save_onnx(
-        self,
-        allow_overwrite: bool=False,
-        check_load_onnx_valid: bool=False,
-    ):
-        """
-        Uses ONNX to save the current model as a binary file.
-
-        Args:
-            allow_overwrite (bool):
-                Whether to allow overwriting of existing files.
-            check_load_onnx_valid (bool):
-                Whether to check that the saved model is valid by loading onnx back in and
-                comparing outputs
-        """
-
-        batch_size = 1 # Arbitrary batch_size for saving the onnx model. Can be anything after load.
-
-        import datetime
-        try:
-            import onnx
-        except ImportError as e:
-            raise ImportError(f'You need to (pip) install onnx to use this method. {e}')
-        
-        ## Make sure we have what we need
-        assert self.model is not None, 'You need to fit the model first.'
-
-        # Convert the model to ONNX format
-        ## Prepare initial types
-
-        # torch.onnx.export
-        torch.onnx.export(
-            self.model,
-            (torch.ones(batch_size, 3, 224, 224),),
-            self.filepath_model, # "onnx.pb",
-            input_names=["x"],
-            output_names=["latents"],
-            dynamic_axes={
-                # dict value: manually named axes
-                "x": {0: "batch_size"},
-                # list value: automatic names
-                "latents": [0],
-            }
-        )
-        
-        if check_load_onnx_valid:
-            self.test(torch.ones((batch_size, 3, 224, 224)))
-
-    def test(
-        self,
-        x,
-        ):
-        """
-        Tests the model by loading the ONNX model and comparing outputs.
-
-        Args:
-            x (torch.Tensor):
-                Input tensor to test the model with.
-        """
-    
-        print('Checking ONNX model...')
-        import onnxruntime as ort
-        # Create example data
-        # x = torch.ones((batch_size, 3, 224, 224))
-        self.model.prep_contrast()
-        self.model.eval()
-        out_torch_original = self.model(x).detach().numpy()
-        
-        model_loaded = self.load_onnx(self.filepath_model, inplace=False)
-        model_loaded.eval()
-        out_torch_loaded = model_loaded(x).detach().numpy()
-
-        # Check the Onnx output against PyTorch
-        print(np.max(np.abs(out_torch_original - out_torch_loaded)))
-        assert np.allclose(out_torch_original, out_torch_loaded, atol=1.e-5), "The outputs from the saved and loaded models are different."
-        print('Saved ONNX model is valid.')
-
-        self.model.prep_contrast()
-        self.model.train()
-        model_loaded.train()
-
-    def load_onnx(
-            self,
-            filepath_model=None,
-            inplace=True,
-            ):
-        """
-        Loads the ONNX model from a file.
-
-        Args:
-            filepath_model (str):
-                Path to the ONNX model file.
-            inplace (bool):
-                Whether to load the model as an attribute or return it.
-
-        Returns:
-            model (ModelTackOn):
-                The loaded model.
-        """
-        
-        try:
-            import onnx
-            import torch
-            import onnx2torch
-        except ImportError as e:
-            raise ImportError(f'You need to (pip) install onnx and skl2onnx to use this method. {e}')
-        
-        # load ONNX model first
-        if isinstance(filepath_model, str):
-            model = onnx2torch.convert(filepath_model)
-        else:
-            raise ValueError(f'path_or_bytes must be either a string or bytes. This error should never be raised.')
-        
-        if inplace:
-            self.model = model
-        else:
-            return model
-
-
 
 class Simclr_Trainer():
     def __init__(
@@ -709,7 +194,7 @@ class Simclr_Trainer():
             ## save model
             self.model_container.save_onnx(allow_overwrite=True, check_load_onnx_valid=True)
 
-    def train_pca(self, x, check_pca_layer_valid=True):
+    def train_pca(self, x, check_pca_layer_valid=True) -> Optional[torch.Tensor]:
         """
         Trains the pca layer of the model using the input data x.
 
@@ -720,8 +205,8 @@ class Simclr_Trainer():
                 Whether to check that the pca layer is valid after training.
 
         Returns:
-            torch.Tensor:
-                The output of the pca layer.
+            Optional[torch.Tensor]:
+                The output of the pca layer if check_pca_layer_valid is True.
         """
 
         self.model_container.model.eval();
@@ -744,11 +229,426 @@ class Simclr_Trainer():
         pca_sklearn.fit(output_head_zscored)
         self.model_container.model.pca_layer[1].weight = torch.nn.Parameter(torch.tensor(pca_sklearn.components_, dtype=torch.float32))
 
-        pca_output = self.model_container.model.forward_head_pca(x)
 
         if check_pca_layer_valid:
+            pca_output = self.model_container.model.forward_head_pca(x)
             assert torch.allclose(pca_output,
                             torch.tensor(pca_sklearn.transform(output_head_zscored)),
                             atol=1e-5
                             ), 'pca layer not working'
-        return pca_output
+            return pca_output
+        else:
+            return None
+
+def train_step_simCLR( 
+    X_train_batch, 
+    y_train_batch, 
+    model, 
+    optimizer,
+    criterion, 
+    scheduler, 
+    temperature, 
+    sample_weights,
+    penalty_orthogonality=0,
+    inner_batch_size=None,
+    ):
+    """
+    Performs a single training step.
+    RH 2021 / JZ 2021
+
+    Args:
+        X_train_batch (torch.Tensor):
+            Batch of training data.
+            Shape: 
+             (batch_size, n_transforms, n_channels, height, width)
+        y_train_batch (torch.Tensor):
+            Batch of training labels
+            NOT USED FOR NOW
+        model (torch.nn.Module):
+            Model to train
+        optimizer (torch.optim.Optimizer):
+            Optimizer to use
+        criterion (torch.nn.Module):
+            Loss function to use
+        scheduler (torch.optim.lr_scheduler.LambdaLR):
+            Learning rate scheduler
+        temperature (float):
+            Temperature term for the softmax
+    
+    Returns:
+        loss (float):
+            Loss of the current batch
+        pos_over_neg (float):
+            Ratio of logits of positive to negative samples
+    """
+
+    double_sample_weights = torch.tile(sample_weights.reshape(-1), (2,))
+    contrastive_matrix_sample_weights = torch.cat((torch.ones(1, device=X_train_batch.device), double_sample_weights), dim=0)
+    
+    optimizer.zero_grad()
+
+    if inner_batch_size is None:
+        features = model.forward(X_train_batch)
+    else:
+        features = torch.cat([model.forward(sub_batch) for sub_batch in make_batches(X_train_batch, batch_size=inner_batch_size)], dim=0)
+    
+    torch.cuda.empty_cache()
+
+    logits, labels = richs_contrastive_matrix(features, batch_size=X_train_batch.shape[0]/2, n_views=2, temperature=temperature, DEVICE=X_train_batch.device) #### FOR RICH - THIS IS THE LINE IN QUESTION. I THINK "/2" NEEDS TO BE REMOVED FROM "X_train_batch.shape[0]/2"
+    pos_over_neg = (torch.mean(logits[:,0]) / torch.mean(logits[:,1:])).item()
+
+    loss_unreduced_train = torch.nn.functional.cross_entropy(logits, labels, weight=contrastive_matrix_sample_weights, reduction='none')
+    loss_train = (loss_unreduced_train.float() @ double_sample_weights.float()) / double_sample_weights.float().sum()
+    loss_orthogonality = off_diagonal(torch.corrcoef(features.T)).pow_(2).sum().div(features.shape[1])
+    loss = loss_train + penalty_orthogonality * loss_orthogonality
+
+
+    loss.backward()
+    optimizer.step()
+    scheduler.step()
+
+    return loss.item(), pos_over_neg
+
+def off_diagonal(x):
+    """
+    Returns the off-diagonal elements of a matrix as a vector.
+    RH 2022
+
+    Args:
+        x (np.ndarray or torch tensor):
+            square matrix to extract off-diagonal elements from.
+
+    Returns:
+        output (np.ndarray or torch tensor):
+            off-diagonal elements of x.
+    """
+    n, m = x.shape
+    assert n == m
+    return x.reshape(-1)[:-1].reshape(n - 1, n + 1)[:, 1:].reshape(-1)
+
+def L2_reg(model):
+    penalized_params = get_trainable_parameters(model)
+    penalty = 0
+    for ii, param in enumerate(penalized_params):
+        penalty += torch.sum(param**2)
+    return penalty
+
+def epoch_step( dataloader, 
+                model, 
+                optimizer, 
+                criterion, 
+                scheduler=None, 
+                temperature=0.5,
+                penalty_orthogonality=0,
+                loss_rolling_train=[], 
+                loss_rolling_val=[],
+                device='cpu', 
+                inner_batch_size=None,
+                do_validation=False,
+                validation_Object=None,
+                verbose=False,
+                verbose_update_period=100,
+                log_function=print,
+                
+                X_val=None,
+                y_val=None
+                ):
+    """
+    Performs an epoch step.
+    RH 2021 / JZ 2021
+
+    Args:
+        dataloader (torch.utils.data.DataLoader):
+            Dataloader for the current epoch.
+            Output for X_batch should be shape:
+             (batch_size, n_transforms, n_channels, height, width)
+        model (torch.nn.Module):
+            Model to train
+        optimizer (torch.optim.Optimizer):
+            Optimizer to use
+        criterion (torch.nn.Module):
+            Loss function to use
+        scheduler (torch.optim.lr_scheduler.LambdaLR):
+            Learning rate scheduler
+        temperature (float):
+            Temperature term for the softmax
+        mode (str):
+            'semi-supervised' or 'supervised'
+        loss_rolling_train (list):
+            List of losses for the current epoch
+        device (str):
+            Device to run the loss on
+        do_validation (bool):
+            Whether to do validation
+            RH: NOT IMPLEMENTED YET. Keep False for now.
+        validation_Object (torch.utils.data.DataLoader):
+            Dataloader for the validation set
+            RH: NOT IMPLEMENTED YET.
+        loss_rolling_val (list):
+            List of losses for the validation set
+            RH: NOT IMPLEMENTED YET. 
+             Keep [None or np.nan] for now.
+        verbose (bool):
+            Whether to print out the loss
+        verbose_update_period (int):
+            How often to print out the loss
+
+    Returns:
+        loss_rolling_train (list):
+            List of losses (passed through and appended)
+    """
+
+    def print_info(batch, n_batches, loss_train, loss_val, pos_over_neg, learning_rate, precis=5):
+        log_function(f'Iter: {batch}/{n_batches}, loss_train: {loss_train:.{precis}}, loss_val: {loss_val:.{precis}}, pos_over_neg: {pos_over_neg} lr: {learning_rate:.{precis}}')
+
+    for i_batch, (X_batch, y_batch, idx_batch, sample_weights) in enumerate(dataloader):
+        X_batch = torch.cat(X_batch, dim=0)
+        X_batch = X_batch.to(device)
+        y_batch = y_batch.to(device)
+        
+        # Get batch weights
+        loss, pos_over_neg = train_step_simCLR(
+            X_batch, 
+            y_batch, 
+            model, 
+            optimizer, 
+            criterion, 
+            scheduler, 
+            temperature, 
+            sample_weights=torch.as_tensor(sample_weights, device=device),
+            penalty_orthogonality=penalty_orthogonality,
+            inner_batch_size=inner_batch_size,
+            ) # Needs to take in weights
+        loss_rolling_train.append(loss)
+        # if False and do_validation:
+        #     loss = validation_Object.get_predictions()
+        #     loss_rolling_val.append(loss)
+        if verbose>0:
+            if i_batch%verbose_update_period == 0:
+                print_info( batch=i_batch,
+                            n_batches=len( dataloader),
+                            loss_train=loss_rolling_train[-1],
+                            loss_val=loss_rolling_val[-1],
+                            pos_over_neg=pos_over_neg,
+                            learning_rate=scheduler.get_last_lr()[0],
+                            precis=5)
+    return loss_rolling_train
+
+# # from https://github.com/sthalles/SimCLR/blob/1848fc934ad844ae630e6c452300433fe99acfd9/simclr.py
+def info_nce_loss(features, batch_size, n_views=2, temperature=0.5, DEVICE='cpu'):
+    """
+    'Noise-Contrastice Estimation' loss. Loss used in SimCLR.
+    InfoNCE loss. Aka: NTXentLoss or generalized NPairsLoss.
+    
+    logits and labels should be run through 
+     CrossEntropyLoss to complete the loss.
+    CURRENTLY ONLY WORKS WITH n_views=2 (I think this can be
+     extended to larger numbers by simply reshaping logits)
+
+    Code mostly copied from: https://github.com/sthalles/SimCLR/blob/1848fc934ad844ae630e6c452300433fe99acfd9/simclr.py
+    RH 2021 / JZ 2021
+
+    demo for learning/following shapes:
+        features = torch.rand(8, 100)
+        labels = torch.cat([torch.arange(4) for i in range(2)], dim=0)
+
+        labels = (labels.unsqueeze(0) == labels.unsqueeze(1)).float()
+        print(labels)
+        features = torch.nn.functional.normalize(features, dim=1)
+        similarity_matrix = torch.matmul(features, features.T)
+        print(similarity_matrix)
+        mask = torch.eye(labels.shape[0], dtype=torch.bool)
+        labels = labels[~mask].view(labels.shape[0], -1)
+        print(labels)
+        similarity_matrix = similarity_matrix[~mask].view(similarity_matrix.shape[0], -1)
+        print(similarity_matrix)
+        positives = similarity_matrix[labels.bool()].view(labels.shape[0], -1)
+        print(positives)
+        negatives = similarity_matrix[~labels.bool()].view(similarity_matrix.shape[0], -1)
+        print(negatives)
+        logits = torch.cat([positives, negatives], dim=1)
+        print(logits)
+        labels = torch.zeros(logits.shape[0], dtype=torch.long)
+        print(labels)
+
+    Args:
+        features (torch.Tensor): 
+            Outputs of the model
+            Shape: (batch_size * n_views, n_channels, height, width)
+        batch_size (int):
+            Number of samples in the batch
+        n_views (int):
+            Number of views in the batch
+            MUST BE 2 (larger values not supported yet)
+        temperature (float):
+            Temperature term for the softmax
+        DEVICE (str):
+            Device to run the loss on
+    
+    Returns:
+        logits (torch.Tensor):
+            Class prediction logits
+            Shape: (batch_size * n_views, ((batch_size-1) * n_views)+1)
+    """
+
+    # make (double) diagonal matrix
+    labels = torch.cat([torch.arange(batch_size) for i in range(n_views)], dim=0)
+    labels = (labels.unsqueeze(0) == labels.unsqueeze(1)).float()
+    labels = labels.to(DEVICE)
+
+    # normalize to unit hypersphere
+    features = torch.nn.functional.normalize(features, dim=1)
+
+    # compute (double) covariance matrix
+    similarity_matrix = torch.matmul(features, features.T)
+    # assert similarity_matrix.shape == (
+    #     self.args.n_views * self.args.batch_size, self.args.n_views * self.args.batch_size)
+    # assert similarity_matrix.shape == labels.shape
+
+    # discard the main diagonal from both: labels and similarities matrix
+    mask = torch.eye(labels.shape[0], dtype=torch.bool).to(DEVICE)
+    labels = labels[~mask].view(labels.shape[0], -1)
+    similarity_matrix = similarity_matrix[~mask].view(similarity_matrix.shape[0], -1)
+    # assert similarity_matrix.shape == labels.shape
+
+    # select and combine multiple positives
+    positives = similarity_matrix[labels.bool()].view(labels.shape[0], -1)
+
+    # select only the negatives the negatives
+    negatives = similarity_matrix[~labels.bool()].view(similarity_matrix.shape[0], -1)
+
+    logits = torch.cat([positives, negatives], dim=1) # logits column 1 is positives, the rest of the columns are negatives
+    labels = torch.zeros(logits.shape[0], dtype=torch.long).to(DEVICE) # all labels are 0 because first column in logits is positives
+
+    logits = logits / temperature
+    return logits, labels
+
+
+# # from https://github.com/sthalles/SimCLR/blob/1848fc934ad844ae630e6c452300433fe99acfd9/simclr.py
+def richs_contrastive_matrix(features, batch_size, n_views=2, temperature=0.5, DEVICE='cpu'):
+    """
+    Modified 'Noise-Contrastice Estimation' loss. 
+    Almost identical to the method used in SimCLR.
+    Should be techincally identical to InfoNCE, 
+     but the output logits matrix is different.
+    The output logits first column is the positives,
+     and the rest of the columns are the cosine 
+     similarities of the negatives (positives )
+    InfoNCE loss. Aka: NTXentLoss or generalized NPairsLoss.
+    
+    logits and labels should be run through 
+     CrossEntropyLoss to complete the loss.
+    CURRENTLY ONLY WORKS WITH n_views=2 (I think this can be
+     extended to larger numbers by simply reshaping logits)
+
+    Code mostly copied from: https://github.com/sthalles/SimCLR/blob/1848fc934ad844ae630e6c452300433fe99acfd9/simclr.py
+    RH 2021
+
+    demo for learning/following shapes:
+        features = torch.rand(8, 100)
+        eye_prep = torch.cat([torch.arange(4) for i in range(2)], dim=0)
+        print(eye_prep)
+        multi_eye = (eye_prep.unsqueeze(0) == eye_prep.unsqueeze(1))
+        print(multi_eye)
+        features = torch.nn.functional.normalize(features, dim=1)
+        similarity_matrix = torch.matmul(features, features.T)
+        print(similarity_matrix)
+        single_eye = torch.eye(multi_eye.shape[0], dtype=torch.bool)
+        multi_cross_eye = multi_eye * ~single_eye
+        print(multi_cross_eye)
+        positives = similarity_matrix[multi_cross_eye.bool()].view(multi_cross_eye.shape[0], -1)
+        print(positives)
+        logits = torch.cat([positives, similarity_matrix*(~multi_eye)], dim=1)
+        print(logits)
+        labels = torch.zeros(logits.shape[0], dtype=torch.long)
+        print(labels)
+
+    Args:
+        features (torch.Tensor): 
+            Outputs of the model
+            Shape: (batch_size * n_views, n_channels, height, width)
+        batch_size (int):
+            Number of samples in the batch
+        n_views (int):
+            Number of views in the batch
+            MUST BE 2 (larger values not supported yet)
+        temperature (float):
+            Temperature term for the softmax
+        DEVICE (str):
+            Device to run the loss on
+    
+    Returns:
+        logits (torch.Tensor):
+            Class prediction logits
+            Shape: (batch_size * n_views, 1 + (batch_size * n_views))
+    """
+
+
+    eye_prep = torch.cat([torch.arange(batch_size) for i in range(n_views)], dim=0).to(DEVICE)
+    multi_eye = (eye_prep.unsqueeze(0) == eye_prep.unsqueeze(1))
+    features = torch.nn.functional.normalize(features, dim=1)
+    similarity_matrix = torch.matmul(features, features.T)
+    single_eye = torch.eye(multi_eye.shape[0], dtype=torch.bool).to(DEVICE)
+    multi_cross_eye = multi_eye * ~single_eye
+    positives = similarity_matrix[multi_cross_eye].view(multi_cross_eye.shape[0], -1)
+    logits = torch.cat([positives, similarity_matrix*(~multi_eye)], dim=1)
+    labels = torch.zeros(logits.shape[0], dtype=torch.long).to(DEVICE)
+
+    logits = logits / temperature
+    return logits, labels
+
+def make_batches(iterable, batch_size=None, num_batches=5, min_batch_size=0, return_idx=False):
+    """
+    Make batches of data or any other iterable.
+    RH 2021
+
+    Args:
+        iterable (iterable):
+            iterable to be batched
+        batch_size (int):
+            size of each batch
+            if None, then batch_size based on num_batches
+        num_batches (int):
+            number of batches to make
+        min_batch_size (int):
+            minimum size of each batch
+        return_idx (bool):
+            whether to return the indices of the batches.
+            output will be [start, end] idx
+    
+    Returns:
+        output (iterable):
+            batches of iterable
+    """
+    l = len(iterable)
+    
+    if batch_size is None:
+        batch_size = np.int64(np.ceil(l / num_batches))
+    
+    for start in range(0, l, batch_size):
+        end = min(start + batch_size, l)
+        if (end-start) < min_batch_size:
+            break
+        else:
+            if return_idx:
+                yield iterable[start:end], [start, end]
+            else:
+                yield iterable[start:end]
+
+def get_trainable_parameters(model):
+    """
+    Get the trainable parameters of a model.
+
+    Args:
+        model (torch.nn.Module):
+            model to get trainable parameters from
+
+    Returns:
+        params_trainable (list):
+            list of trainable parameters
+    """
+    params_trainable = []
+    for param in list(model.parameters()):
+        if param.requires_grad:
+            params_trainable.append(param)
+    return params_trainable
