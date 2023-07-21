@@ -82,6 +82,9 @@ data = roicat.data_importing.Data_roicat();
 
 if test_option:
     ROI_images = [ROI_images[0][:3000]]
+    n_epochs = 2
+else:
+    n_epochs = dict_params['trainer']['n_epochs']
 
 data.set_ROI_images(
     ROI_images=ROI_images,
@@ -135,7 +138,7 @@ model_container = sth.Simclr_Model(
 trainer = sth.Simclr_Trainer(
     dataloader=dataloader,
     model_container=model_container,
-    n_epochs=dict_params['trainer']['n_epochs'],
+    n_epochs=n_epochs,
     device_train=dict_params['trainer']['device_train'],
     inner_batch_size=dict_params['trainer']['inner_batch_size'],
     learning_rate=dict_params['trainer']['learning_rate'],
@@ -149,3 +152,12 @@ trainer = sth.Simclr_Trainer(
 # Loop through epochs, batches, etc. if loss becomes NaNs, don't save the network and stop training.
 # Otherwise, save the network as an onnx file.
 trainer.train()
+
+if test_option:
+    pass
+    # trainer.test(torch.ones((1, 3, 224, 224)))
+
+    # trainer.train_pca(torch.rand((260, 3, 224, 224)))
+    # trainer.test_pca(torch.ones((1, 3, 224, 224)))
+
+    # trainer.train_pca(torch.cat([torch.cat(x[0], dim=0) for x in trainer.dataloader], axis=0), check_pca_layer_valid=True)

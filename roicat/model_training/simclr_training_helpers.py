@@ -16,6 +16,7 @@ import argparse
 import pickle
 import roicat
 import tqdm
+from sklearn.decomposition import PCA
 from functools import partial
 from roicat.model_training import training
 from typing import Optional, List, Tuple, Union, Dict, Any
@@ -100,21 +101,32 @@ class ModelTackOn(torch.nn.Module):
         post_head_fc_sizes: List[int]=[100], 
         nonlinearity: str='relu', 
         kwargs_nonlinearity={},
+        non_singular_pca_size=None,
     ):
-            super(ModelTackOn, self).__init__()
-            self.base_model = base_model
-            final_base_layer = list(un_modified_model.children())[-1]
+        super(ModelTackOn, self).__init__()
+        self.base_model = base_model
+        final_base_layer = list(un_modified_model.children())[-1]
+        
+        self.data_dim = data_dim
+        self.non_singular_pca_size = non_singular_pca_size
+
+        self.pre_head_fc_lst = []
+        self.post_head_fc_lst = []
             
-            self.data_dim = data_dim
+        self.nonlinearity = nonlinearity
+        self.kwargs_nonlinearity = kwargs_nonlinearity
 
-            self.pre_head_fc_lst = []
-            self.post_head_fc_lst = []
-                
-            self.nonlinearity = nonlinearity
-            self.kwargs_nonlinearity = kwargs_nonlinearity
-
-            self.init_prehead(final_base_layer, pre_head_fc_sizes)
-            self.init_posthead(pre_head_fc_sizes[-1], post_head_fc_sizes)
+        self.init_prehead(final_base_layer, pre_head_fc_sizes)
+        self.init_posthead(pre_head_fc_sizes[-1], post_head_fc_sizes)
+        
+        self.pca_layer = torch.nn.Sequential(
+            torch.nn.Linear(pre_head_fc_sizes[-1], pre_head_fc_sizes[-1]),
+            torch.nn.Linear(pre_head_fc_sizes[-1], pre_head_fc_sizes[-1], bias=False)
+        )
+        self.pca_layer[0].weight = torch.nn.Parameter(torch.tensor(np.eye(pre_head_fc_sizes[-1],),dtype=torch.float32))
+        self.pca_layer[0].bias = torch.nn.Parameter(torch.tensor(np.zeros(pre_head_fc_sizes[-1],),dtype=torch.float32))
+        self.pca_layer[1].weight = torch.nn.Parameter(torch.tensor(np.eye(pre_head_fc_sizes[-1],),dtype=torch.float32))
+        # self.pca_layer[1].bias = torch.nn.Parameter(torch.tensor(np.zeros(pre_head_fc_sizes[-1],),dtype=torch.float32))
             
     def init_prehead(self, prv_layer, pre_head_fc_sizes):
         """
@@ -176,9 +188,43 @@ class ModelTackOn(torch.nn.Module):
                 Latent representation of the input data
         """
         interim = self.base_model(X)
-        interim = self.get_head(interim)
-        interim = self.get_latent(interim)
-        return interim
+        head = self.get_head(interim)
+        latent = self.get_latent(head)
+        return latent
+
+    def forward_head(self, X):
+        """
+        Run the model forward to get the head output of the model (used for training PCA layers)
+
+        Args:
+            X (torch.Tensor):
+                Input data to be run through the model
+
+        Returns:
+            latent (torch.Tensor):
+                Latent representation of the input data
+        """
+        interim = self.base_model(X)
+        head = self.get_head(interim)
+        return head
+
+    def forward_head_pca(self, X):
+        """
+        Run the model forward to get the head output of the model, passed through a pre-fit PCA layer
+        (used for classification)
+
+        Args:
+            X (torch.Tensor):
+                Input data to be run through the model
+
+        Returns:
+            head_pca (torch.Tensor):
+                Head output of the model, passed through a pre-fit PCA layer
+        """
+        interim = self.base_model(X)
+        head = self.get_head(interim)
+        head_pca = self.pca_layer(head)[...,:self.non_singular_pca_size] if self.non_singular_pca_size is not None else self.pca_layer(head)
+        return head_pca
 
     def get_head(self, base_out):
         """
@@ -193,9 +239,10 @@ class ModelTackOn(torch.nn.Module):
             head (torch.Tensor):
                 Output of the FC layers (the head output used for classification)
         """
-        head = base_out
+        interim = base_out
         for pre_head_layer in self.pre_head_fc_lst:
-          head = pre_head_layer(head)
+            interim = pre_head_layer(interim)
+        head = interim
         return head
 
     def get_latent(self, head):
@@ -211,11 +258,23 @@ class ModelTackOn(torch.nn.Module):
             latent (torch.Tensor):
                 Latent representation of the input data (used for SimCLR similarity training)
         """
-        latent = head
+        interim = head
         for post_head_layer in self.post_head_fc_lst:
-            latent = post_head_layer(latent)
+            interim = post_head_layer(interim)
+        latent = interim
         return latent
 
+    def set_pca_head_grad(self, requires_grad=False):
+        """
+        Set the gradient requirements for the PCA output head layers built on the head
+
+        Args:
+            requires_grad (bool):
+                Whether or not to require gradients for the FC layers
+        """
+        for param in self.pca_layer.parameters():
+            param.requires_grad = requires_grad
+    
     def set_pre_head_grad(self, requires_grad=True):
         """
         Set the gradient requirements for the FC layers between the base model
@@ -254,9 +313,7 @@ class ModelTackOn(torch.nn.Module):
         """
         self.set_pre_head_grad(requires_grad=True)
         self.set_post_head_grad(requires_grad=True)
-
-
-
+        self.set_pca_head_grad(requires_grad=False)
 
 class Simclr_Model():
     """
@@ -409,6 +466,9 @@ class Simclr_Model():
                 Whether to check that the saved model is valid by loading onnx back in and
                 comparing outputs
         """
+
+        batch_size = 1 # Arbitrary batch_size for saving the onnx model. Can be anything after load.
+
         import datetime
         try:
             import onnx
@@ -424,44 +484,53 @@ class Simclr_Model():
         # torch.onnx.export
         torch.onnx.export(
             self.model,
-            (torch.ones(1, 3, 224, 224),),
+            (torch.ones(batch_size, 3, 224, 224),),
             self.filepath_model, # "onnx.pb",
             input_names=["x"],
             output_names=["latents"],
             dynamic_axes={
                 # dict value: manually named axes
-                "x": {0: "batch"},
+                "x": {0: "batch_size"},
                 # list value: automatic names
                 "latents": [0],
             }
         )
         
         if check_load_onnx_valid:
-            print('Checking ONNX model...')
-            import onnxruntime as ort
-            # Create example data
-            x = torch.ones((1, 3, 224, 224))
-            self.model.prep_contrast()
-            self.model.eval()
-            out_torch_original = self.model(x).detach().numpy()
-            
-            model_loaded = self.load_onnx(self.filepath_model, inplace=False)
-            # model_loaded.prep_contrast()
-            model_loaded.eval()
-            out_torch_loaded = model_loaded(x).detach().numpy()
+            self.test(torch.ones((batch_size, 3, 224, 224)))
 
-            # Check the Onnx output against PyTorch
-            print(np.max(np.abs(out_torch_original - out_torch_loaded)))
-            assert np.allclose(out_torch_original, out_torch_loaded, atol=1.e-5), "The outputs from the saved and loaded models are different."
-            print('Saved ONNX model is valid.')
+    def test(
+        self,
+        x,
+        ):
+        """
+        Tests the model by loading the ONNX model and comparing outputs.
 
+        Args:
+            x (torch.Tensor):
+                Input tensor to test the model with.
+        """
+    
+        print('Checking ONNX model...')
+        import onnxruntime as ort
+        # Create example data
+        # x = torch.ones((batch_size, 3, 224, 224))
+        self.model.prep_contrast()
+        self.model.eval()
+        out_torch_original = self.model(x).detach().numpy()
+        
+        model_loaded = self.load_onnx(self.filepath_model, inplace=False)
+        model_loaded.eval()
+        out_torch_loaded = model_loaded(x).detach().numpy()
 
-            self.model.prep_contrast()
-            self.model.train()
+        # Check the Onnx output against PyTorch
+        print(np.max(np.abs(out_torch_original - out_torch_loaded)))
+        assert np.allclose(out_torch_original, out_torch_loaded, atol=1.e-5), "The outputs from the saved and loaded models are different."
+        print('Saved ONNX model is valid.')
 
-            # model_loaded.prep_contrast()
-            model_loaded.train()
-
+        self.model.prep_contrast()
+        self.model.train()
+        model_loaded.train()
 
     def load_onnx(
             self,
@@ -489,11 +558,7 @@ class Simclr_Model():
         except ImportError as e:
             raise ImportError(f'You need to (pip) install onnx and skl2onnx to use this method. {e}')
         
-        """
-        Initializes the runtime session.
-        """
-
-        ## load ONNX model first
+        # load ONNX model first
         if isinstance(filepath_model, str):
             model = onnx2torch.convert(filepath_model)
         else:
@@ -572,7 +637,11 @@ class Simclr_Trainer():
         self.l2_alpha = l2_alpha
         self.path_saveLog = path_saveLog
 
-    def train(self):
+    def train(
+            self,
+            bool_fitPCA: bool=True,
+            check_pca_layer_valid: Optional[bool]=True
+            ):
         """
         Trains the model using the saved attributes.
         """
@@ -633,5 +702,53 @@ class Simclr_Trainer():
             if torch.isnan(torch.as_tensor(losses_train[-1])) and self.training_stop_revert_atNan:
                 break
             
+            if bool_fitPCA:
+                ## fit PCA layer
+                self.train_pca(torch.concat([x for x in self.dataloader], axis=0), check_pca_layer_valid=check_pca_layer_valid)
+
             ## save model
             self.model_container.save_onnx(allow_overwrite=True, check_load_onnx_valid=True)
+
+    def train_pca(self, x, check_pca_layer_valid=True):
+        """
+        Trains the pca layer of the model using the input data x.
+
+        Args:
+            x (torch.Tensor):
+                The input data to use for training.
+            check_pca_layer_valid (bool):
+                Whether to check that the pca layer is valid after training.
+
+        Returns:
+            torch.Tensor:
+                The output of the pca layer.
+        """
+
+        self.model_container.model.eval();
+
+        output_head = self.model_container.model.forward_head(x)
+        output_head_mean = output_head.mean(dim=0)
+        output_head_std = output_head.std(dim=0)
+
+        self.model_container.model.pca_layer[0].weight = torch.nn.Parameter(torch.diag(1/output_head_std))
+        self.model_container.model.pca_layer[0].bias = torch.nn.Parameter(-output_head_mean/output_head_std)
+
+        output_head_zscored = self.model_container.model.pca_layer[0](output_head)
+        
+        if check_pca_layer_valid:
+            assert torch.allclose(output_head_zscored, (output_head - output_head_mean) / output_head_std, atol=torch.tensor(1e-4)), 'zscore layer not working'
+
+        output_head_zscored = output_head_zscored.detach().cpu().numpy()
+
+        pca_sklearn = PCA()
+        pca_sklearn.fit(output_head_zscored)
+        self.model_container.model.pca_layer[1].weight = torch.nn.Parameter(torch.tensor(pca_sklearn.components_, dtype=torch.float32))
+
+        pca_output = self.model_container.model.forward_head_pca(x)
+
+        if check_pca_layer_valid:
+            assert torch.allclose(pca_output,
+                            torch.tensor(pca_sklearn.transform(output_head_zscored)),
+                            atol=1e-5
+                            ), 'pca layer not working'
+        return pca_output
