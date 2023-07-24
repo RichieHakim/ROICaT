@@ -13,7 +13,6 @@ from sklearn.metrics import accuracy_score
 from sklearn.decomposition import PCA
 
 from functools import partial
-from roicat.model_training import training
 from typing import Optional, List, Tuple, Union, Dict, Any
 from torch.nn import CrossEntropyLoss
 from torch.optim import Adam
@@ -162,7 +161,7 @@ class Simclr_Trainer():
         losses_train, losses_val = [], [np.nan]
         for epoch in tqdm.tqdm(range(self.n_epochs)):
             print(f'epoch: {epoch}')
-            losses_train = training.epoch_step(
+            losses_train = epoch_step(
                 self.dataloader, 
                 self.model_container.model, 
                 optimizer, 
@@ -213,10 +212,11 @@ class Simclr_Trainer():
 
         output_head = self.model_container.model.forward_head(x)
         output_head_mean = output_head.mean(dim=0)
-        output_head_std = output_head.std(dim=0)
 
-        self.model_container.model.pca_layer[0].weight = torch.nn.Parameter(torch.diag(1/output_head_std))
-        self.model_container.model.pca_layer[0].bias = torch.nn.Parameter(-output_head_mean/output_head_std)
+        self.model_container.model.pca_layer[0].weight = torch.nn.Parameter(torch.eye(output_head_mean.shape[0]))
+        # output_head_std = output_head.std(dim=0)
+        # self.model_container.model.pca_layer[0].weight = torch.nn.Parameter(torch.diag(1/output_head_std))
+        self.model_container.model.pca_layer[0].bias = torch.nn.Parameter(-output_head_mean)
 
         output_head_zscored = self.model_container.model.pca_layer[0](output_head)
         

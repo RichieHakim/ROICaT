@@ -7,15 +7,14 @@ import torchvision
 from PIL import Image
 import matplotlib.pyplot as plt
 import pandas as pd
-import roicat
-from roicat.model_training import simclr_training_helpers as sth
 from sklearn.decomposition import PCA
 from functools import partial
-from roicat.model_training import training
 from typing import Optional, List, Tuple, Union, Dict, Any
 
 from torch.nn import CrossEntropyLoss
 from torch.optim import Adam
+
+from . import simclr_training_helpers as sth
 
 class ModelTackOn(torch.nn.Module):
     """

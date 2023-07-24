@@ -10,10 +10,13 @@ import matplotlib.pyplot as plt
 import json
 import pandas as pd
 import argparse
-import roicat
 import scipy.sparse
-from roicat.model_training import simclr_training_helpers as sth
 from pathlib import Path
+
+import roicat.data_importing
+import roicat.ROInet
+import roicat.model_training.augmentation
+import roicat.model_training.simclr_training_helpers as sth
 
 path_script = sys.argv[0]
 
@@ -146,7 +149,7 @@ trainer = sth.Simclr_Trainer(
 
 # Loop through epochs, batches, etc. if loss becomes NaNs, don't save the network and stop training.
 # Otherwise, save the network as an onnx file.
-trainer.train()
+# trainer.train()
 
 if test_option:
     pass
@@ -155,4 +158,4 @@ if test_option:
     # trainer.train_pca(torch.rand((260, 3, 224, 224)))
     # trainer.test_pca(torch.ones((1, 3, 224, 224)))
 
-    # trainer.train_pca(torch.cat([torch.cat(x[0], dim=0) for x in trainer.dataloader], axis=0), check_pca_layer_valid=True)
+    trainer.train_pca(torch.cat([torch.cat(x[0], dim=0) for x in trainer.dataloader], axis=0), check_pca_layer_valid=True)
