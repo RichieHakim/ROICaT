@@ -432,9 +432,8 @@ def system_info(verbose: bool = False,) -> Dict:
     pkgs_dict = {i.key: i.version for i in pkg_resources.working_set}
 
     ## roicat
-    import roicat
     import time
-    roicat_version = roicat.__version__
+    roicat_version = pkg_resources.get_distribution("roicat").version        
     roicat_fileDate = time.ctime(os.path.getctime(pkg_resources.get_distribution("roicat").location))
     roicat_stuff = {'version': roicat_version, 'date_installed': roicat_fileDate}
     print(f'== ROICaT Version ==: {roicat_version}') if verbose else None
