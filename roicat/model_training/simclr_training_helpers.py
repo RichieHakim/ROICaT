@@ -122,9 +122,7 @@ class Simclr_Trainer():
         self.path_saveLog = path_saveLog
 
     def train(
-            self,
-            bool_fitPCA: bool=True,
-            check_pca_layer_valid: Optional[bool]=True
+            self
             ):
         """
         Trains the model using the saved attributes.
@@ -185,60 +183,9 @@ class Simclr_Trainer():
             ## if loss becomes NaNs, don't save the network and stop training
             if torch.isnan(torch.as_tensor(losses_train[-1])) and self.training_stop_revert_atNan:
                 break
-            
-            if bool_fitPCA:
-                ## fit PCA layer
-                self.train_pca(torch.concat([x for x in self.dataloader], axis=0), check_pca_layer_valid=check_pca_layer_valid)
 
             ## save model
-            self.model_container.save_onnx(allow_overwrite=True, check_load_onnx_valid=True)
-
-    def train_pca(self, x, check_pca_layer_valid=True) -> Optional[torch.Tensor]:
-        """
-        Trains the pca layer of the model using the input data x.
-
-        Args:
-            x (torch.Tensor):
-                The input data to use for training.
-            check_pca_layer_valid (bool):
-                Whether to check that the pca layer is valid after training.
-
-        Returns:
-            Optional[torch.Tensor]:
-                The output of the pca layer if check_pca_layer_valid is True.
-        """
-
-        self.model_container.model.eval();
-
-        output_head = self.model_container.model.forward_head(x)
-        output_head_mean = output_head.mean(dim=0)
-
-        self.model_container.model.pca_layer[0].weight = torch.nn.Parameter(torch.eye(output_head_mean.shape[0]))
-        # output_head_std = output_head.std(dim=0)
-        # self.model_container.model.pca_layer[0].weight = torch.nn.Parameter(torch.diag(1/output_head_std))
-        self.model_container.model.pca_layer[0].bias = torch.nn.Parameter(-output_head_mean)
-
-        output_head_zscored = self.model_container.model.pca_layer[0](output_head)
-        
-        if check_pca_layer_valid:
-            assert torch.allclose(output_head_zscored, (output_head - output_head_mean) / output_head_std, atol=torch.tensor(1e-4)), 'zscore layer not working'
-
-        output_head_zscored = output_head_zscored.detach().cpu().numpy()
-
-        pca_sklearn = PCA()
-        pca_sklearn.fit(output_head_zscored)
-        self.model_container.model.pca_layer[1].weight = torch.nn.Parameter(torch.tensor(pca_sklearn.components_, dtype=torch.float32))
-
-
-        if check_pca_layer_valid:
-            pca_output = self.model_container.model.forward_head_pca(x)
-            assert torch.allclose(pca_output,
-                            torch.tensor(pca_sklearn.transform(output_head_zscored)),
-                            atol=1e-5
-                            ), 'pca layer not working'
-            return pca_output
-        else:
-            return None
+            self.model_container.save_onnx(check_load_onnx_valid=True)
 
 def train_step_simCLR( 
     X_train_batch, 
@@ -288,9 +235,9 @@ def train_step_simCLR(
     optimizer.zero_grad()
 
     if inner_batch_size is None:
-        features = model.forward(X_train_batch)
+        features = model.forward_latent(X_train_batch)
     else:
-        features = torch.cat([model.forward(sub_batch) for sub_batch in make_batches(X_train_batch, batch_size=inner_batch_size)], dim=0)
+        features = torch.cat([model.forward_latent(sub_batch) for sub_batch in make_batches(X_train_batch, batch_size=inner_batch_size)], dim=0)
     
     torch.cuda.empty_cache()
 
@@ -652,3 +599,102 @@ def get_trainable_parameters(model):
         if param.requires_grad:
             params_trainable.append(param)
     return params_trainable
+
+class Simclr_PCA_Trainer():
+    def __init__(
+            self,
+            dataloader,
+            model_container,
+
+            center: bool = True,
+            scale: bool = False,
+            path_saveLog: Optional[str] = None,
+
+            # use_iterated_learning: bool = False,
+            ):
+        """
+        Training module to train a SimCLR model from scratch using the provided parameters.
+
+        Args:
+            dataloader (torch.utils.data.DataLoader):
+                The dataloader to use for training.
+            model_container (ModelContainer):
+                The model container to use for training.
+            training_stop_revert_atNan (bool):
+                Whether to revert to the previous model if the loss becomes NaN and stop training.
+            n_epochs (int):
+                The number of epochs to train for.
+            device_train (str):
+                The device to train on.
+            inner_batch_size (int):
+                The batch size to use for training.
+            learning_rate (float):
+                The learning rate to use for training.
+            penalty_orthogonality (float):
+                The penalty to apply to the orthogonality of the latent space.
+            weight_decay (float):
+                The weight decay to use for training.
+            gamma (float):
+                The gamma to use for training.
+            temperature (float):
+                The temperature to use for training.
+            l2_alpha (float):
+                The alpha to use for L2 regularization.
+            path_saveLog (str):
+                The path to which to save the training log.
+        """
+
+        self.dataloader = dataloader
+        self.model_container = model_container
+        self.center = center
+        self.scale = scale
+        self.path_saveLog = path_saveLog
+
+    def train(self, check_pca_layer_valid: bool=True):
+        """
+        Trains the pca layer of the model using the input data x.
+
+        Args:
+            x (torch.Tensor):
+                The input data to use for training.
+            check_pca_layer_valid (bool):
+                Whether to check that the pca layer is valid after training.
+
+        Returns:
+            Optional[torch.Tensor]:
+                The output of the pca layer if check_pca_layer_valid is True.
+        """
+        # self.model_container.model.train();
+        # self.model_container.model.to(self.device_train)
+        # self.model_container.model.prep_contrast()
+
+        x = torch.cat([torch.cat(data_subset[0], dim=0) for data_subset in self.dataloader], axis=0)
+
+        output_head = self.model_container.model(x)
+
+        output_head_scaler = output_head.std(dim=0) if self.scale else torch.ones_like(output_head.shape[1])
+        output_head_centerer = output_head.mean(dim=0)/output_head_scaler if self.center else torch.zeros_like(output_head.shape[1])
+
+        self.model_container.model.pca_layer[0].weight = torch.nn.Parameter(torch.diag(1/output_head_scaler))        
+        self.model_container.model.pca_layer[0].bias = torch.nn.Parameter(-output_head_centerer)
+
+        output_head_centered = self.model_container.model.pca_layer[0](output_head)
+        
+        if check_pca_layer_valid:
+            assert torch.allclose(output_head_centered, (output_head - output_head_centerer) / output_head_scaler, atol=torch.tensor(1e-4)), 'zscore layer not working'
+
+        output_head_centered = output_head_centered.detach().cpu().numpy()
+
+        pca_sklearn = PCA()
+        pca_sklearn.fit(output_head_centered)
+        self.model_container.model.pca_layer[1].weight = torch.nn.Parameter(torch.tensor(pca_sklearn.components_, dtype=torch.float32))
+
+        if check_pca_layer_valid:
+            pca_output = self.model_container.model(x)
+            assert torch.allclose(pca_output,
+                            torch.tensor(pca_sklearn.transform(output_head_centered)),
+                            atol=1e-5
+                            ), 'pca layer not working'
+        
+        ## save model
+        self.model_container.save_onnx(allow_overwrite=True, check_load_onnx_valid=True)

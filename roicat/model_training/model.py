@@ -298,8 +298,8 @@ class Simclr_Model():
     """
     def __init__(
             self,
-            filepath_model, # Set filepath to save model
-            load_model: bool=False, # Whether or not to load the onnx model from filepath_model (if not, model will be saved to filepath_model)
+            filepath_model_save: Optional[torch.nn.Module]=None, # Set filepath to load model
+            filepath_model_load: Optional[torch.nn.Module]=None, # Set filepath to save model
             base_model: Optional[torch.nn.Module]=None, # Set base model to use
             head_pool_method: Optional[str]=None, # Set pooling method to use for the head
             head_pool_method_kwargs: Optional[dict]=None, # Set pooling method kwargs to use for the head
@@ -310,10 +310,26 @@ class Simclr_Model():
             block_to_unfreeze: Optional[str]=None, # Unfreeze the model at and beyond the unfreeze_point
             n_block_toInclude: Optional[int]=None, # Set the number of blocks to include in the model
             image_out_size: Optional[int]=None, # Set the size of the output image
+            forward_version: Optional[str]=None, # Set the version of the forward pass to use
             ):
+        
+        assert filepath_model_load is not None or (
+            base_model is not None and
+            head_pool_method is not None and
+            head_pool_method_kwargs is not None and
+            pre_head_fc_sizes is not None and
+            post_head_fc_sizes is not None and
+            head_nonlinearity is not None and
+            head_nonlinearity_kwargs is not None and
+            block_to_unfreeze is not None and
+            n_block_toInclude is not None and
+            image_out_size is not None and
+            forward_version is not None
+            ), "Either filepath_model_load or every other parameter must be set (except filepath_model_save)"
+
         # If loading model, load it from onnx, otherwise create one from scratch using the other parameters
-        if load_model:
-            self.load_onnx(filepath_model)
+        if filepath_model_load is not None:
+            self.load_onnx(filepath_model_load)
         else:
             self.create_model(
                 base_model=base_model,
@@ -326,8 +342,10 @@ class Simclr_Model():
                 block_to_unfreeze=block_to_unfreeze,
                 n_block_toInclude=n_block_toInclude,
                 image_out_size=image_out_size,
+                forward_version=forward_version
                 )
-            self.filepath_model = filepath_model
+            self.filepath_model_save = filepath_model_save
+            self.filepath_model_load = filepath_model_load
             
     def create_model(
             self,
@@ -341,6 +359,7 @@ class Simclr_Model():
             block_to_unfreeze=None, # Unfreeze the model at and beyond the unfreeze_point
             n_block_toInclude=None, # Unfreeze the model at and beyond the unfreeze_point
             image_out_size=None,
+            forward_version=None
             ):
         """
         Create the model from scratch using the parameters
@@ -400,11 +419,10 @@ class Simclr_Model():
                 elif mnp_nums[ii] >= block_to_freeze_nums:
                     param.requires_grad = True
 
-        self.model.forward = self.model.forward_latent
+        self.model.forward = self.model.forward_latent if forward_version == 'forward_latent' else self.model.forward_head
     
     def save_onnx(
         self,
-        allow_overwrite: bool=False,
         check_load_onnx_valid: bool=False,
     ):
         """
@@ -417,6 +435,8 @@ class Simclr_Model():
                 Whether to check that the saved model is valid by loading onnx back in and
                 comparing outputs
         """
+
+        assert self.filepath_model_save is not None, 'You need to specify a filepath to save the model to.'
 
         batch_size = 1 # Arbitrary batch_size for saving the onnx model. Can be anything after load.
 
@@ -436,7 +456,7 @@ class Simclr_Model():
         torch.onnx.export(
             self.model,
             (torch.ones(batch_size, 3, 224, 224),),
-            self.filepath_model, # "onnx.pb",
+            self.filepath_model_save, # "onnx.pb",
             input_names=["x"],
             output_names=["latents"],
             dynamic_axes={
@@ -470,7 +490,7 @@ class Simclr_Model():
         self.model.eval()
         out_torch_original = self.model(x).detach().numpy()
         
-        model_loaded = self.load_onnx(self.filepath_model, inplace=False)
+        model_loaded = self.load_onnx(self.filepath_model_save, inplace=False)
         model_loaded.eval()
         out_torch_loaded = model_loaded(x).detach().numpy()
 
@@ -502,6 +522,8 @@ class Simclr_Model():
                 The loaded model.
         """
         
+        assert filepath_model is not None, 'You need to specify a filepath from which to load the model.'
+
         try:
             import onnx
             import torch

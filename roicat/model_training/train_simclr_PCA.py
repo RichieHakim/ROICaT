@@ -74,6 +74,8 @@ list_filepaths_data = [Path(os.path.join(directory_data, filename)) for filename
 with open(filepath_params) as f:
     dict_params = json.load(f)
 
+assert dict_params['trainer']['forward_version'] == 'forward_head', "This script is only for training SimCLR with ."
+
 # Load data from dir_data into Data object
 ROI_sparse_all = [scipy.sparse.load_npz(filepath_ROI_images) for filepath_ROI_images in list_filepaths_data if filepath_ROI_images.suffix == '.npz']
 ROI_images = [sf_sparse.toarray().reshape(sf_sparse.shape[0], 36,36).astype(np.float32) for sf_sparse in ROI_sparse_all]
@@ -90,7 +92,7 @@ data.set_ROI_images(
     um_per_pixel=dict_params['data']['um_per_pixel'],
 )
 
-# Create dataset / dataloader for SimCLR training
+# Create dataset / dataloader without augmentations for PCA training
 ROI_images_rs = ROInet.Resizer_ROI_images(
     ROI_images=np.concatenate(data.ROI_images, axis=0),
     um_per_pixel=dict_params['data']['um_per_pixel'],
@@ -98,6 +100,7 @@ ROI_images_rs = ROInet.Resizer_ROI_images(
     nan_to_num_val=dict_params['data']['nan_to_num_val'],
     verbose=dict_params['data']['verbose']
 ).ROI_images_rs
+
 dataloader_generator = ROInet.Dataloader_ROInet(
     ROI_images_rs,
     batchSize_dataloader=dict_params['dataloader']['batchSize_dataloader'],
@@ -105,9 +108,7 @@ dataloader_generator = ROInet.Dataloader_ROInet(
     numWorkers_dataloader=dict_params['dataloader']['numWorkers_dataloader'],
     persistentWorkers_dataloader=dict_params['dataloader']['persistentWorkers_dataloader'],
     prefetchFactor_dataloader=dict_params['dataloader']['prefetchFactor_dataloader'],
-    transforms=torch.nn.Sequential(
-        *[augmentation.__dict__[key](**params) for key,params in dict_params['dataloader']['transforms_invariant'].items()]
-    ), # Converting dictionary of transforms to torch.nn.Sequential object
+    transforms=None,
     n_transforms=2,
     img_size_out=tuple(dict_params['dataloader']['img_size_out']),
     jit_script_transforms=dict_params['dataloader']['jit_script_transforms'],
@@ -117,46 +118,17 @@ dataloader_generator = ROInet.Dataloader_ROInet(
 )
 dataloader = dataloader_generator.dataloader
 
-# Create Model
+# Load Model
 model_container = model.Simclr_Model(
-    filepath_model_save=dict_params['model']['filepath_model_noPCA'], # Set filepath to/from which to save/load model
-    base_model=torchvision.models.__dict__[dict_params['model']['torchvision_model']](weights='DEFAULT'),
-    head_pool_method=dict_params['model']['head_pool_method'],
-    head_pool_method_kwargs=dict_params['model']['head_pool_method_kwargs'],
-    pre_head_fc_sizes=dict_params['model']['pre_head_fc_sizes'],
-    post_head_fc_sizes=dict_params['model']['post_head_fc_sizes'],
-    head_nonlinearity=dict_params['model']['head_nonlinearity'],
-    head_nonlinearity_kwargs=dict_params['model']['head_nonlinearity_kwargs'],
-    block_to_unfreeze=dict_params['model']['block_to_unfreeze'],
-    n_block_toInclude=dict_params['model']['n_block_toInclude'],
-    image_out_size=list(dataloader_generator.dataset[0][0][0].shape),
-    forward_version=dict_params['trainer']['forward_version'],
+    filepath_model_load=dict_params['model']['filepath_model_noPCA'],
+    filepath_model_save=dict_params['model']['filepath_model_wPCA'],
 )
 
-# Specify criterion, optimizer, scheduler, learning rate, etc.
-trainer = sth.Simclr_Trainer(
+# Specify dataloader and model conatainer for PCA training
+trainer = sth.Simclr_PCA_Trainer(
     dataloader=dataloader,
-    model_container=model_container,
-    n_epochs=n_epochs,
-    device_train=dict_params['trainer']['device_train'],
-    inner_batch_size=dict_params['trainer']['inner_batch_size'],
-    learning_rate=dict_params['trainer']['learning_rate'],
-    penalty_orthogonality=dict_params['trainer']['penalty_orthogonality'],
-    weight_decay=dict_params['trainer']['weight_decay'],
-    gamma=dict_params['trainer']['gamma'],
-    temperature=dict_params['trainer']['temperature'],
-    l2_alpha=dict_params['trainer']['l2_alpha'],
+    model_container=model_container
 )
 
-# Loop through epochs, batches, etc. if loss becomes NaNs, don't save the network and stop training.
-# Otherwise, save the network as an onnx file.
+# Fit PCA layer and resave to new onnx file
 trainer.train()
-
-if test_option:
-    pass
-    # trainer.test(torch.ones((1, 3, 224, 224)))
-
-    # trainer.train_pca(torch.rand((260, 3, 224, 224)))
-    # trainer.test_pca(torch.ones((1, 3, 224, 224)))
-
-    # trainer.train_pca(torch.cat([torch.cat(x[0], dim=0) for x in trainer.dataloader], axis=0), check_pca_layer_valid=True)

@@ -54,7 +54,8 @@
     },
     "model": {
         "torchvision_model": "convnext_tiny",
-        "filepath_model": "/Users/josh/analysis/outputs/ROICaT/simclr_training/models/ConvNext_tiny__1_0_best__simCLR.onnx",
+        "filepath_model_noPCA": "/Users/josh/analysis/outputs/ROICaT/simclr_training/models/ConvNext_tiny__1_0_best_simCLR.onnx",
+        "filepath_model_wPCA": "/Users/josh/analysis/outputs/ROICaT/simclr_training/models/ConvNext_tiny__1_0_best_simCLR_PCA.onnx",
         "head_pool_method": "AdaptiveAvgPool2d",
         "head_pool_method_kwargs": {"output_size": 1},
 
@@ -75,6 +76,7 @@
         "weight_decay": 0.1,
         "gamma": 1.0000,
         "temperature": 0.03,
-        "l2_alpha": 0.0000
-    }   
+        "l2_alpha": 0.0000,
+        "forward_version": "forward_head"
+    }
 }
