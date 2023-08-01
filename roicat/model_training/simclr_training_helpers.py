@@ -664,38 +664,50 @@ class Simclr_PCA_Trainer():
         # x = torch.cat([torch.cat(data_subset[0], dim=0) for data_subset in self.dataloader], axis=0)
         # output_head = self.model_container.model(x)
         output_head = torch.cat([self.model_container.model(torch.cat(data_subset[0], dim=0)) for data_subset in self.dataloader], dim=0)
+        pca_size = output_head.shape[1]
 
         output_head_scaler = output_head.std(dim=0) if self.scale else torch.ones_like(output_head.std(dim=0))
         output_head_centerer = output_head.mean(dim=0)/output_head_scaler if self.center else torch.zeros_like(output_head.mean(dim=0)/output_head_scaler)
 
-        self.model_container.model.get_submodule('pca_layer/pca_layer/0/Gemm').weight = torch.nn.Parameter(torch.diag(1/output_head_scaler))
-        self.model_container.model.get_submodule('pca_layer/pca_layer/0/Gemm').bias = torch.nn.Parameter(-output_head_centerer)
+        pca_layer = torch.nn.Sequential(
+            torch.nn.Linear(pca_size, pca_size),
+            torch.nn.Linear(pca_size, pca_size, bias=False)
+        )
+        pca_layer[0].weight = torch.nn.Parameter(torch.diag(1/output_head_scaler))
+        pca_layer[0].bias = torch.nn.Parameter(-output_head_centerer)
 
         output_head_centered = (output_head - output_head_centerer) / output_head_scaler
         
         if check_pca_layer_valid:
             assert torch.allclose(
                 output_head_centered,
-                torch.cat([self.model_container.model(torch.cat(data_subset[0], dim=0)) for data_subset in self.dataloader], dim=0),
+                pca_layer[0](output_head),
                 atol=torch.tensor(1e-4)
             ), 'zscore layer not working'
 
-        output_head_centered = output_head_centered.detach().cpu().numpy()
+        np_output_head_centered = output_head_centered.detach().cpu().numpy()
 
         pca_sklearn = PCA()
-        pca_sklearn.fit(output_head_centered)
-        self.model_container.model.get_submodule('pca_layer/pca_layer/1/Gemm').weight = torch.nn.Parameter(torch.tensor(pca_sklearn.components_, dtype=torch.float32))
+        pca_sklearn.fit(np_output_head_centered)
+
+        pca_layer[1].weight = torch.nn.Parameter(torch.tensor(pca_sklearn.components_, dtype=torch.float32))
+        # pca_layer[1].bias = torch.nn.Parameter(torch.tensor(np.zeros(pca_size,),dtype=torch.float32))
 
         if check_pca_layer_valid:
-            pca_output = torch.cat([self.model_container.model(torch.cat(data_subset[0], dim=0)) for data_subset in self.dataloader], dim=0)
+            pca_output = pca_layer(output_head)
             assert torch.allclose(pca_output,
-                            torch.tensor(pca_sklearn.transform(output_head_centered)),
+                            torch.tensor(pca_sklearn.transform(np_output_head_centered)),
                             atol=1e-5
                             ), 'pca layer not working'
         
         print('save')
 
         ## save model
-        self.model_container.save_onnx(check_load_onnx_valid=True)
+        self.model_container.model = torch.nn.Sequential(
+            self.model_container.model,
+            pca_layer
+        )
+
+        self.model_container.save_onnx(check_load_onnx_valid=True, revert_train=False)
 
         print('pca layer trained and saved to model_container')
