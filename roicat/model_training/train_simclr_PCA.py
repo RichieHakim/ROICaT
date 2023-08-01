@@ -16,8 +16,8 @@ from pathlib import Path
 from roicat import data_importing
 from roicat import ROInet
 from roicat.model_training import augmentation
-from roicat.model_training import simclr_training_helpers as sth
 from roicat.model_training import model
+from roicat.model_training import simclr_training_helpers as sth
 
 path_script = sys.argv[0]
 
@@ -76,13 +76,14 @@ with open(filepath_params) as f:
 
 assert dict_params['trainer']['forward_version'] == 'forward_head', "This script is only for training SimCLR with ."
 
+
 # Load data from dir_data into Data object
 ROI_sparse_all = [scipy.sparse.load_npz(filepath_ROI_images) for filepath_ROI_images in list_filepaths_data if filepath_ROI_images.suffix == '.npz']
 ROI_images = [sf_sparse.toarray().reshape(sf_sparse.shape[0], 36,36).astype(np.float32) for sf_sparse in ROI_sparse_all]
 data = data_importing.Data_roicat();
 
 if test_option:
-    ROI_images = [ROI_images[0][:3000]]
+    ROI_images = [ROI_images[0][:300]]
     n_epochs = 2
 else:
     n_epochs = dict_params['trainer']['n_epochs']
@@ -91,6 +92,7 @@ data.set_ROI_images(
     ROI_images=ROI_images,
     um_per_pixel=dict_params['data']['um_per_pixel'],
 )
+
 
 # Create dataset / dataloader without augmentations for PCA training
 ROI_images_rs = ROInet.Resizer_ROI_images(
@@ -101,9 +103,11 @@ ROI_images_rs = ROInet.Resizer_ROI_images(
     verbose=dict_params['data']['verbose']
 ).ROI_images_rs
 
+batchSize_dataloader = 64 if test_option else dict_params['dataloader']['batchSize_dataloader']
+
 dataloader_generator = ROInet.Dataloader_ROInet(
     ROI_images_rs,
-    batchSize_dataloader=dict_params['dataloader']['batchSize_dataloader'],
+    batchSize_dataloader=batchSize_dataloader,
     pinMemory_dataloader=dict_params['dataloader']['pinMemory_dataloader'],
     numWorkers_dataloader=dict_params['dataloader']['numWorkers_dataloader'],
     persistentWorkers_dataloader=dict_params['dataloader']['persistentWorkers_dataloader'],
@@ -118,11 +122,13 @@ dataloader_generator = ROInet.Dataloader_ROInet(
 )
 dataloader = dataloader_generator.dataloader
 
+
 # Load Model
 model_container = model.Simclr_Model(
     filepath_model_load=dict_params['model']['filepath_model_noPCA'],
     filepath_model_save=dict_params['model']['filepath_model_wPCA'],
 )
+
 
 # Specify dataloader and model conatainer for PCA training
 trainer = sth.Simclr_PCA_Trainer(
@@ -130,5 +136,9 @@ trainer = sth.Simclr_PCA_Trainer(
     model_container=model_container
 )
 
+print("\n\nHEREEEEEEE!!!!!! - 11\n\n")
+
 # Fit PCA layer and resave to new onnx file
 trainer.train()
+
+print("\n\nHEREEEEEEE!!!!!! - 12\n\n")

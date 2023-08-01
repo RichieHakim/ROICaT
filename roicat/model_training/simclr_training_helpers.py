@@ -17,6 +17,8 @@ from typing import Optional, List, Tuple, Union, Dict, Any
 from torch.nn import CrossEntropyLoss
 from torch.optim import Adam
 
+import model
+
 def log_fn(log_str, log_file):
     """
     Write a string to a log file
@@ -56,14 +58,49 @@ def get_nums_from_string(string_with_nums):
     return nums
 
 class Simclr_Trainer():
+    """
+    Class to train a SimCLR model from scratch using the provided parameters.
+
+    JZ 2023
+
+    Args:
+        dataloader (torch.utils.data.DataLoader):
+            The dataloader to use for training.
+        model_container (ModelContainer):
+            The model container to use for training.
+        training_stop_revert_atNan (bool):
+            Whether to revert to the previous model if the loss becomes NaN and stop training.
+        n_epochs (int):
+            The number of epochs to train for.
+        device_train (str):
+            The device to train on.
+        inner_batch_size (int):
+            The batch size to use for training.
+        learning_rate (float):
+            The learning rate to use for training.
+        penalty_orthogonality (float):
+            The penalty to apply to the orthogonality of the latent space.
+        weight_decay (float):
+            The weight decay to use for training.
+        gamma (float):
+            The gamma to use for training.
+        temperature (float):
+            The temperature to use for training.
+        l2_alpha (float):
+            The alpha to use for L2 regularization.
+        path_saveLog (Optional[str]):
+            The path to which to save the training log.
+    """
+
+
     def __init__(
             self,
-            dataloader,
-            model_container,
+            dataloader: torch.utils.data.DataLoader,
+            model_container: model.Simclr_Model,
             
-            training_stop_revert_atNan = True,
+            training_stop_revert_atNan: bool = True,
                     
-            n_epochs = 9999999,
+            n_epochs: int = 9999999,
             device_train: str = 'cuda:0',
             inner_batch_size: int = 256,
             learning_rate: float = 0.01,
@@ -74,38 +111,7 @@ class Simclr_Trainer():
             l2_alpha: float = 0.0000,
 
             path_saveLog: Optional[str] = None,
-            ):
-        """
-        Training module to train a SimCLR model from scratch using the provided parameters.
-
-        Args:
-            dataloader (torch.utils.data.DataLoader):
-                The dataloader to use for training.
-            model_container (ModelContainer):
-                The model container to use for training.
-            training_stop_revert_atNan (bool):
-                Whether to revert to the previous model if the loss becomes NaN and stop training.
-            n_epochs (int):
-                The number of epochs to train for.
-            device_train (str):
-                The device to train on.
-            inner_batch_size (int):
-                The batch size to use for training.
-            learning_rate (float):
-                The learning rate to use for training.
-            penalty_orthogonality (float):
-                The penalty to apply to the orthogonality of the latent space.
-            weight_decay (float):
-                The weight decay to use for training.
-            gamma (float):
-                The gamma to use for training.
-            temperature (float):
-                The temperature to use for training.
-            l2_alpha (float):
-                The alpha to use for L2 regularization.
-            path_saveLog (str):
-                The path to which to save the training log.
-        """
+        ):
 
         self.dataloader = dataloader
         self.training_stop_revert_atNan = training_stop_revert_atNan
@@ -176,7 +182,7 @@ class Simclr_Trainer():
                 log_function=log_function,
             )
             
-            ## save loss stuff
+            ## save loss information
             if self.path_saveLog is not None:
                 np.save(self.path_saveLoss, losses_train)
             
@@ -221,6 +227,12 @@ def train_step_simCLR(
             Learning rate scheduler
         temperature (float):
             Temperature term for the softmax
+        sample_weights (torch.Tensor):
+            Sample weights for the batch
+        penalty_orthogonality (float):
+            Penalty for the orthogonality of the weights
+        inner_batch_size (Optional[int]):
+            Batch size for the inner loop. If None, the whole batch is used.
     
     Returns:
         loss (float):
@@ -274,6 +286,18 @@ def off_diagonal(x):
     return x.reshape(-1)[:-1].reshape(n - 1, n + 1)[:, 1:].reshape(-1)
 
 def L2_reg(model):
+    """
+    Returns the L2 regularization penalty for a model.
+    RH 2021 / JZ 2021
+
+    Args:
+        model (torch.nn.Module):
+            Model to calculate the penalty for.
+
+    Returns:
+        penalty (float):
+            L2 regularization penalty.
+    """
     penalized_params = get_trainable_parameters(model)
     penalty = 0
     for ii, param in enumerate(penalized_params):
@@ -291,14 +315,9 @@ def epoch_step( dataloader,
                 loss_rolling_val=[],
                 device='cpu', 
                 inner_batch_size=None,
-                do_validation=False,
-                validation_Object=None,
                 verbose=False,
                 verbose_update_period=100,
-                log_function=print,
-                
-                X_val=None,
-                y_val=None
+                log_function=print
                 ):
     """
     Performs an epoch step.
@@ -319,26 +338,22 @@ def epoch_step( dataloader,
             Learning rate scheduler
         temperature (float):
             Temperature term for the softmax
-        mode (str):
-            'semi-supervised' or 'supervised'
+        penalty_orthogonality (float):
+            Penalty for the orthogonality of the weights
         loss_rolling_train (list):
             List of losses for the current epoch
-        device (str):
-            Device to run the loss on
-        do_validation (bool):
-            Whether to do validation
-            RH: NOT IMPLEMENTED YET. Keep False for now.
-        validation_Object (torch.utils.data.DataLoader):
-            Dataloader for the validation set
-            RH: NOT IMPLEMENTED YET.
         loss_rolling_val (list):
             List of losses for the validation set
-            RH: NOT IMPLEMENTED YET. 
-             Keep [None or np.nan] for now.
+        device (str):
+            Device to run the loss on
+        inner_batch_size (Optional[int]):
+            Batch size for the inner loop. If None, the whole batch is used.
         verbose (bool):
             Whether to print out the loss
         verbose_update_period (int):
             How often to print out the loss
+        log_function (function):
+            Function to use for printing out the loss
 
     Returns:
         loss_rolling_train (list):
@@ -615,31 +630,17 @@ class Simclr_PCA_Trainer():
         """
         Training module to train a SimCLR model from scratch using the provided parameters.
 
+        JZ 2023
+
         Args:
             dataloader (torch.utils.data.DataLoader):
                 The dataloader to use for training.
             model_container (ModelContainer):
                 The model container to use for training.
-            training_stop_revert_atNan (bool):
-                Whether to revert to the previous model if the loss becomes NaN and stop training.
-            n_epochs (int):
-                The number of epochs to train for.
-            device_train (str):
-                The device to train on.
-            inner_batch_size (int):
-                The batch size to use for training.
-            learning_rate (float):
-                The learning rate to use for training.
-            penalty_orthogonality (float):
-                The penalty to apply to the orthogonality of the latent space.
-            weight_decay (float):
-                The weight decay to use for training.
-            gamma (float):
-                The gamma to use for training.
-            temperature (float):
-                The temperature to use for training.
-            l2_alpha (float):
-                The alpha to use for L2 regularization.
+            center (bool):
+                Whether to center the data.
+            scale (bool):
+                Whether to scale the data.
             path_saveLog (str):
                 The path to which to save the training log.
         """
@@ -652,49 +653,49 @@ class Simclr_PCA_Trainer():
 
     def train(self, check_pca_layer_valid: bool=True):
         """
-        Trains the pca layer of the model using the input data x.
+        Trains the pca layer of the model using the input data x and saves
+        the updated model to self.model_container.filepath_model_save
 
         Args:
-            x (torch.Tensor):
-                The input data to use for training.
             check_pca_layer_valid (bool):
                 Whether to check that the pca layer is valid after training.
-
-        Returns:
-            Optional[torch.Tensor]:
-                The output of the pca layer if check_pca_layer_valid is True.
         """
-        # self.model_container.model.train();
-        # self.model_container.model.to(self.device_train)
-        # self.model_container.model.prep_contrast()
 
-        x = torch.cat([torch.cat(data_subset[0], dim=0) for data_subset in self.dataloader], axis=0)
+        # x = torch.cat([torch.cat(data_subset[0], dim=0) for data_subset in self.dataloader], axis=0)
+        # output_head = self.model_container.model(x)
+        output_head = torch.cat([self.model_container.model(torch.cat(data_subset[0], dim=0)) for data_subset in self.dataloader], dim=0)
 
-        output_head = self.model_container.model(x)
+        output_head_scaler = output_head.std(dim=0) if self.scale else torch.ones_like(output_head.std(dim=0))
+        output_head_centerer = output_head.mean(dim=0)/output_head_scaler if self.center else torch.zeros_like(output_head.mean(dim=0)/output_head_scaler)
 
-        output_head_scaler = output_head.std(dim=0) if self.scale else torch.ones_like(output_head.shape[1])
-        output_head_centerer = output_head.mean(dim=0)/output_head_scaler if self.center else torch.zeros_like(output_head.shape[1])
+        self.model_container.model.get_submodule('pca_layer/pca_layer/0/Gemm').weight = torch.nn.Parameter(torch.diag(1/output_head_scaler))
+        self.model_container.model.get_submodule('pca_layer/pca_layer/0/Gemm').bias = torch.nn.Parameter(-output_head_centerer)
 
-        self.model_container.model.pca_layer[0].weight = torch.nn.Parameter(torch.diag(1/output_head_scaler))        
-        self.model_container.model.pca_layer[0].bias = torch.nn.Parameter(-output_head_centerer)
-
-        output_head_centered = self.model_container.model.pca_layer[0](output_head)
+        output_head_centered = (output_head - output_head_centerer) / output_head_scaler
         
         if check_pca_layer_valid:
-            assert torch.allclose(output_head_centered, (output_head - output_head_centerer) / output_head_scaler, atol=torch.tensor(1e-4)), 'zscore layer not working'
+            assert torch.allclose(
+                output_head_centered,
+                torch.cat([self.model_container.model(torch.cat(data_subset[0], dim=0)) for data_subset in self.dataloader], dim=0),
+                atol=torch.tensor(1e-4)
+            ), 'zscore layer not working'
 
         output_head_centered = output_head_centered.detach().cpu().numpy()
 
         pca_sklearn = PCA()
         pca_sklearn.fit(output_head_centered)
-        self.model_container.model.pca_layer[1].weight = torch.nn.Parameter(torch.tensor(pca_sklearn.components_, dtype=torch.float32))
+        self.model_container.model.get_submodule('pca_layer/pca_layer/1/Gemm').weight = torch.nn.Parameter(torch.tensor(pca_sklearn.components_, dtype=torch.float32))
 
         if check_pca_layer_valid:
-            pca_output = self.model_container.model(x)
+            pca_output = torch.cat([self.model_container.model(torch.cat(data_subset[0], dim=0)) for data_subset in self.dataloader], dim=0)
             assert torch.allclose(pca_output,
                             torch.tensor(pca_sklearn.transform(output_head_centered)),
                             atol=1e-5
                             ), 'pca layer not working'
         
+        print('save')
+
         ## save model
-        self.model_container.save_onnx(allow_overwrite=True, check_load_onnx_valid=True)
+        self.model_container.save_onnx(check_load_onnx_valid=True)
+
+        print('pca layer trained and saved to model_container')

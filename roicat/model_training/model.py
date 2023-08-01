@@ -14,7 +14,7 @@ from typing import Optional, List, Tuple, Union, Dict, Any
 from torch.nn import CrossEntropyLoss
 from torch.optim import Adam
 
-from . import simclr_training_helpers as sth
+from roicat.model_training import simclr_training_helpers as sth
 
 class ModelTackOn(torch.nn.Module):
     """
@@ -37,6 +37,9 @@ class ModelTackOn(torch.nn.Module):
             Nonlinearity to be used in the fully connected layers
         kwargs_nonlinearity (dict):
             Keyword arguments to be passed to the nonlinearity function
+        non_singular_pca_size (int):
+            Size of the PCA to be used to create the latent space
+            NOT YET IMPLEMENTED
             
     Returns:
         model (torch.nn.Module):
@@ -67,25 +70,15 @@ class ModelTackOn(torch.nn.Module):
         self.nonlinearity = nonlinearity
         self.kwargs_nonlinearity = kwargs_nonlinearity
 
-        self.init_prehead(final_base_layer, pre_head_fc_sizes)
+        self.init_prehead(pre_head_fc_sizes)
         self.init_posthead(pre_head_fc_sizes[-1], post_head_fc_sizes)
-        
-        self.pca_layer = torch.nn.Sequential(
-            torch.nn.Linear(pre_head_fc_sizes[-1], pre_head_fc_sizes[-1]),
-            torch.nn.Linear(pre_head_fc_sizes[-1], pre_head_fc_sizes[-1], bias=False)
-        )
-        self.pca_layer[0].weight = torch.nn.Parameter(torch.tensor(np.eye(pre_head_fc_sizes[-1],),dtype=torch.float32))
-        self.pca_layer[0].bias = torch.nn.Parameter(torch.tensor(np.zeros(pre_head_fc_sizes[-1],),dtype=torch.float32))
-        self.pca_layer[1].weight = torch.nn.Parameter(torch.tensor(np.eye(pre_head_fc_sizes[-1],),dtype=torch.float32))
-        # self.pca_layer[1].bias = torch.nn.Parameter(torch.tensor(np.zeros(pre_head_fc_sizes[-1],),dtype=torch.float32))
-            
-    def init_prehead(self, prv_layer, pre_head_fc_sizes):
+        self.init_pca_layer(pre_head_fc_sizes[-1])
+    
+    def init_prehead(self, pre_head_fc_sizes):
         """
         Initialize the fully connected layers to be attached before the head
         
         Args:
-            prv_layer (torch.nn.Module):
-                Final layer of the base model
             pre_head_fc_sizes (list):
                 List of fully connected layer sizes to be attached before the head
         """
@@ -124,6 +117,25 @@ class ModelTackOn(torch.nn.Module):
             non_linearity = torch.nn.__dict__[self.nonlinearity](**self.kwargs_nonlinearity)    
             self.add_module(f'PostHead_{i}_NonLinearity', non_linearity)
             self.pre_head_fc_lst.append(non_linearity)
+    
+    def init_pca_layer(self, pca_size):
+        """
+        Initialize the PCA layer with identity weights and biases
+
+        Args:
+            pca_size (int):
+                Size of the PCA to be used to create the latent space
+        """
+        self.pca_layer = torch.nn.Sequential(
+            torch.nn.Linear(pca_size, pca_size),
+            torch.nn.Linear(pca_size, pca_size, bias=False)
+        )
+        self.pca_layer[0].weight = torch.nn.Parameter(torch.tensor(np.eye(pca_size,),dtype=torch.float32))
+        self.pca_layer[0].bias = torch.nn.Parameter(torch.tensor(np.zeros(pca_size,),dtype=torch.float32))
+        self.pca_layer[1].weight = torch.nn.Parameter(torch.tensor(np.eye(pca_size,),dtype=torch.float32))
+        self.pca_layer[1].bias = torch.nn.Parameter(torch.tensor(np.zeros(pca_size,),dtype=torch.float32))
+
+        self.add_module(f'PCA_Layer', self.pca_layer)
     
     def forward_latent(self, X):
         """
@@ -271,8 +283,10 @@ class Simclr_Model():
     SimCLR model class
 
     Args:
-        filepath_model (str):
-            Filepath to/from which to save/load the model
+        filepath_model_save (str):
+            Filepath to which to save the model
+        filepath_model_load (str):
+            Filepath from which to load a pretrained model
         base_model (torch.nn.Module):
             Base torchvision model (or otherwise) to use for the SimCLR model
         head_pool_method (str):
@@ -293,8 +307,8 @@ class Simclr_Model():
             Number of blocks to include in the base model
         image_out_size (int):
             Size of the output image (for resizing)
-        load_model (bool):
-            Whether or not to load the model from the filepath (if not, will initialize from scratch)
+        forward_version (str):
+            Version of the forward pass to use
     """
     def __init__(
             self,
@@ -385,6 +399,8 @@ class Simclr_Model():
                 Number of blocks to include in the base model
             image_out_size (int):
                 Size of the output image (for resizing)
+            forward_version (str):
+                Version of the forward pass to use
         """
 
         base_model_frozen = base_model
@@ -419,7 +435,7 @@ class Simclr_Model():
                 elif mnp_nums[ii] >= block_to_freeze_nums:
                     param.requires_grad = True
 
-        self.model.forward = self.model.forward_latent if forward_version == 'forward_latent' else self.model.forward_head
+        self.model.forward = self.model.forward_latent if forward_version == 'forward_latent' else self.model.forward_head_pca
     
     def save_onnx(
         self,
@@ -429,8 +445,6 @@ class Simclr_Model():
         Uses ONNX to save the current model as a binary file.
 
         Args:
-            allow_overwrite (bool):
-                Whether to allow overwriting of existing files.
             check_load_onnx_valid (bool):
                 Whether to check that the saved model is valid by loading onnx back in and
                 comparing outputs
