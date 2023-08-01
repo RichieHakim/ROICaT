@@ -136,9 +136,5 @@ trainer = sth.Simclr_PCA_Trainer(
     model_container=model_container
 )
 
-print("\n\nHEREEEEEEE!!!!!! - 11\n\n")
-
 # Fit PCA layer and resave to new onnx file
 trainer.train()
-
-print("\n\nHEREEEEEEE!!!!!! - 12\n\n")
