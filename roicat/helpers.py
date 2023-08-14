@@ -4256,6 +4256,8 @@ def compute_cluster_similarity_matrices(
 
     Returns:
         (tuple): tuple containing:
+            labels_unique (np.ndarray):
+                Unique labels in ``l``.
             cs_mean (np.ndarray):
                 Similarity matrix for each cluster. Each element is the mean
                 similarity between all the pairs of samples in each cluster.
@@ -4350,7 +4352,7 @@ def compute_cluster_similarity_matrices(
     ## Compute the max similarity matrix for each cluster
     cs_max = (s_big_conj - s_big_diag).max(axis=(2,3))
 
-    return cs_mean, cs_max.todense(), cs_min
+    return l_u, cs_mean, cs_max.todense(), cs_min
 
 
 ######################################################################################################################################
