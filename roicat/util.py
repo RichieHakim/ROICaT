@@ -912,7 +912,7 @@ def squeeze_UCID_labels(
     ## apply the mapping to the data
     n_sesh = len(ucids_out)
     for i_sesh in range(n_sesh):
-        ucids_out[i_sesh] = [mapping[val] for val in ucids_out[i_sesh]]
+        ucids_out[i_sesh] = [int(mapping[val]) for val in ucids_out[i_sesh]]
 
     return ucids_out
 
