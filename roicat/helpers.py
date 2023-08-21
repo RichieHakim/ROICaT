@@ -966,6 +966,32 @@ def pydata_sparse_to_torch_coo(
     return torch.sparse_coo_tensor(i, v, torch.Size(shape))
 
 
+def index_with_nans(values, indices):
+    """
+    Indexes an array with a list of indices, allowing for NaNs in the indices.
+    RH 2022
+    
+    Args:
+        values (np.ndarray):
+            Array to be indexed.
+        indices (Union[List[int], np.ndarray]):
+            1D list or array of indices to use for indexing. Can contain NaNs.
+            Datatype should be floating point. NaNs will be removed and values
+            will be cast to int.
+
+    Returns:
+        np.ndarray:
+            Indexed array. Positions where `indices` was NaN will be filled with
+            NaNs.
+    """
+    indices = np.array(indices, dtype=float) if not isinstance(indices, np.ndarray) else indices
+    values = np.concatenate((np.array([np.nan]).astype(values.dtype), values))
+    idx = indices.copy() + 1
+    idx[np.isnan(idx)] = 0
+    
+    return values[idx.astype(np.int64)]
+
+
 ######################################################################################################################################
 ######################################################## FILE HELPERS ################################################################
 ######################################################################################################################################

@@ -733,7 +733,7 @@ def check_dataStructure__list_ofListOrArray_ofDtype(
         ## switch case for if the elements are lists or np.ndarray or numbers (int or float) or dtypes
         if all([isinstance(lod, list) for lod in lolod]):
             ## switch case for if the elements are numbers (int or float) or dtype or other
-            if all([all([isinstance(l, (int, float)) for l in lod]) for lod in lolod]):
+            if all([all([isinstance(l, (int, float, np.integer, np.floating)) for l in lod]) for lod in lolod]):
                 if fix:
                     print(f'ROICaT WARNING: lolod is a list of lists of numbers (int or float). Converting to np.ndarray.') if verbose else None
                     lolod = [np.array(lod, dtype=dtype) for lod in lolod]
@@ -979,6 +979,7 @@ def match_arrays_with_ucids(
 def match_arrays_with_ucids_inverse(
     arrays: Union[np.ndarray, List[np.ndarray]], 
     ucids: Union[List[np.ndarray], List[List[int]]],
+    unsqueeze: bool = True,
 ) -> List[Union[np.ndarray, scipy.sparse.lil_matrix]]:
     """
     Inverts the matching of the indices of the arrays using the UCIDs. Arrays
@@ -992,6 +993,10 @@ def match_arrays_with_ucids_inverse(
             List of numpy arrays for each session.
         ucids (Union[List[np.ndarray], List[List[int]]]): 
             List of lists of UCIDs for each session.
+        unsqueeze (bool):
+            If ``True``, then this algorithm assumes that the arrays were
+            squeezed to remove unused UCIDs. This corresponds to and should
+            match the argument ``squeeze`` used in match_arrays_with_ucids().
 
     Returns:
         (List[Union[np.ndarray, scipy.sparse.lil_matrix]]): 
@@ -999,26 +1004,41 @@ def match_arrays_with_ucids_inverse(
                 List of arrays with indices that correspond to the original
                 indices of the arrays / ucids. 
     """
-    import scipy.sparse
-
     arrays = [arrays] if not isinstance(arrays, list) else arrays
 
-    ucids_tu = squeeze_UCID_labels(ucids)
-    n_ucids = (np.unique(np.concatenate(ucids_tu, axis=0)) >= 0).sum()
+    ## Make a mapping of the UCIDs to the original indices ('aranges_matched')
+    ucids_clean = copy.deepcopy(ucids)
+    ucids_clean = check_dataStructure__list_ofListOrArray_ofDtype(
+        lolod=ucids_clean,
+        dtype=np.float32,
+        fix=True,
+        verbose=False,
+    )
+    aranges = [np.arange(len(u), dtype=np.float32) for u in ucids_clean]
+    aranges_matched = match_arrays_with_ucids(
+        arrays=aranges,
+        ucids=ucids_clean,
+        squeeze=False,
+    )
 
-    dicts_ucids = [{u: i for i, u in enumerate(u_sesh)} for u_sesh in ucids_tu]
-    
-    ## make ndarrays filled with np.nan for each session
-    if isinstance(arrays[0], np.ndarray):
-        arrays_out = [np.full((len(u_sesh), *a.shape[1:]), np.nan) for u_sesh, a in zip(ucids_tu, arrays)]
-    elif scipy.sparse.issparse(arrays[0]):
-        arrays_out = [scipy.sparse.lil_matrix((len(u_sesh), *a.shape[1:])) for u_sesh, a in zip(ucids_tu, arrays)]
-    ## fill in the arrays with the data
-    n_sesh = len(arrays)
-    for i_sesh in range(n_sesh):
-        for u, idx in dicts_ucids[i_sesh].items():
-            if u >= 0:
-                arrays_out[i_sesh][idx] = arrays[i_sesh][u]
+    ## Make sure that unsqueeze is consistent with the arrays
+    flag_same_len = all([len(u) == len(a) for u, a in zip(aranges_matched, arrays)])
+    if unsqueeze == False:
+        assert flag_same_len == True
+    else:
+        assert flag_same_len == False
+        
+    # Unsqueeze arrays
+    if unsqueeze:
+        idx_unsq = [(np.cumsum(~np.isnan(a)) - 1).astype(np.float32) for a in aranges_matched]
+        for ii, a in enumerate(aranges_matched):
+            idx_unsq[ii][np.isnan(a)] = np.nan
+        arrays_unsq = [helpers.index_with_nans(a, idx) for a, idx in zip(arrays, idx_unsq)]
+    else:
+        arrays_unsq = arrays
 
-    return arrays_out
+    ## Invert the matching
+    arrays_inv = [helpers.index_with_nans(a, o) for a, o in zip(arrays_unsq, aranges_matched)]
+
+    return arrays_inv
     
