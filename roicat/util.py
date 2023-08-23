@@ -907,7 +907,8 @@ def squeeze_UCID_labels(
     uniques_all = np.unique(np.concatenate(ucids_out, axis=0))
     uniques_all = np.sort(uniques_all[uniques_all >= 0])
     ## make a mapping of the unique values to new values
-    mapping = {old: new for old, new in zip(uniques_all, helpers.squeeze_integers(uniques_all))}
+    # mapping = {old: new for old, new in zip(uniques_all, helpers.squeeze_integers(uniques_all))}
+    mapping = {old: new for old, new in zip(uniques_all, np.arange(len(uniques_all)))}
     mapping.update({-1: -1})
     ## apply the mapping to the data
     n_sesh = len(ucids_out)
@@ -921,6 +922,7 @@ def match_arrays_with_ucids(
     arrays: Union[np.ndarray, List[np.ndarray]], 
     ucids: Union[List[np.ndarray], List[List[int]]], 
     squeeze: bool = False,
+    force_sparse: bool = False,
 ) -> List[Union[np.ndarray, scipy.sparse.lil_matrix]]:
     """
     Matches the indices of the arrays using the UCIDs. Array indices with UCIDs
@@ -963,10 +965,12 @@ def match_arrays_with_ucids(
     dicts_ucids = [{u: i for i, u in enumerate(u_sesh)} for u_sesh in ucids_tu]
     
     ## make ndarrays filled with np.nan for each session
-    if isinstance(arrays[0], np.ndarray):
+    if isinstance(arrays[0], np.ndarray) and not force_sparse:
         arrays_out = [np.full((max_ucid, *a.shape[1:]), np.nan, dtype=arrays[0].dtype) for a in arrays]
-    elif scipy.sparse.issparse(arrays[0]):
-        arrays_out = [scipy.sparse.lil_matrix((max_ucid, *a.shape[1:])) for a in arrays]
+    elif scipy.sparse.issparse(arrays[0]) or force_sparse:
+        arrays_out = [scipy.sparse.lil_matrix((max_ucid, *a.shape[1:]), dtype=a.dtype) for a in arrays]
+    else:
+        raise ValueError(f'ROICaT ERROR: arrays[0] is not a numpy array or scipy.sparse matrix.')
     ## fill in the arrays with the data
     n_sesh = len(arrays)
     for i_sesh in range(n_sesh):
@@ -1038,7 +1042,12 @@ def match_arrays_with_ucids_inverse(
         arrays_unsq = arrays
 
     ## Invert the matching
-    arrays_inv = [helpers.index_with_nans(a, o) for a, o in zip(arrays_unsq, aranges_matched)]
-
+    def negOne_to_nan(x):
+        tmp = np.array(x, dtype=np.float32)
+        np.place(arr=tmp, mask=tmp == -1, vals=np.nan)
+        return tmp
+    ucids_clean_nan = [negOne_to_nan(u) for u in ucids_clean]
+    arrays_inv = [helpers.index_with_nans(a, o) for a, o in zip(arrays_unsq, ucids_clean_nan)]
+    
     return arrays_inv
     
