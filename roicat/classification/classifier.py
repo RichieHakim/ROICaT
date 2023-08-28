@@ -310,7 +310,7 @@ class Autotuner_regression(util.ROICaT_Module):
         return model_onnx
 
 
-class LossFucntion_CrossEntropy_CV():
+class LossFunction_CrossEntropy_CV():
     """
     Calculates the cross-entropy loss of a classifier using cross-validation. 
     RH 2023
@@ -521,13 +521,13 @@ class Auto_LogisticRegression(Autotuner_regression):
             classes=self.classes,
         )
         self.class_weight = {c: cw for c, cw in zip(self.classes, class_weight)}
-        sample_weight = sklearn.utils.class_weight.compute_sample_weight(
+        self.sample_weight = sklearn.utils.class_weight.compute_sample_weight(
             class_weight=sample_weight, 
             y=y,
         )
 
         ## Prepare the loss function
-        self.fn_loss = LossFucntion_CrossEntropy_CV(
+        self.fn_loss = LossFunction_CrossEntropy_CV(
             penalty_testTrainRatio=penalty_testTrainRatio,
             labels=y,
         )
