@@ -142,6 +142,7 @@ class Autotuner_regression(util.ROICaT_Module):
         self.loss_running_train = []
         self.loss_running_test = []
         self.loss_running = []
+        self.params_running = []
         self.model_best = None
         self.loss_best = np.inf
         self.params_best = None
@@ -212,6 +213,7 @@ class Autotuner_regression(util.ROICaT_Module):
         self.loss_running_train.append(loss_train)
         self.loss_running_test.append(loss_test)
         self.loss_running.append(loss)
+        self.params_running.append(kwargs_model)
 
         # Update the bests
         if loss < self.loss_best:
@@ -654,8 +656,8 @@ class Auto_LogisticRegression(Autotuner_regression):
         """
         import matplotlib.pyplot as plt
         results = {
-            'C': [t.params['C'] for t in self.study.trials], 
-            'value': [t.value for t in self.study.trials], 
+            'C': [t['C'] for t in self.params_running], 
+            'value': self.loss_running, 
             'loss_train': self.loss_running_train, 
             'loss_test': self.loss_running_test
         }
