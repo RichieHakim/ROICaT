@@ -341,9 +341,9 @@ class LossFunction_CrossEntropy_CV():
         self.penalty_testTrainRatio = penalty_testTrainRatio
         ## Set the penalty function
         if test_or_train == 'test':
-            self.fn_penalty_testTrainRation = lambda test, train: test * ((test  / train) ** self.penalty_testTrainRatio)
+            self.fn_penalty_testTrainRatio = lambda test, train: test * ((test  / train) ** self.penalty_testTrainRatio)
         elif test_or_train == 'train':
-            self.fn_penalty_testTrainRation = lambda test, train: train * ((train / test) ** self.penalty_testTrainRatio)
+            self.fn_penalty_testTrainRatio = lambda test, train: train * ((train / test) ** self.penalty_testTrainRatio)
         else:
             raise ValueError('test_or_train must be either "test" or "train".')
 
@@ -388,7 +388,7 @@ class LossFunction_CrossEntropy_CV():
         from sklearn.metrics import log_loss
         loss_train = log_loss(y_train_true, y_pred_train, sample_weight=sample_weight_train, labels=self.labels)
         loss_test =  log_loss(y_test_true,  y_pred_test,  sample_weight=sample_weight_test,  labels=self.labels)
-        loss = self.fn_penalty_testTrainRation(loss_test, loss_train)
+        loss = self.fn_penalty_testTrainRatio(loss_test, loss_train)
 
         return loss, loss_train, loss_test
 
