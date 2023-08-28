@@ -536,7 +536,7 @@ class Auto_LogisticRegression(Autotuner_regression):
         self.cv = sklearn.model_selection.StratifiedShuffleSplit(
             n_splits=1,
             test_size=test_size,
-        )
+        ) if cv is None else cv
 
         ## Prepare static kwargs for sklearn LogisticRegression
         kwargs_LogisticRegression = {key: val for key, val in params_LogisticRegression.items() if isinstance(val, list)==False}
