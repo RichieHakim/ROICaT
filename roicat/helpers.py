@@ -966,6 +966,32 @@ def pydata_sparse_to_torch_coo(
     return torch.sparse_coo_tensor(i, v, torch.Size(shape))
 
 
+def index_with_nans(values, indices):
+    """
+    Indexes an array with a list of indices, allowing for NaNs in the indices.
+    RH 2022
+    
+    Args:
+        values (np.ndarray):
+            Array to be indexed.
+        indices (Union[List[int], np.ndarray]):
+            1D list or array of indices to use for indexing. Can contain NaNs.
+            Datatype should be floating point. NaNs will be removed and values
+            will be cast to int.
+
+    Returns:
+        np.ndarray:
+            Indexed array. Positions where `indices` was NaN will be filled with
+            NaNs.
+    """
+    indices = np.array(indices, dtype=float) if not isinstance(indices, np.ndarray) else indices
+    values = np.concatenate((np.full(shape=values.shape[1:], fill_value=np.nan, dtype=values.dtype)[None,...], values), axis=0)
+    idx = indices.copy() + 1
+    idx[np.isnan(idx)] = 0
+    
+    return values[idx.astype(np.int64)]
+
+
 ######################################################################################################################################
 ######################################################## FILE HELPERS ################################################################
 ######################################################################################################################################
@@ -978,7 +1004,8 @@ def find_paths(
     find_folders: bool = False, 
     depth: int = 0, 
     natsorted: bool = True, 
-    alg_ns: Optional[str] = None
+    alg_ns: Optional[str] = None,
+    verbose: bool = False,
 ) -> List[str]:
     """
     Searches for files and/or folders recursively in a directory using a regex
@@ -1010,6 +1037,8 @@ def find_paths(
             https://natsort.readthedocs.io/en/4.0.4/ns_class.html/ for options.
             Default is PATH. Other commons are INT, FLOAT, VERSION. (Default is
             ``None``)
+        verbose (bool):
+            Whether to print the paths found. (Default is ``False``)
 
     Returns:
         (List[str]): 
@@ -1027,12 +1056,14 @@ def find_paths(
             if os.path.isdir(path):
                 if find_folders:
                     if re.search(reMatch, path) is not None:
+                        print(f'Found folder: {path}') if verbose else None
                         paths.append(path)
                 if depth < depth_end:
                     paths += get_paths_recursive_inner(path, depth_end, depth=depth+1)
             else:
                 if find_files:
                     if re.search(reMatch, path) is not None:
+                        print(f'Found file: {path}') if verbose else None
                         paths.append(path)
         return paths
 
@@ -4251,6 +4282,8 @@ def compute_cluster_similarity_matrices(
 
     Returns:
         (tuple): tuple containing:
+            labels_unique (np.ndarray):
+                Unique labels in ``l``.
             cs_mean (np.ndarray):
                 Similarity matrix for each cluster. Each element is the mean
                 similarity between all the pairs of samples in each cluster.
@@ -4345,7 +4378,7 @@ def compute_cluster_similarity_matrices(
     ## Compute the max similarity matrix for each cluster
     cs_max = (s_big_conj - s_big_diag).max(axis=(2,3))
 
-    return cs_mean, cs_max.todense(), cs_min
+    return l_u, cs_mean, cs_max.todense(), cs_min
 
 
 ######################################################################################################################################

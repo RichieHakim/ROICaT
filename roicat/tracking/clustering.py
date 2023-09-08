@@ -181,7 +181,7 @@ class Clusterer(util.ROICaT_Module):
 
         print('Finding mixing parameters using automated hyperparameter tuning...') if self._verbose else None
         optuna.logging.set_verbosity(optuna.logging.WARNING)
-        self.checker = helpers.Convergence_checker_optuna(verbose=self._verbose >=2, **kwargs_findParameters)
+        self.checker = helpers.Convergence_checker_optuna(verbose=self._verbose>=2, **kwargs_findParameters)
         self.study = optuna.create_study(direction='minimize', sampler=optuna.samplers.TPESampler(
             n_startup_trials=kwargs_findParameters['n_patience']//2,
             seed=self._seed,
@@ -1126,23 +1126,23 @@ class Clusterer(util.ROICaT_Module):
         assert scipy.sparse.issparse(sim_mat), "sim_mat must be a scipy.sparse.csr_matrix."
         assert scipy.sparse.issparse(dist_mat), "dist_mat must be a scipy.sparse.csr_matrix."
 
-        cs_intra_means, cs_intra_mins, cs_intra_maxs, cs_sil = cluster_quality_metrics(
+        labels_unique, cs_intra_means, cs_intra_mins, cs_intra_maxs, cs_sil = cluster_quality_metrics(
             sim=sim_mat,
             labels=labels,
         )
 
         import sklearn
-        # if sklearn.__version__ < '1.3':
-        ## Warn that current version is memory intensive and will be improved when sklearn 1.3 is released
-        warnings.warn("Current version of silhouette samples calculation is memory intensive and will be improved when sklearn 1.3 is released.")
+        ## Warn that current version is memory intensive and might be improved when sklearn 1.3 is released
+        # warnings.warn("Current version of silhouette samples calculation is memory intensive and will be improved when sklearn 1.3 is released.")
         import sparse
-        d_dense = sparse.COO(dist_mat.copy().tocsr())
-        d_dense.fill_value = (d_dense.max() - d_dense.min()) * 1000
+        d_dense = sparse.COO(dist_mat.astype(np.float16).copy().tocsr())
+        d_dense.fill_value = (dist_mat.data.max() - dist_mat.data.min()).astype(np.float16) * 10
         d_dense = d_dense.todense()
         np.fill_diagonal(d_dense, 0)
         rs_sil = sklearn.metrics.silhouette_samples(X=d_dense, labels=labels, metric='precomputed')
 
         self.quality_metrics = {
+            'cluster_labels_unique': labels_unique,
             'cluster_intra_means': cs_intra_means,
             'cluster_intra_mins': cs_intra_mins,
             'cluster_intra_maxs': cs_intra_maxs,
@@ -1340,7 +1340,7 @@ def cluster_quality_metrics(
     """
     import sparse
     
-    cs_mean, cs_max, cs_min = helpers.compute_cluster_similarity_matrices(sim, labels, verbose=True)
+    labels_unique, cs_mean, cs_max, cs_min = helpers.compute_cluster_similarity_matrices(sim, labels, verbose=True)
     fn_sil_score = lambda intra, inter: (intra - inter) / np.maximum(intra, inter)
 
     eye_inv = 1 - sparse.eye(cs_max.shape[0])
@@ -1351,7 +1351,7 @@ def cluster_quality_metrics(
     cs_intra_mins = cs_min.diagonal()
     cs_intra_maxs = cs_max.diagonal()
     
-    return cs_intra_means, cs_intra_mins, cs_intra_maxs, cs_sil
+    return labels_unique, cs_intra_means, cs_intra_mins, cs_intra_maxs, cs_sil
 
 def make_label_variants(
     labels: np.ndarray, 

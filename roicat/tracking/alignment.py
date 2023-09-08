@@ -2,6 +2,7 @@ import copy
 import typing
 import warnings
 from typing import List, Tuple, Union, Optional, Dict, Any, Sequence, Callable
+import functools
 
 import numpy as np
 import scipy.sparse
@@ -13,7 +14,7 @@ from .. import helpers, util
 class Aligner(util.ROICaT_Module):
     """
     A class for registering ROIs to a template FOV. Currently relies on
-    available OpenCV methods for non-rigid registration.
+    available OpenCV methods for rigid and non-rigid registration.
     RH 2023
 
     Args:
@@ -26,7 +27,7 @@ class Aligner(util.ROICaT_Module):
     ):
         self._verbose = verbose
         
-        self.remapingIdx_geo = None
+        self.remappingIdx_geo = None
         self.warp_matrices = None
 
         self.remappingIdx_nonrigid = None
@@ -433,7 +434,7 @@ class Aligner(util.ROICaT_Module):
         """
         remappingIdx = self.remappingIdx_geo if remappingIdx is None else remappingIdx
         print('Applying geometric registration warps to images...') if self._verbose else None
-        self.ims_registered_geo = self._transform_images(ims_moving=ims_moving, remappingIdx=remappingIdx)
+        self.ims_registered_geo = self.transform_images(ims_moving=ims_moving, remappingIdx=remappingIdx)
         return self.ims_registered_geo
     
     def transform_images_nonrigid(
@@ -460,21 +461,22 @@ class Aligner(util.ROICaT_Module):
         """
         remappingIdx = self.remappingIdx_nonrigid if remappingIdx is None else remappingIdx
         print('Applying nonrigid registration warps to images...') if self._verbose else None
-        self.ims_registered_nonrigid = self._transform_images(ims_moving=ims_moving, remappingIdx=remappingIdx)
+        self.ims_registered_nonrigid = self.transform_images(ims_moving=ims_moving, remappingIdx=remappingIdx)
         return self.ims_registered_nonrigid
     
-    def _transform_images(
+    def transform_images(
         self, 
-        ims_moving: np.ndarray, 
-        remappingIdx: np.ndarray
+        ims_moving: List[np.ndarray], 
+        remappingIdx: List[np.ndarray]
     ) -> List[np.ndarray]:
         """
         Transforms images using the specified remapping index.
 
         Args:
-            ims_moving (np.ndarray): 
-                The images to be transformed. *(N, H, W)*
-            remappingIdx (np.ndarray): 
+            ims_moving (List[np.ndarray]): 
+                The images to be transformed. List of arrays with shape: *(H,
+                W)* or *(H, W, C)*
+            remappingIdx (List[np.ndarray]): 
                 The remapping index to apply to the images.
 
         Returns:
@@ -482,19 +484,20 @@ class Aligner(util.ROICaT_Module):
                 ims_registered (List[np.ndarray]): 
                     The transformed images. *(N, H, W)*
         """
+
         ims_registered = []
         for ii, (im_moving, remapIdx) in enumerate(zip(ims_moving, remappingIdx)):
-            im_registered = helpers.remap_images(
-                images=im_moving,
+            remapper = functools.partial(
+                helpers.remap_images,
                 remappingIdx=remapIdx,
                 backend='cv2',
                 interpolation_method='linear',
                 border_mode='constant',
                 border_value=float(im_moving.mean()),
             )
+            im_registered = np.stack([remapper(im_moving[:,:,ii]) for ii in range(im_moving.shape[2])], axis=-1) if im_moving.ndim==3 else remapper(im_moving)
             ims_registered.append(im_registered)
-        return ims_registered
-    
+        return ims_registered    
 
     def _compose_warps(
         self, 

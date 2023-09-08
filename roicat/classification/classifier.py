@@ -83,6 +83,15 @@ class Autotuner_regression(util.ROICaT_Module):
             If ``True``, ignore ConvergenceWarning during model fitting.
         verbose (bool):
             If ``True``, show progress bar and print running results.
+
+    Example:
+        .. highlight:: python
+        .. code-block:: python
+    
+        params = {
+            'C':             {'type': 'real',        'kwargs': {'log': True, 'low': 1e-4, 'high': 1e4}},
+            'penalty':       {'type': 'categorical', 'kwargs': {'choices': ['l1', 'l2']}},
+        }
     """
     def __init__(
         self, 
@@ -133,6 +142,7 @@ class Autotuner_regression(util.ROICaT_Module):
         self.loss_running_train = []
         self.loss_running_test = []
         self.loss_running = []
+        self.params_running = []
         self.model_best = None
         self.loss_best = np.inf
         self.params_best = None
@@ -203,6 +213,7 @@ class Autotuner_regression(util.ROICaT_Module):
         self.loss_running_train.append(loss_train)
         self.loss_running_test.append(loss_test)
         self.loss_running.append(loss)
+        self.params_running.append(kwargs_model)
 
         # Update the bests
         if loss < self.loss_best:
@@ -301,7 +312,7 @@ class Autotuner_regression(util.ROICaT_Module):
         return model_onnx
 
 
-class LossFucntion_CrossEntropy_CV():
+class LossFunction_CrossEntropy_CV():
     """
     Calculates the cross-entropy loss of a classifier using cross-validation. 
     RH 2023
@@ -332,9 +343,9 @@ class LossFucntion_CrossEntropy_CV():
         self.penalty_testTrainRatio = penalty_testTrainRatio
         ## Set the penalty function
         if test_or_train == 'test':
-            self.fn_penalty_testTrainRation = lambda test, train: test * ((test  / train) ** self.penalty_testTrainRatio)
+            self.fn_penalty_testTrainRatio = lambda test, train: test * ((test  / train) ** self.penalty_testTrainRatio)
         elif test_or_train == 'train':
-            self.fn_penalty_testTrainRation = lambda test, train: train * ((train / test) ** self.penalty_testTrainRatio)
+            self.fn_penalty_testTrainRatio = lambda test, train: train * ((train / test) ** self.penalty_testTrainRatio)
         else:
             raise ValueError('test_or_train must be either "test" or "train".')
 
@@ -379,7 +390,7 @@ class LossFucntion_CrossEntropy_CV():
         from sklearn.metrics import log_loss
         loss_train = log_loss(y_train_true, y_pred_train, sample_weight=sample_weight_train, labels=self.labels)
         loss_test =  log_loss(y_test_true,  y_pred_test,  sample_weight=sample_weight_test,  labels=self.labels)
-        loss = self.fn_penalty_testTrainRation(loss_test, loss_train)
+        loss = self.fn_penalty_testTrainRatio(loss_test, loss_train)
 
         return loss, loss_train, loss_test
 
@@ -512,13 +523,13 @@ class Auto_LogisticRegression(Autotuner_regression):
             classes=self.classes,
         )
         self.class_weight = {c: cw for c, cw in zip(self.classes, class_weight)}
-        sample_weight = sklearn.utils.class_weight.compute_sample_weight(
+        self.sample_weight = sklearn.utils.class_weight.compute_sample_weight(
             class_weight=sample_weight, 
             y=y,
         )
 
         ## Prepare the loss function
-        self.fn_loss = LossFucntion_CrossEntropy_CV(
+        self.fn_loss = LossFunction_CrossEntropy_CV(
             penalty_testTrainRatio=penalty_testTrainRatio,
             labels=y,
         )
@@ -527,7 +538,7 @@ class Auto_LogisticRegression(Autotuner_regression):
         self.cv = sklearn.model_selection.StratifiedShuffleSplit(
             n_splits=1,
             test_size=test_size,
-        )
+        ) if cv is None else cv
 
         ## Prepare static kwargs for sklearn LogisticRegression
         kwargs_LogisticRegression = {key: val for key, val in params_LogisticRegression.items() if isinstance(val, list)==False}
@@ -645,8 +656,8 @@ class Auto_LogisticRegression(Autotuner_regression):
         """
         import matplotlib.pyplot as plt
         results = {
-            'C': [t.params['C'] for t in self.study.trials], 
-            'value': [t.value for t in self.study.trials], 
+            'C': [t['C'] for t in self.params_running], 
+            'value': self.loss_running, 
             'loss_train': self.loss_running_train, 
             'loss_test': self.loss_running_test
         }

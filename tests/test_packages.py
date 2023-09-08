@@ -84,9 +84,12 @@ def test_importing_packages():
         except ModuleNotFoundError:
             warnings.warn(f'RH Warning: {pkg} not found. Skipping tests.')
 
-def test_torch(device='cuda', verbose=2):
+def test_torch(
+    device='cpu', 
+    verbose=2
+):
     """
-    Test to see if torch can do operations on GPU if CUDA is available.
+    Test to see if torch can do operations on device.
     RH 2022
 
     Args:
@@ -99,20 +102,10 @@ def test_torch(device='cuda', verbose=2):
     """
     import torch
     version = torch.__version__
-    ## Check if CUDA is available
-    if torch.cuda.is_available():
-        print(f'RH: CUDA is available. Environment using PyTorch version: {version}') if verbose > 1 else None
-        arr = torch.rand(1000, 10).to(device)
-        arr2 = torch.rand(10, 1000).to(device)
-        arr3 = (arr @ arr2).mean().cpu().numpy()
-        print(f'RH: Torch can do basic operations on GPU. Environment using PyTorch version: {version}. Result of operations: {arr3}') if verbose > 1 else None
-
-    else:
-        warnings.warn(f'RH Warning: CUDA is not available. Environment using PyTorch version: {version}')
         
     ## Test CPU computations
-    arr = torch.rand(1000, 10)
-    arr2 = torch.rand(10, 1000)
+    arr = torch.rand(1000, 10, device=device)
+    arr2 = torch.rand(10, 1000, device=device)
     arr3 = (arr @ arr2).mean().numpy()
     print(f'RH: Torch can do basic operations on CPU. Environment using PyTorch version: {version}. Result of operations: {arr3}') if verbose > 1 else None
 
