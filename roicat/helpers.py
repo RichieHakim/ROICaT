@@ -1008,13 +1008,13 @@ def find_paths(
     verbose: bool = False,
 ) -> List[str]:
     """
-    Searches for files and/or folders recursively in a directory using a regex
-    match. 
+    Searches for files and/or folders recursively in a directory(ies) using a 
+    regex match. 
     RH 2022
 
     Args:
-        dir_outer (str): 
-            Path to directory to search.
+        dir_outer (str | list): 
+            Path to directory to search, or list of directories to search.
         reMatch (str): 
             Regular expression to match. Each path name encountered will be
             compared using ``re.search(reMatch, filename)``. If the output is
@@ -1076,7 +1076,7 @@ def find_paths(
 
     # Get paths from list or immediately go to recursive function
     if isinstance(dir_outer, list):
-        assert all([isinstance(d, str) or isinstance(d, Path) for d in dir_outer]), "if dir_outer is a list, every element in it should be a string"
+        assert all([isinstance(d, str) or isinstance(d, Path) for d in dir_outer]), "if dir_outer is a list, every element in it should be a string or path-like object"
         paths = get_paths_from_list(dir_outer, depth, depth=0)
     else:
         paths = get_paths_recursive_inner(dir_outer, depth, depth=0)
