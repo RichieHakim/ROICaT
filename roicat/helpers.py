@@ -998,7 +998,7 @@ def index_with_nans(values, indices):
 
 
 def find_paths(
-    dir_outer: str, 
+    dir_outer: str | list,
     reMatch: str = 'filename', 
     find_files: bool = True, 
     find_folders: bool = False, 
@@ -1049,6 +1049,13 @@ def find_paths(
     if alg_ns is None:
         alg_ns = natsort.ns.PATH
 
+    
+    def get_paths_from_list(dir_list, depth_end, depth=0):
+        paths = []
+        for path in dir_list:
+            paths += get_paths_recursive_inner(path, depth_end, depth=0)
+        return paths
+
     def get_paths_recursive_inner(dir_inner, depth_end, depth=0):
         paths = []
         for path in os.listdir(dir_inner):
@@ -1067,7 +1074,13 @@ def find_paths(
                         paths.append(path)
         return paths
 
-    paths = get_paths_recursive_inner(dir_outer, depth, depth=0)
+    # Get paths from list or immediately go to recursive function
+    if isinstance(dir_outer, list):
+        assert all([isinstance(d, str) or isinstance(d, Path) for d in dir_outer]), "if dir_outer is a list, every element in it should be a string"
+        paths = get_paths_from_list(dir_outer, depth, depth=0)
+    else:
+        paths = get_paths_recursive_inner(dir_outer, depth, depth=0)
+    
     if natsorted:
         paths = natsort.natsorted(paths, alg=alg_ns)
     return paths
