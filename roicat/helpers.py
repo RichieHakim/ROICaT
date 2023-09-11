@@ -999,7 +999,8 @@ def index_with_nans(values, indices):
 
 def find_paths(
     dir_outer: str | list,
-    reMatch: str = 'filename', 
+    reMatch: str = 'filename',
+    requireMatch: Optional[str] = None,
     find_files: bool = True, 
     find_folders: bool = False, 
     depth: int = 0, 
@@ -1020,6 +1021,11 @@ def find_paths(
             compared using ``re.search(reMatch, filename)``. If the output is
             not ``None``, the file will be included in the output. (Default is
             ``'filename'``)
+        requireMatch (str):
+            Extra string required to be anywhere in the full path returned by
+            find_paths(). For example, if requireMatch="plane0", then only 
+            paths containing a substring equal to plane0 will be included. 
+            (Default is None)
         find_files (bool): 
             Whether to find files. (Default is ``True``)
         find_folders (bool): 
@@ -1083,6 +1089,10 @@ def find_paths(
     
     if natsorted:
         paths = natsort.natsorted(paths, alg=alg_ns)
+    
+    if requireMatch is not None:
+        paths = [path for path in paths if requireMatch in path]
+    
     return paths
 
 
