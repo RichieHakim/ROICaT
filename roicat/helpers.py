@@ -998,9 +998,9 @@ def index_with_nans(values, indices):
 
 
 def find_paths(
-    dir_outer: str | list,
-    reMatch: str = 'filename',
-    requireMatch: Optional[str] = None,
+    dir_outer: Union[str, List[str]],
+    reMatch: str = 'filename', 
+    reMatch_in_path: Optional[str] = None,
     find_files: bool = True, 
     find_folders: bool = False, 
     depth: int = 0, 
@@ -1009,23 +1009,23 @@ def find_paths(
     verbose: bool = False,
 ) -> List[str]:
     """
-    Searches for files and/or folders recursively in a directory(ies) using a 
-    regex match. 
+    Searches for files and/or folders recursively in a directory using a regex
+    match. 
     RH 2022
 
     Args:
-        dir_outer (str | list): 
-            Path to directory to search, or list of directories to search.
+        dir_outer (Union[str, List[str]]):
+            Path(s) to the directory(ies) to search. If a list of directories,
+            then all directories will be searched.
         reMatch (str): 
-            Regular expression to match. Each path name encountered will be
-            compared using ``re.search(reMatch, filename)``. If the output is
-            not ``None``, the file will be included in the output. (Default is
-            ``'filename'``)
-        requireMatch (str):
-            Extra string required to be anywhere in the full path returned by
-            find_paths(). For example, if requireMatch="plane0", then only 
-            paths containing a substring equal to plane0 will be included. 
-            (Default is None)
+            Regular expression to match. Each file or folder name encountered
+            will be compared using ``re.search(reMatch, filename)``. If the
+            output is not ``None``, the file will be included in the output.
+        reMatch_in_path (Optional[str]):
+            Additional regular expression to match anywhere in the path. Useful
+            for finding files/folders in specific subdirectories. If ``None``, then
+            no additional matching is done. \n
+            (Default is ``None``)
         find_files (bool): 
             Whether to find files. (Default is ``True``)
         find_folders (bool): 
@@ -1055,12 +1055,15 @@ def find_paths(
     if alg_ns is None:
         alg_ns = natsort.ns.PATH
 
-    
-    def get_paths_from_list(dir_list, depth_end, depth=0):
-        paths = []
-        for path in dir_list:
-            paths += get_paths_recursive_inner(path, depth_end, depth=0)
-        return paths
+    def fn_match(path, reMatch, reMatch_in_path):
+        # returns true if reMatch is basename and reMatch_in_path in full dirname
+        if reMatch is not None:
+            if re.search(reMatch, os.path.basename(path)) is None:
+                return False
+        if reMatch_in_path is not None:
+            if re.search(reMatch_in_path, os.path.dirname(path)) is None:
+                return False
+        return True
 
     def get_paths_recursive_inner(dir_inner, depth_end, depth=0):
         paths = []
@@ -1068,31 +1071,29 @@ def find_paths(
             path = os.path.join(dir_inner, path)
             if os.path.isdir(path):
                 if find_folders:
-                    if re.search(reMatch, path) is not None:
+                    if fn_match(path, reMatch, reMatch_in_path):
                         print(f'Found folder: {path}') if verbose else None
                         paths.append(path)
                 if depth < depth_end:
                     paths += get_paths_recursive_inner(path, depth_end, depth=depth+1)
             else:
                 if find_files:
-                    if re.search(reMatch, path) is not None:
+                    if fn_match(path, reMatch, reMatch_in_path):
                         print(f'Found file: {path}') if verbose else None
                         paths.append(path)
         return paths
 
-    # Get paths from list or immediately go to recursive function
-    if isinstance(dir_outer, list):
-        assert all([isinstance(d, str) or isinstance(d, Path) for d in dir_outer]), "if dir_outer is a list, every element in it should be a string or path-like object"
-        paths = get_paths_from_list(dir_outer, depth, depth=0)
-    else:
-        paths = get_paths_recursive_inner(dir_outer, depth, depth=0)
-    
+    def fn_check_iterable(obj):
+        try:
+            iter(obj)
+            return True
+        except TypeError:
+            return False
+
+    dir_outer = [dir_outer] if not fn_check_iterable(dir_outer) else dir_outer
+    paths = list(set(sum([get_paths_recursive_inner(str(d), depth, depth=0) for d in dir_outer], start=[])))
     if natsorted:
         paths = natsort.natsorted(paths, alg=alg_ns)
-    
-    if requireMatch is not None:
-        paths = [path for path in paths if requireMatch in path]
-    
     return paths
 
 
