@@ -1101,6 +1101,7 @@ def find_paths(
             return False            
 
     dir_outer = [dir_outer] if fn_check_pathLike(dir_outer) else dir_outer
+
     paths = list(set(sum([get_paths_recursive_inner(str(d), depth, depth=0) for d in dir_outer], start=[])))
     if natsorted:
         paths = natsort.natsorted(paths, alg=alg_ns)
