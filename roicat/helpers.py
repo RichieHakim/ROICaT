@@ -1083,14 +1083,25 @@ def find_paths(
                         paths.append(path)
         return paths
 
-    def fn_check_iterable(obj):
-        try:
-            iter(obj)
+    def fn_check_pathLike(obj):
+        if isinstance(obj, (
+            str,
+            Path,
+            os.PathLike,
+            np.str_,
+            bytes,
+            memoryview,
+            np.bytes_,
+            np.unicode_,
+            re.Pattern,
+            re.Match,
+        )):
             return True
-        except TypeError:
-            return False
+        else:
+            return False            
 
-    dir_outer = [dir_outer] if not fn_check_iterable(dir_outer) else dir_outer
+    dir_outer = [dir_outer] if fn_check_pathLike(dir_outer) else dir_outer
+
     paths = list(set(sum([get_paths_recursive_inner(str(d), depth, depth=0) for d in dir_outer], start=[])))
     if natsorted:
         paths = natsort.natsorted(paths, alg=alg_ns)

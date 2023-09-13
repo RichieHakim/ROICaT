@@ -74,6 +74,7 @@ pip install --user roicat[all]
 pip install git+https://github.com/RichieHakim/roiextractors
 ```
 Note: if you are using a zsh terminal, change command to: `pip3 install --user 'roicat[all]'`
+For installing GPU support on Windows, see [Troubleshooting](#troubleshooting-gpu-support) below.
 
 ### 3. Clone the repo to get the scripts and notebooks
 ```
@@ -119,6 +120,12 @@ Using versions: torch==X.X.X+cuXXX, torchvision==X.X.X+cuXXX
 torch.cuda.is_available() = False
 ```
 If a CUDA version of PyTorch is installed but GPU is not available, make sure you have a [CUDA compatible NVIDIA GPU](https://developer.nvidia.com/cuda-gpus) and [drivers](https://developer.nvidia.com/cuda-toolkit-archive) that match the same version as the PyTorch CUDA version you choose. All CUDA 11.x versions are intercompatible, so if you have CUDA 11.8 drivers, you can install `torch==2.0.1+cu117`.
+
+**Solution:**
+To force install the GPU version of pytorch, see the pytorch installation instructions [here](https://pytorch.org/get-started/locally/) or use the conda command:
+```
+conda install pytorch torchvision torchaudio pytorch-cuda=11.7 -c pytorch -c nvidia
+```
 
 # General workflow:
 - **Pass ROIs through ROInet:** Images of the ROIs are passed through a neural network which outputs a feature vector for each image describing what the ROI looks like.
