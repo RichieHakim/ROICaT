@@ -20,7 +20,7 @@ bokeh==3.2.2
 psutil==5.9.5
 py-cpuinfo==9.0.0
 GPUtil==1.4.0
-PyYAML==6.0
+PyYAML==6.0.1
 mat73==0.62
 torch==2.0.1
 torchvision==0.15.2
