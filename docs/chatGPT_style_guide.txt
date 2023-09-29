@@ -5,7 +5,7 @@ Style guide / Ruleset:
 
 Function signature formatting:
 1. Each parameter should be on a separate line if there is more than one parameter.
-2. If a parameter has a default value, include it in the definition.
+2. If a parameter has a default value, only include it in the definition if it is not obvious.
 3. Use type hints for all parameters and the return value. Use the typing module and style guide for type hints.
 
 In the docstring:

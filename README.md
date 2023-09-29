@@ -12,7 +12,7 @@
 - Discussion forum: [https://groups.google.com/g/roicat_support](https://groups.google.com/g/roicat_support)
 - Technical support: [Github Issues](https://github.com/RichieHakim/ROICaT/issues)
 
-## **R**egion **O**f **I**nterest **C**lassification **a**nd **T**racking
+## **R**egion **O**f **I**nterest **C**lassification **a**nd **T**racking ᗢ
 A simple-to-use Python package for automatically classifying images of cells and tracking them across imaging sessions/planes.
 <div>
     <img src="docs/media/tracking_FOV_clusters_rich.gif" alt="tracking_FOV_clusters_rich"  width="400"  align="right" style="margin-left: 20px"/>
@@ -96,6 +96,7 @@ pip install --user roicat[all]
 pip install git+https://github.com/RichieHakim/roiextractors
 ```
 Note: if you are using a zsh terminal, change command to: `pip3 install --user 'roicat[all]'`
+For installing GPU support on Windows, see [Troubleshooting](#troubleshooting-gpu-support) below.
 
 ### 3. Clone the repo to get the scripts and notebooks
 ```
@@ -141,6 +142,12 @@ Using versions: torch==X.X.X+cuXXX, torchvision==X.X.X+cuXXX
 torch.cuda.is_available() = False
 ```
 If a CUDA version of PyTorch is installed but GPU is not available, make sure you have a [CUDA compatible NVIDIA GPU](https://developer.nvidia.com/cuda-gpus) and [drivers](https://developer.nvidia.com/cuda-toolkit-archive) that match the same version as the PyTorch CUDA version you choose. All CUDA 11.x versions are intercompatible, so if you have CUDA 11.8 drivers, you can install `torch==2.0.1+cu117`.
+
+**Solution:**
+To force install the GPU version of pytorch, see the pytorch installation instructions [here](https://pytorch.org/get-started/locally/) or use the conda command:
+```
+conda install pytorch torchvision torchaudio pytorch-cuda=11.7 -c pytorch -c nvidia
+```
 
 
 # TODO:

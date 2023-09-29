@@ -14,7 +14,7 @@ import PIL
 from PIL import ImageTk
 import csv
 import warnings
-from typing import List, Dict, Tuple, Union, Optional, Any, Callable, Iterable, Sequence, Type, Any
+from typing import List, Dict, Tuple, Union, Optional, Any, Callable, Iterable, Sequence, Type, Any, MutableMapping
 
 import numpy as np
 import torch
@@ -167,6 +167,38 @@ def deep_update_dict(
         helper_deep_update_dict(d, key, val)
         return d
         
+
+def flatten_dict(d: MutableMapping, parent_key: str = '', sep: str ='.') -> MutableMapping:
+    """
+    Flattens a dictionary of dictionaries into a single dictionary. NOTE: Turns
+    all keys into strings. Stolen from https://stackoverflow.com/a/6027615.
+    RH 2022
+
+    Args:
+        d (Dict):
+            Dictionary to flatten
+        parent_key (str):
+            Key to prepend to flattened keys IGNORE: USED INTERNALLY FOR
+            RECURSION
+        sep (str):
+            Separator to use between keys IGNORE: USED INTERNALLY FOR RECURSION
+
+    Returns:
+        (Dict):
+            flattened dictionary (dict):
+                Flat dictionary with the keys to deeper dictionaries joined by
+                the separator.
+    """
+
+    items = []
+    for k, v in d.items():
+        new_key = str(parent_key) + str(sep) + str(k) if parent_key else str(k)
+        if isinstance(v, MutableMapping):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
 
 ######################################################################################################################################
 ####################################################### MATH FUNCTIONS ###############################################################
@@ -934,19 +966,47 @@ def pydata_sparse_to_torch_coo(
     return torch.sparse_coo_tensor(i, v, torch.Size(shape))
 
 
+def index_with_nans(values, indices):
+    """
+    Indexes an array with a list of indices, allowing for NaNs in the indices.
+    RH 2022
+    
+    Args:
+        values (np.ndarray):
+            Array to be indexed.
+        indices (Union[List[int], np.ndarray]):
+            1D list or array of indices to use for indexing. Can contain NaNs.
+            Datatype should be floating point. NaNs will be removed and values
+            will be cast to int.
+
+    Returns:
+        np.ndarray:
+            Indexed array. Positions where `indices` was NaN will be filled with
+            NaNs.
+    """
+    indices = np.array(indices, dtype=float) if not isinstance(indices, np.ndarray) else indices
+    values = np.concatenate((np.full(shape=values.shape[1:], fill_value=np.nan, dtype=values.dtype)[None,...], values), axis=0)
+    idx = indices.copy() + 1
+    idx[np.isnan(idx)] = 0
+    
+    return values[idx.astype(np.int64)]
+
+
 ######################################################################################################################################
 ######################################################## FILE HELPERS ################################################################
 ######################################################################################################################################
 
 
 def find_paths(
-    dir_outer: str, 
+    dir_outer: Union[str, List[str]],
     reMatch: str = 'filename', 
+    reMatch_in_path: Optional[str] = None,
     find_files: bool = True, 
     find_folders: bool = False, 
     depth: int = 0, 
     natsorted: bool = True, 
-    alg_ns: Optional[str] = None
+    alg_ns: Optional[str] = None,
+    verbose: bool = False,
 ) -> List[str]:
     """
     Searches for files and/or folders recursively in a directory using a regex
@@ -954,13 +1014,18 @@ def find_paths(
     RH 2022
 
     Args:
-        dir_outer (str): 
-            Path to directory to search.
+        dir_outer (Union[str, List[str]]):
+            Path(s) to the directory(ies) to search. If a list of directories,
+            then all directories will be searched.
         reMatch (str): 
-            Regular expression to match. Each path name encountered will be
-            compared using ``re.search(reMatch, filename)``. If the output is
-            not ``None``, the file will be included in the output. (Default is
-            ``'filename'``)
+            Regular expression to match. Each file or folder name encountered
+            will be compared using ``re.search(reMatch, filename)``. If the
+            output is not ``None``, the file will be included in the output.
+        reMatch_in_path (Optional[str]):
+            Additional regular expression to match anywhere in the path. Useful
+            for finding files/folders in specific subdirectories. If ``None``, then
+            no additional matching is done. \n
+            (Default is ``None``)
         find_files (bool): 
             Whether to find files. (Default is ``True``)
         find_folders (bool): 
@@ -978,6 +1043,8 @@ def find_paths(
             https://natsort.readthedocs.io/en/4.0.4/ns_class.html/ for options.
             Default is PATH. Other commons are INT, FLOAT, VERSION. (Default is
             ``None``)
+        verbose (bool):
+            Whether to print the paths found. (Default is ``False``)
 
     Returns:
         (List[str]): 
@@ -988,23 +1055,54 @@ def find_paths(
     if alg_ns is None:
         alg_ns = natsort.ns.PATH
 
+    def fn_match(path, reMatch, reMatch_in_path):
+        # returns true if reMatch is basename and reMatch_in_path in full dirname
+        if reMatch is not None:
+            if re.search(reMatch, os.path.basename(path)) is None:
+                return False
+        if reMatch_in_path is not None:
+            if re.search(reMatch_in_path, os.path.dirname(path)) is None:
+                return False
+        return True
+
     def get_paths_recursive_inner(dir_inner, depth_end, depth=0):
         paths = []
         for path in os.listdir(dir_inner):
             path = os.path.join(dir_inner, path)
             if os.path.isdir(path):
                 if find_folders:
-                    if re.search(reMatch, path) is not None:
+                    if fn_match(path, reMatch, reMatch_in_path):
+                        print(f'Found folder: {path}') if verbose else None
                         paths.append(path)
                 if depth < depth_end:
                     paths += get_paths_recursive_inner(path, depth_end, depth=depth+1)
             else:
                 if find_files:
-                    if re.search(reMatch, path) is not None:
+                    if fn_match(path, reMatch, reMatch_in_path):
+                        print(f'Found file: {path}') if verbose else None
                         paths.append(path)
         return paths
 
-    paths = get_paths_recursive_inner(dir_outer, depth, depth=0)
+    def fn_check_pathLike(obj):
+        if isinstance(obj, (
+            str,
+            Path,
+            os.PathLike,
+            np.str_,
+            bytes,
+            memoryview,
+            np.bytes_,
+            np.unicode_,
+            re.Pattern,
+            re.Match,
+        )):
+            return True
+        else:
+            return False            
+
+    dir_outer = [dir_outer] if fn_check_pathLike(dir_outer) else dir_outer
+
+    paths = list(set(sum([get_paths_recursive_inner(str(d), depth, depth=0) for d in dir_outer], start=[])))
     if natsorted:
         paths = natsort.natsorted(paths, alg=alg_ns)
     return paths
@@ -4219,6 +4317,8 @@ def compute_cluster_similarity_matrices(
 
     Returns:
         (tuple): tuple containing:
+            labels_unique (np.ndarray):
+                Unique labels in ``l``.
             cs_mean (np.ndarray):
                 Similarity matrix for each cluster. Each element is the mean
                 similarity between all the pairs of samples in each cluster.
@@ -4313,7 +4413,183 @@ def compute_cluster_similarity_matrices(
     ## Compute the max similarity matrix for each cluster
     cs_max = (s_big_conj - s_big_diag).max(axis=(2,3))
 
-    return cs_mean, cs_max.todense(), cs_min
+    return l_u, cs_mean, cs_max.todense(), cs_min
+
+
+######################################################################################################################################
+########################################################## TESTING ###################################################################
+######################################################################################################################################
+
+
+class Equivalence_checker():
+    """
+    Class for checking if all items are equivalent or allclose (almost equal) in
+    two complex data structures. Can check nested lists, dicts, and other data
+    structures. Can also optionally assert (raise errors) if all items are not
+    equivalent. 
+    RH 2023
+
+    Attributes:
+        _kwargs_allclose (Optional[dict]): 
+            Keyword arguments for the `numpy.allclose` function.
+        _assert_mode (bool):
+            Whether to raise an assertion error if items are not close.
+
+    Args:
+        kwargs_allclose (Optional[dict]): 
+            Keyword arguments for the `numpy.allclose` function. (Default is
+            ``{'rtol': 1e-7, 'equal_nan': True}``)
+        assert_mode (bool): 
+            Whether to raise an assertion error if items are not close.
+        verbose (bool):
+            How much information to print out:
+                * ``False`` / ``0``: No information printed out.
+                * ``True`` / ``1``: Mismatched items only.
+                * ``2``: All items printed out.
+    """
+    def __init__(
+        self,
+        kwargs_allclose: Optional[dict] = {'rtol': 1e-7, 'equal_nan': True},
+        assert_mode=False,
+        verbose=False,
+    ) -> None:
+        """
+        Initializes the Allclose_checker.
+        """
+        self._kwargs_allclose = kwargs_allclose
+        self._assert_mode = assert_mode
+        self._verbose = verbose
+        
+    def _checker(
+        self, 
+        test: Any,
+        true: Any, 
+        path: Optional[List[str]] = None,
+        ) -> bool:
+        """
+        Compares the test and true values using numpy's allclose function.
+
+        Args:
+            test (Union[dict, list, tuple, set, np.ndarray, int, float, complex,
+            str, bool, None]): 
+                Test value to compare.
+            true (Union[dict, list, tuple, set, np.ndarray, int, float, complex,
+            str, bool, None]): 
+                True value to compare.
+            path (Optional[List[str]]): 
+                The path of the data structure that is currently being compared.
+                (Default is ``None``)
+
+        Returns:
+            (bool): 
+                result (bool): 
+                    Returns True if all elements in test and true are close.
+                    Otherwise, returns False.
+        """
+        try:
+            out = np.allclose(test, true, **self._kwargs_allclose)
+        except Exception as e:
+            out = None
+            warnings.warn(f"WARNING. Equivalence check failed. Path: {path}. Error: {e}") if self._verbose else None
+            
+        if out == False:
+            if self._assert_mode:
+                raise AssertionError(f"Equivalence check failed. Path: {path}.")
+            if self._verbose:
+                ## Come up with a way to describe the difference between the two values. Something like the following:
+                ### IF the arrays are numeric, then calculate the relative difference
+                dtypes_numeric = (np.number, np.bool_, np.integer, np.floating, np.complexfloating)
+                if any([np.issubdtype(test.dtype, dtype) and np.issubdtype(true.dtype, dtype) for dtype in dtypes_numeric]):
+                    diff = np.abs(test - true)
+                    r_diff = diff / np.abs(true)
+                    r_diff_mean, r_diff_max, any_nan = np.nanmean(r_diff), np.nanmax(r_diff), np.any(np.isnan(r_diff))
+                    print(f"Equivalence check failed. Path: {path}. Relative difference: mean={r_diff_mean}, max={r_diff_max}, any_nan={any_nan}") if self._verbose > 0 else None
+                else:
+                    print(f"Equivalence check failed. Path: {path}. Value is non-numerical.") if self._verbose > 0 else None
+        return out
+
+    def __call__(
+        self,
+        test: Union[dict, list, tuple, set, np.ndarray, int, float, complex, str, bool, None], 
+        true: Union[dict, list, tuple, set, np.ndarray, int, float, complex, str, bool, None], 
+        path: Optional[List[str]] = None,
+    ) -> Dict[str, Tuple[bool, str]]:
+        """
+        Compares the test and true values and returns the comparison result.
+        Handles various data types including dictionaries, iterables,
+        np.ndarray, scalars, strings, numbers, bool, and None.
+
+        Args:
+            test (Union[dict, list, tuple, set, np.ndarray, int, float, complex,
+            str, bool, None]): 
+                Test value to compare.
+            true (Union[dict, list, tuple, set, np.ndarray, int, float, complex,
+            str, bool, None]): 
+                True value to compare.
+            path (Optional[List[str]]): 
+                The path of the data structure that is currently being compared.
+                (Default is ``None``)
+
+        Returns:
+            Dict[Tuple[bool, str]]: 
+                result Dict[Tuple[bool, str]]: 
+                    The comparison result as a dictionary or a tuple depending
+                    on the data types of test and true.
+        """
+        if path is None:
+            path = ['']
+
+        if len(path) > 0:
+            if path[-1].startswith('_'):
+                return (None, 'excluded from testing')
+
+        ## DICT
+        if isinstance(true, dict):
+            result = {}
+            for key in true:
+                if key not in test:
+                    result[str(key)] = (False, 'key not found')
+                else:
+                    result[str(key)] = self.__call__(test[key], true[key], path=path + [str(key)])
+        ## ITERATABLE
+        elif isinstance(true, (list, tuple, set)):
+            if len(true) != len(test):
+                result = (False, 'length_mismatch')
+            result = {}
+            for idx, (i, j) in enumerate(zip(test, true)):
+                result[str(idx)] = self.__call__(i, j, path=path + [str(idx)])
+        ## NP.NDARRAY
+        elif isinstance(true, np.ndarray):
+            r = self._checker(test, true, path)
+            result = (r, 'equivalence')
+        ## NP.SCALAR
+        elif np.isscalar(true):
+            if isinstance(test, (int, float, complex, np.number)):
+                r = self._checker(np.array(test), np.array(true), path)
+                result = (r, 'equivalence')
+            else:
+                result = (test == true, 'equivalence')
+        ## STRING
+        elif isinstance(true, str):
+            result = (test == true, 'equivalence')
+        ## NUMBER
+        elif isinstance(true, (int, float, complex)):
+            r = self._checker(test, true, path)
+            result = (result, 'equivalence')
+        ## BOOL
+        elif isinstance(true, bool):
+            result = (test == true, 'equivalence')
+        ## NONE
+        elif true is None:
+            result = (test is None, 'equivalence')
+        ## N/A
+        else:
+            result = (None, 'not tested')
+
+        if self._verbose > 1:
+            print(f"{'.'.join(path)}: {result}")
+
+        return result
 
 
 ######################################################################################################################################
