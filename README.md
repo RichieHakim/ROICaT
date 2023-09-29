@@ -1,4 +1,4 @@
-# ROICaT
+# Welcome to ROICaT
 
 <div>
     <img src="docs/media/logo1.png" alt="ROICaT" width="200"  align="right"  style="margin-left: 20px"/>
@@ -18,11 +18,21 @@ A simple-to-use Python package for automatically classifying images of cells and
     <img src="docs/media/tracking_FOV_clusters_rich.gif" alt="tracking_FOV_clusters_rich"  width="400"  align="right" style="margin-left: 20px"/>
 </div>
 
-With this package, you can:
+**Why use ROICaT?**
+- ROICaT is capable of clasifying cells with near human accuracy when compared to human relabeling and can track cells with higher accuracy than other methods currently available. With minimal input data, ROICaT can classify and track cells with XX% accuracy. Additionally, the computational needs of ROICaT are minimal, requiring only a standard computer with 4 GB of RAM and a CPU. 
+
+With ROICaT, you can:
 - **Classify ROIs** into different categories (e.g. neurons, dendrites, glia, etc.).
 - **Track ROIs** across imaging sessions/planes.
 
-We have found that ROICaT is capable of classifying cells with accuracy comparable to human relabeling performance, and tracking cells with higher accuracy than any other methods we have tried. Paper coming soon.
+**What data types can ROICaT process?** 
+- ROICaT can accept many different two-photon imaging data formats including: Suite2p, CaImAn, CNMF, NWB, and more. 
+
+**What are the minimum computing needs?** 
+- We recommend the following as a starting point: 
+    - 4 GB of RAM (more for large data sets e.g., ~32 Gb for 100K neurons)
+    - GPU not required but will increase run speed. 
+
 
 <br>
 <br>
@@ -31,6 +41,10 @@ We have found that ROICaT is capable of classifying cells with accuracy comparab
 <div>
     <img src="docs/media/umap_with_labels.png" alt="ROICaT" width="300"  align="right"  style="margin-left: 20px"/>
 </div>
+
+Listed below, we have a suite of easy to run notebooks for running the ROICaT pipelines. 
+- The Google CoLab notebooks can be run fully remotely without installing anything on your computer.
+- The Jupyter notebooks can be run locally on your computer and require you to install ROICaT.
 
 **TRACKING:** 
 - [Interactive notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/tracking_interactive_notebook.ipynb)
@@ -48,6 +62,14 @@ We have found that ROICaT is capable of classifying cells with accuracy comparab
 - [Custom data importing notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/other/demo_data_importing.ipynb)
 - Use the API to integrate ROICaT functions into your own code: [Documentation](https://roicat.readthedocs.io/en/latest/roicat.html).
 <!-- - Train a new ROInet model using the provided Jupyter Notebook [TODO: link]. -->
+
+# General workflow:
+- **Pass ROIs through ROInet:** Images of the ROIs are passed through a neural network which outputs a feature vector for each image describing what the ROI looks like.
+-  **Classification:** The feature vectors can then be used to classify ROIs:
+- A simple classifier can be trained using user supplied labeled data (e.g. an array of images of ROIs and a corresponding array of labels for each ROI).
+- Alternatively, classification can be done by projecting the feature vectors into a lower-dimensional space using UMAP and then simply circling the region of space to classify the ROIs.
+-  **Tracking**: The feature vectors can be combined with information about the position of the ROIs to track the ROIs across imaging sessions/planes.
+
 
 # Installation
 ROICaT works on Windows, MacOS, and Linux. If you have any issues during the installation process, please make a [github issue](https://github.com/RichieHakim/ROICaT/issues) with the error.
@@ -127,12 +149,6 @@ To force install the GPU version of pytorch, see the pytorch installation instru
 conda install pytorch torchvision torchaudio pytorch-cuda=11.7 -c pytorch -c nvidia
 ```
 
-# General workflow:
-- **Pass ROIs through ROInet:** Images of the ROIs are passed through a neural network which outputs a feature vector for each image describing what the ROI looks like.
--  **Classification:** The feature vectors can then be used to classify ROIs:
-- A simple classifier can be trained using user supplied labeled data (e.g. an array of images of ROIs and a corresponding array of labels for each ROI).
-- Alternatively, classification can be done by projecting the feature vectors into a lower-dimensional space using UMAP and then simply circling the region of space to classify the ROIs.
--  **Tracking**: The feature vectors can be combined with information about the position of the ROIs to track the ROIs across imaging sessions/planes.
 
 # TODO:
 - Unify model training into this repo
