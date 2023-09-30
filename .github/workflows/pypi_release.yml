@@ -88,4 +88,7 @@ jobs:
       # `dist/` contains the built packages, and the
       # sigstore-produced signatures and certificates.
       run: >-
-        gh release upload v$VERSION dist/*
+        gh release upload \
+        v$VERSION \
+        dist/* \
+        --repo ${{ github.repository }}
