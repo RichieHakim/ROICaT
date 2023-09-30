@@ -75,12 +75,18 @@ jobs:
         inputs: >-
           ./dist/*.tar.gz
           ./dist/*.whl
+    - name: List files in workspace
+      run: >-
+        ls ${{ github.workspace }}
+    - name: List files in upper directory
+      run: >-
+        ls ${{ github.workspace }}/..
     - name: List files in dist
       run: >-
         ls ${{ github.workspace }}/dist    
     - name: Store the version number
       run: |
-        version=$(grep '__version__' ${{ github.workspace }}/roicat/__init__.py | awk -F = '{print $2}' | tr -d ' ' | tr -d \"\')
+        version=$(grep '__version__' ${{ github.workspace }}/../roicat/__init__.py | awk -F = '{print $2}' | tr -d ' ' | tr -d \"\')
         echo "VERSION=$version" >> $GITHUB_ENV
     - name: Check version number
       run: echo "Version is $VERSION"
