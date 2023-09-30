@@ -18,6 +18,13 @@ jobs:
       uses: actions/setup-python@v4
       with:
         python-version: "3.11"
+    - name: Store the version number
+      id: get_version
+      run: >-
+        echo "VERSION=$(grep '__version__' roicat/__init__.py | awk -F = '{print $2}' | tr -d ' ' | tr -d \"\')" >> $GITHUB_OUTPUT
+    - name: Check version number
+      run: >-
+        cat $GITHUB_OUTPUT
     - name: Install pypa/build
       run: >-
         python3 -m pip install build --user
@@ -28,12 +35,6 @@ jobs:
       with:
         name: python-package-distributions
         path: dist/
-    - name: Store the version number
-      id: get_version
-      run: >-
-        echo "VERSION=$(grep '__version__' roicat/__init__.py | awk -F = '{print $2}' | tr -d ' ' | tr -d \"\')" >> $GITHUB_OUTPUT
-        echo "Version: $VERSION"
-        echo "GITHUB_OUTPUT=$GITHUB_OUTPUT"
         
   # publish-to-pypi:
   #   name: >-
