@@ -868,10 +868,11 @@ def discard_UCIDs_with_fewer_matches(
     n_sesh_thresh = n_sesh if n_sesh_thresh == 'all' else n_sesh_thresh
     assert isinstance(n_sesh_thresh, int)
     
-    ucids_inAllSesh = [u for u in np.unique(ucids_out[0]) if np.array([np.isin(u, u_sesh) for u_sesh in ucids_out]).sum() >= n_sesh_thresh]
+    ucids_unique = np.unique(np.concatenate(ucids_out, axis=0))
+    ucids_inAllSesh = [u for u in ucids_unique if np.array([np.isin(u, u_sesh) for u_sesh in ucids_out]).sum() >= n_sesh_thresh]
     if verbose:
-        fraction = (np.unique(ucids_inAllSesh) >= 0).sum() / (np.unique(ucids_out[0]) >= 0).sum()
-        print(f'INFO: {fraction*100:.2f}% of UCIDs in first session appear in at least {n_sesh_thresh} sessions.')
+        fraction = (np.unique(ucids_inAllSesh) >= 0).sum() / (ucids_unique >= 0).sum()
+        print(f'INFO: {fraction*100:.2f}% of UCIDs that appear in at least {n_sesh_thresh} sessions.')
     ucids_out = [[val * np.isin(val, ucids_inAllSesh) - np.logical_not(np.isin(val, ucids_inAllSesh)) for val in u] for u in ucids_out]
     
     return ucids_out
