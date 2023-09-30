@@ -78,6 +78,11 @@ jobs:
         inputs: >-
           ./dist/*.tar.gz
           ./dist/*.whl
+    - name: Get the version number from the package
+      id: get_version
+      run: |
+        VERSION=$(python3 ROICaT/setup.py --version)
+        echo "VERSION=$VERSION" >> $GITHUB_ENV    
     - name: Upload artifact signatures to GitHub Release
       env:
         GITHUB_TOKEN: ${{ github.token }}
@@ -85,6 +90,4 @@ jobs:
       # `dist/` contains the built packages, and the
       # sigstore-produced signatures and certificates.
       run: >-
-        gh release upload
-        '${{ github.ref_name }}' dist/**
-        --repo '${{ github.repository }}'
+        gh release upload v${{ steps.get_version.outputs.VERSION }} dist/** --repo ${{ github.repository }}
