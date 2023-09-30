@@ -19,12 +19,11 @@ jobs:
       with:
         python-version: "3.11"
     - name: Store the version number
-      id: get_version
-      run: >-
-        echo "VERSION=$(grep '__version__' roicat/__init__.py | awk -F = '{print $2}' | tr -d ' ' | tr -d \"\')" >> $GITHUB_OUTPUT
+      run: |
+        version=$(grep '__version__' roicat/__init__.py | awk -F = '{print $2}' | tr -d ' ' | tr -d \"\')
+        echo "VERSION=$version" >> $GITHUB_ENV
     - name: Check version number
-      run: >-
-        echo $VERSION
+      run: echo "Version is $VERSION"
     - name: Install pypa/build
       run: >-
         python3 -m pip install build --user
