@@ -20,10 +20,7 @@ jobs:
         python-version: "3.11"
     - name: Install pypa/build
       run: >-
-        python3 -m
-        pip install
-        build
-        --user
+        python3 -m pip install build --user
     - name: Build a binary wheel and a source tarball
       run: python3 -m build
     - name: Store the distribution packages
@@ -31,11 +28,11 @@ jobs:
       with:
         name: python-package-distributions
         path: dist/
-
+        
   publish-to-pypi:
     name: >-
       Publish Python 🐍 distribution 📦 to PyPI
-    if: startsWith(github.ref, 'refs/tags/')  # only publish to PyPI on tag pushes
+    # if: startsWith(github.ref, 'refs/tags/')  # only publish to PyPI on tag pushes
     needs:
     - build
     runs-on: ubuntu-latest
@@ -67,6 +64,7 @@ jobs:
       id-token: write  # IMPORTANT: mandatory for sigstore
 
     steps:
+    - uses: actions/checkout@v4
     - name: Download all the dists
       uses: actions/download-artifact@v3
       with:
@@ -78,16 +76,26 @@ jobs:
         inputs: >-
           ./dist/*.tar.gz
           ./dist/*.whl
-    - name: Get the version number from the package
-      id: get_version
+    - name: List files in workspace
+      run: >-
+        ls ${{ github.workspace }}
+    - name: List files in upper directory
+      run: >-
+        ls ${{ github.workspace }}/..
+    - name: List files in dist
+      run: >-
+        ls ${{ github.workspace }}/dist    
+    - name: Store the version number
       run: |
-        VERSION=$(python3 ROICaT/setup.py --version)
-        echo "VERSION=$VERSION" >> $GITHUB_ENV    
-    - name: Upload artifact signatures to GitHub Release
+        version=$(grep '__version__' ${{ github.workspace }}/roicat/__init__.py | awk -F = '{print $2}' | tr -d ' ' | tr -d \"\')
+        echo "VERSION=$version" >> $GITHUB_ENV
+    - name: Check version number
+      run: echo "Version is $VERSION"
+    - name: Create GitHub Release
       env:
         GITHUB_TOKEN: ${{ github.token }}
-      # Upload to GitHub Release using the `gh` CLI.
-      # `dist/` contains the built packages, and the
-      # sigstore-produced signatures and certificates.
       run: >-
-        gh release upload v${{ steps.get_version.outputs.VERSION }} dist/** --repo ${{ github.repository }}
+        gh release create "v$VERSION" 
+        --title "v$VERSION" 
+        --notes "Release for version $VERSION. Also available on PyPI: https://pypi.org/project/roicat/$VERSION/"
+        --repo ${{ github.repository }}
