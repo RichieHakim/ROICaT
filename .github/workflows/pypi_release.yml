@@ -24,7 +24,7 @@ jobs:
         echo "VERSION=$(grep '__version__' roicat/__init__.py | awk -F = '{print $2}' | tr -d ' ' | tr -d \"\')" >> $GITHUB_OUTPUT
     - name: Check version number
       run: >-
-        cat $GITHUB_OUTPUT
+        echo $VERSION
     - name: Install pypa/build
       run: >-
         python3 -m pip install build --user
