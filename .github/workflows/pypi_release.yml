@@ -34,8 +34,9 @@ jobs:
         export VERSION=$(python3 setup.py --version)
     - name: Print the version number
       run: >-
+        VERSION=$(grep '__version__' your_package/__init__.py | awk -F = '{print $2}' | tr -d ' ' | tr -d \"\')
         echo "Version: $VERSION"
-
+        
   # publish-to-pypi:
   #   name: >-
   #     Publish Python 🐍 distribution 📦 to PyPI
