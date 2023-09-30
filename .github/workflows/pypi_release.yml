@@ -94,13 +94,8 @@ jobs:
     - name: Create GitHub Release
       env:
         GITHUB_TOKEN: ${{ github.token }}
-      run: |
-        gh release create "v$VERSION" --title "v$VERSION" --notes "Release for version $VERSION" --repo RichieHakim/ROICaT
-    - name: Upload artifact signatures to GitHub Release
-      env:
-        GITHUB_TOKEN: ${{ github.token }}
-      # Upload to GitHub Release using the `gh` CLI.
-      # `dist/` contains the built packages, and the
-      # sigstore-produced signatures and certificates.
       run: >-
-        gh release upload v$VERSION ${{ github.workspace }}/dist/* --repo ${{ github.repository }}
+        gh release create "v$VERSION" 
+        --title "v$VERSION" 
+        --notes "Release for version $VERSION. Also available on PyPI: https://pypi.org/project/roicat/$VERSION/"
+        --repo ${{ github.repository }}
