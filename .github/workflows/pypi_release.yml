@@ -78,9 +78,11 @@ jobs:
         inputs: >-
           ./dist/*.tar.gz
           ./dist/*.whl
-    - name: Set tag as version
+    - name: Extract the version from the tag
       id: get_version
-      run: echo ::set-output name=VERSION::${GITHUB_REF#refs/tags/}
+      run: >-
+        VERSION=$(python -c "from your_project.__init__ import __version__; print(__version__)")
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
     - name: Upload artifact signatures to GitHub Release
       env:
         GITHUB_TOKEN: ${{ github.token }}
@@ -90,5 +92,5 @@ jobs:
       run: >-
         gh release upload
         ${{ steps.get_version.outputs.VERSION }}
-        dist/*
-        
+        dist/*.tar.gz
+        dist/*.whl
