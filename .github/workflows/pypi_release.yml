@@ -81,6 +81,12 @@ jobs:
         inputs: >-
           ./dist/*.tar.gz
           ./dist/*.whl
+    - name: Print working directory
+      run: >-
+        pwd
+    - name: List files in dist
+      run: >-
+        ls ${{ github.workspace }}/dist    
     - name: Upload artifact signatures to GitHub Release
       env:
         GITHUB_TOKEN: ${{ github.token }}
@@ -90,5 +96,5 @@ jobs:
       run: >-
         gh release upload \
         v$VERSION \
-        dist/** \
+        ${{ github.workspace }}/dist/** \
         --repo ${{ github.repository }}
