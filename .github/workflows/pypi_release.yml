@@ -81,12 +81,12 @@ jobs:
         inputs: >-
           ./dist/*.tar.gz
           ./dist/*.whl
-    - name: Print working directory
-      run: >-
-        pwd
     - name: List files in dist
       run: >-
         ls ${{ github.workspace }}/dist    
+    - name: Create GitHub Release
+      run: |
+        gh release create "v$VERSION" --title "v$VERSION" --notes "Release for version $VERSION" --repo RichieHakim/ROICaT
     - name: Upload artifact signatures to GitHub Release
       env:
         GITHUB_TOKEN: ${{ github.token }}
