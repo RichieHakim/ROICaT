@@ -13,4 +13,4 @@ __all__ = [
 for pkg in __all__:
     exec('from . import ' + pkg)
 
-__version__ = '1.1.8'
+__version__ = '1.1.9'
