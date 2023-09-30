@@ -31,10 +31,10 @@ jobs:
     - name: Store the version number
       id: get_version
       run: >-
-        echo "VERSION=$(python3 setup.py --version)" >> $GITHUB_ENV
+        export VERSION=$(python3 setup.py --version)
     - name: Print the version number
       run: >-
-        echo "Version is ${{ env.VERSION }}"
+        echo "Version: $VERSION"
 
   # publish-to-pypi:
   #   name: >-
