@@ -96,5 +96,5 @@ jobs:
       run: >-
         gh release upload \
         v$VERSION \
-        ${{ github.workspace }}/dist/** \
+        ${{ github.workspace }}/dist/* \
         --repo ${{ github.repository }}
