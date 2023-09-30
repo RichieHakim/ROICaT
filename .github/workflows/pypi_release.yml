@@ -28,11 +28,10 @@ jobs:
       with:
         name: python-package-distributions
         path: dist/
-    - name: Set the tag as the version number
+    - name: Store the version number
       id: get_version
       run: >-
-        VERSION=$(python3 setup.py --version)
-        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "VERSION=$(python3 setup.py --version)" >> $GITHUB_ENV
     - name: Print the version number
       run: >-
         echo "Version is ${{ env.VERSION }}"
