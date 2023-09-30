@@ -78,11 +78,9 @@ jobs:
         inputs: >-
           ./dist/*.tar.gz
           ./dist/*.whl
-    - name: Get the version number from the package
+    - name: Set tag as version
       id: get_version
-      run: |
-        VERSION=$(python3 setup.py --version)
-        echo "VERSION=$VERSION" >> $GITHUB_ENV    
+      run: echo ::set-output name=VERSION::${GITHUB_REF#refs/tags/}
     - name: Upload artifact signatures to GitHub Release
       env:
         GITHUB_TOKEN: ${{ github.token }}
@@ -90,4 +88,7 @@ jobs:
       # `dist/` contains the built packages, and the
       # sigstore-produced signatures and certificates.
       run: >-
-        gh release upload v${{ steps.get_version.outputs.VERSION }} dist/** --repo ${{ github.repository }}
+        gh release upload
+        ${{ steps.get_version.outputs.VERSION }}
+        dist/*
+        
