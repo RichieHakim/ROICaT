@@ -1,7 +1,12 @@
 name: Publish Python 🐍 distribution 📦 to PyPI
 
-on: push
-
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: 'description'     
+        required: false                     
+        default: '' 
 jobs:
   build:
     name: Build distribution 📦
