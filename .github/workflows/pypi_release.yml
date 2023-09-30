@@ -85,6 +85,8 @@ jobs:
       run: >-
         ls ${{ github.workspace }}/dist    
     - name: Create GitHub Release
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
       run: |
         gh release create "v$VERSION" --title "v$VERSION" --notes "Release for version $VERSION" --repo RichieHakim/ROICaT
     - name: Upload artifact signatures to GitHub Release
