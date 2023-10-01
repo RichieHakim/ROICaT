@@ -19,14 +19,16 @@ A simple-to-use Python package for automatically classifying images of cells and
 </div>
 
 **Why use ROICaT?**
-- ROICaT is capable of clasifying cells with near human accuracy when compared to human relabeling and can track cells with higher accuracy than other methods currently available. With minimal input data, ROICaT can classify and track cells with XX% accuracy. Additionally, the computational needs of ROICaT are minimal, requiring only a standard computer with 4 GB of RAM and a CPU. 
+- ROICaT was made to be better than existing tools. It is capable of classifying and tracking neuron ROIs at accuracies approaching human performance. Several labs currently use ROICaT to do automatic tracking and classification of ROIs with no post-hoc curation required. 
+- Great effort was taken to optimize performance. Computational requirements are minimal and run times are fast.
+- It's easy to use. You don't need to know how to code. You can use the interactive notebooks to run the pipelines with just a few clicks.
 
 With ROICaT, you can:
 - **Classify ROIs** into different categories (e.g. neurons, dendrites, glia, etc.).
-- **Track ROIs** across imaging sessions/planes.
+- **Track ROIs** across imaging sessions/planes (e.g. ROI #1 in session 1 is the same as ROI #7 in session 2).
 
 **What data types can ROICaT process?** 
-- ROICaT can accept many different two-photon imaging data formats including: Suite2p, CaImAn, CNMF, NWB, and more. 
+- ROICaT can accept any imaging data format including: Suite2p, CaImAn, CNMF, NWB, raw/custom ROI data and more. See below for details on how to use any data type with ROICaT.
 
 **What are the minimum computing needs?** 
 - We recommend the following as a starting point: 
