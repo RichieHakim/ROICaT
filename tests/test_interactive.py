@@ -6,7 +6,7 @@ import tempfile
 
 import numpy as np
 import torch
-import threading
+import multiprocessing as mp
 
 from roicat import visualization
 import holoviews as hv
@@ -85,25 +85,32 @@ def deploy_bokeh(instance):
 
 
 def test_interactive_drawing():
+    warnings.warn("Interactive GUI Drawing Test is running. Please wait...")
     ## Bokeh server deployment at http://localhost:5000
     apps = {"/": Application(FunctionHandler(deploy_bokeh))}
 
+    warnings.warn("Deploy Bokeh server to localhost:5000...")
     ## Let it run in the background so that the test can continue
-    thread = threading.Thread(target=start_server, args=(apps,))
-    thread.start()
+    server_process = mp.Process(target=start_server, args=(apps,))
+    server_process.start()
 
+    warnings.warn("Setup chrome webdriver...")
     service = Service()
     chrome_options = Options()
     chrome_options.add_argument("--window-size=1280,1280")
     ## For local testing, just comment out the headless options.
     chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--disable-gpu")
 
     ## if you are on latest version say selenium v4.6.0 or higher, you don't have to use third party library such as WebDriverManager
     driver = webdriver.Chrome(service=service, options=chrome_options)
+
+    warnings.warn("Get to the Bokeh server...")
     driver.get("http://localhost:5000/")
     wait = WebDriverWait(driver, 10)
     try:
         element = wait.until(EC.presence_of_element_located((By.XPATH, "//*")))
+        warnings.warn("Found Bokeh drawing element!")
     except Exception as e:
         warnings.warn(f"Failed to locate element: {str(e)}")
 
@@ -112,6 +119,7 @@ def test_interactive_drawing():
     width, height = size["width"], size["height"]
 
     ## Move to the center of the element
+    warnings.warn("Start mouse movement...")
     actions = ActionChains(driver)
     actions.move_to_element(element)
     actions.click_and_hold()
@@ -129,7 +137,14 @@ def test_interactive_drawing():
     actions.release()
     actions.perform()
 
+    warnings.warn("Mouse movement done! Detach Selenium from Bokeh server...")
     driver.quit()
 
+    warnings.warn("Test if indices are correctly saved...")
     indices = get_indices()
     assert indices == [3]
+
+    warnings.warn("Test is done. Cleaning up...")
+    server_process.terminate()
+    server_process.join()
+    warnings.warn("Test is done. Cleaning up done.")
