@@ -65,7 +65,7 @@ def deploy_bokeh(instance):
     mock_data, mock_idx_images_overlay, mock_images_overlay = create_mock_input()
 
     ## Create a scatter plot
-    _, layout, path_tempFile = visualization.select_region_scatterPlot(
+    _, layout, _ = visualization.select_region_scatterPlot(
         data=mock_data,
         idx_images_overlay=mock_idx_images_overlay,
         images_overlay=mock_images_overlay,
@@ -76,11 +76,6 @@ def deploy_bokeh(instance):
         size_points=10,
         color_points="b",
     )
-
-    ## Sanity check
-    warnings.warning("path_tempFile: {}".format(path_tempFile))
-    warnings.warn("Tmpfile dir: {}".format(os.listdir(tempfile.gettempdir())))
-    assert os.path.exists(path_tempFile)
 
     ## Render plot
     hv_layout = hv.render(layout)
