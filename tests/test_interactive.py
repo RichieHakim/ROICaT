@@ -1,4 +1,4 @@
-from pathlib import Path
+import os
 
 import warnings
 import pytest
@@ -36,7 +36,7 @@ def create_mock_input():
 
 def get_indices():
     ## Steal the fn_get_indices function for testing purposes
-    path_tempFile = tempfile.gettempdir() + "/indices.csv"
+    path_tempFile = os.path.join(tempfile.gettempdir(), "indices.csv")
     with open(path_tempFile, "r") as f:
         indices = f.read().split(",")
     indices = [int(i) for i in indices if i != ""] if len(indices) > 0 else None
@@ -87,7 +87,7 @@ def deploy_bokeh(instance):
 
 def check_server():
     try:
-        response = requests.get("http://localhost:5000")
+        response = requests.get("http://127.0.0.1:5000")
         if response.status_code == 200:
             warnings.warn("Server is up and running!")
         else:
@@ -133,7 +133,8 @@ def test_interactive_drawing():
         )
 
         warnings.warn("Get to the Bokeh server...")
-        driver.get("http://localhost:5000/")
+        # driver.get("http://localhost:5000/")
+        driver.get("http://127.0.0.1:5000/")
         wait = WebDriverWait(driver, 10)
         warnings.warn("Found the Bokeh server, locate drawing Bokeh element...")
         try:
