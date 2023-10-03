@@ -47,9 +47,9 @@ def start_server(apps):
     ## Start Bokeh server given a test scatter plot
     server = Server(
         apps,
-        port=5000,
+        port=5006,
         address="0.0.0.0",
-        allow_websocket_origin=["0.0.0.0:5000", "localhost:5000"],
+        allow_websocket_origin=["0.0.0.0:5006", "localhost:5006"],
     )
     server.start()
 
@@ -87,7 +87,7 @@ def deploy_bokeh(instance):
 
 def check_server():
     try:
-        response = requests.get("http://127.0.0.1:5000")
+        response = requests.get("http://127.0.0.1:5006")
         if response.status_code == 200:
             warnings.warn("Server is up and running!")
         else:
@@ -99,10 +99,10 @@ def check_server():
 def test_interactive_drawing():
     try:
         warnings.warn("Interactive GUI Drawing Test is running. Please wait...")
-        ## Bokeh server deployment at http://localhost:5000
+        ## Bokeh server deployment at http://localhost:5006
         apps = {"/": Application(FunctionHandler(deploy_bokeh))}
 
-        warnings.warn("Deploy Bokeh server to localhost:5000...")
+        warnings.warn("Deploy Bokeh server to localhost:5006...")
         ## Let it run in the background so that the test can continue
         server_process = mp.Process(target=start_server, args=(apps,))
         server_process.start()
@@ -133,8 +133,8 @@ def test_interactive_drawing():
         )
 
         warnings.warn("Get to the Bokeh server...")
-        # driver.get("http://localhost:5000/")
-        driver.get("http://127.0.0.1:5000/")
+        # driver.get("http://localhost:5006/")
+        driver.get("http://127.0.0.1:5006/")
         wait = WebDriverWait(driver, 10)
         warnings.warn("Found the Bokeh server, locate drawing Bokeh element...")
         try:
@@ -170,6 +170,7 @@ def test_interactive_drawing():
         driver.quit()
 
         warnings.warn("Test if indices are correctly saved...")
+        warnings.warn("Tmpfile dir: {}".format(os.listdir(tempfile.gettempdir())))
         indices = get_indices()
         assert indices == [3]
     except Exception as e:
