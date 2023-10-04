@@ -140,7 +140,8 @@ def test_interactive_drawing():
     ## Sanity check...
     # path_tempfile = internal_test()
     ## Okay, let's try to make my own temp directory
-    path_tempdir = tempfile.mkdtemp()
+    user_home = os.path.expanduser("~")
+    path_tempdir = tempfile.mkdtemp(dir=user_home)
     path_tempfile = os.path.join(path_tempdir, 'indices.csv')
 
     warnings.warn(f"Path_tempfile: {path_tempfile}")
