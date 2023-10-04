@@ -222,12 +222,15 @@ def test_interactive_drawing():
     actions.move_by_offset(
         int(width / 2), int(0)
     )  ## Move from center to midpoint of right edge
+    # actions.pause(1)
     actions.move_by_offset(
         int(0), int(-height / 2)
     )  ## Move from midpoint of right edge to top right corner
+    # actions.pause(1)
     actions.move_by_offset(
         int(-width / 2), int(0)
     )  ## Move from top right corner to midpoint of top edge
+    # actions.pause(1)
     actions.release()
     actions.perform()
 
@@ -235,6 +238,13 @@ def test_interactive_drawing():
     driver.quit()
 
     ## Wait for the server to save indices.csv
+    time.sleep(5)
+
+    ## Any chance kill the server first helps?
+    warnings.warn("Kill the Bokeh server...")
+    server_process.terminate()
+    server_process.join()
+
     time.sleep(5)
 
     warnings.warn("Tmpfile dir: {}".format(os.listdir(path_tempdir)))
@@ -264,6 +274,4 @@ def test_interactive_drawing():
     ## Check if the indices are correct
     assert indices == [3]
     warnings.warn("Test is done. Cleaning up...")
-    server_process.terminate()
-    server_process.join()
     warnings.warn("Test is done. Cleaning up done.")
