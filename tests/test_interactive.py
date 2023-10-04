@@ -4,10 +4,12 @@ import warnings
 import pytest
 import tempfile
 import requests
+import time
 
 import numpy as np
 import torch
 import multiprocessing as mp
+from multiprocessing import Queue
 
 from roicat import visualization
 import holoviews as hv
@@ -43,7 +45,7 @@ def get_indices():
     return indices
 
 
-def start_server(apps):
+def start_server(apps, query):
     ## Start Bokeh server given a test scatter plot
     server = Server(
         apps,
@@ -52,6 +54,14 @@ def start_server(apps):
         allow_websocket_origin=["0.0.0.0:5006", "localhost:5006"],
     )
     server.start()
+
+    ## Put server details into the queue
+    query.put(
+        {
+            "address": server.address,
+            "port": server.port,
+        }
+    )
 
     ## Setup IO loop
     server.io_loop.start()
@@ -87,30 +97,46 @@ def deploy_bokeh(instance):
 
 def check_server():
     try:
-        # response = requests.get("http://127.0.0.1:5006")
-        response = requests.get("http://localhost:5006")
+        # response = requests.get("http://localhost:5006/test_drawing")
+        response = requests.get("http://localhost:5006/test_drawing")
         if response.status_code == 200:
             warnings.warn("Server is up and running!")
+            return 1
         else:
             warnings.warn(f"Server responded with status code: {response.status_code}")
+            return 0
     except requests.ConnectionError:
         warnings.warn("Cannot connect to the server!")
+        return 0
 
 
 def test_interactive_drawing():
-    # try:
     warnings.warn("Interactive GUI Drawing Test is running. Please wait...")
-    ## Bokeh server deployment at http://localhost:5006
-    apps = {"/": Application(FunctionHandler(deploy_bokeh))}
+    ## Bokeh server deployment at http://localhost:5006/test_drawing
+    apps = {"/test_drawing": Application(FunctionHandler(deploy_bokeh))}
 
-    warnings.warn("Deploy Bokeh server to localhost:5006...")
+    warnings.warn("Deploy Bokeh server to localhost:5006/test_drawing...")
     ## Let it run in the background so that the test can continue
-    server_process = mp.Process(target=start_server, args=(apps,))
+    query = Queue()
+    server_process = mp.Process(target=start_server, args=(apps, query))
     server_process.start()
+
+    ## Wait for the server to start
+    time.sleep(5)
+
+    ## Get server info
+    server_query = query.get()
+
+    warnings.warn(f"Server address: {server_query['address']}")
+    warnings.warn(f"Server port: {server_query['port']}")
 
     ## Check if the server is up and running
     warnings.warn("Check if Bokeh server is up and running...")
-    check_server()
+    server_status = check_server()
+    if not server_status:
+        server_process.terminate()
+        server_process.join()
+        raise Exception("Server is not up and running!")
 
     warnings.warn("Setup chrome webdriver...")
     service = Service()
@@ -134,8 +160,7 @@ def test_interactive_drawing():
     )
 
     warnings.warn("Get to the Bokeh server...")
-    # driver.get("http://127.0.0.1:5006/")
-    driver.get("http://localhost:5006/")
+    driver.get("http://localhost:5006/test_drawing")
     wait = WebDriverWait(driver, 10)
     warnings.warn("Found the Bokeh server, locate drawing Bokeh element...")
     try:
@@ -174,10 +199,6 @@ def test_interactive_drawing():
     warnings.warn("Tmpfile dir: {}".format(os.listdir(tempfile.gettempdir())))
     indices = get_indices()
     assert indices == [3]
-    # except Exception as e:
-    #     warnings.warn(f"Test failed: {str(e)}")
-    #     raise e
-    # finally:
     warnings.warn("Test is done. Cleaning up...")
     server_process.terminate()
     server_process.join()
