@@ -36,16 +36,12 @@ def create_mock_input():
     return mock_data, mock_idx_images_overlay, mock_images_overlay
 
 
-def get_indices():
+def get_indices(path_tempFile):
     ## Steal the fn_get_indices function for testing purposes
-    path_tempFile = os.path.join(tempfile.gettempdir(), "indices.csv")
-    try:
-        with open(path_tempFile, "r") as f:
-            indices = f.read().split(",")
-        indices = [int(i) for i in indices if i != ""] if len(indices) > 0 else None
-        return indices
-    except FileNotFoundError:
-        return None
+    with open(path_tempFile, "r") as f:
+        indices = f.read().split(",")
+    indices = [int(i) for i in indices if i != ""] if len(indices) > 0 else None
+    return indices
 
 
 def start_server(apps, query):
@@ -70,7 +66,7 @@ def start_server(apps, query):
     server.io_loop.start()
 
 
-def deploy_bokeh(instance):
+def deploy_bokeh(instance,indices_path):
     ## Draw test plot and add to Bokeh document
     hv.extension("bokeh")
 
@@ -84,6 +80,7 @@ def deploy_bokeh(instance):
         images_overlay=mock_images_overlay,
         size_images_overlay=0.01,
         frac_overlap_allowed=0.5,
+        path=indices_path,
         figsize=(1200, 1200),
         alpha_points=1.0,
         size_points=10,
@@ -100,14 +97,14 @@ def deploy_bokeh(instance):
 
 def internal_test():
     ## Sometimes, for some unknown reason, github action misses indices.csv
-    ## Draw test plot and add to Bokeh document
+    ## If we manually define the path to indices.csv, would it work?
     hv.extension("bokeh")
 
     ## Create a mock input
     mock_data, mock_idx_images_overlay, mock_images_overlay = create_mock_input()
 
     ## Create a scatter plot
-    _, layout, path_tempfile = visualization.select_region_scatterPlot(
+    _, _, path_tempfile = visualization.select_region_scatterPlot(
         data=mock_data,
         idx_images_overlay=mock_idx_images_overlay,
         images_overlay=mock_images_overlay,
@@ -143,9 +140,11 @@ def test_interactive_drawing():
     path_tempfile = internal_test()
     warnings.warn(f"Path_tempfile: {path_tempfile}")
     warnings.warn("Tmpfile dir: {}".format(os.listdir(tempfile.gettempdir())))
+    os.makedirs(os.path.dirname(path_tempfile), exist_ok=True)
 
     ## Bokeh server deployment at http://localhost:5006/test_drawing
-    apps = {"/test_drawing": Application(FunctionHandler(deploy_bokeh))}
+    # apps = {"/test_drawing": Application(FunctionHandler(deploy_bokeh))}
+    apps = {"/test_drawing": Application(FunctionHandler(lambda instance: deploy_bokeh(instance, path_tempfile)))}
 
     warnings.warn("Deploy Bokeh server to localhost:5006/test_drawing...")
     ## Let it run in the background so that the test can continue
@@ -227,14 +226,34 @@ def test_interactive_drawing():
     warnings.warn("Mouse movement done! Detach Selenium from Bokeh server...")
     driver.quit()
 
-    warnings.warn("Test if indices are correctly saved...")
+    ## Wait for the server to save indices.csv
+    time.sleep(5)
+
     warnings.warn("Tmpfile dir: {}".format(os.listdir(tempfile.gettempdir())))
-    indices = get_indices()
-    if indices is None:
+    warnings.warn("Test if indices.csv is created...")
+    if not os.path.exists(path_tempfile):
         warnings.warn("No indices.csv found!")
         server_process.terminate()
         server_process.join()
-        raise Exception("No indices found!")
+        raise Exception("No indices.csv found!")
+    
+    warnings.warn("Test if indices.csv has correct permission...")
+    if not os.access(path_tempfile, os.R_OK):
+        warnings.warn("indices.csv is not readable!")
+        server_process.terminate()
+        server_process.join()
+        raise Exception("indices.csv is not readable!")
+    
+    warnings.warn("Test if indices are correctly saved...")
+    indices = get_indices(path_tempfile)
+
+    if indices is None:
+        warnings.warn("indices.csv is created, but no indices are saved!")
+        server_process.terminate()
+        server_process.join()
+        raise Exception("indices.csv is created, but no indices are saved!")
+    
+    ## Check if the indices are correct
     assert indices == [3]
     warnings.warn("Test is done. Cleaning up...")
     server_process.terminate()
