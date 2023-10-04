@@ -139,10 +139,14 @@ def test_interactive_drawing():
     warnings.warn("Interactive GUI Drawing Test is running. Please wait...")
     ## Sanity check...
     # path_tempfile = internal_test()
-    path_tempfile = os.path.join(tempfile.gettempdir(), 'indices.csv')
+    ## Okay, let's try to make my own temp directory
+    path_tempdir = tempfile.mkdtemp()
+    path_tempfile = os.path.join(path_tempdir, 'indices.csv')
+
     warnings.warn(f"Path_tempfile: {path_tempfile}")
-    warnings.warn("Tmpfile dir: {}".format(os.listdir(tempfile.gettempdir())))
-    os.makedirs(os.path.dirname(path_tempfile), exist_ok=True)
+    warnings.warn("Tmpfile dir: {}".format(os.listdir(path_tempdir)))
+    # os.makedirs(os.path.dirname(path_tempfile), exist_ok=True)
+    os.makedirs(path_tempdir, exist_ok=True)
 
     ## Bokeh server deployment at http://localhost:5006/test_drawing
     # apps = {"/test_drawing": Application(FunctionHandler(deploy_bokeh))}
@@ -232,7 +236,7 @@ def test_interactive_drawing():
     ## Wait for the server to save indices.csv
     time.sleep(5)
 
-    warnings.warn("Tmpfile dir: {}".format(os.listdir(tempfile.gettempdir())))
+    warnings.warn("Tmpfile dir: {}".format(os.listdir(path_tempdir)))
     warnings.warn("Test if indices.csv is created...")
     if not os.path.exists(path_tempfile):
         warnings.warn("No indices.csv found!")
