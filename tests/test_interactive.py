@@ -67,7 +67,7 @@ def start_server(apps, query):
     server.io_loop.start()
 
 
-def deploy_bokeh(instance,indices_path):
+def deploy_bokeh(instance):
     ## Draw test plot and add to Bokeh document
     hv.extension("bokeh")
 
@@ -81,7 +81,6 @@ def deploy_bokeh(instance,indices_path):
         images_overlay=mock_images_overlay,
         size_images_overlay=0.01,
         frac_overlap_allowed=0.5,
-        path=indices_path,
         figsize=(1200, 1200),
         alpha_points=1.0,
         size_points=10,
@@ -94,6 +93,35 @@ def deploy_bokeh(instance,indices_path):
 
     ## Add to Bokeh document
     instance.add_root(hv_layout)
+
+
+# def deploy_bokeh(instance,indices_path):
+#     ## Draw test plot and add to Bokeh document
+#     hv.extension("bokeh")
+
+#     ## Create a mock input
+#     mock_data, mock_idx_images_overlay, mock_images_overlay = create_mock_input()
+
+#     ## Create a scatter plot
+#     _, layout, _ = visualization.select_region_scatterPlot(
+#         data=mock_data,
+#         idx_images_overlay=mock_idx_images_overlay,
+#         images_overlay=mock_images_overlay,
+#         size_images_overlay=0.01,
+#         frac_overlap_allowed=0.5,
+#         path=indices_path,
+#         figsize=(1200, 1200),
+#         alpha_points=1.0,
+#         size_points=10,
+#         color_points="b",
+#     )
+
+#     ## Render plot
+#     hv_layout = hv.render(layout)
+#     hv_layout.name = "drawing_test"
+
+#     ## Add to Bokeh document
+#     instance.add_root(hv_layout)
 
 
 # def internal_test():
@@ -137,22 +165,26 @@ def check_server():
 
 def test_interactive_drawing():
     warnings.warn("Interactive GUI Drawing Test is running. Please wait...")
-    ## Sanity check...
-    # path_tempfile = internal_test()
-    ## Okay, let's try to make my own temp directory
-    user_home = os.path.expanduser("~")
-    path_tempdir = tempfile.mkdtemp(dir=user_home)
+    # ## Sanity check...
+    # # path_tempfile = internal_test()
+    # ## Okay, let's try to make my own temp directory
+    # user_home = os.path.expanduser("~")
+    # path_tempdir = tempfile.mkdtemp(dir=user_home)
+    # path_tempfile = os.path.join(path_tempdir, 'indices.csv')
+
+    # warnings.warn(f"Path_tempfile: {path_tempfile}")
+    # warnings.warn("Tmpfile dir: {}".format(os.listdir(path_tempdir)))
+    # # os.makedirs(os.path.dirname(path_tempfile), exist_ok=True)
+    # os.makedirs(path_tempdir, exist_ok=True)
+
+    # ## Bokeh server deployment at http://localhost:5006/test_drawing
+    # # apps = {"/test_drawing": Application(FunctionHandler(deploy_bokeh))}
+    # partial_deploy_bokeh = partial(deploy_bokeh, indices_path=path_tempfile)
+    # apps = {"/test_drawing": Application(FunctionHandler(partial_deploy_bokeh))}
+
+    path_tempdir = tempfile.gettempdir()
     path_tempfile = os.path.join(path_tempdir, 'indices.csv')
-
-    warnings.warn(f"Path_tempfile: {path_tempfile}")
-    warnings.warn("Tmpfile dir: {}".format(os.listdir(path_tempdir)))
-    # os.makedirs(os.path.dirname(path_tempfile), exist_ok=True)
-    os.makedirs(path_tempdir, exist_ok=True)
-
-    ## Bokeh server deployment at http://localhost:5006/test_drawing
-    # apps = {"/test_drawing": Application(FunctionHandler(deploy_bokeh))}
-    partial_deploy_bokeh = partial(deploy_bokeh, indices_path=path_tempfile)
-    apps = {"/test_drawing": Application(FunctionHandler(partial_deploy_bokeh))}
+    apps = {"/test_drawing": Application(FunctionHandler(deploy_bokeh))}
 
     warnings.warn("Deploy Bokeh server to localhost:5006/test_drawing...")
     ## Let it run in the background so that the test can continue
@@ -240,7 +272,7 @@ def test_interactive_drawing():
     ## Wait for the server to save indices.csv
     time.sleep(5)
 
-    ## Any chance kill the server first helps?
+    ## Kill the process to avoid race condition
     warnings.warn("Kill the Bokeh server...")
     server_process.terminate()
     server_process.join()
@@ -273,5 +305,4 @@ def test_interactive_drawing():
     
     ## Check if the indices are correct
     assert indices == [3]
-    warnings.warn("Test is done. Cleaning up...")
-    warnings.warn("Test is done. Cleaning up done.")
+    warnings.warn("Test is done.")
