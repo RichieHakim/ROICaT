@@ -5,6 +5,7 @@ import pytest
 import tempfile
 import requests
 import time
+from functools import partial
 
 import numpy as np
 import torch
@@ -95,28 +96,28 @@ def deploy_bokeh(instance,indices_path):
     instance.add_root(hv_layout)
 
 
-def internal_test():
-    ## Sometimes, for some unknown reason, github action misses indices.csv
-    ## If we manually define the path to indices.csv, would it work?
-    hv.extension("bokeh")
+# def internal_test():
+#     ## Sometimes, for some unknown reason, github action misses indices.csv
+#     ## If we manually define the path to indices.csv, would it work?
+#     hv.extension("bokeh")
 
-    ## Create a mock input
-    mock_data, mock_idx_images_overlay, mock_images_overlay = create_mock_input()
+#     ## Create a mock input
+#     mock_data, mock_idx_images_overlay, mock_images_overlay = create_mock_input()
 
-    ## Create a scatter plot
-    _, _, path_tempfile = visualization.select_region_scatterPlot(
-        data=mock_data,
-        idx_images_overlay=mock_idx_images_overlay,
-        images_overlay=mock_images_overlay,
-        size_images_overlay=0.01,
-        frac_overlap_allowed=0.5,
-        figsize=(1200, 1200),
-        alpha_points=1.0,
-        size_points=10,
-        color_points="b",
-    )
+#     ## Create a scatter plot
+#     _, _, path_tempfile = visualization.select_region_scatterPlot(
+#         data=mock_data,
+#         idx_images_overlay=mock_idx_images_overlay,
+#         images_overlay=mock_images_overlay,
+#         size_images_overlay=0.01,
+#         frac_overlap_allowed=0.5,
+#         figsize=(1200, 1200),
+#         alpha_points=1.0,
+#         size_points=10,
+#         color_points="b",
+#     )
 
-    return path_tempfile
+#     return path_tempfile
 
 
 def check_server():
@@ -137,14 +138,16 @@ def check_server():
 def test_interactive_drawing():
     warnings.warn("Interactive GUI Drawing Test is running. Please wait...")
     ## Sanity check...
-    path_tempfile = internal_test()
+    # path_tempfile = internal_test()
+    path_tempfile = os.path.join(tempfile.gettempdir(), 'indices.csv')
     warnings.warn(f"Path_tempfile: {path_tempfile}")
     warnings.warn("Tmpfile dir: {}".format(os.listdir(tempfile.gettempdir())))
     os.makedirs(os.path.dirname(path_tempfile), exist_ok=True)
 
     ## Bokeh server deployment at http://localhost:5006/test_drawing
     # apps = {"/test_drawing": Application(FunctionHandler(deploy_bokeh))}
-    apps = {"/test_drawing": Application(FunctionHandler(lambda instance: deploy_bokeh(instance, path_tempfile)))}
+    partial_deploy_bokeh = partial(deploy_bokeh, indices_path=path_tempfile)
+    apps = {"/test_drawing": Application(FunctionHandler(partial_deploy_bokeh))}
 
     warnings.warn("Deploy Bokeh server to localhost:5006/test_drawing...")
     ## Let it run in the background so that the test can continue
