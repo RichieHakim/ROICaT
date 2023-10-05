@@ -44,56 +44,6 @@ def get_indices(path_tempFile):
     return indices
 
 
-def start_server(apps, query):
-    ## Start Bokeh server given a test scatter plot
-    server = Server(
-        apps,
-        port=5006,
-        address="0.0.0.0",
-        allow_websocket_origin=["0.0.0.0:5006", "localhost:5006"],
-    )
-    server.start()
-
-    ## Put server details into the queue
-    query.put(
-        {
-            "address": server.address,
-            "port": server.port,
-        }
-    )
-
-    ## Setup IO loop
-    server.io_loop.start()
-
-
-# def deploy_bokeh(instance,indices_path):
-#     ## Draw test plot and add to Bokeh document
-#     hv.extension("bokeh")
-
-#     ## Create a mock input
-#     mock_data, mock_idx_images_overlay, mock_images_overlay = create_mock_input()
-
-#     ## Create a scatter plot
-#     _, layout, _ = visualization.select_region_scatterPlot(
-#         data=mock_data,
-#         idx_images_overlay=mock_idx_images_overlay,
-#         images_overlay=mock_images_overlay,
-#         size_images_overlay=0.01,
-#         frac_overlap_allowed=0.5,
-#         path=indices_path,
-#         figsize=(1200, 1200),
-#         alpha_points=1.0,
-#         size_points=10,
-#         color_points="b",
-#     )
-
-#     ## Render plot
-#     hv_layout = hv.render(layout)
-#     hv_layout.name = "drawing_test"
-
-#     ## Add to Bokeh document
-#     instance.add_root(hv_layout)
-
 def deploy_bokeh(instance):
     ## Draw test plot and add to Bokeh document
     hv.extension("bokeh")
@@ -122,6 +72,28 @@ def deploy_bokeh(instance):
     instance.add_root(hv_layout)
 
 
+def start_server(apps, query):
+    ## Start Bokeh server given a test scatter plot
+    server = Server(
+        apps,
+        port=5006,
+        address="0.0.0.0",
+        allow_websocket_origin=["0.0.0.0:5006", "localhost:5006"],
+    )
+    server.start()
+
+    ## Put server details into the queue
+    query.put(
+        {
+            "address": server.address,
+            "port": server.port,
+        }
+    )
+
+    ## Setup IO loop
+    server.io_loop.start()
+
+
 def check_server():
     try:
         response = requests.get("http://localhost:5006/test_drawing")
@@ -138,21 +110,10 @@ def check_server():
 
 def test_interactive_drawing():
     warnings.warn("Interactive GUI Drawing Test is running. Please wait...")
-    # user_home = os.path.expanduser("~")
-    # path_tempdir = tempfile.mkdtemp(dir=user_home)
-    # path_tempfile = os.path.join(path_tempdir, 'indices.csv')
-
-    # warnings.warn(f"Path_tempfile: {path_tempfile}")
-    # warnings.warn("Tmpfile dir: {}".format(os.listdir(path_tempdir)))
-    # # os.makedirs(os.path.dirname(path_tempfile), exist_ok=True)
-    # os.makedirs(path_tempdir, exist_ok=True)
-
     ## Bokeh server deployment at http://localhost:5006/test_drawing
     apps = {"/test_drawing": Application(FunctionHandler(deploy_bokeh))}
     path_tempdir = tempfile.gettempdir()
     path_tempfile = os.path.join(path_tempdir, "indices.csv")
-    # partial_deploy_bokeh = partial(deploy_bokeh, indices_path=path_tempfile)
-    # apps = {"/test_drawing": Application(FunctionHandler(partial_deploy_bokeh))}
 
     warnings.warn("Deploy Bokeh server to localhost:5006/test_drawing...")
     ## Let it run in the background so that the test can continue
@@ -181,7 +142,8 @@ def test_interactive_drawing():
     service = Service()
     chrome_options = Options()
     chrome_options.add_argument("--window-size=1280,1280")
-    ## For local testing, just comment out the headless options.
+
+    ## For local testing, comment out these options to visualize actions in bokeh / selenium server.
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--disable-gpu")
 
@@ -224,8 +186,10 @@ def test_interactive_drawing():
     warnings.warn("Start mouse movement...")
     actions = ActionChains(driver)
 
-    ## Surprisingly, this pause seems to be very important, especially in Windows env.
+    ## Surprisingly, this pause seems to be crucial.
     actions.pause(5)
+
+    ## Move to the center of the element
     actions.move_to_element(element)
     actions.click_and_hold()
 
@@ -233,15 +197,12 @@ def test_interactive_drawing():
     actions.move_by_offset(
         int(width / 2), int(0)
     )  ## Move from center to midpoint of right edge
-    # actions.pause(1)
     actions.move_by_offset(
         int(0), int(-height / 2)
     )  ## Move from midpoint of right edge to top right corner
-    # actions.pause(1)
     actions.move_by_offset(
         int(-width / 2), int(0)
     )  ## Move from top right corner to midpoint of top edge
-    # actions.pause(1)
     actions.release()
     actions.perform()
 
@@ -251,11 +212,12 @@ def test_interactive_drawing():
     ## Wait for the server to save indices.csv
     time.sleep(5)
 
-    ## Any chance kill the server first helps?
+    ## Kill the process to prevent potential race condition
     warnings.warn("Kill the Bokeh server...")
     server_process.terminate()
     server_process.join()
 
+    ## Wait for the process to terminate
     time.sleep(5)
 
     warnings.warn("Tmpfile dir: {}".format(os.listdir(path_tempdir)))
@@ -265,14 +227,14 @@ def test_interactive_drawing():
         server_process.terminate()
         server_process.join()
         raise Exception("No indices.csv found!")
-    
+
     warnings.warn("Test if indices.csv has correct permission...")
     if not os.access(path_tempfile, os.R_OK):
         warnings.warn("indices.csv is not readable!")
         server_process.terminate()
         server_process.join()
         raise Exception("indices.csv is not readable!")
-    
+
     warnings.warn("Test if indices are correctly saved...")
     indices = get_indices(path_tempfile)
 
@@ -281,8 +243,7 @@ def test_interactive_drawing():
         server_process.terminate()
         server_process.join()
         raise Exception("indices.csv is created, but no indices are saved!")
-    
+
     ## Check if the indices are correct
     assert indices == [3]
-    warnings.warn("Test is done. Cleaning up...")
-    warnings.warn("Test is done. Cleaning up done.")
+    warnings.warn("Test is done.")
