@@ -1,6 +1,7 @@
 import os
 import sys
 
+import logging
 import warnings
 import pytest
 import tempfile
@@ -102,7 +103,6 @@ def deploy_bokeh(instance,indices_path):
 
 def check_server():
     try:
-        # response = requests.get("http://localhost:5006/test_drawing")
         response = requests.get("http://localhost:5006/test_drawing")
         if response.status_code == 200:
             warnings.warn("Server is up and running!")
@@ -203,9 +203,18 @@ def test_interactive_drawing():
     size = element.size
     width, height = size["width"], size["height"]
 
+    warnings.warn("element size: {}".format(size))
+    warnings.warn("element tagname: {}".format(element.tag_name))
+    warnings.warn("element text: {}".format(element.text))
+    warnings.warn("element location: {}".format(element.location))
+    warnings.warn("element displayed: {}".format(element.is_displayed()))
+    warnings.warn("element enabled: {}".format(element.is_enabled()))
+    warnings.warn("element selected: {}".format(element.is_selected()))
+
     ## Move to the center of the element
     warnings.warn("Start mouse movement...")
     actions = ActionChains(driver)
+    actions.pause(5)
     actions.move_to_element(element)
     actions.click_and_hold()
 
