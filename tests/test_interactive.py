@@ -1,10 +1,10 @@
 import os
-
 import warnings
 import pytest
 import tempfile
 import requests
 import time
+from functools import partial
 
 import numpy as np
 import torch
@@ -36,38 +36,12 @@ def create_mock_input():
     return mock_data, mock_idx_images_overlay, mock_images_overlay
 
 
-def get_indices():
-    ## Steal the fn_get_indices function for testing purposes
-    path_tempFile = os.path.join(tempfile.gettempdir(), "indices.csv")
-    try:
-        with open(path_tempFile, "r") as f:
-            indices = f.read().split(",")
-        indices = [int(i) for i in indices if i != ""] if len(indices) > 0 else None
-        return indices
-    except FileNotFoundError:
-        return None
-
-
-def start_server(apps, query):
-    ## Start Bokeh server given a test scatter plot
-    server = Server(
-        apps,
-        port=5006,
-        address="0.0.0.0",
-        allow_websocket_origin=["0.0.0.0:5006", "localhost:5006"],
-    )
-    server.start()
-
-    ## Put server details into the queue
-    query.put(
-        {
-            "address": server.address,
-            "port": server.port,
-        }
-    )
-
-    ## Setup IO loop
-    server.io_loop.start()
+def get_indices(path_tempFile):
+    ## Steal the fn_get_indices function from roicat.visualization for testing purposes
+    with open(path_tempFile, "r") as f:
+        indices = f.read().split(",")
+    indices = [int(i) for i in indices if i != ""] if len(indices) > 0 else None
+    return indices
 
 
 def deploy_bokeh(instance):
@@ -98,33 +72,30 @@ def deploy_bokeh(instance):
     instance.add_root(hv_layout)
 
 
-def internal_test():
-    ## Sometimes, for some unknown reason, github action misses indices.csv
-    ## Draw test plot and add to Bokeh document
-    hv.extension("bokeh")
+def start_server(apps, query):
+    ## Start Bokeh server given a test scatter plot
+    server = Server(
+        apps,
+        port=5006,
+        address="0.0.0.0",
+        allow_websocket_origin=["0.0.0.0:5006", "localhost:5006"],
+    )
+    server.start()
 
-    ## Create a mock input
-    mock_data, mock_idx_images_overlay, mock_images_overlay = create_mock_input()
-
-    ## Create a scatter plot
-    _, layout, path_tempfile = visualization.select_region_scatterPlot(
-        data=mock_data,
-        idx_images_overlay=mock_idx_images_overlay,
-        images_overlay=mock_images_overlay,
-        size_images_overlay=0.01,
-        frac_overlap_allowed=0.5,
-        figsize=(1200, 1200),
-        alpha_points=1.0,
-        size_points=10,
-        color_points="b",
+    ## Put server details into the queue
+    query.put(
+        {
+            "address": server.address,
+            "port": server.port,
+        }
     )
 
-    return path_tempfile
+    ## Setup IO loop
+    server.io_loop.start()
 
 
 def check_server():
     try:
-        # response = requests.get("http://localhost:5006/test_drawing")
         response = requests.get("http://localhost:5006/test_drawing")
         if response.status_code == 200:
             warnings.warn("Server is up and running!")
@@ -139,13 +110,10 @@ def check_server():
 
 def test_interactive_drawing():
     warnings.warn("Interactive GUI Drawing Test is running. Please wait...")
-    ## Sanity check...
-    path_tempfile = internal_test()
-    warnings.warn(f"Path_tempfile: {path_tempfile}")
-    warnings.warn("Tmpfile dir: {}".format(os.listdir(tempfile.gettempdir())))
-
     ## Bokeh server deployment at http://localhost:5006/test_drawing
     apps = {"/test_drawing": Application(FunctionHandler(deploy_bokeh))}
+    path_tempdir = tempfile.gettempdir()
+    path_tempfile = os.path.join(path_tempdir, "indices.csv")
 
     warnings.warn("Deploy Bokeh server to localhost:5006/test_drawing...")
     ## Let it run in the background so that the test can continue
@@ -174,7 +142,8 @@ def test_interactive_drawing():
     service = Service()
     chrome_options = Options()
     chrome_options.add_argument("--window-size=1280,1280")
-    ## For local testing, just comment out the headless options.
+
+    ## For local testing, comment out these options to visualize actions in bokeh / selenium server.
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--disable-gpu")
 
@@ -205,9 +174,22 @@ def test_interactive_drawing():
     size = element.size
     width, height = size["width"], size["height"]
 
+    warnings.warn("element size: {}".format(size))
+    warnings.warn("element tagname: {}".format(element.tag_name))
+    warnings.warn("element text: {}".format(element.text))
+    warnings.warn("element location: {}".format(element.location))
+    warnings.warn("element displayed: {}".format(element.is_displayed()))
+    warnings.warn("element enabled: {}".format(element.is_enabled()))
+    warnings.warn("element selected: {}".format(element.is_selected()))
+
     ## Move to the center of the element
     warnings.warn("Start mouse movement...")
     actions = ActionChains(driver)
+
+    ## Surprisingly, this pause seems to be crucial.
+    actions.pause(5)
+
+    ## Move to the center of the element
     actions.move_to_element(element)
     actions.click_and_hold()
 
@@ -227,16 +209,41 @@ def test_interactive_drawing():
     warnings.warn("Mouse movement done! Detach Selenium from Bokeh server...")
     driver.quit()
 
-    warnings.warn("Test if indices are correctly saved...")
-    warnings.warn("Tmpfile dir: {}".format(os.listdir(tempfile.gettempdir())))
-    indices = get_indices()
-    if indices is None:
+    ## Wait for the server to save indices.csv
+    time.sleep(5)
+
+    ## Kill the process to prevent potential race condition
+    warnings.warn("Kill the Bokeh server...")
+    server_process.terminate()
+    server_process.join()
+
+    ## Wait for the process to terminate
+    time.sleep(5)
+
+    warnings.warn("Tmpfile dir: {}".format(os.listdir(path_tempdir)))
+    warnings.warn("Test if indices.csv is created...")
+    if not os.path.exists(path_tempfile):
         warnings.warn("No indices.csv found!")
         server_process.terminate()
         server_process.join()
-        raise Exception("No indices found!")
+        raise Exception("No indices.csv found!")
+
+    warnings.warn("Test if indices.csv has correct permission...")
+    if not os.access(path_tempfile, os.R_OK):
+        warnings.warn("indices.csv is not readable!")
+        server_process.terminate()
+        server_process.join()
+        raise Exception("indices.csv is not readable!")
+
+    warnings.warn("Test if indices are correctly saved...")
+    indices = get_indices(path_tempfile)
+
+    if indices is None:
+        warnings.warn("indices.csv is created, but no indices are saved!")
+        server_process.terminate()
+        server_process.join()
+        raise Exception("indices.csv is created, but no indices are saved!")
+
+    ## Check if the indices are correct
     assert indices == [3]
-    warnings.warn("Test is done. Cleaning up...")
-    server_process.terminate()
-    server_process.join()
-    warnings.warn("Test is done. Cleaning up done.")
+    warnings.warn("Test is done.")
