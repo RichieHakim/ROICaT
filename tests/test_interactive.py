@@ -1,4 +1,5 @@
 import os
+import sys
 
 import warnings
 import pytest
@@ -10,7 +11,7 @@ from functools import partial
 import numpy as np
 import torch
 import multiprocessing as mp
-from multiprocessing import Queue
+from multiprocessing import Queue, Manager
 
 from roicat import visualization
 import holoviews as hv
@@ -38,14 +39,17 @@ def create_mock_input():
 
 
 def get_indices(path_tempFile):
-    ## Steal the fn_get_indices function for testing purposes
+    ## Steal the fn_get_indices function from roicat.visualization for testing purposes
     with open(path_tempFile, "r") as f:
         indices = f.read().split(",")
     indices = [int(i) for i in indices if i != ""] if len(indices) > 0 else None
     return indices
 
 
-def start_server(apps, query):
+def start_server(apps, query, server_log):
+    sys.stdout = ListWriter(server_log)
+    sys.stderr = ListWriter(server_log)
+
     ## Start Bokeh server given a test scatter plot
     server = Server(
         apps,
@@ -96,30 +100,6 @@ def deploy_bokeh(instance,indices_path):
     instance.add_root(hv_layout)
 
 
-# def internal_test():
-#     ## Sometimes, for some unknown reason, github action misses indices.csv
-#     ## If we manually define the path to indices.csv, would it work?
-#     hv.extension("bokeh")
-
-#     ## Create a mock input
-#     mock_data, mock_idx_images_overlay, mock_images_overlay = create_mock_input()
-
-#     ## Create a scatter plot
-#     _, _, path_tempfile = visualization.select_region_scatterPlot(
-#         data=mock_data,
-#         idx_images_overlay=mock_idx_images_overlay,
-#         images_overlay=mock_images_overlay,
-#         size_images_overlay=0.01,
-#         frac_overlap_allowed=0.5,
-#         figsize=(1200, 1200),
-#         alpha_points=1.0,
-#         size_points=10,
-#         color_points="b",
-#     )
-
-#     return path_tempfile
-
-
 def check_server():
     try:
         # response = requests.get("http://localhost:5006/test_drawing")
@@ -133,12 +113,21 @@ def check_server():
     except requests.ConnectionError:
         warnings.warn("Cannot connect to the server!")
         return 0
+    
+class ListWriter:
+    def __init__(self, shared_list):
+        self.shared_list = shared_list
+
+    def write(self, message):
+        self.shared_list.append(message)
+
+    def flush(self):
+        pass
 
 
 def test_interactive_drawing():
     warnings.warn("Interactive GUI Drawing Test is running. Please wait...")
     ## Sanity check...
-    # path_tempfile = internal_test()
     ## Okay, let's try to make my own temp directory
     user_home = os.path.expanduser("~")
     path_tempdir = tempfile.mkdtemp(dir=user_home)
@@ -157,7 +146,9 @@ def test_interactive_drawing():
     warnings.warn("Deploy Bokeh server to localhost:5006/test_drawing...")
     ## Let it run in the background so that the test can continue
     query = Queue()
-    server_process = mp.Process(target=start_server, args=(apps, query))
+    manager = Manager()
+    bokeh_logs = manager.list()
+    server_process = mp.Process(target=start_server, args=(apps, query, bokeh_logs))
     server_process.start()
 
     ## Wait for the server to start
@@ -246,6 +237,10 @@ def test_interactive_drawing():
     server_process.join()
 
     time.sleep(5)
+
+    warnings.warn("List server interaction")
+    for log in bokeh_logs:
+        warnings.warn(log)
 
     warnings.warn("Tmpfile dir: {}".format(os.listdir(path_tempdir)))
     warnings.warn("Test if indices.csv is created...")
