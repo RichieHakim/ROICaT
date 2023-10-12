@@ -146,7 +146,6 @@ def test_interactive_drawing():
     port = 5006
     server_iter = 0
     max_server_iter = 3
-    webdriver_iter = 0
     max_webdriver_iter = 10
     path_tempdir = tempfile.gettempdir()
     path_tempfile = os.path.join(path_tempdir, "indices.csv")
@@ -177,6 +176,9 @@ def test_interactive_drawing():
 
         ## Wait for the server to start
         time.sleep(5)
+
+        ## Start webdriver iteration using selenium
+        webdriver_iter = 0
         while webdriver_iter <= max_webdriver_iter:
             warnings.warn(f"Iteration {webdriver_iter} starts...")
             ## Get server info
@@ -281,7 +283,6 @@ def test_interactive_drawing():
 
         ## Wait for the process to terminate
         time.sleep(5)
-
 
         ## If indices.csv is created, break the loop
         if os.path.exists(path_tempfile):
