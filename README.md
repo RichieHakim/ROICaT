@@ -32,8 +32,8 @@ With ROICaT, you can:
 
 **What are the minimum computing needs?** 
 - We recommend the following as a starting point: 
-    - 4 GB of RAM (more for large data sets e.g., ~32 Gb for 100K neurons)
-    - GPU not required but will increase run speed. 
+    - 4 GB of RAM (more for large data sets e.g., ~32 GB for 100K neurons)
+    - GPU not required but will increase run speeds ~5-50x
 
 
 <br>
@@ -68,8 +68,8 @@ Listed below, we have a suite of easy to run notebooks for running the ROICaT pi
 # General workflow:
 - **Pass ROIs through ROInet:** Images of the ROIs are passed through a neural network which outputs a feature vector for each image describing what the ROI looks like.
 -  **Classification:** The feature vectors can then be used to classify ROIs:
-- A simple classifier can be trained using user supplied labeled data (e.g. an array of images of ROIs and a corresponding array of labels for each ROI).
-- Alternatively, classification can be done by projecting the feature vectors into a lower-dimensional space using UMAP and then simply circling the region of space to classify the ROIs.
+   - A simple regression-like classifier can be trained using user-supplied labeled data (e.g. an array of images of ROIs and a corresponding array of labels for each ROI).
+   - Alternatively, classification can be done by projecting the feature vectors into a lower-dimensional space using UMAP and then simply circling the region of space to classify the ROIs.
 -  **Tracking**: The feature vectors can be combined with information about the position of the ROIs to track the ROIs across imaging sessions/planes.
 
 
