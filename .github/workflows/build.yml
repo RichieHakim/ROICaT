@@ -9,7 +9,13 @@ on:
     # branches: [ "main" ]
     # branches: [ "dev" ]    
     branches: [ "main", "dev" ]        
-
+  workflow_dispatch:
+    inputs:
+      name:
+        description: 'description'     
+        required: false                     
+        default: '' 
+        
 permissions:
   contents: read
 
