@@ -14,7 +14,7 @@ scipy==1.11.3
 seaborn==0.13.0
 sparse==0.14.0
 tqdm==4.66.1
-umap-learn==0.5.4
+umap-learn==0.5.5
 xxhash==3.4.1
 bokeh==3.3.1
 psutil==5.9.6
