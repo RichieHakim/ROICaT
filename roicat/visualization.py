@@ -434,7 +434,7 @@ def select_region_scatterPlot(
     # Declare points as source of selection stream
     selection = hv.streams.Selection1D(source=points)
 
-    path_tempFile = tempfile.gettempdir() + '/indices.csv' if path is None else path
+    path_tempFile = os.path.join(tempfile.gettempdir(), 'indices.csv') if path is None else path
 
     # Write function that uses the selection indices to slice points and compute stats
     def callback(index):
