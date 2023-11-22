@@ -60,8 +60,9 @@ def get_default_parameters(
                 'random_seed': None,
             },
             'data_loading': {
-                'data_kind': 'suite2p',  ## Can be 'suite2p', 'roiextractors', or 'roicat'. See documentation and/or notebook on custom data loading for more details.
+                'data_kind': 'data_suite2p',  ## Can be 'data_suite2p', 'roiextractors', or 'roicat'. See documentation and/or notebook on custom data loading for more details.
                 'dir_outer': None,  ## directory where directories containing below 'pathSuffixTo...' are
+                'reMatch_in_path': None, ## additional string to filter paths (See documentation for roicat.helpers.find_paths())
                 'common': {
                     'um_per_pixel': 1.0,  ## Number of microns per pixel for the imaging dataset. Doesn't need to be exact. Used for resizing the ROIs. Check the images of the resized ROIs to tweak.
                     'centroid_method': 'centerOfMass', ## Can be 'centerOfMass' or 'median'.
