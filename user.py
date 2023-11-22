@@ -1,23 +1,30 @@
-import sys
 from pathlib import Path
+import argparse
 
-assert len(sys.argv) <= 2, "user.py only accepts one input argument"
-task = sys.argv[1] if len(sys.argv)==2 else None
+parser = argparse.ArgumentParser(description='perform user tasks')
+parser.add_argument('-t', '--task', type=str, default=None, help='which task to perform')
+parser.add_argument('--noupgrade', default=False, action='store_true')
+args = parser.parse_args()
 
 # This is just to store some locally used variables not relevant for any other user of roicat
 # Right now I suppose it's just to connect myself to other code I've written.
 def codePath():
     return Path('C:/Users/andrew/Documents/GitHub/vrAnalysis')
 
+def remotePath():
+    return "https://github.com/landoskape/vrAnalysis"
+    
 def localDataPath():
     return Path("C:/Users/andrew/Documents/localData")
 
 def analysisPath():
     return localDataPath() / 'analysis'
 
-def updateVR():
+def updateVR(upgrade=True):
     # convenience function that outputs the pip command for updating vrAnalysis
-    cmdPromptCommand = f"pip install --upgrade {codePath()}"
+    extra_args = "--force-reinstall --no-deps " if upgrade else ""
+    cmdPromptCommand = "pip install " + extra_args + f"git+{remotePath()}"
     print(cmdPromptCommand)
 
-if task=='updateVR': updateVR()
+if args.task=='updateVR':
+    updateVR(upgrade=not(args.noupgrade))
