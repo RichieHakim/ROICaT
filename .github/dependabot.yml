@@ -4,6 +4,7 @@ updates:
     directory: "/" # This denotes the directory where Dependabot will look for dependency files.
     schedule:
       interval: "daily" # This will tell Dependabot to check for updates once a day.
+    open-pull-requests-limit: 99999 # This will tell Dependabot to keep up to n PRs open at any time.
     target-branch: "dev" # This will ensure Dependabot PRs target the "dev" branch.
     commit-message:
       prefix: "chore" # This is the prefix for commit messages.

@@ -71,14 +71,6 @@ deps_tracking = [deps_all_dict[dep] for dep in [
     'kymatio',
 ]] + deps_core
 
-print({
-    'deps_all': deps_all,
-    'deps_all_latest': deps_all_latest,
-    'deps_core': deps_core,
-    'deps_classification': deps_classification,
-    'deps_tracking': deps_tracking,
-})
-
 ## Get README.md
 with open(str(dir_parent / "README.md"), "r") as f:
     readme = f.read()
