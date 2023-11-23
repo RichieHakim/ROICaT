@@ -33,7 +33,7 @@ def define_dirs(args):
     
     # identify sessions for requested mouse (that match relevant criteria in database)
     vrdb = database.vrDatabase('vrSessions')
-    ises = vrdb.iterSessions(imaging=True, mouseName=args.mouse)
+    ises = vrdb.iterSessions(imaging=True, mouseName=args.mouse, dontTrack=False)
     assert len(ises)>0, f"no sessions found for mouse={args.mouse}"
     session_paths = [ses.sessionPath() for ses in ises]
 
