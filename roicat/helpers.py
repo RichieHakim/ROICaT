@@ -3415,26 +3415,41 @@ def remap_sparse_images(
         rows, cols = im_coo.row, im_coo.col
         data = im_coo.data
 
-        # Account for 1d images by convolving image with tiny gaussian kernel to increase image width
         if safe:
-            ## append if there are < 3 nonzero pixels
-            if (np.unique(rows).size == 1) or (np.unique(cols).size == 1) or (rows.size < 3):
+            # can't use scipy.interpolate.griddata with 1d values
+            is_horz = np.unique(rows).size == 1
+            is_vert = np.unique(cols).size == 1
+
+            # check for diagonal pixels (pretty sure this checks for all possibilities)
+            rdiff = np.diff(rows)
+            cdiff = np.diff(cols)
+            is_diag = np.all(rdiff[0] * cdiff == rdiff * cdiff[0]) and not(is_horz) and not(is_vert) # ruling out horz & vert for accuracy of name
+            
+            # best practice to just convolve instead of interpolating if too few pixels
+            is_smol = rows.size < 3 
+
+            if is_horz or is_vert or is_smol or is_diag:
+                # warp convolved sparse image directly without interpolation
                 return warp_sparse_image(im_sparse=conv2d(im_sparse, batching=False), remappingIdx=remappingIdx)
-
-        # Get values at the grid points
-        grid_values = scipy.interpolate.griddata(
-            points=(rows, cols), 
-            values=data, 
-            xi=remappingIdx[:,:,::-1], 
-            method=method, 
-            fill_value=fill_value,
-        )
-
-        # Create a new sparse image from the nonzero pixels
-        warped_sparse_image = scipy.sparse.csr_matrix(grid_values, dtype=dtype)
-        warped_sparse_image.eliminate_zeros()
-
-        return warped_sparse_image
+        
+        try:
+            # Get values at the grid points
+            grid_values = scipy.interpolate.griddata(
+                points=(rows, cols), 
+                values=data, 
+                xi=remappingIdx[:,:,::-1], 
+                method=method, 
+                fill_value=fill_value,
+            )
+            # Create a new sparse image from the nonzero pixels
+            warped_sparse_image = scipy.sparse.csr_matrix(grid_values, dtype=dtype)
+            warped_sparse_image.eliminate_zeros()
+            return warped_sparse_image
+        
+        except:
+            # Fallback if we haven't accounted for all the possibilities that break scipy.interpolate.griddata()
+            return warp_sparse_image(im_sparse=conv2d(im_sparse, batching=False), remappingIdx=remappingIdx)
+            
     
     wsi_partial = partial(warp_sparse_image, remappingIdx=remappingIdx)
     ims_sparse_out = map_parallel(func=wsi_partial, args=(ims_sparse,), method='multithreading', workers=n_workers, prog_bar=verbose)
