@@ -412,7 +412,7 @@ class Aligner(util.ROICaT_Module):
         
     def transform_images_geometric(
         self, 
-        ims_moving: np.ndarray, 
+        ims_moving: List[np.ndarray], 
         remappingIdx: Optional[np.ndarray] = None
     ) -> np.ndarray:
         """
@@ -439,7 +439,7 @@ class Aligner(util.ROICaT_Module):
     
     def transform_images_nonrigid(
         self, 
-        ims_moving: np.ndarray, 
+        ims_moving: List[np.ndarray], 
         remappingIdx: Optional[np.ndarray] = None
     ) -> np.ndarray:
         """
