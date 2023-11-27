@@ -3055,7 +3055,7 @@ def find_geometric_transformation(
             pass
         else:
             mask = (mask != 0).astype(np.uint8)
-    
+
     ## make gaussFiltSize odd
     gaussFiltSize = int(np.ceil(gaussFiltSize))
     gaussFiltSize = gaussFiltSize + (gaussFiltSize % 2 == 0)
