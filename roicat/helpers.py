@@ -3055,7 +3055,7 @@ def find_geometric_transformation(
             pass
         else:
             mask = (mask != 0).astype(np.uint8)
-    
+
     ## make gaussFiltSize odd
     gaussFiltSize = int(np.ceil(gaussFiltSize))
     gaussFiltSize = gaussFiltSize + (gaussFiltSize % 2 == 0)
@@ -3415,7 +3415,6 @@ def remap_sparse_images(
         rows, cols = im_coo.row, im_coo.col
         data = im_coo.data
 
-        # Account for 1d images by convolving image with tiny gaussian kernel to increase image width
         if safe:
             # can't use scipy.interpolate.griddata with 1d values
             is_horz = np.unique(rows).size == 1

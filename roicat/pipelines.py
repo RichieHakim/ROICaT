@@ -3,6 +3,8 @@ from pathlib import Path
 import copy
 import tempfile
 from IPython.display import display
+from pprint import PrettyPrinter
+pp = PrettyPrinter(indent=1, width=80)
 
 # import matplotlib.pyplot as plt
 import numpy as np
@@ -36,7 +38,7 @@ def pipeline_tracking(params: dict):
     ## Prepare params
     defaults = util.get_default_parameters(pipeline='tracking')
     params = util.prepare_params(params, defaults, verbose=True)
-    display(params)
+    pp.pprint(params)
 
     ## Prepare state variables
     VERBOSE = params['general']['verbose']
@@ -51,6 +53,7 @@ def pipeline_tracking(params: dict):
         paths_allStat = helpers.find_paths(
             dir_outer=params['data_loading']['dir_outer'],
             reMatch='stat.npy',
+            reMatch_in_path=params['data_loading']['reMatch_in_path'],
             depth=4,
             find_files=True,
             find_folders=False,
@@ -101,18 +104,18 @@ def pipeline_tracking(params: dict):
         ims_moving=FOV_images,  ## input images
         **params['alignment']['fit_geometric'],
     )
-    aligner.transform_images_geometric(FOV_images);
+    aligner.transform_images_geometric(FOV_images)
     aligner.fit_nonrigid(
         ims_moving=aligner.ims_registered_geo,  ## Input images. Typically the geometrically registered images
         remappingIdx_init=aligner.remappingIdx_geo,  ## The remappingIdx between the original images (and ROIs) and ims_moving
         **params['alignment']['fit_nonrigid'],
     )
-    aligner.transform_images_nonrigid(FOV_images);
+    aligner.transform_images_nonrigid(FOV_images)
     aligner.transform_ROIs(
         ROIs=data.spatialFootprints, 
         remappingIdx=aligner.remappingIdx_nonrigid,
         **params['alignment']['transform_ROIs'],
-    );
+    )
 
 
     ## Blur ROIs
@@ -140,8 +143,8 @@ def pipeline_tracking(params: dict):
         um_per_pixel=data.um_per_pixel,  ## Resolution of FOV
         pref_plot=False,  ## Whether or not to plot the ROI sizes
         **params['ROInet']['dataloader'],
-    );
-    roinet.generate_latents();
+    )
+    roinet.generate_latents()
 
 
     ## Scattering wavelet embedding
@@ -153,7 +156,7 @@ def pipeline_tracking(params: dict):
     swt.transform(
         ROI_images=roinet.ROI_images_rs,  ## All the cropped and resized ROI images
         batch_size=params['SWT']['batch_size'],
-    );
+    )
 
 
     ## Compute similarities
@@ -170,7 +173,7 @@ def pipeline_tracking(params: dict):
         ROI_session_bool=data.session_bool,  ## Boolean array of which ROIs belong to which sessions
     #     spatialFootprint_maskPower=1.0,  ##  An exponent to raise the spatial footprints to to care more or less about bright pixels
         **params['similarity_graph']['compute_similarity'],
-    );
+    )
     sim.make_normalized_similarities(
         centers_of_mass=data.centroids,  ## ROI centroid positions
         features_NN=roinet.latents,  ## ROInet latents
@@ -228,7 +231,7 @@ def pipeline_tracking(params: dict):
     else:
         raise ValueError('Clustering method not recognized. This should never happen.')
 
-    quality_metrics = clusterer.compute_quality_metrics();
+    quality_metrics = clusterer.compute_quality_metrics()
 
     ## Collect results
     labels_squeezed, labels_bySession, labels_bool, labels_bool_bySession, labels_dict = tracking.clustering.make_label_variants(labels=labels, n_roi_bySession=data.n_roi)
