@@ -3415,10 +3415,22 @@ def remap_sparse_images(
         rows, cols = im_coo.row, im_coo.col
         data = im_coo.data
 
-        # Account for 1d images by convolving image with tiny gaussian kernel to increase image width
         if safe:
-            ## append if there are < 3 nonzero pixels
-            if (np.unique(rows).size == 1) or (np.unique(cols).size == 1) or (rows.size < 3):
+            # can't use scipy.interpolate.griddata with 1d values
+            is_horz = np.unique(rows).size == 1
+            is_vert = np.unique(cols).size == 1
+
+            # check for diagonal pixels 
+            # slope = rise / run --- don't need to check if run==0 
+            rdiff = np.diff(rows)
+            cdiff = np.diff(cols)
+            is_diag = np.unique(cdiff / rdiff).size == 1 if not np.any(rdiff==0) else False
+            
+            # best practice to just convolve instead of interpolating if too few pixels
+            is_smol = rows.size < 3 
+
+            if is_horz or is_vert or is_smol or is_diag:
+                # warp convolved sparse image directly without interpolation
                 return warp_sparse_image(im_sparse=conv2d(im_sparse, batching=False), remappingIdx=remappingIdx)
 
         # Get values at the grid points
@@ -3429,11 +3441,9 @@ def remap_sparse_images(
             method=method, 
             fill_value=fill_value,
         )
-
         # Create a new sparse image from the nonzero pixels
         warped_sparse_image = scipy.sparse.csr_matrix(grid_values, dtype=dtype)
         warped_sparse_image.eliminate_zeros()
-
         return warped_sparse_image
     
     wsi_partial = partial(warp_sparse_image, remappingIdx=remappingIdx)
