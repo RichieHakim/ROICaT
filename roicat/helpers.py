@@ -3434,20 +3434,24 @@ def remap_sparse_images(
                 return warp_sparse_image(im_sparse=conv2d(im_sparse, batching=False), remappingIdx=remappingIdx)
 
         # Get values at the grid points
-        grid_values = scipy.interpolate.griddata(
-            points=(rows, cols), 
-            values=data, 
-            xi=remappingIdx[:,:,::-1], 
-            method=method, 
-            fill_value=fill_value,
-        )
+        try:
+            grid_values = scipy.interpolate.griddata(
+                points=(rows, cols), 
+                values=data, 
+                xi=remappingIdx[:,:,::-1], 
+                method=method, 
+                fill_value=fill_value,
+            )
+        except Exception as e:
+            raise Exception(f"Error interpolating sparse image. Something is either weird about one of the input images or the remappingIdx. Error: {e}")
+        
         # Create a new sparse image from the nonzero pixels
         warped_sparse_image = scipy.sparse.csr_matrix(grid_values, dtype=dtype)
         warped_sparse_image.eliminate_zeros()
         return warped_sparse_image
     
     wsi_partial = partial(warp_sparse_image, remappingIdx=remappingIdx)
-    ims_sparse_out = map_parallel(func=wsi_partial, args=(ims_sparse,), method='multithreading', workers=n_workers, prog_bar=verbose)
+    ims_sparse_out = map_parallel(func=wsi_partial, args=[ims_sparse,], method='multithreading', workers=n_workers, prog_bar=verbose)
     return ims_sparse_out
 
 
@@ -4234,6 +4238,25 @@ class Toeplitz_convolution2d():
 ######################################################################################################################################
 
 
+class ParallelExecutionError(Exception):
+    """
+    Exception class for errors that occur during parallel execution.
+    Intended to be used with the ``map_parallel`` function.
+    RH 2023
+
+    Attributes:
+        index (int):
+            Index of the job that failed.
+        original_exception (Exception):
+            The original exception that was raised.
+    """
+    def __init__(self, index, original_exception):
+        self.index = index
+        self.original_exception = original_exception
+
+    def __str__(self):
+        return f"Job {self.index} raised an exception: {self.original_exception}"
+
 def map_parallel(
     func: Callable, 
     args: List[Any], 
@@ -4250,9 +4273,8 @@ def map_parallel(
             The function to be mapped.
         args (List[Any]): 
             List of arguments to which the function should be mapped.
-            The length of *args* should be equal to the number of arguments. If the function requires multiple arguments, 
-            *args* should be an iterable (e.g., list, tuple, generator) of length equal to the number of arguments. Each element 
-            can then be an iterable for each iteration of the function.
+            Length of list should be equal to the number of arguments.
+            Each element should then be an iterable for each job that is run.
         method (str): 
             Method to use for parallelization. Either \n
             * ``'multithreading'``: Use multithreading from concurrent.futures.
@@ -4282,6 +4304,33 @@ def map_parallel(
     ## Get number of arguments. If args is a generator, make None.
     n_args = len(args[0]) if hasattr(args, '__len__') else None
 
+    ## Assert that args is a list
+    assert isinstance(args, list), "args must be a list"
+
+    ## Assert that all args are the same length
+    assert all([len(arg) == n_args for arg in args]), "All args must be the same length"
+
+    ## Make indices
+    indices = np.arange(n_args)
+
+    def wrapper(*args_index):
+        """
+        Wrapper function to catch exceptions.
+        
+        Args:
+        *args_index (tuple):
+            Tuple of arguments to be passed to the function.
+            Should take the form of (arg1, arg2, ..., argN, index)
+            The last element is the index of the job.
+        """
+        index = args_index[-1]
+        args = args_index[:-1]
+        
+        try:
+            return func(*args)
+        except Exception as e:
+            raise ParallelExecutionError(index, e)
+        
     if method == 'multithreading':
         executor = ThreadPoolExecutor
     elif method == 'multiprocessing':
@@ -4294,12 +4343,12 @@ def map_parallel(
     #     return joblib.Parallel(n_jobs=workers)(joblib.delayed(func)(arg) for arg in tqdm(args, total=n_args, disable=prog_bar!=True))
     elif method == 'serial':
         # return [func(*arg) for arg in tqdm(args, disable=prog_bar!=True)]
-        return list(tqdm(map(func, *args), total=n_args, disable=prog_bar!=True))
+        return list(tqdm(map(wrapper, *(args + [indices])), total=n_args, disable=prog_bar!=True))
     else:
         raise ValueError(f"method {method} not recognized")
 
     with executor(workers) as ex:
-        return list(tqdm(ex.map(func, *args), total=n_args, disable=prog_bar!=True))
+        return list(tqdm(ex.map(wrapper, *(args + [indices])), total=n_args, disable=prog_bar!=True))
 
 
 ######################################################################################################################################
