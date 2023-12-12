@@ -29,3 +29,4 @@ selenium==4.15.2
 skl2onnx==1.15.0
 onnx==1.15.0
 onnxruntime==1.16.2
+jupyter-bokeh==3.0.7
