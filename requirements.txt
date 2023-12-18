@@ -17,7 +17,7 @@ tqdm==4.66.1
 umap-learn==0.5.5
 xxhash==3.4.1
 bokeh==3.3.2
-psutil==5.9.6
+psutil==5.9.7
 py-cpuinfo==9.0.0
 GPUtil==1.4.0
 PyYAML==6.0.1
