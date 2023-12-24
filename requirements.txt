@@ -22,7 +22,7 @@ py-cpuinfo==9.0.0
 GPUtil==1.4.0
 PyYAML==6.0.1
 mat73==0.62
-torch==2.1.1
+torch==2.1.2
 torchvision==0.16.2
 torchaudio==2.1.1
 selenium==4.16.0
