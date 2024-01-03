@@ -27,6 +27,8 @@ Contents
 
    howto
 
+   inputs_and_outputs
+
    roicat
 
 
