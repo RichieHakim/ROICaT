@@ -302,10 +302,12 @@ class ROI_graph(util.ROICaT_Module):
         features_NN_normd = torch.nn.functional.normalize(features_NN, dim=1)
         s_NN = torch.matmul(features_NN_normd, features_NN_normd.T) ## cosine similarity. ranges [0,1]
         s_NN[s_NN>(1-1e-5)] = 1.0
+        # s_NN[s_NN < 0] = 0
         s_NN[range(s_NN.shape[0]), range(s_NN.shape[0])] = 0
         
         features_SWT_normd = torch.nn.functional.normalize(features_SWT, dim=1)
         s_SWT = torch.matmul(features_SWT_normd, features_SWT_normd.T) ## cosine similarity. Normalized to [0,1]
+        # s_SWT[s_SWT>(1-1e-5)] = 1.0
         s_SWT[s_SWT < 0] = 0
         s_SWT[range(s_SWT.shape[0]), range(s_SWT.shape[0])] = 0
 
