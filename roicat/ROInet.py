@@ -136,7 +136,7 @@ class Resizer_ROI_images(util.ROICaT_Module):
                 ROI_images_rs (np.ndarray): 
                     The resized ROI images.
         """        
-        scale_forRS = 0.7 * um_per_pixel  ## hardcoded for now sorry
+        scale_forRS = 1.2 * um_per_pixel * (ROI_images.shape[1] / 36)  ## hardcoded for now sorry
         return np.stack([resize_affine(img, scale=scale_forRS, clamp_range=True) for img in ROI_images], axis=0)
 
 

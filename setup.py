@@ -60,6 +60,7 @@ deps_classification = [deps_all_dict[dep] for dep in [
     'umap-learn',
     'bokeh',
     'holoviews[recommended]',
+    'jupyter-bokeh',
     'skl2onnx',
     'onnx',
     'onnxruntime',

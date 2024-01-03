@@ -18,6 +18,7 @@ from typing import List, Dict, Tuple, Union, Optional, Any, Callable, Iterable, 
 
 import numpy as np
 import torch
+import torchvision
 import scipy.sparse
 import sparse
 from tqdm import tqdm
@@ -1092,7 +1093,6 @@ def find_paths(
             bytes,
             memoryview,
             np.bytes_,
-            np.unicode_,
             re.Pattern,
             re.Match,
         )):
@@ -3415,29 +3415,43 @@ def remap_sparse_images(
         rows, cols = im_coo.row, im_coo.col
         data = im_coo.data
 
-        # Account for 1d images by convolving image with tiny gaussian kernel to increase image width
         if safe:
-            ## append if there are < 3 nonzero pixels
-            if (np.unique(rows).size == 1) or (np.unique(cols).size == 1) or (rows.size < 3):
+            # can't use scipy.interpolate.griddata with 1d values
+            is_horz = np.unique(rows).size == 1
+            is_vert = np.unique(cols).size == 1
+
+            # check for diagonal pixels 
+            # slope = rise / run --- don't need to check if run==0 
+            rdiff = np.diff(rows)
+            cdiff = np.diff(cols)
+            is_diag = np.unique(cdiff / rdiff).size == 1 if not np.any(rdiff==0) else False
+            
+            # best practice to just convolve instead of interpolating if too few pixels
+            is_smol = rows.size < 3 
+
+            if is_horz or is_vert or is_smol or is_diag:
+                # warp convolved sparse image directly without interpolation
                 return warp_sparse_image(im_sparse=conv2d(im_sparse, batching=False), remappingIdx=remappingIdx)
 
         # Get values at the grid points
-        grid_values = scipy.interpolate.griddata(
-            points=(rows, cols), 
-            values=data, 
-            xi=remappingIdx[:,:,::-1], 
-            method=method, 
-            fill_value=fill_value,
-        )
-
+        try:
+            grid_values = scipy.interpolate.griddata(
+                points=(rows, cols), 
+                values=data, 
+                xi=remappingIdx[:,:,::-1], 
+                method=method, 
+                fill_value=fill_value,
+            )
+        except Exception as e:
+            raise Exception(f"Error interpolating sparse image. Something is either weird about one of the input images or the remappingIdx. Error: {e}")
+        
         # Create a new sparse image from the nonzero pixels
         warped_sparse_image = scipy.sparse.csr_matrix(grid_values, dtype=dtype)
         warped_sparse_image.eliminate_zeros()
-
         return warped_sparse_image
     
     wsi_partial = partial(warp_sparse_image, remappingIdx=remappingIdx)
-    ims_sparse_out = map_parallel(func=wsi_partial, args=(ims_sparse,), method='multithreading', workers=n_workers, prog_bar=verbose)
+    ims_sparse_out = map_parallel(func=wsi_partial, args=[ims_sparse,], method='multithreading', workers=n_workers, prog_bar=verbose)
     return ims_sparse_out
 
 
@@ -3824,72 +3838,97 @@ def add_text_to_images(
 
 
 def resize_images(
-    images: Union[np.ndarray, List[np.ndarray]], 
+    images: Union[np.ndarray, List[np.ndarray], torch.Tensor, List[torch.Tensor]], 
     new_shape: Tuple[int, int] = (100,100),
-    interpolation: str = 'linear',
+    interpolation: str = 'BILINEAR',
     antialias: bool = False,
-    align_corners: bool = False,
     device: str = 'cpu',
+    return_numpy: bool = True,
 ) -> np.ndarray:
     """
-    Resizes images using the ``torch.nn.functional.interpolate`` method.
+    Resizes images using the ``torchvision.transforms.Resize`` method.
     RH 2023
 
     Args:
-        images (Union[np.ndarray, List[np.ndarray]]): 
-            Frames of video or images. Can be 2D, 3D, or 4D. 
+        images (Union[np.ndarray, List[np.ndarray]], torch.Tensor, List[torch.Tensor]): 
+            Images or frames of a video. Can be 2D, 3D, or 4D. 
             * For a 2D array: shape is *(height, width)*
             * For a 3D array: shape is *(n_frames, height, width)*
-            * For a 4D array: shape is *(n_frames, height, width, n_channels)*
+            * For a 4D array: shape is *(n_frames, n_channels, height, width)*
         new_shape (Tuple[int, int]): 
             The desired height and width of resized images as a tuple. 
             (Default is *(100, 100)*)
         interpolation (str): 
-            The interpolation method to use. See ``torch.nn.functional.interpolate`` 
-            for options. (Default is ``'linear'``)
+            The interpolation method to use. See ``torchvision.transforms.Resize`` 
+            for options.
+            * ``'NEAREST'``: Nearest neighbor interpolation
+            * ``'NEAREST_EXACT'``: Nearest neighbor interpolation
+            * ``'BILINEAR'``: Bilinear interpolation
+            * ``'BICUBIC'``: Bicubic interpolation
         antialias (bool): 
             If ``True``, antialiasing will be used. (Default is ``False``)
-        align_corners (bool): 
-            If ``True``, the corners will be aligned. See ``torch.nn.functional.interpolate`` 
-            for details. (Default is ``False``)
         device (str): 
-            The device to use for ``torch.nn.functional.interpolate``. 
+            The device to use for ``torchvision.transforms.Resize``. 
             (Default is ``'cpu'``)
+        return_numpy (bool):
+            If ``True``, then will return a numpy array. Otherwise, will return
+            a torch tensor on the defined device. (Default is ``True``)
             
     Returns:
         (np.ndarray): 
             images_resized (np.ndarray): 
                 Frames of video or images with overlay added.
     """
+    ## Convert images to torch tensor
     if isinstance(images, list):
-        images = np.stack(images, axis=0)
-    
-    if images.ndim == 2:
-        images = images[None,:,:]
-    elif images.ndim == 3:
-        images = images
-    elif images.ndim == 4:
-        images = images.transpose(0,3,1,2)
+        if isinstance(images[0], np.ndarray):
+            images = torch.stack([torch.as_tensor(im, device=device) for im in images], dim=0)
+    elif isinstance(images, np.ndarray):
+        images = torch.as_tensor(images, device=device)
+    elif isinstance(images, torch.Tensor):
+        images = images.to(device=device)
     else:
-        raise ValueError('images must be 2D, 3D, or 4D.')
+        raise ValueError(f"images must be a np.ndarray or torch.Tensor or a list of np.ndarray or torch.Tensor. Got {type(images)}")        
     
-    images_torch = torch.as_tensor(images, device=device)
-    images_torch = torch.nn.functional.interpolate(
-        images_torch, 
-        size=tuple(np.array(new_shape, dtype=int)), 
-        mode=interpolation,
-        align_corners=align_corners,
-        recompute_scale_factor=None,
+    ## Convert images to 4D
+    def pad_to_4D(ims):
+        if ims.ndim == 2:
+            ims = ims[None, None, :, :]
+        elif ims.ndim == 3:
+            ims = ims[None, :, :, :]
+        elif ims.ndim != 4:
+            raise ValueError(f"images must be a 2D, 3D, or 4D array. Got shape {ims.shape}")
+        return ims
+    ndim_orig = images.ndim
+    images = pad_to_4D(images)
+    
+    ## Get interpolation method
+    try:
+        interpolation = getattr(torchvision.transforms.InterpolationMode, interpolation.upper())
+    except Exception as e:
+        raise Exception(f"Invalid interpolation method. See torchvision.transforms.InterpolationMode for options. Error: {e}")
+
+    resizer = torchvision.transforms.Resize(
+        size=new_shape,
+        interpolation=interpolation,
         antialias=antialias,
-    )
-    images_resized = images_torch.cpu().numpy()
-    
-    if images.ndim == 2:
-        images_resized = images_resized[0,:,:]
-    elif images.ndim == 3:
-        images_resized = images_resized
-    elif images.ndim == 4:
-        images_resized = images_resized.transpose(0,2,3,1)
+    ).to(device=device)
+    images_resized = resizer(images)
+       
+    ## Convert images back to original shape
+    def unpad_to_orig(ims, ndim_orig):
+        if ndim_orig == 2:
+            ims = ims[0,0,:,:]
+        elif ndim_orig == 3:
+            ims = ims[0,:,:,:]
+        elif ndim_orig != 4:
+            raise ValueError(f"images must be a 2D, 3D, or 4D array. Got shape {ims.shape}")
+        return ims
+    images_resized = unpad_to_orig(images_resized, ndim_orig)
+        
+    ## Convert images to numpy
+    if return_numpy:
+        images_resized = images_resized.detach().cpu().numpy()
     
     return images_resized
 
@@ -4224,6 +4263,25 @@ class Toeplitz_convolution2d():
 ######################################################################################################################################
 
 
+class ParallelExecutionError(Exception):
+    """
+    Exception class for errors that occur during parallel execution.
+    Intended to be used with the ``map_parallel`` function.
+    RH 2023
+
+    Attributes:
+        index (int):
+            Index of the job that failed.
+        original_exception (Exception):
+            The original exception that was raised.
+    """
+    def __init__(self, index, original_exception):
+        self.index = index
+        self.original_exception = original_exception
+
+    def __str__(self):
+        return f"Job {self.index} raised an exception: {self.original_exception}"
+
 def map_parallel(
     func: Callable, 
     args: List[Any], 
@@ -4240,9 +4298,8 @@ def map_parallel(
             The function to be mapped.
         args (List[Any]): 
             List of arguments to which the function should be mapped.
-            The length of *args* should be equal to the number of arguments. If the function requires multiple arguments, 
-            *args* should be an iterable (e.g., list, tuple, generator) of length equal to the number of arguments. Each element 
-            can then be an iterable for each iteration of the function.
+            Length of list should be equal to the number of arguments.
+            Each element should then be an iterable for each job that is run.
         method (str): 
             Method to use for parallelization. Either \n
             * ``'multithreading'``: Use multithreading from concurrent.futures.
@@ -4272,6 +4329,33 @@ def map_parallel(
     ## Get number of arguments. If args is a generator, make None.
     n_args = len(args[0]) if hasattr(args, '__len__') else None
 
+    ## Assert that args is a list
+    assert isinstance(args, list), "args must be a list"
+
+    ## Assert that all args are the same length
+    assert all([len(arg) == n_args for arg in args]), "All args must be the same length"
+
+    ## Make indices
+    indices = np.arange(n_args)
+
+    def wrapper(*args_index):
+        """
+        Wrapper function to catch exceptions.
+        
+        Args:
+        *args_index (tuple):
+            Tuple of arguments to be passed to the function.
+            Should take the form of (arg1, arg2, ..., argN, index)
+            The last element is the index of the job.
+        """
+        index = args_index[-1]
+        args = args_index[:-1]
+        
+        try:
+            return func(*args)
+        except Exception as e:
+            raise ParallelExecutionError(index, e)
+        
     if method == 'multithreading':
         executor = ThreadPoolExecutor
     elif method == 'multiprocessing':
@@ -4284,12 +4368,12 @@ def map_parallel(
     #     return joblib.Parallel(n_jobs=workers)(joblib.delayed(func)(arg) for arg in tqdm(args, total=n_args, disable=prog_bar!=True))
     elif method == 'serial':
         # return [func(*arg) for arg in tqdm(args, disable=prog_bar!=True)]
-        return list(tqdm(map(func, *args), total=n_args, disable=prog_bar!=True))
+        return list(tqdm(map(wrapper, *(args + [indices])), total=n_args, disable=prog_bar!=True))
     else:
         raise ValueError(f"method {method} not recognized")
 
     with executor(workers) as ex:
-        return list(tqdm(ex.map(func, *args), total=n_args, disable=prog_bar!=True))
+        return list(tqdm(ex.map(wrapper, *(args + [indices])), total=n_args, disable=prog_bar!=True))
 
 
 ######################################################################################################################################
