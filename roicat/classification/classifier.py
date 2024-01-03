@@ -55,7 +55,7 @@ class Autotuner_regression(util.ROICaT_Module):
         cv (Type[sklearn.model_selection._split.BaseCrossValidator]):
             A Scikit-Learn cross-validator class.
             Must have: \n
-                * Call signature: ``idx_train, idx_test = next(self.cv.split(self.X, self.y))``
+                * Call signature: ``idx_train, idx_test = next(self.cv.split(self.X, self.y))`` \n
         fn_loss (Callable):
             Function to compute the loss.
             Must have: \n
@@ -88,10 +88,10 @@ class Autotuner_regression(util.ROICaT_Module):
         .. highlight:: python
         .. code-block:: python
     
-        params = {
-            'C':             {'type': 'real',        'kwargs': {'log': True, 'low': 1e-4, 'high': 1e4}},
-            'penalty':       {'type': 'categorical', 'kwargs': {'choices': ['l1', 'l2']}},
-        }
+            params = {
+                'C':             {'type': 'real',        'kwargs': {'log': True, 'low': 1e-4, 'high': 1e4}},
+                'penalty':       {'type': 'categorical', 'kwargs': {'choices': ['l1', 'l2']}},
+            }
     """
     def __init__(
         self, 

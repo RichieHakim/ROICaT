@@ -76,7 +76,7 @@ class Data_roicat(util.ROICaT_Module):
             numpy array (first dimension) is an ROI.
         spatialFootprints (List[object]): 
             A list of scipy.sparse.csr_matrix objects, each with shape *(n_roi,
-            FOV_height*FOV_width)*. Each element represents an imaging session.
+            FOV_height \* FOV_width)*. Each element represents an imaging session.
         class_labels_raw (List[np.ndarray]): 
             A list of numpy arrays, each with shape *(n_roi,)*, where each
             element is an integer. Each element of the list is an imaging
@@ -86,7 +86,7 @@ class Data_roicat(util.ROICaT_Module):
             element is an integer. Each element of the list is an imaging
             session and each element of the numpy array is the index of the
             class label obtained from passing the raw class label through
-            np.unique(*, return_inverse=True).
+            np.unique(\*, return_inverse=True).
         um_per_pixel (float): 
             The conversion factor from pixels to microns. This is used to scale
             the ROI_images to a common size.
