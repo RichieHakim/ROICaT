@@ -18,6 +18,7 @@ from typing import List, Dict, Tuple, Union, Optional, Any, Callable, Iterable, 
 
 import numpy as np
 import torch
+import torchvision
 import scipy.sparse
 import sparse
 from tqdm import tqdm
@@ -1092,7 +1093,6 @@ def find_paths(
             bytes,
             memoryview,
             np.bytes_,
-            np.unicode_,
             re.Pattern,
             re.Match,
         )):
@@ -3838,72 +3838,97 @@ def add_text_to_images(
 
 
 def resize_images(
-    images: Union[np.ndarray, List[np.ndarray]], 
+    images: Union[np.ndarray, List[np.ndarray], torch.Tensor, List[torch.Tensor]], 
     new_shape: Tuple[int, int] = (100,100),
-    interpolation: str = 'linear',
+    interpolation: str = 'BILINEAR',
     antialias: bool = False,
-    align_corners: bool = False,
     device: str = 'cpu',
+    return_numpy: bool = True,
 ) -> np.ndarray:
     """
-    Resizes images using the ``torch.nn.functional.interpolate`` method.
+    Resizes images using the ``torchvision.transforms.Resize`` method.
     RH 2023
 
     Args:
-        images (Union[np.ndarray, List[np.ndarray]]): 
-            Frames of video or images. Can be 2D, 3D, or 4D. 
+        images (Union[np.ndarray, List[np.ndarray]], torch.Tensor, List[torch.Tensor]): 
+            Images or frames of a video. Can be 2D, 3D, or 4D. 
             * For a 2D array: shape is *(height, width)*
             * For a 3D array: shape is *(n_frames, height, width)*
-            * For a 4D array: shape is *(n_frames, height, width, n_channels)*
+            * For a 4D array: shape is *(n_frames, n_channels, height, width)*
         new_shape (Tuple[int, int]): 
             The desired height and width of resized images as a tuple. 
             (Default is *(100, 100)*)
         interpolation (str): 
-            The interpolation method to use. See ``torch.nn.functional.interpolate`` 
-            for options. (Default is ``'linear'``)
+            The interpolation method to use. See ``torchvision.transforms.Resize`` 
+            for options.
+            * ``'NEAREST'``: Nearest neighbor interpolation
+            * ``'NEAREST_EXACT'``: Nearest neighbor interpolation
+            * ``'BILINEAR'``: Bilinear interpolation
+            * ``'BICUBIC'``: Bicubic interpolation
         antialias (bool): 
             If ``True``, antialiasing will be used. (Default is ``False``)
-        align_corners (bool): 
-            If ``True``, the corners will be aligned. See ``torch.nn.functional.interpolate`` 
-            for details. (Default is ``False``)
         device (str): 
-            The device to use for ``torch.nn.functional.interpolate``. 
+            The device to use for ``torchvision.transforms.Resize``. 
             (Default is ``'cpu'``)
+        return_numpy (bool):
+            If ``True``, then will return a numpy array. Otherwise, will return
+            a torch tensor on the defined device. (Default is ``True``)
             
     Returns:
         (np.ndarray): 
             images_resized (np.ndarray): 
                 Frames of video or images with overlay added.
     """
+    ## Convert images to torch tensor
     if isinstance(images, list):
-        images = np.stack(images, axis=0)
-    
-    if images.ndim == 2:
-        images = images[None,:,:]
-    elif images.ndim == 3:
-        images = images
-    elif images.ndim == 4:
-        images = images.transpose(0,3,1,2)
+        if isinstance(images[0], np.ndarray):
+            images = torch.stack([torch.as_tensor(im, device=device) for im in images], dim=0)
+    elif isinstance(images, np.ndarray):
+        images = torch.as_tensor(images, device=device)
+    elif isinstance(images, torch.Tensor):
+        images = images.to(device=device)
     else:
-        raise ValueError('images must be 2D, 3D, or 4D.')
+        raise ValueError(f"images must be a np.ndarray or torch.Tensor or a list of np.ndarray or torch.Tensor. Got {type(images)}")        
     
-    images_torch = torch.as_tensor(images, device=device)
-    images_torch = torch.nn.functional.interpolate(
-        images_torch, 
-        size=tuple(np.array(new_shape, dtype=int)), 
-        mode=interpolation,
-        align_corners=align_corners,
-        recompute_scale_factor=None,
+    ## Convert images to 4D
+    def pad_to_4D(ims):
+        if ims.ndim == 2:
+            ims = ims[None, None, :, :]
+        elif ims.ndim == 3:
+            ims = ims[None, :, :, :]
+        elif ims.ndim != 4:
+            raise ValueError(f"images must be a 2D, 3D, or 4D array. Got shape {ims.shape}")
+        return ims
+    ndim_orig = images.ndim
+    images = pad_to_4D(images)
+    
+    ## Get interpolation method
+    try:
+        interpolation = getattr(torchvision.transforms.InterpolationMode, interpolation.upper())
+    except Exception as e:
+        raise Exception(f"Invalid interpolation method. See torchvision.transforms.InterpolationMode for options. Error: {e}")
+
+    resizer = torchvision.transforms.Resize(
+        size=new_shape,
+        interpolation=interpolation,
         antialias=antialias,
-    )
-    images_resized = images_torch.cpu().numpy()
-    
-    if images.ndim == 2:
-        images_resized = images_resized[0,:,:]
-    elif images.ndim == 3:
-        images_resized = images_resized
-    elif images.ndim == 4:
-        images_resized = images_resized.transpose(0,2,3,1)
+    ).to(device=device)
+    images_resized = resizer(images)
+       
+    ## Convert images back to original shape
+    def unpad_to_orig(ims, ndim_orig):
+        if ndim_orig == 2:
+            ims = ims[0,0,:,:]
+        elif ndim_orig == 3:
+            ims = ims[0,:,:,:]
+        elif ndim_orig != 4:
+            raise ValueError(f"images must be a 2D, 3D, or 4D array. Got shape {ims.shape}")
+        return ims
+    images_resized = unpad_to_orig(images_resized, ndim_orig)
+        
+    ## Convert images to numpy
+    if return_numpy:
+        images_resized = images_resized.detach().cpu().numpy()
     
     return images_resized
 
