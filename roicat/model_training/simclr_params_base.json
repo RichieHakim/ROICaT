@@ -69,7 +69,7 @@
     },
     "trainer": {
         "n_epochs": 9999999,
-        "device_train": "cpu",
+        "device_train": "cuda:0",
         "inner_batch_size": 256,
         "learning_rate": 0.01,
         "penalty_orthogonality":1.00,

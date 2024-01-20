@@ -17,7 +17,7 @@ from typing import Optional, List, Tuple, Union, Dict, Any
 from torch.nn import CrossEntropyLoss
 from torch.optim import Adam
 
-import model
+from . import model
 
 def log_fn(log_str, log_file):
     """
@@ -32,30 +32,6 @@ def log_fn(log_str, log_file):
     with open(log_file, 'a') as f:
         f.write(log_str + '\n')
 
-def get_nums_from_string(string_with_nums):
-    """
-    Return the numbers from a string as an int
-    RH 2021-2022
-
-    Args:
-        string_with_nums (str):
-            String with numbers in it
-    
-    Returns:
-        nums (int):
-            The numbers from the string    
-            If there are no numbers, return None.        
-    """
-    idx_nums = [ii in str(np.arange(10)) for ii in string_with_nums]
-    
-    nums = []
-    for jj, val in enumerate(idx_nums):
-        if val:
-            nums.append(string_with_nums[jj])
-    if not nums:
-        return None
-    nums = int(''.join(nums))
-    return nums
 
 class Simclr_Trainer():
     """
@@ -90,6 +66,8 @@ class Simclr_Trainer():
             The alpha to use for L2 regularization.
         path_saveLog (Optional[str]):
             The path to which to save the training log.
+        path_saveLoss (Optional[str]):
+            The path to which to save the losses.
     """
 
 
@@ -111,6 +89,7 @@ class Simclr_Trainer():
             l2_alpha: float = 0.0000,
 
             path_saveLog: Optional[str] = None,
+            path_saveLoss: Optional[str] = None,
         ):
 
         self.dataloader = dataloader
@@ -126,6 +105,7 @@ class Simclr_Trainer():
         self.temperature = temperature
         self.l2_alpha = l2_alpha
         self.path_saveLog = path_saveLog
+        self.path_saveLoss = path_saveLoss
 
     def train(
             self
@@ -160,7 +140,7 @@ class Simclr_Trainer():
         self.l2_alpha
         self.path_saveLog
 
-        log_function = partial(log_fn, path_log=self.path_saveLog) if self.path_saveLog is not None else lambda x: None
+        log_function = partial(log_fn, log_file=self.path_saveLog) if self.path_saveLog is not None else lambda x: None
 
         losses_train, losses_val = [], [np.nan]
         for epoch in tqdm.tqdm(range(self.n_epochs)):
@@ -183,7 +163,7 @@ class Simclr_Trainer():
             )
             
             ## save loss information
-            if self.path_saveLog is not None:
+            if self.path_saveLoss is not None:
                 np.save(self.path_saveLoss, losses_train)
             
             ## if loss becomes NaNs, don't save the network and stop training
@@ -689,24 +669,37 @@ class Simclr_PCA_Trainer():
 
         pca_sklearn = PCA()
         pca_sklearn.fit(np_output_head_centered)
+        pca_sklearn.components_ = pca_sklearn.components_.astype(np.float32)
+        pca_sklearn.mean_ = np.zeros(pca_size, dtype=np.float32)
 
         pca_layer[1].weight = torch.nn.Parameter(torch.tensor(pca_sklearn.components_, dtype=torch.float32))
         # pca_layer[1].bias = torch.nn.Parameter(torch.tensor(np.zeros(pca_size,),dtype=torch.float32))
 
         if check_pca_layer_valid:
             pca_output = pca_layer(output_head)
+            pca_sklearn_tensor = torch.tensor(pca_sklearn.transform(np_output_head_centered))
+            print(np.max(np.abs(pca_output.detach().numpy() - pca_sklearn_tensor.detach().numpy())))
             assert torch.allclose(pca_output,
-                            torch.tensor(pca_sklearn.transform(np_output_head_centered)),
+                            pca_sklearn_tensor,
                             atol=1e-5
                             ), 'pca layer not working'
         
         print('save')
 
         ## save model
-        self.model_container.model = torch.nn.Sequential(
-            self.model_container.model,
-            pca_layer
-        )
+        class ModelPCATackOn(torch.nn.Module):
+            def __init__(self, model_pre, pca_layer):
+                super().__init__()
+                self.model = torch.nn.Sequential(
+                    model_pre,
+                    pca_layer
+                )
+            @property
+            def device(self):
+                return next(self.model.parameters()).device
+            def forward(self, x):
+                return self.model(x)
+        self.model_container.model = ModelPCATackOn(self.model_container.model, pca_layer)
 
         self.model_container.save_onnx(check_load_onnx_valid=True, revert_train=False)
 

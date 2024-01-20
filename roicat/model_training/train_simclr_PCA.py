@@ -32,7 +32,7 @@ parser.add_argument(
     required=False,
     metavar='',
     type=str,
-    default='/Users/josh/analysis/data/ROICaT/simclr_training',
+    default=None,
     help='Path to raw ROI data to be used to train the model.',
 )
 parser.add_argument(
@@ -41,7 +41,7 @@ parser.add_argument(
     required=False,
     metavar='',
     type=str,
-    default='/Users/josh/analysis/github_repos/ROICaT/roicat/model_training/simclr_params_base.json',
+    default=None,
     help='Path to json file containing parameters.',
 )
 parser.add_argument(
@@ -50,8 +50,17 @@ parser.add_argument(
     required=False,
     metavar='',
     type=str,
-    default='/Users/josh/analysis/outputs/ROICaT/simclr_training',
+    default=None,
     help="Directory into which final model and evaluations should be saved.",
+)
+parser.add_argument(
+    '--filepath_source_model',
+    '-m',
+    required=False,
+    metavar='',
+    type=str,
+    default=None,
+    help="Filepath with the .onnx model to be used for PCA training.",
 )
 parser.add_argument(
     '--test_option',
@@ -59,13 +68,14 @@ parser.add_argument(
     required=False,
     metavar='',
     type=bool,
-    default=True,
+    default=False,
     help="Whether to run the script in test mode (True) or not (False). Reduces number of training examples to 3000.",
 )
 args = parser.parse_args()
 directory_data = args.directory_data
 filepath_params = args.path_params
 directory_save = args.directory_save
+filepath_source_model = args.filepath_source_model
 test_option = args.test_option
 
 
@@ -73,6 +83,12 @@ test_option = args.test_option
 list_filepaths_data = [Path(os.path.join(directory_data, filename)) for filename in os.listdir(directory_data)]
 with open(filepath_params) as f:
     dict_params = json.load(f)
+## If directory_save is specified from the arg parser, overwrite the save directory in the params file
+if directory_save is not None:
+    dict_params['model']['filepath_model_wPCA'] = str(Path(directory_save) / (dict_params['model']['torchvision_model'] + '_' + 'trainingBest_wPCA.onnx'))
+## If filepath_source_model is specified from the arg parser, overwrite the source model in the params file
+if filepath_source_model is not None:
+    dict_params['model']['filepath_model_noPCA'] = filepath_source_model
 
 assert dict_params['trainer']['forward_version'] == 'forward_head', "This script is only for training SimCLR with ."
 

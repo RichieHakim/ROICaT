@@ -32,7 +32,7 @@ parser.add_argument(
     required=False,
     metavar='',
     type=str,
-    default='/Users/josh/analysis/data/ROICaT/simclr_training',
+    default=None,
     help='Path to raw ROI data to be used to train the model.',
 )
 parser.add_argument(
@@ -41,7 +41,7 @@ parser.add_argument(
     required=False,
     metavar='',
     type=str,
-    default='/Users/josh/analysis/github_repos/ROICaT/roicat/model_training/simclr_params_base.json',
+    default=None,
     help='Path to json file containing parameters.',
 )
 parser.add_argument(
@@ -50,7 +50,7 @@ parser.add_argument(
     required=False,
     metavar='',
     type=str,
-    default='/Users/josh/analysis/outputs/ROICaT/simclr_training',
+    default=None,
     help="Directory into which final model and evaluations should be saved.",
 )
 parser.add_argument(
@@ -59,7 +59,7 @@ parser.add_argument(
     required=False,
     metavar='',
     type=bool,
-    default=True,
+    default=False,
     help="Whether to run the script in test mode (True) or not (False). Reduces number of training examples to 3000.",
 )
 args = parser.parse_args()
@@ -68,11 +68,23 @@ filepath_params = args.path_params
 directory_save = args.directory_save
 test_option = args.test_option
 
+# directory_data = '/media/rich/bigSSD/analysis_data/ROICaT/ROIs_for_training/'
+# filepath_params = 'roicat/model_training/simclr_params_base.json'
+# directory_save = '/media/rich/bigSSD/analysis_data/ROICaT/training/'
+# test_option = True
+
+filepath_logger = str(Path(directory_save) / 'logger.txt')
+filepath_losses = str(Path(directory_save) / 'losses.npy')
+
+
 
 # Load paths from directory_data and parameters from JSON
 list_filepaths_data = [Path(os.path.join(directory_data, filename)) for filename in os.listdir(directory_data)]
 with open(filepath_params) as f:
     dict_params = json.load(f)
+## If directory_save is specified from the arg parser, overwrite the save directory in the params file
+if directory_save is not None:
+    dict_params['model']['filepath_model_noPCA'] = str(Path(directory_save) / (dict_params['model']['torchvision_model'] + '_' + 'trainingBest_noPCA.onnx'))
 
 # Load data from dir_data into Data object
 ROI_sparse_all = [scipy.sparse.load_npz(filepath_ROI_images) for filepath_ROI_images in list_filepaths_data if filepath_ROI_images.suffix == '.npz']
@@ -80,7 +92,8 @@ ROI_images = [sf_sparse.toarray().reshape(sf_sparse.shape[0], 36,36).astype(np.f
 data = data_importing.Data_roicat();
 
 if test_option:
-    ROI_images = [ROI_images[0][:3000]]
+    print('Running in test mode. Reducing number of training examples.')
+    ROI_images = [ROI_images[0][:10000]]
     n_epochs = 2
 else:
     n_epochs = dict_params['trainer']['n_epochs']
@@ -146,6 +159,8 @@ trainer = sth.Simclr_Trainer(
     gamma=dict_params['trainer']['gamma'],
     temperature=dict_params['trainer']['temperature'],
     l2_alpha=dict_params['trainer']['l2_alpha'],
+    path_saveLog=filepath_logger,
+    path_saveLoss=filepath_losses
 )
 
 # Loop through epochs, batches, etc. if loss becomes NaNs, don't save the network and stop training.

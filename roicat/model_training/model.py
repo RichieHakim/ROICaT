@@ -14,7 +14,7 @@ from typing import Optional, List, Tuple, Union, Dict, Any
 from torch.nn import CrossEntropyLoss
 from torch.optim import Adam
 
-from roicat.model_training import simclr_training_helpers as sth
+from .. import helpers
 
 class ModelTackOn(torch.nn.Module):
     """
@@ -278,6 +278,17 @@ class ModelTackOn(torch.nn.Module):
         self.set_post_head_grad(requires_grad=True)
         # self.set_pca_head_grad(requires_grad=False)
 
+    @property
+    def device(self):
+        """
+        Get the device of the model
+
+        Returns:
+            device (torch.device):
+                Device of the model
+        """
+        return next(self.parameters()).device
+
 class Simclr_Model():
     """
     SimCLR model class
@@ -423,8 +434,8 @@ class Simclr_Model():
 
         mnp = [name for name, param in self.model.named_parameters()]  ## 'model named parameters'
         mnp_blockNums = [name[name.find('.'):name.find('.')+8] for name in mnp]  ## pulls out the numbers just after the model name
-        mnp_nums = [sth.get_nums_from_string(name) for name in mnp_blockNums]  ## converts them to numbers
-        block_to_freeze_nums = sth.get_nums_from_string(block_to_unfreeze)  ## converts the input parameter specifying the block to freeze into a number for comparison
+        mnp_nums = [helpers.get_nums_from_string(name) for name in mnp_blockNums]  ## converts them to numbers
+        block_to_freeze_nums = helpers.get_nums_from_string(block_to_unfreeze)  ## converts the input parameter specifying the block to freeze into a number for comparison
 
         m_baseName = mnp[0][:mnp[0].find('.')]
 
@@ -469,6 +480,10 @@ class Simclr_Model():
         ## Prepare initial types
 
         # torch.onnx.export
+        ## Prepare model
+        self.model.eval()
+        device_prev = self.model.device
+        self.model.to('cpu')
         torch.onnx.export(
             self.model,
             (torch.ones(batch_size, 3, 224, 224),),
@@ -482,9 +497,11 @@ class Simclr_Model():
                 "latents": [0],
             }
         )
+        self.model.to(device_prev)
+        self.model.train()
         
         if check_load_onnx_valid:
-            self.test(torch.ones((batch_size, 3, 224, 224)), revert_train=revert_train)
+            self.test(torch.ones((batch_size, 3, 224, 224), device='cpu'), revert_train=revert_train)
 
     def test(
         self,
@@ -506,11 +523,14 @@ class Simclr_Model():
         if hasattr(self.model, 'prep_contrast'):
             self.model.prep_contrast()
         self.model.eval()
-        out_torch_original = self.model(x).detach().numpy()
+        device_prev = self.model.device
+        self.model.to('cpu')
+        out_torch_original = self.model(x).cpu().detach().numpy()
+        self.model.to(device_prev)
         
         model_loaded = self.load_onnx(self.filepath_model_save, inplace=False)
         model_loaded.eval()
-        out_torch_loaded = model_loaded(x).detach().numpy()
+        out_torch_loaded = model_loaded(x.cpu()).cpu().detach().numpy()
 
         # Check the Onnx output against PyTorch
         print(np.max(np.abs(out_torch_original - out_torch_loaded)))
