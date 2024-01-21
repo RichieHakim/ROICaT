@@ -170,6 +170,9 @@ class Dataloader_ROInet(util.ROICaT_Module):
             function will only scale dynamic range (to 0-1), resize (to
             img_size_out dimensions), and tile channels (to 3) as a minimum
             to pass images through the network. (Default is ``None``)
+        n_transforms (int):
+            The number of times to apply the transforms to each image. Should
+            be 1 for inference and 2 for training. (Default is *1*)
         img_size_out (Tuple[int, int]): 
             The image output dimensions of DataLoader if transforms is
             ``None``. (Default is *(224, 224)*)
@@ -177,9 +180,14 @@ class Dataloader_ROInet(util.ROICaT_Module):
             If ``True``, converts the transforms pipeline into a TorchScript
             pipeline, potentially improving calculation speed but can cause
             problems with multiprocessing. (Default is ``False``)
+        shuffle (bool):
+            If ``True``, shuffles the data. Should be set to ``True`` for
+            SimCLR training. (Default is ``False``)
+        drop_last (bool):
+            If ``True``, drops the last batch if it is not full. Should be
+            set to ``True`` for SimCLR training. (Default is ``False``)
         verbose (bool):
-            If ``True``, print out extra information. (Default is ``True``)
-    """
+            If ``True``, print out extra information. (Default is ``True``)    """
     def __init__(
             self,
             ROI_images: np.ndarray,
@@ -189,8 +197,11 @@ class Dataloader_ROInet(util.ROICaT_Module):
             persistentWorkers_dataloader: bool = True,
             prefetchFactor_dataloader: int = 2,
             transforms: Optional[Callable] = None,
+            n_transforms: int = 1,
             img_size_out: Tuple[int, int] = (224, 224),
             jit_script_transforms: bool = False,
+            shuffle_dataloader: bool = False,
+            drop_last_dataloader: bool = False,
             verbose: bool = True,
         ):
         self._verbose = verbose
@@ -217,7 +228,7 @@ class Dataloader_ROInet(util.ROICaT_Module):
         self.dataset = dataset_simCLR(
                 X=torch.as_tensor(ROI_images, device='cpu', dtype=torch.float32),
                 y=torch.as_tensor(torch.zeros(ROI_images.shape[0]), device='cpu', dtype=torch.float32),
-                n_transforms=1,
+                n_transforms=n_transforms,
                 transform=self.transforms,
                 DEVICE='cpu',
                 dtype_X=torch.float32,
@@ -226,8 +237,8 @@ class Dataloader_ROInet(util.ROICaT_Module):
         self.dataloader = torch.utils.data.DataLoader(
                 self.dataset,
                 batch_size=batchSize_dataloader,
-                shuffle=False,
-                drop_last=False,
+                shuffle=shuffle_dataloader,
+                drop_last=drop_last_dataloader,
                 pin_memory=pinMemory_dataloader,
                 num_workers=numWorkers_dataloader,
                 persistent_workers=persistentWorkers_dataloader,
