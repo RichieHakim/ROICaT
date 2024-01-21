@@ -207,6 +207,11 @@ class Dataloader_ROInet(util.ROICaT_Module):
         self._verbose = verbose
         numWorkers_dataloader = mp.cpu_count() if numWorkers_dataloader == -1 else numWorkers_dataloader
 
+        ## Type checking / correction
+        if not isinstance(img_size_out, (tuple, list)):
+            assert isinstance(img_size_out, int), f'img_size_out should be a tuple or list, but is {type(img_size_out)}'
+            img_size_out = (img_size_out, img_size_out)
+
         transforms = torch.nn.Sequential(
             ScaleDynamicRange(scaler_bounds=(0,1)),
             torchvision.transforms.Resize(
@@ -479,16 +484,19 @@ class ROInet_embedder(util.ROICaT_Module):
         self.ROI_images_rs = roi_resizer.ROI_images_rs
 
         dataloader_generator = Dataloader_ROInet(
-            self.ROI_images_rs,
-            batchSize_dataloader,
-            pinMemory_dataloader,
-            numWorkers_dataloader,
-            persistentWorkers_dataloader,
-            prefetchFactor_dataloader,
-            transforms,
-            img_size_out,
-            jit_script_transforms,
-            self._verbose,
+            ROI_images=self.ROI_images_rs,
+            batchSize_dataloader=batchSize_dataloader,
+            pinMemory_dataloader=pinMemory_dataloader,
+            numWorkers_dataloader=numWorkers_dataloader,
+            persistentWorkers_dataloader=persistentWorkers_dataloader,
+            prefetchFactor_dataloader=prefetchFactor_dataloader,
+            transforms=transforms,
+            n_transforms=1,
+            img_size_out=img_size_out,
+            jit_script_transforms=jit_script_transforms,
+            shuffle_dataloader=False,
+            drop_last_dataloader=False,
+            verbose=self._verbose,
         )
 
         self.transforms = dataloader_generator.transforms
