@@ -7,8 +7,8 @@ from IPython.display import display
 # import matplotlib.pyplot as plt
 import numpy as np
 
-## Import roicat
-import roicat
+## Import roicat submodules
+from . import data_importing, ROInet, helpers, util, tracking, classification
 
 def pipeline_tracking(params: dict):
     """
@@ -34,13 +34,13 @@ def pipeline_tracking(params: dict):
     """
 
     ## Prepare params
-    defaults = roicat.util.get_default_parameters(pipeline='tracking')
-    params = roicat.util.prepare_params(params, defaults, verbose=True)
+    defaults = util.get_default_parameters(pipeline='tracking')
+    params = util.prepare_params(params, defaults, verbose=True)
     display(params)
 
     ## Prepare state variables
     VERBOSE = params['general']['verbose']
-    DEVICE = roicat.helpers.set_device(use_GPU=params['general']['use_GPU'])
+    DEVICE = helpers.set_device(use_GPU=params['general']['use_GPU'])
     SEED = _set_random_seed(
         seed=params['general']['random_seed'],
         deterministic=params['general']['random_seed'] is not None,
@@ -48,7 +48,7 @@ def pipeline_tracking(params: dict):
 
     if params['data_loading']['data_kind'] == 'data_suite2p':
         assert params['data_loading']['dir_outer'] is not None, f"params['data_loading']['dir_outer'] must be specified if params['data_loading']['data_kind'] is 'data_suite2p'."
-        paths_allStat = roicat.helpers.find_paths(
+        paths_allStat = helpers.find_paths(
             dir_outer=params['data_loading']['dir_outer'],
             reMatch='stat.npy',
             depth=4,
@@ -67,7 +67,7 @@ def pipeline_tracking(params: dict):
         params['data_loading']['paths_allOps'] = paths_allOps
 
         ## Import data
-        data = roicat.data_importing.Data_suite2p(
+        data = data_importing.Data_suite2p(
             paths_statFiles=paths_allStat[:],
             paths_opsFiles=paths_allOps[:],
             verbose=VERBOSE,
@@ -75,7 +75,7 @@ def pipeline_tracking(params: dict):
         )
         assert data.check_completeness(verbose=False)['tracking'], f"Data object is missing attributes necessary for tracking."
     elif params['data_loading']['data_kind'] == 'roicat':
-        paths_allDataObjs = roicat.helpers.find_paths(
+        paths_allDataObjs = helpers.find_paths(
             dir_outer=params['data_loading']['dir_outer'],
             reMatch=params['data_loading']['data_roicat']['filename_search'],
             depth=1,
@@ -85,13 +85,13 @@ def pipeline_tracking(params: dict):
         )[:]
         assert len(paths_allDataObjs) == 1, f"ERROR: Found {len(paths_allDataObjs)} files matching the search pattern '{params['data_loading']['data_roicat']['filename_search']}' in '{params['data_loading']['dir_outer']}'. Exactly one file must be found."
         
-        data = roicat.data_importing.Data_roicat()
+        data = data_importing.Data_roicat()
         data.load(path_load=paths_allDataObjs[0])
     else:
         raise NotImplementedError(f"params['data_loading']['data_kind'] == '{params['data_loading']['data_kind']}' is not yet implemented.")
 
     ## Alignment
-    aligner = roicat.tracking.alignment.Aligner(verbose=True)
+    aligner = tracking.alignment.Aligner(verbose=True)
     FOV_images = aligner.augment_FOV_images(
         ims=data.FOV_images,
         spatialFootprints=data.spatialFootprints,
@@ -116,7 +116,7 @@ def pipeline_tracking(params: dict):
 
 
     ## Blur ROIs
-    blurrer = roicat.tracking.blurring.ROI_Blurrer(
+    blurrer = tracking.blurring.ROI_Blurrer(
         frame_shape=(data.FOV_height, data.FOV_width),  ## FOV height and width
         plot_kernel=False,  ## Whether to visualize the 2D gaussian
         **params['blurring'],
@@ -129,7 +129,7 @@ def pipeline_tracking(params: dict):
     ## ROInet embedding
     dir_temp = tempfile.gettempdir()
 
-    roinet = roicat.ROInet.ROInet_embedder(
+    roinet = ROInet.ROInet_embedder(
         device=DEVICE,  ## Which torch device to use ('cpu', 'cuda', etc.)
         dir_networkFiles=dir_temp,  ## Directory to download the pretrained network to
         verbose=VERBOSE,  ## Whether to print updates
@@ -145,7 +145,7 @@ def pipeline_tracking(params: dict):
 
 
     ## Scattering wavelet embedding
-    swt = roicat.tracking.scatteringWaveletTransformer.SWT(
+    swt = tracking.scatteringWaveletTransformer.SWT(
         image_shape=data.ROI_images[0].shape[1:3],  ## size of a cropped ROI image
         device=DEVICE,  ## PyTorch device
         kwargs_Scattering2D=params['SWT']['kwargs_Scattering2D'],
@@ -157,7 +157,7 @@ def pipeline_tracking(params: dict):
 
 
     ## Compute similarities
-    sim = roicat.tracking.similarity_graph.ROI_graph(
+    sim = tracking.similarity_graph.ROI_graph(
         frame_height=data.FOV_height,
         frame_width=data.FOV_width,
         verbose=VERBOSE,  ## Whether to print outputs
@@ -183,7 +183,7 @@ def pipeline_tracking(params: dict):
 
 
     ## Clustering
-    clusterer = roicat.tracking.clustering.Clusterer(
+    clusterer = tracking.clustering.Clusterer(
         s_sf=sim.s_sf,
         s_NN_z=sim.s_NN_z,
         s_SWT_z=sim.s_SWT_z,
@@ -231,7 +231,7 @@ def pipeline_tracking(params: dict):
     quality_metrics = clusterer.compute_quality_metrics();
 
     ## Collect results
-    labels_squeezed, labels_bySession, labels_bool, labels_bool_bySession, labels_dict = roicat.tracking.clustering.make_label_variants(labels=labels, n_roi_bySession=data.n_roi)
+    labels_squeezed, labels_bySession, labels_bool, labels_bool_bySession, labels_dict = tracking.clustering.make_label_variants(labels=labels, n_roi_bySession=data.n_roi)
 
     results = {
         "clusters":{
@@ -281,13 +281,13 @@ def pipeline_tracking(params: dict):
         path_save = dir_save / (name_save + '.ROICaT.tracking.results' + '.pkl')
         print(f'path_save: {path_save}')
 
-        roicat.helpers.pickle_save(
+        helpers.pickle_save(
             obj=results,
             filepath=path_save,
             mkdir=True,
         )
 
-        roicat.helpers.pickle_save(
+        helpers.pickle_save(
             obj=run_data,
             filepath=str(dir_save / (name_save + '.ROICaT.tracking.rundata' + '.pkl')),
             mkdir=True,

@@ -733,7 +733,7 @@ def check_dataStructure__list_ofListOrArray_ofDtype(
         ## switch case for if the elements are lists or np.ndarray or numbers (int or float) or dtypes
         if all([isinstance(lod, list) for lod in lolod]):
             ## switch case for if the elements are numbers (int or float) or dtype or other
-            if all([all([isinstance(l, (int, float)) for l in lod]) for lod in lolod]):
+            if all([all([isinstance(l, (int, float, np.integer, np.floating)) for l in lod]) for lod in lolod]):
                 if fix:
                     print(f'ROICaT WARNING: lolod is a list of lists of numbers (int or float). Converting to np.ndarray.') if verbose else None
                     lolod = [np.array(lod, dtype=dtype) for lod in lolod]
@@ -868,10 +868,11 @@ def discard_UCIDs_with_fewer_matches(
     n_sesh_thresh = n_sesh if n_sesh_thresh == 'all' else n_sesh_thresh
     assert isinstance(n_sesh_thresh, int)
     
-    ucids_inAllSesh = [u for u in np.unique(ucids_out[0]) if np.array([np.isin(u, u_sesh) for u_sesh in ucids_out]).sum() >= n_sesh_thresh]
+    ucids_unique = np.unique(np.concatenate(ucids_out, axis=0))
+    ucids_inAllSesh = [u for u in ucids_unique if np.array([np.isin(u, u_sesh) for u_sesh in ucids_out]).sum() >= n_sesh_thresh]
     if verbose:
-        fraction = (np.unique(ucids_inAllSesh) >= 0).sum() / (np.unique(ucids_out[0]) >= 0).sum()
-        print(f'INFO: {fraction*100:.2f}% of UCIDs in first session appear in at least {n_sesh_thresh} sessions.')
+        fraction = (np.unique(ucids_inAllSesh) >= 0).sum() / (ucids_unique >= 0).sum()
+        print(f'INFO: {fraction*100:.2f}% of UCIDs that appear in at least {n_sesh_thresh} sessions.')
     ucids_out = [[val * np.isin(val, ucids_inAllSesh) - np.logical_not(np.isin(val, ucids_inAllSesh)) for val in u] for u in ucids_out]
     
     return ucids_out
@@ -907,12 +908,13 @@ def squeeze_UCID_labels(
     uniques_all = np.unique(np.concatenate(ucids_out, axis=0))
     uniques_all = np.sort(uniques_all[uniques_all >= 0])
     ## make a mapping of the unique values to new values
-    mapping = {old: new for old, new in zip(uniques_all, helpers.squeeze_integers(uniques_all))}
+    # mapping = {old: new for old, new in zip(uniques_all, helpers.squeeze_integers(uniques_all))}
+    mapping = {old: new for old, new in zip(uniques_all, np.arange(len(uniques_all)))}
     mapping.update({-1: -1})
     ## apply the mapping to the data
     n_sesh = len(ucids_out)
     for i_sesh in range(n_sesh):
-        ucids_out[i_sesh] = [mapping[val] for val in ucids_out[i_sesh]]
+        ucids_out[i_sesh] = [int(mapping[val]) for val in ucids_out[i_sesh]]
 
     return ucids_out
 
@@ -921,6 +923,7 @@ def match_arrays_with_ucids(
     arrays: Union[np.ndarray, List[np.ndarray]], 
     ucids: Union[List[np.ndarray], List[List[int]]], 
     squeeze: bool = False,
+    force_sparse: bool = False,
 ) -> List[Union[np.ndarray, scipy.sparse.lil_matrix]]:
     """
     Matches the indices of the arrays using the UCIDs. Array indices with UCIDs
@@ -963,10 +966,12 @@ def match_arrays_with_ucids(
     dicts_ucids = [{u: i for i, u in enumerate(u_sesh)} for u_sesh in ucids_tu]
     
     ## make ndarrays filled with np.nan for each session
-    if isinstance(arrays[0], np.ndarray):
+    if isinstance(arrays[0], np.ndarray) and not force_sparse:
         arrays_out = [np.full((max_ucid, *a.shape[1:]), np.nan, dtype=arrays[0].dtype) for a in arrays]
-    elif scipy.sparse.issparse(arrays[0]):
-        arrays_out = [scipy.sparse.lil_matrix((max_ucid, *a.shape[1:])) for a in arrays]
+    elif scipy.sparse.issparse(arrays[0]) or force_sparse:
+        arrays_out = [scipy.sparse.lil_matrix((max_ucid, *a.shape[1:]), dtype=a.dtype) for a in arrays]
+    else:
+        raise ValueError(f'ROICaT ERROR: arrays[0] is not a numpy array or scipy.sparse matrix.')
     ## fill in the arrays with the data
     n_sesh = len(arrays)
     for i_sesh in range(n_sesh):
@@ -979,6 +984,7 @@ def match_arrays_with_ucids(
 def match_arrays_with_ucids_inverse(
     arrays: Union[np.ndarray, List[np.ndarray]], 
     ucids: Union[List[np.ndarray], List[List[int]]],
+    unsqueeze: bool = True,
 ) -> List[Union[np.ndarray, scipy.sparse.lil_matrix]]:
     """
     Inverts the matching of the indices of the arrays using the UCIDs. Arrays
@@ -992,6 +998,10 @@ def match_arrays_with_ucids_inverse(
             List of numpy arrays for each session.
         ucids (Union[List[np.ndarray], List[List[int]]]): 
             List of lists of UCIDs for each session.
+        unsqueeze (bool):
+            If ``True``, then this algorithm assumes that the arrays were
+            squeezed to remove unused UCIDs. This corresponds to and should
+            match the argument ``squeeze`` used in match_arrays_with_ucids().
 
     Returns:
         (List[Union[np.ndarray, scipy.sparse.lil_matrix]]): 
@@ -999,26 +1009,46 @@ def match_arrays_with_ucids_inverse(
                 List of arrays with indices that correspond to the original
                 indices of the arrays / ucids. 
     """
-    import scipy.sparse
-
     arrays = [arrays] if not isinstance(arrays, list) else arrays
 
-    ucids_tu = squeeze_UCID_labels(ucids)
-    n_ucids = (np.unique(np.concatenate(ucids_tu, axis=0)) >= 0).sum()
+    ## Make a mapping of the UCIDs to the original indices ('aranges_matched')
+    ucids_clean = copy.deepcopy(ucids)
+    ucids_clean = check_dataStructure__list_ofListOrArray_ofDtype(
+        lolod=ucids_clean,
+        dtype=np.float32,
+        fix=True,
+        verbose=False,
+    )
+    aranges = [np.arange(len(u), dtype=np.float32) for u in ucids_clean]
+    aranges_matched = match_arrays_with_ucids(
+        arrays=aranges,
+        ucids=ucids_clean,
+        squeeze=False,
+    )
 
-    dicts_ucids = [{u: i for i, u in enumerate(u_sesh)} for u_sesh in ucids_tu]
+    ## Make sure that unsqueeze is consistent with the arrays
+    flag_same_len = all([len(u) == len(a) for u, a in zip(aranges_matched, arrays)])
+    if unsqueeze == False:
+        assert flag_same_len == True
+    else:
+        assert flag_same_len == False
+        
+    # Unsqueeze arrays
+    if unsqueeze:
+        idx_unsq = [(np.cumsum(~np.isnan(a)) - 1).astype(np.float32) for a in aranges_matched]
+        for ii, a in enumerate(aranges_matched):
+            idx_unsq[ii][np.isnan(a)] = np.nan
+        arrays_unsq = [helpers.index_with_nans(a, idx) for a, idx in zip(arrays, idx_unsq)]
+    else:
+        arrays_unsq = arrays
+
+    ## Invert the matching
+    def negOne_to_nan(x):
+        tmp = np.array(x, dtype=np.float32)
+        np.place(arr=tmp, mask=tmp == -1, vals=np.nan)
+        return tmp
+    ucids_clean_nan = [negOne_to_nan(u) for u in ucids_clean]
+    arrays_inv = [helpers.index_with_nans(a, o) for a, o in zip(arrays_unsq, ucids_clean_nan)]
     
-    ## make ndarrays filled with np.nan for each session
-    if isinstance(arrays[0], np.ndarray):
-        arrays_out = [np.full((len(u_sesh), *a.shape[1:]), np.nan) for u_sesh, a in zip(ucids_tu, arrays)]
-    elif scipy.sparse.issparse(arrays[0]):
-        arrays_out = [scipy.sparse.lil_matrix((len(u_sesh), *a.shape[1:])) for u_sesh, a in zip(ucids_tu, arrays)]
-    ## fill in the arrays with the data
-    n_sesh = len(arrays)
-    for i_sesh in range(n_sesh):
-        for u, idx in dicts_ucids[i_sesh].items():
-            if u >= 0:
-                arrays_out[i_sesh][idx] = arrays[i_sesh][u]
-
-    return arrays_out
+    return arrays_inv
     
