@@ -18,6 +18,7 @@ from typing import List, Dict, Tuple, Union, Optional, Any, Callable, Iterable, 
 
 import numpy as np
 import torch
+import torchvision
 import scipy.sparse
 import sparse
 from tqdm import tqdm
@@ -966,6 +967,32 @@ def pydata_sparse_to_torch_coo(
     return torch.sparse_coo_tensor(i, v, torch.Size(shape))
 
 
+def index_with_nans(values, indices):
+    """
+    Indexes an array with a list of indices, allowing for NaNs in the indices.
+    RH 2022
+    
+    Args:
+        values (np.ndarray):
+            Array to be indexed.
+        indices (Union[List[int], np.ndarray]):
+            1D list or array of indices to use for indexing. Can contain NaNs.
+            Datatype should be floating point. NaNs will be removed and values
+            will be cast to int.
+
+    Returns:
+        np.ndarray:
+            Indexed array. Positions where `indices` was NaN will be filled with
+            NaNs.
+    """
+    indices = np.array(indices, dtype=float) if not isinstance(indices, np.ndarray) else indices
+    values = np.concatenate((np.full(shape=values.shape[1:], fill_value=np.nan, dtype=values.dtype)[None,...], values), axis=0)
+    idx = indices.copy() + 1
+    idx[np.isnan(idx)] = 0
+    
+    return values[idx.astype(np.int64)]
+
+
 ######################################################################################################################################
 ######################################################## FILE HELPERS ################################################################
 ######################################################################################################################################
@@ -997,8 +1024,9 @@ def get_nums_from_string(string_with_nums):
 
 
 def find_paths(
-    dir_outer: str, 
+    dir_outer: Union[str, List[str]],
     reMatch: str = 'filename', 
+    reMatch_in_path: Optional[str] = None,
     find_files: bool = True, 
     find_folders: bool = False, 
     depth: int = 0, 
@@ -1012,13 +1040,18 @@ def find_paths(
     RH 2022
 
     Args:
-        dir_outer (str): 
-            Path to directory to search.
+        dir_outer (Union[str, List[str]]):
+            Path(s) to the directory(ies) to search. If a list of directories,
+            then all directories will be searched.
         reMatch (str): 
-            Regular expression to match. Each path name encountered will be
-            compared using ``re.search(reMatch, filename)``. If the output is
-            not ``None``, the file will be included in the output. (Default is
-            ``'filename'``)
+            Regular expression to match. Each file or folder name encountered
+            will be compared using ``re.search(reMatch, filename)``. If the
+            output is not ``None``, the file will be included in the output.
+        reMatch_in_path (Optional[str]):
+            Additional regular expression to match anywhere in the path. Useful
+            for finding files/folders in specific subdirectories. If ``None``, then
+            no additional matching is done. \n
+            (Default is ``None``)
         find_files (bool): 
             Whether to find files. (Default is ``True``)
         find_folders (bool): 
@@ -1048,25 +1081,53 @@ def find_paths(
     if alg_ns is None:
         alg_ns = natsort.ns.PATH
 
+    def fn_match(path, reMatch, reMatch_in_path):
+        # returns true if reMatch is basename and reMatch_in_path in full dirname
+        if reMatch is not None:
+            if re.search(reMatch, os.path.basename(path)) is None:
+                return False
+        if reMatch_in_path is not None:
+            if re.search(reMatch_in_path, os.path.dirname(path)) is None:
+                return False
+        return True
+
     def get_paths_recursive_inner(dir_inner, depth_end, depth=0):
         paths = []
         for path in os.listdir(dir_inner):
             path = os.path.join(dir_inner, path)
             if os.path.isdir(path):
                 if find_folders:
-                    if re.search(reMatch, path) is not None:
+                    if fn_match(path, reMatch, reMatch_in_path):
                         print(f'Found folder: {path}') if verbose else None
                         paths.append(path)
                 if depth < depth_end:
                     paths += get_paths_recursive_inner(path, depth_end, depth=depth+1)
             else:
                 if find_files:
-                    if re.search(reMatch, path) is not None:
+                    if fn_match(path, reMatch, reMatch_in_path):
                         print(f'Found file: {path}') if verbose else None
                         paths.append(path)
         return paths
 
-    paths = get_paths_recursive_inner(dir_outer, depth, depth=0)
+    def fn_check_pathLike(obj):
+        if isinstance(obj, (
+            str,
+            Path,
+            os.PathLike,
+            np.str_,
+            bytes,
+            memoryview,
+            np.bytes_,
+            re.Pattern,
+            re.Match,
+        )):
+            return True
+        else:
+            return False            
+
+    dir_outer = [dir_outer] if fn_check_pathLike(dir_outer) else dir_outer
+
+    paths = list(set(sum([get_paths_recursive_inner(str(d), depth, depth=0) for d in dir_outer], start=[])))
     if natsorted:
         paths = natsort.natsorted(paths, alg=alg_ns)
     return paths
@@ -3379,29 +3440,43 @@ def remap_sparse_images(
         rows, cols = im_coo.row, im_coo.col
         data = im_coo.data
 
-        # Account for 1d images by convolving image with tiny gaussian kernel to increase image width
         if safe:
-            ## append if there are < 3 nonzero pixels
-            if (np.unique(rows).size == 1) or (np.unique(cols).size == 1) or (rows.size < 3):
+            # can't use scipy.interpolate.griddata with 1d values
+            is_horz = np.unique(rows).size == 1
+            is_vert = np.unique(cols).size == 1
+
+            # check for diagonal pixels 
+            # slope = rise / run --- don't need to check if run==0 
+            rdiff = np.diff(rows)
+            cdiff = np.diff(cols)
+            is_diag = np.unique(cdiff / rdiff).size == 1 if not np.any(rdiff==0) else False
+            
+            # best practice to just convolve instead of interpolating if too few pixels
+            is_smol = rows.size < 3 
+
+            if is_horz or is_vert or is_smol or is_diag:
+                # warp convolved sparse image directly without interpolation
                 return warp_sparse_image(im_sparse=conv2d(im_sparse, batching=False), remappingIdx=remappingIdx)
 
         # Get values at the grid points
-        grid_values = scipy.interpolate.griddata(
-            points=(rows, cols), 
-            values=data, 
-            xi=remappingIdx[:,:,::-1], 
-            method=method, 
-            fill_value=fill_value,
-        )
-
+        try:
+            grid_values = scipy.interpolate.griddata(
+                points=(rows, cols), 
+                values=data, 
+                xi=remappingIdx[:,:,::-1], 
+                method=method, 
+                fill_value=fill_value,
+            )
+        except Exception as e:
+            raise Exception(f"Error interpolating sparse image. Something is either weird about one of the input images or the remappingIdx. Error: {e}")
+        
         # Create a new sparse image from the nonzero pixels
         warped_sparse_image = scipy.sparse.csr_matrix(grid_values, dtype=dtype)
         warped_sparse_image.eliminate_zeros()
-
         return warped_sparse_image
     
     wsi_partial = partial(warp_sparse_image, remappingIdx=remappingIdx)
-    ims_sparse_out = map_parallel(func=wsi_partial, args=(ims_sparse,), method='multithreading', workers=n_workers, prog_bar=verbose)
+    ims_sparse_out = map_parallel(func=wsi_partial, args=[ims_sparse,], method='multithreading', workers=n_workers, prog_bar=verbose)
     return ims_sparse_out
 
 
@@ -3788,72 +3863,97 @@ def add_text_to_images(
 
 
 def resize_images(
-    images: Union[np.ndarray, List[np.ndarray]], 
+    images: Union[np.ndarray, List[np.ndarray], torch.Tensor, List[torch.Tensor]], 
     new_shape: Tuple[int, int] = (100,100),
-    interpolation: str = 'linear',
+    interpolation: str = 'BILINEAR',
     antialias: bool = False,
-    align_corners: bool = False,
     device: str = 'cpu',
+    return_numpy: bool = True,
 ) -> np.ndarray:
     """
-    Resizes images using the ``torch.nn.functional.interpolate`` method.
+    Resizes images using the ``torchvision.transforms.Resize`` method.
     RH 2023
 
     Args:
-        images (Union[np.ndarray, List[np.ndarray]]): 
-            Frames of video or images. Can be 2D, 3D, or 4D. 
+        images (Union[np.ndarray, List[np.ndarray]], torch.Tensor, List[torch.Tensor]): 
+            Images or frames of a video. Can be 2D, 3D, or 4D. 
             * For a 2D array: shape is *(height, width)*
             * For a 3D array: shape is *(n_frames, height, width)*
-            * For a 4D array: shape is *(n_frames, height, width, n_channels)*
+            * For a 4D array: shape is *(n_frames, n_channels, height, width)*
         new_shape (Tuple[int, int]): 
             The desired height and width of resized images as a tuple. 
             (Default is *(100, 100)*)
         interpolation (str): 
-            The interpolation method to use. See ``torch.nn.functional.interpolate`` 
-            for options. (Default is ``'linear'``)
+            The interpolation method to use. See ``torchvision.transforms.Resize`` 
+            for options.
+            * ``'NEAREST'``: Nearest neighbor interpolation
+            * ``'NEAREST_EXACT'``: Nearest neighbor interpolation
+            * ``'BILINEAR'``: Bilinear interpolation
+            * ``'BICUBIC'``: Bicubic interpolation
         antialias (bool): 
             If ``True``, antialiasing will be used. (Default is ``False``)
-        align_corners (bool): 
-            If ``True``, the corners will be aligned. See ``torch.nn.functional.interpolate`` 
-            for details. (Default is ``False``)
         device (str): 
-            The device to use for ``torch.nn.functional.interpolate``. 
+            The device to use for ``torchvision.transforms.Resize``. 
             (Default is ``'cpu'``)
+        return_numpy (bool):
+            If ``True``, then will return a numpy array. Otherwise, will return
+            a torch tensor on the defined device. (Default is ``True``)
             
     Returns:
         (np.ndarray): 
             images_resized (np.ndarray): 
                 Frames of video or images with overlay added.
     """
+    ## Convert images to torch tensor
     if isinstance(images, list):
-        images = np.stack(images, axis=0)
-    
-    if images.ndim == 2:
-        images = images[None,:,:]
-    elif images.ndim == 3:
-        images = images
-    elif images.ndim == 4:
-        images = images.transpose(0,3,1,2)
+        if isinstance(images[0], np.ndarray):
+            images = torch.stack([torch.as_tensor(im, device=device) for im in images], dim=0)
+    elif isinstance(images, np.ndarray):
+        images = torch.as_tensor(images, device=device)
+    elif isinstance(images, torch.Tensor):
+        images = images.to(device=device)
     else:
-        raise ValueError('images must be 2D, 3D, or 4D.')
+        raise ValueError(f"images must be a np.ndarray or torch.Tensor or a list of np.ndarray or torch.Tensor. Got {type(images)}")        
     
-    images_torch = torch.as_tensor(images, device=device)
-    images_torch = torch.nn.functional.interpolate(
-        images_torch, 
-        size=tuple(np.array(new_shape, dtype=int)), 
-        mode=interpolation,
-        align_corners=align_corners,
-        recompute_scale_factor=None,
+    ## Convert images to 4D
+    def pad_to_4D(ims):
+        if ims.ndim == 2:
+            ims = ims[None, None, :, :]
+        elif ims.ndim == 3:
+            ims = ims[None, :, :, :]
+        elif ims.ndim != 4:
+            raise ValueError(f"images must be a 2D, 3D, or 4D array. Got shape {ims.shape}")
+        return ims
+    ndim_orig = images.ndim
+    images = pad_to_4D(images)
+    
+    ## Get interpolation method
+    try:
+        interpolation = getattr(torchvision.transforms.InterpolationMode, interpolation.upper())
+    except Exception as e:
+        raise Exception(f"Invalid interpolation method. See torchvision.transforms.InterpolationMode for options. Error: {e}")
+
+    resizer = torchvision.transforms.Resize(
+        size=new_shape,
+        interpolation=interpolation,
         antialias=antialias,
-    )
-    images_resized = images_torch.cpu().numpy()
-    
-    if images.ndim == 2:
-        images_resized = images_resized[0,:,:]
-    elif images.ndim == 3:
-        images_resized = images_resized
-    elif images.ndim == 4:
-        images_resized = images_resized.transpose(0,2,3,1)
+    ).to(device=device)
+    images_resized = resizer(images)
+       
+    ## Convert images back to original shape
+    def unpad_to_orig(ims, ndim_orig):
+        if ndim_orig == 2:
+            ims = ims[0,0,:,:]
+        elif ndim_orig == 3:
+            ims = ims[0,:,:,:]
+        elif ndim_orig != 4:
+            raise ValueError(f"images must be a 2D, 3D, or 4D array. Got shape {ims.shape}")
+        return ims
+    images_resized = unpad_to_orig(images_resized, ndim_orig)
+        
+    ## Convert images to numpy
+    if return_numpy:
+        images_resized = images_resized.detach().cpu().numpy()
     
     return images_resized
 
@@ -4188,6 +4288,25 @@ class Toeplitz_convolution2d():
 ######################################################################################################################################
 
 
+class ParallelExecutionError(Exception):
+    """
+    Exception class for errors that occur during parallel execution.
+    Intended to be used with the ``map_parallel`` function.
+    RH 2023
+
+    Attributes:
+        index (int):
+            Index of the job that failed.
+        original_exception (Exception):
+            The original exception that was raised.
+    """
+    def __init__(self, index, original_exception):
+        self.index = index
+        self.original_exception = original_exception
+
+    def __str__(self):
+        return f"Job {self.index} raised an exception: {self.original_exception}"
+
 def map_parallel(
     func: Callable, 
     args: List[Any], 
@@ -4204,9 +4323,8 @@ def map_parallel(
             The function to be mapped.
         args (List[Any]): 
             List of arguments to which the function should be mapped.
-            The length of *args* should be equal to the number of arguments. If the function requires multiple arguments, 
-            *args* should be an iterable (e.g., list, tuple, generator) of length equal to the number of arguments. Each element 
-            can then be an iterable for each iteration of the function.
+            Length of list should be equal to the number of arguments.
+            Each element should then be an iterable for each job that is run.
         method (str): 
             Method to use for parallelization. Either \n
             * ``'multithreading'``: Use multithreading from concurrent.futures.
@@ -4236,6 +4354,33 @@ def map_parallel(
     ## Get number of arguments. If args is a generator, make None.
     n_args = len(args[0]) if hasattr(args, '__len__') else None
 
+    ## Assert that args is a list
+    assert isinstance(args, list), "args must be a list"
+
+    ## Assert that all args are the same length
+    assert all([len(arg) == n_args for arg in args]), "All args must be the same length"
+
+    ## Make indices
+    indices = np.arange(n_args)
+
+    def wrapper(*args_index):
+        """
+        Wrapper function to catch exceptions.
+        
+        Args:
+        *args_index (tuple):
+            Tuple of arguments to be passed to the function.
+            Should take the form of (arg1, arg2, ..., argN, index)
+            The last element is the index of the job.
+        """
+        index = args_index[-1]
+        args = args_index[:-1]
+        
+        try:
+            return func(*args)
+        except Exception as e:
+            raise ParallelExecutionError(index, e)
+        
     if method == 'multithreading':
         executor = ThreadPoolExecutor
     elif method == 'multiprocessing':
@@ -4248,12 +4393,12 @@ def map_parallel(
     #     return joblib.Parallel(n_jobs=workers)(joblib.delayed(func)(arg) for arg in tqdm(args, total=n_args, disable=prog_bar!=True))
     elif method == 'serial':
         # return [func(*arg) for arg in tqdm(args, disable=prog_bar!=True)]
-        return list(tqdm(map(func, *args), total=n_args, disable=prog_bar!=True))
+        return list(tqdm(map(wrapper, *(args + [indices])), total=n_args, disable=prog_bar!=True))
     else:
         raise ValueError(f"method {method} not recognized")
 
     with executor(workers) as ex:
-        return list(tqdm(ex.map(func, *args), total=n_args, disable=prog_bar!=True))
+        return list(tqdm(ex.map(wrapper, *(args + [indices])), total=n_args, disable=prog_bar!=True))
 
 
 ######################################################################################################################################
@@ -4281,6 +4426,8 @@ def compute_cluster_similarity_matrices(
 
     Returns:
         (tuple): tuple containing:
+            labels_unique (np.ndarray):
+                Unique labels in ``l``.
             cs_mean (np.ndarray):
                 Similarity matrix for each cluster. Each element is the mean
                 similarity between all the pairs of samples in each cluster.
@@ -4375,7 +4522,7 @@ def compute_cluster_similarity_matrices(
     ## Compute the max similarity matrix for each cluster
     cs_max = (s_big_conj - s_big_diag).max(axis=(2,3))
 
-    return cs_mean, cs_max.todense(), cs_min
+    return l_u, cs_mean, cs_max.todense(), cs_min
 
 
 ######################################################################################################################################

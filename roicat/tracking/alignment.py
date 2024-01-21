@@ -412,7 +412,7 @@ class Aligner(util.ROICaT_Module):
         
     def transform_images_geometric(
         self, 
-        ims_moving: np.ndarray, 
+        ims_moving: List[np.ndarray], 
         remappingIdx: Optional[np.ndarray] = None
     ) -> np.ndarray:
         """
@@ -439,7 +439,7 @@ class Aligner(util.ROICaT_Module):
     
     def transform_images_nonrigid(
         self, 
-        ims_moving: np.ndarray, 
+        ims_moving: List[np.ndarray], 
         remappingIdx: Optional[np.ndarray] = None
     ) -> np.ndarray:
         """
@@ -579,6 +579,7 @@ class Aligner(util.ROICaT_Module):
                 fill_value=0,
                 dtype=np.float32,
                 safe=True,
+                verbose=False,
             )
             rois_aligned = scipy.sparse.vstack([roi.reshape(1, -1) for roi in rois_aligned])
 
