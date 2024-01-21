@@ -51,16 +51,16 @@ deps_core = [deps_all_dict[dep] for dep in [
     'torchvision',
     'torchaudio',
     'psutil',
-    'py-cpuinfo',
+    'py_cpuinfo',
     'GPUtil',
 ]]
 
 deps_classification = [deps_all_dict[dep] for dep in [
     'opencv_contrib_python',
-    'umap-learn',
+    'umap_learn',
     'bokeh',
     'holoviews[recommended]',
-    'jupyter-bokeh',
+    'jupyter_bokeh',
     'skl2onnx',
     'onnx',
     'onnxruntime',
