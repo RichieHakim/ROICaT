@@ -234,7 +234,7 @@ class ROI_graph(util.ROICaT_Module):
 
     def _helper_compute_ROI_similarity_graph(
         self,
-        spatialFootprints: List[scipy.sparse.csr_matrix],
+        spatialFootprints: scipy.sparse.csr_matrix,
         features_NN: torch.Tensor,
         features_SWT: torch.Tensor,
         ROI_session_bool: np.ndarray,
@@ -246,9 +246,9 @@ class ROI_graph(util.ROICaT_Module):
         RH 2022
 
         Args:
-            spatialFootprints (List[scipy.sparse.csr_matrix]): 
-                The spatial footprints of the ROIs. Each matrix in the list has
-                shape *(n_ROIs for each session, FOV height * FOV width)*.
+            spatialFootprints (scipy.sparse.csr_matrix): 
+                The spatial footprints of the ROIs. with shape *(n_ROIs for each
+                session, FOV height * FOV width)*.
             features_NN (torch.Tensor): 
                 The output latent embeddings of the NN model with shape *(n_ROIs
                 total, n_features)*.
@@ -275,8 +275,7 @@ class ROI_graph(util.ROICaT_Module):
         if spatialFootprints.shape[0] == 0:
             return None, None, None, None
 
-        sf = scipy.sparse.vstack(spatialFootprints)
-        sf = sf.power(self._sf_maskPower)
+        sf = spatialFootprints.power(self._sf_maskPower)
         sf = sf.multiply( 0.5 / sf.sum(1))
         sf = scipy.sparse.csr_matrix(sf)
 
