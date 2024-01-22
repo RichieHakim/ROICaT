@@ -997,6 +997,31 @@ def index_with_nans(values, indices):
 ######################################################## FILE HELPERS ################################################################
 ######################################################################################################################################
 
+def get_nums_from_string(string_with_nums):
+    """
+    Return the numbers from a string as an int
+    RH 2021-2022
+
+    Args:
+        string_with_nums (str):
+            String with numbers in it
+    
+    Returns:
+        nums (int):
+            The numbers from the string    
+            If there are no numbers, return None.        
+    """
+    idx_nums = [ii in str(np.arange(10)) for ii in string_with_nums]
+    
+    nums = []
+    for jj, val in enumerate(idx_nums):
+        if val:
+            nums.append(string_with_nums[jj])
+    if not nums:
+        return None
+    nums = int(''.join(nums))
+    return nums
+
 
 def find_paths(
     dir_outer: Union[str, List[str]],
@@ -4572,6 +4597,7 @@ class Equivalence_checker():
         """
         try:
             out = np.allclose(test, true, **self._kwargs_allclose)
+            print(f"Equivalence check passed. Path: {path}") if self._verbose > 1 else None
         except Exception as e:
             out = None
             warnings.warn(f"WARNING. Equivalence check failed. Path: {path}. Error: {e}") if self._verbose else None
@@ -4669,9 +4695,6 @@ class Equivalence_checker():
         ## N/A
         else:
             result = (None, 'not tested')
-
-        if self._verbose > 1:
-            print(f"{'.'.join(path)}: {result}")
 
         return result
 
