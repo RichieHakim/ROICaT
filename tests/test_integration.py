@@ -74,6 +74,13 @@ def test_pipeline_tracking_simple(dir_data_test):
     assert len(results['clusters']['labels_dict']) == len(results['quality_metrics']['cluster_intra_means']), "Error: Cluster data is mismatched"
     assert len(results['clusters']['labels_dict']) == results['clusters']['labels_bool_bySession'][0].shape[1], "Error: Cluster data is mismatched"
 
+    ## Save results
+    print(f"Saving to: {str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'results.pkl')}")
+    helpers.pickle_save(
+        obj=run_data,
+        filepath=str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'run_data_output.pkl'),
+    )
+
     ## Check run_data equality
     print(f"Checking run_data equality")
     path_run_data_true = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'run_data.pkl')
