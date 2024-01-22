@@ -4572,6 +4572,7 @@ class Equivalence_checker():
         """
         try:
             out = np.allclose(test, true, **self._kwargs_allclose)
+            print(f"Equivalence check passed. Path: {path}") if self._verbose > 1 else None
         except Exception as e:
             out = None
             warnings.warn(f"WARNING. Equivalence check failed. Path: {path}. Error: {e}") if self._verbose else None
@@ -4669,9 +4670,6 @@ class Equivalence_checker():
         ## N/A
         else:
             result = (None, 'not tested')
-
-        if self._verbose > 1:
-            print(f"{'.'.join(path)}: {result}")
 
         return result
 
