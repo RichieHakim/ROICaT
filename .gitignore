@@ -133,3 +133,5 @@ dmypy.json
 data_test/
 .vscode/
 .fuse_hidden*
+__pycache__/
+.fr-*
