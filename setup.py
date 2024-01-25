@@ -30,7 +30,7 @@ deps_all = read_requirements()
 deps_names = [req.split('=')[0].split('>')[0].split('<')[0].split('!')[0] for req in deps_all]
 deps_all_dict = dict(zip(deps_names, deps_all))
 
-deps_all_latest = copy.deepcopy(deps_names)
+deps_all_latest = dict(zip(deps_names, deps_names))
 
 
 ## Operating system specific dependencies
@@ -38,7 +38,8 @@ deps_all_latest = copy.deepcopy(deps_names)
 system, version = platform.system(), platform.mac_ver()[0]
 if system == "Darwin" and version and ('opencv_contrib_python' in deps_all_dict):
     if tuple(map(int, version.split('.'))) < (12, 0, 0):
-        deps_all_dict['opencv_contrib_python'] = "opencv_contrib_python<=4.8.1.78"
+        version_opencv_macosSub12 = "opencv_contrib_python<=4.8.1.78"
+        deps_all_dict['opencv_contrib_python'], deps_all_latest['opencv_contrib_python'] = version_opencv_macosSub12, version_opencv_macosSub12
 
 
 ## Make different versions of dependencies
@@ -65,21 +66,20 @@ deps_core = [deps_all_dict[dep] for dep in [
     'psutil',
     'py_cpuinfo',
     'GPUtil',
+    'skl2onnx',
+    'onnx',
+    'onnxruntime',
+    'opencv_contrib_python',
 ]]
 
 deps_classification = [deps_all_dict[dep] for dep in [
-    'opencv_contrib_python',
     'umap_learn',
     'bokeh',
     'holoviews[recommended]',
     'jupyter_bokeh',
-    'skl2onnx',
-    'onnx',
-    'onnxruntime',
 ]] + deps_core
 
 deps_tracking = [deps_all_dict[dep] for dep in [
-    'opencv_contrib_python',
     'hdbscan',
     'kymatio',
 ]] + deps_core
