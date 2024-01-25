@@ -1,11 +1,14 @@
 ## setup.py file for roicat
 from pathlib import Path
+import copy
+import platform
 
 from distutils.core import setup
-import copy
 
+## Get the parent directory of this file
 dir_parent = Path(__file__).parent
 
+## Get requirements from requirements.txt
 def read_requirements():
     with open(str(dir_parent / "requirements.txt"), "r") as req:
         content = req.read()  ## read the file
@@ -19,8 +22,8 @@ def read_requirements():
     requirements = [req.replace(",", "").replace("\"", "").replace("\'", "").strip() for req in requirements]
 
     return requirements
-
 deps_all = read_requirements()
+
 
 ## Dependencies: latest versions of requirements
 ### remove everything starting and after the first =,>,<,! sign
@@ -28,6 +31,15 @@ deps_names = [req.split('=')[0].split('>')[0].split('<')[0].split('!')[0] for re
 deps_all_dict = dict(zip(deps_names, deps_all))
 
 deps_all_latest = copy.deepcopy(deps_names)
+
+
+## Operating system specific dependencies
+### OpenCV >= 4.9 is not supported on macOS < 12
+system, version = platform.system(), platform.mac_ver()[0]
+if system == "Darwin" and version and ('opencv_contrib_python' in deps_all_dict):
+    if tuple(map(int, version.split('.'))) < (12, 0, 0):
+        deps_all_dict['opencv_contrib_python'] = "opencv_contrib_python<=4.8.1.78"
+
 
 ## Make different versions of dependencies
 ### Also pull out the version number from the requirements (specified in deps_all_dict values).
@@ -72,11 +84,12 @@ deps_tracking = [deps_all_dict[dep] for dep in [
     'kymatio',
 ]] + deps_core
 
+
 ## Get README.md
 with open(str(dir_parent / "README.md"), "r") as f:
     readme = f.read()
 
-## Get version number
+## Get ROICaT version number
 with open(str(dir_parent / "roicat" / "__init__.py"), "r") as f:
     for line in f:
         if line.startswith("__version__"):
