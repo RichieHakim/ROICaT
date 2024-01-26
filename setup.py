@@ -36,15 +36,16 @@ deps_all_latest = dict(zip(deps_names, deps_names))
 # Operating system specific dependencies
 # OpenCV >= 4.9 is not supported on macOS < 12
 system, version_macos = platform.system(), platform.mac_ver()[0]
-
-if system == "Darwin" and version_macos:
+print(f"System: {system}, macOS version: {version_macos}")
+if (system == "Darwin"):
     # Safely convert version string components to integers
     version_parts = version_macos.split('.')
-    version_major_macos= int(version_parts[0])
+    version_major_macos = int(version_parts[0])
 
     # Check macOS version and adjust the OpenCV version accordingly
     if (version_major_macos < 12) and ('opencv_contrib_python' in deps_all_dict):
         version_opencv_macos_sub12 = "opencv_contrib_python<=4.8.1.78"
+        print(f"Detected macOS version {version_major_macos}, which is < 12. Installing an older version of OpenCV: {version_opencv_macos_sub12}")
         deps_all_dict['opencv_contrib_python'] = version_opencv_macos_sub12
         deps_all_latest['opencv_contrib_python'] = version_opencv_macos_sub12
 
