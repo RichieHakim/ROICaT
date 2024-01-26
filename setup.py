@@ -124,8 +124,8 @@ setup(
     
     install_requires=[],
     extras_require={
-        'all': deps_all,
-        'all_latest': deps_all_latest,
+        'all': list(deps_all_dict.values()),
+        'all_latest': list(deps_all_latest.values()),
         'core': deps_core,
         'classification': deps_classification,
         'tracking': deps_tracking,
