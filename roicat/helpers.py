@@ -4656,7 +4656,7 @@ class Equivalence_checker():
         test: Any,
         true: Any, 
         path: Optional[List[str]] = None,
-        ) -> bool:
+    ) -> bool:
         """
         Compares the test and true values using numpy's allclose function.
 
