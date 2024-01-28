@@ -4681,7 +4681,7 @@ class Equivalence_checker():
             ## If the dtype is a kind of string (or byte string) or object, then allclose will raise an error. In this case, just check if the values are equal.
             if np.issubdtype(test.dtype, np.str_) or np.issubdtype(test.dtype, np.bytes_) or test.dtype == np.object_:
                 out = bool(np.all(test == true))
-                print(f"Equivalence check {'passed' if out else 'failed'}. Path: {path}.") if self._verbose > 0 else None
+                print(f"Equivalence check {'passed' if out else 'failed'}. Path: {path}.") if self._verbose > 1 else None
             else:
                 out = np.allclose(test, true, **self._kwargs_allclose)
             print(f"Equivalence check passed. Path: {path}") if self._verbose > 1 else None
