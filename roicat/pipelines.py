@@ -30,12 +30,12 @@ def pipeline_tracking(params: dict):
                 pipeline.
             params (dict):
                 Parameters used in the pipeline. See
-                ``roicat.util.prepare_params()`` for details.
+                ``roicat.helpers.prepare_params()`` for details.
     """
 
     ## Prepare params
     defaults = util.get_default_parameters(pipeline='tracking')
-    params = util.prepare_params(params, defaults, verbose=True)
+    params = helpers.prepare_params(params, defaults, verbose=True)
     display(params)
 
     ## Prepare state variables
