@@ -62,7 +62,7 @@ def test_pipeline_tracking_simple(dir_data_test):
             },
         },
     }
-    params = util.prepare_params(params_partial, defaults)
+    params = helpers.prepare_params(params_partial, defaults)
     results, run_data, params = pipelines.pipeline_tracking(params)
 
     #check that results fields are not empty
