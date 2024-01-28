@@ -4678,10 +4678,15 @@ class Equivalence_checker():
                     Otherwise, returns False.
         """
         try:
-            out = np.allclose(test, true, **self._kwargs_allclose)
+            ## If the dtype is a kind of string (or byte string) or object, then allclose will raise an error. In this case, just check if the values are equal.
+            if np.issubdtype(test.dtype, np.str_) or np.issubdtype(test.dtype, np.bytes_) or test.dtype == np.object_:
+                out = bool(np.all(test == true))
+                print(f"Equivalence check {'passed' if out else 'failed'}. Path: {path}.") if self._verbose > 0 else None
+            else:
+                out = np.allclose(test, true, **self._kwargs_allclose)
             print(f"Equivalence check passed. Path: {path}") if self._verbose > 1 else None
         except Exception as e:
-            out = None
+            out = None  ## This is not False because sometimes allclose will raise an error if the arrays have a weird dtype among other reasons.
             warnings.warn(f"WARNING. Equivalence check failed. Path: {path}. Error: {e}") if self._verbose else None
             
         if out == False:
@@ -4735,23 +4740,8 @@ class Equivalence_checker():
             if path[-1].startswith('_'):
                 return (None, 'excluded from testing')
 
-        ## DICT
-        if isinstance(true, dict):
-            result = {}
-            for key in true:
-                if key not in test:
-                    result[str(key)] = (False, 'key not found')
-                else:
-                    result[str(key)] = self.__call__(test[key], true[key], path=path + [str(key)])
-        ## ITERATABLE
-        elif isinstance(true, (list, tuple, set)):
-            if len(true) != len(test):
-                result = (False, 'length_mismatch')
-            result = {}
-            for idx, (i, j) in enumerate(zip(test, true)):
-                result[str(idx)] = self.__call__(i, j, path=path + [str(idx)])
         ## NP.NDARRAY
-        elif isinstance(true, np.ndarray):
+        if isinstance(true, np.ndarray):
             r = self._checker(test, true, path)
             result = (r, 'equivalence')
         ## NP.SCALAR
@@ -4761,22 +4751,44 @@ class Equivalence_checker():
                 result = (r, 'equivalence')
             else:
                 result = (test == true, 'equivalence')
-        ## STRING
-        elif isinstance(true, str):
-            result = (test == true, 'equivalence')
         ## NUMBER
         elif isinstance(true, (int, float, complex)):
             r = self._checker(test, true, path)
             result = (result, 'equivalence')
+        ## DICT
+        elif isinstance(true, dict):
+            result = {}
+            for key in true:
+                if key not in test:
+                    result[str(key)] = (False, 'key not found')
+                    print(f"Equivalence check failed. Path: {path}. Key {key} not found.") if self._verbose > 0 else None
+                else:
+                    result[str(key)] = self.__call__(test[key], true[key], path=path + [str(key)])
+        ## ITERATABLE
+        elif isinstance(true, (list, tuple, set)):
+            if len(true) != len(test):
+                result = (False, 'length_mismatch')
+                print(f"Equivalence check failed. Path: {path}. Length mismatch.") if self._verbose > 0 else None
+            else:
+                result = {}
+                for idx, (i, j) in enumerate(zip(test, true)):
+                    result[str(idx)] = self.__call__(i, j, path=path + [str(idx)])
+        ## STRING
+        elif isinstance(true, str):
+            result = (test == true, 'equivalence')
+            print(f"Equivalence check {'passed' if result[0] else 'failed'}. Path: {path}.") if self._verbose > 0 else None
         ## BOOL
         elif isinstance(true, bool):
             result = (test == true, 'equivalence')
+            print(f"Equivalence check {'passed' if result[0] else 'failed'}. Path: {path}.") if self._verbose > 0 else None
         ## NONE
         elif true is None:
             result = (test is None, 'equivalence')
+            print(f"Equivalence check {'passed' if result[0] else 'failed'}. Path: {path}.") if self._verbose > 0 else None
         ## N/A
         else:
             result = (None, 'not tested')
+            print(f"Equivalence check not performed. Path: {path}.") if self._verbose > 0 else None
 
         return result
 
