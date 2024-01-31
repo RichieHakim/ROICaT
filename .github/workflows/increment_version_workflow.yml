@@ -22,6 +22,9 @@ jobs:
 
             - name: Prepare git branch
               run: |
+                git config --local user.email "richhakim@gmail.com"
+                git config --local user.name "Richard Hakim"
+                git fetch --all
                 git checkout dev
                 git pull
                 
@@ -30,8 +33,7 @@ jobs:
 
             - name: Commit changes
               run: |
-                git config --local user.email "richhakim@gmail.com"
-                git config --local user.name "Richard Hakim"
+                git status
                 git add roicat/__init__.py
                 git commit -m "Increment version number"
                 git push
