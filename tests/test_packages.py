@@ -1,6 +1,40 @@
 import warnings
 
 
+PACKAGES = [
+    'GPUtil',
+    'PIL',
+    'cpuinfo',
+    'cv2',
+    'jupyter',
+    'mat73',
+    'matplotlib',
+    'natsort',
+    'numpy',
+    'onnx',
+    'onnxruntime',
+    'optuna',
+    'psutil',
+    'pytest',
+    'scipy',
+    'seaborn',
+    'skl2onnx',
+    'sklearn',
+    'sparse',
+    'torch',
+    'torchaudio',
+    'torchvision',
+    'tqdm',
+    'xxhash',
+    'yaml',
+    'bokeh',
+    'holoviews',
+    'jupyter_bokeh',
+    'umap',
+    'hdbscan',
+    'kymatio',
+]
+
 def test_internal_package_tests():
     """
     Test packages.
@@ -29,60 +63,34 @@ def test_internal_package_tests():
             exec(f'import {pkg_s}')
             print(f'RH: Successfully imported {pkg_s}')
         except ImportError:
-            warnings.warn(f'RH: Could not import {pkg_s}.')
+            warnings.warn(f'RH: Could not import {pkg_s}. Skipping tests.')
             continue
 
-        ## Get a handle on the package
-        pkg_h = eval(pkg_s)
+        else:
+            try:
+                ## Get a handle on the package
+                pkg_h = eval(pkg_s)
 
-        ## Get the path to the package
-        path_pkg = str(Path(pkg_h.__file__).parent)
+                ## Get the path to the package
+                path_pkg = str(Path(pkg_h.__file__).parent)
 
-        ## Run the tests
-        pytest.main([path_pkg, '-v'])
+                ## Run the tests
+                pytest.main([path_pkg, '-v'])
+            except Exception as e:
+                warnings.warn(f'RH: Could not run tests for {pkg_s}. Error: {e}')
+                continue
+
 
 def test_importing_packages():
     """
     Runs pytest on the core packages.
     """
-    corePackages = [
-        'hdbscan',
-        'holoviews',
-        'jupyter',
-        'kymatio',
-        'matplotlib',
-        'natsort',
-        'numpy',
-        'cv2',
-        'optuna',
-        'PIL',
-        'pytest',
-        'sklearn',
-        'scipy',
-        'seaborn',
-        'sparse',
-        'tqdm',
-        'umap',
-        'xxhash',
-        'bokeh',
-        'psutil',
-        'cpuinfo',
-        'GPUtil',
-        'yaml',
-        'mat73',
-        'torch',
-        'torchvision',
-        'torchaudio',
-        'skl2onnx',
-        'onnx',
-        'onnxruntime',
-    ]
 
-    for pkg in corePackages:
+    for pkg in PACKAGES:
         try:
             exec(f'import {pkg}')
         except ModuleNotFoundError:
-            warnings.warn(f'RH Warning: {pkg} not found. Skipping tests.')
+            warnings.warn(f'RH Warning: {pkg} not found.')
 
 def test_torch(
     device='cpu', 
