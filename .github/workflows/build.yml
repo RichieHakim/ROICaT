@@ -48,7 +48,7 @@ jobs:
         ]
         extra: [
           all,
-          # all_latest,
+          all_latest,
         ]
         install-level: [
           system,
