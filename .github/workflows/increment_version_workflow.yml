@@ -1,0 +1,37 @@
+name: Increment Version
+
+on:
+    workflow_dispatch:
+      inputs:
+        name:
+          description: 'description'     
+          required: false                     
+          default: '' 
+    
+jobs:
+    increment-version:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Check out code
+              uses: actions/checkout@v2
+
+            - name: Set up Python
+              uses: actions/setup-python@v2
+              with:
+                python-version: '3.x'
+
+            - name: Prepare git branch
+              run: |
+                git checkout dev
+                git pull
+                
+            - name: Increment version
+              run: python .github/scripts/increment_version.py --path roicat/__init__.py
+
+            - name: Commit changes
+              run: |
+                git config --local user.email "richhakim@gmail.com"
+                git config --local user.name "Richard Hakim"
+                git add roicat/__init__.py
+                git commit -m "Increment version number"
+                git push
