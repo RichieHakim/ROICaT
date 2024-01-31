@@ -51,6 +51,8 @@ if (system == "Darwin"):
 import re
 ## find the numbers in the string
 version_opencv = '.'.join(re.findall(r'[0-9]+', deps_all_dict['opencv_contrib_python']))
+if len(version_opencv) > 0:
+    version_opencv = f"<={version_opencv}"
 
 
 ## Make different versions of dependencies
