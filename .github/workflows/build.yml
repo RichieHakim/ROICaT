@@ -2,8 +2,8 @@ name: build
 
 on:
   push:
-    branches: [ "main" ]
-    # branches: [ "dev" ]
+    # branches: [ "main" ]
+    branches: [ "dev" ]
     # branches: [ "main", "dev" ]
   pull_request:
     # branches: [ "main" ]
