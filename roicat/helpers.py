@@ -3558,7 +3558,7 @@ def remap_sparse_images(
         return warped_sparse_image
     
     wsi_partial = partial(warp_sparse_image, remappingIdx=remappingIdx)
-    ims_sparse_out = map_parallel(func=wsi_partial, args=[ims_sparse,], method='multithreading', workers=n_workers, prog_bar=verbose)
+    ims_sparse_out = map_parallel(func=wsi_partial, args=[ims_sparse,], method='multithreading', n_workers=n_workers, prog_bar=verbose)
     return ims_sparse_out
 
 
@@ -4393,7 +4393,7 @@ def map_parallel(
     func: Callable, 
     args: List[Any], 
     method: str = 'multithreading', 
-    workers: int = -1, 
+    n_workers: int = -1, 
     prog_bar: bool = True
 ) -> List[Any]:
     """
@@ -4428,40 +4428,28 @@ def map_parallel(
         .. highlight::python
         .. code-block::python
 
-            result = map_parallel(max, [[1,2,3,4],[5,6,7,8]], method='multiprocessing', workers=3)
+            result = map_parallel(max, [[1,2,3,4],[5,6,7,8]], method='multiprocessing', n_workers=3)
     """
-    if workers == -1:
-        workers = mp.cpu_count()
-
-    ## Get number of arguments. If args is a generator, make None.
-    n_args = len(args[0]) if hasattr(args, '__len__') else None
+    if n_workers == -1:
+        n_workers = mp.cpu_count()
 
     ## Assert that args is a list
     assert isinstance(args, list), "args must be a list"
+    ## Assert that each element of args is an iterable
+    assert all([hasattr(arg, '__iter__') for arg in args]), "All elements of args must be iterable"
 
+    ## Assert that each element has a length
+    assert all([hasattr(arg, '__len__') for arg in args]), "All elements of args must have a length"
+    ## Get number of arguments. If args is a generator, make None.
+    n_args = len(args[0]) if hasattr(args, '__len__') else None
     ## Assert that all args are the same length
     assert all([len(arg) == n_args for arg in args]), "All args must be the same length"
 
     ## Make indices
     indices = np.arange(n_args)
 
-    def wrapper(*args_index):
-        """
-        Wrapper function to catch exceptions.
-        
-        Args:
-        *args_index (tuple):
-            Tuple of arguments to be passed to the function.
-            Should take the form of (arg1, arg2, ..., argN, index)
-            The last element is the index of the job.
-        """
-        index = args_index[-1]
-        args = args_index[:-1]
-        
-        try:
-            return func(*args)
-        except Exception as e:
-            raise ParallelExecutionError(index, e)
+    ## Prepare args_map (input to map function)
+    args_map = [[func] * n_args, *args, indices]
         
     if method == 'multithreading':
         executor = ThreadPoolExecutor
@@ -4474,13 +4462,30 @@ def map_parallel(
     #     import joblib
     #     return joblib.Parallel(n_jobs=workers)(joblib.delayed(func)(arg) for arg in tqdm(args, total=n_args, disable=prog_bar!=True))
     elif method == 'serial':
-        # return [func(*arg) for arg in tqdm(args, disable=prog_bar!=True)]
-        return list(tqdm(map(wrapper, *(args + [indices])), total=n_args, disable=prog_bar!=True))
+        return    list(tqdm(map(_func_wrapper_helper, *args_map), total=n_args, disable=prog_bar!=True))
     else:
         raise ValueError(f"method {method} not recognized")
 
-    with executor(workers) as ex:
-        return list(tqdm(ex.map(wrapper, *(args + [indices])), total=n_args, disable=prog_bar!=True))
+    with executor(n_workers) as ex:
+        return list(tqdm(ex.map(_func_wrapper_helper, *args_map), total=n_args, disable=prog_bar!=True))
+def _func_wrapper_helper(*func_args_index):
+    """
+    Wrapper function to catch exceptions.
+    
+    Args:
+    *func_args_index (tuple):
+        Tuple of arguments to be passed to the function.
+        Should take the form of (func, arg1, arg2, ..., argN, index)
+        The last element is the index of the job.
+    """
+    func = func_args_index[0]
+    args = func_args_index[1:-1]
+    index = func_args_index[-1]
+
+    try:
+        return func(*args)
+    except Exception as e:
+        raise ParallelExecutionError(index, e)
 
 
 ######################################################################################################################################
