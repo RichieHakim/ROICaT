@@ -4,7 +4,7 @@ jupyter==1.0.0
 kymatio==0.3.0
 matplotlib==3.8.2
 natsort==8.4.0
-numpy==1.26.3
+numpy==1.26.4
 opencv_contrib_python<=4.9.0.80
 optuna==3.5.0
 Pillow==10.2.0
