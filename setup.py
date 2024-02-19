@@ -70,6 +70,7 @@ deps_core = [deps_all_dict[dep] for dep in [
     'scikit_learn',
     'scipy',
     'seaborn',
+    'setuptools',
     'sparse',
     'tqdm',
     'xxhash',
