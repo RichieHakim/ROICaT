@@ -200,6 +200,88 @@ def flatten_dict(d: MutableMapping, parent_key: str = '', sep: str ='.') -> Muta
             items.append((new_key, v))
     return dict(items)
 
+## parameter dictionary helpers ##
+
+def fill_in_dict(
+    d: Dict, 
+    defaults: Dict,
+    verbose: bool = True,
+    hierarchy: List[str] = ['dict'], 
+):
+    """
+    In-place. Fills in dictionary ``d`` with values from ``defaults`` if they
+    are missing. Works hierachically.
+    RH 2023
+
+    Args:
+        d (Dict):
+            Dictionary to fill in.
+            In-place.
+        defaults (Dict):
+            Dictionary of defaults.
+        verbose (bool):
+            Whether to print messages.
+        hierarchy (List[str]):
+            Used internally for recursion.
+            Hierarchy of keys to d.
+    """
+    from copy import deepcopy
+    for key in defaults:
+        if key not in d:
+            print(f"Key '{key}' not found in params dictionary: {' > '.join([f'{str(h)}' for h in hierarchy])}. Using default value: {defaults[key]}") if verbose else None
+            d.update({key: deepcopy(defaults[key])})
+        elif isinstance(defaults[key], dict):
+            assert isinstance(d[key], dict), f"Key '{key}' is a dict in defaults, but not in params. {' > '.join([f'{str(h)}' for h in hierarchy])}."
+            fill_in_dict(d[key], defaults[key], hierarchy=hierarchy+[key])
+            
+
+def check_keys_subset(d, default_dict, hierarchy=['defaults']):
+    """
+    Checks that the keys in d are all in default_dict. Raises an error if not.
+    RH 2023
+
+    Args:
+        d (Dict):
+            Dictionary to check.
+        default_dict (Dict):
+            Dictionary containing the keys to check against.
+        hierarchy (List[str]):
+            Used internally for recursion.
+            Hierarchy of keys to d.
+    """
+    default_keys = list(default_dict.keys())
+    for key in d.keys():
+        assert key in default_keys, f"Parameter '{key}' not found in defaults dictionary: {' > '.join([f'{str(h)}' for h in hierarchy])}."
+        if isinstance(default_dict[key], dict) and isinstance(d[key], dict):
+            check_keys_subset(d[key], default_dict[key], hierarchy=hierarchy+[key])
+
+
+def prepare_params(params, defaults, verbose=True):
+    """
+    Does the following:
+        * Checks that all keys in ``params`` are in ``defaults``.
+        * Fills in any missing keys in ``params`` with values from ``defaults``.
+        * Returns a deepcopy of the filled-in ``params``.
+
+    Args:
+        params (Dict):
+            Dictionary of parameters.
+        defaults (Dict):
+            Dictionary of defaults.
+        verbose (bool):
+            Whether to print messages.
+    """
+    from copy import deepcopy
+    ## Check inputs
+    assert isinstance(params, dict), f"p must be a dict. Got {type(params)} instead."
+    ## Make sure all the keys in p are valid
+    check_keys_subset(params, defaults)
+    ## Fill in any missing keys with defaults
+    params_out = deepcopy(params)
+    fill_in_dict(params_out, defaults, verbose=verbose)
+
+    return params_out
+
 
 ######################################################################################################################################
 ####################################################### MATH FUNCTIONS ###############################################################
@@ -996,6 +1078,31 @@ def index_with_nans(values, indices):
 ######################################################################################################################################
 ######################################################## FILE HELPERS ################################################################
 ######################################################################################################################################
+
+def get_nums_from_string(string_with_nums):
+    """
+    Return the numbers from a string as an int
+    RH 2021-2022
+
+    Args:
+        string_with_nums (str):
+            String with numbers in it
+    
+    Returns:
+        nums (int):
+            The numbers from the string    
+            If there are no numbers, return None.        
+    """
+    idx_nums = [ii in str(np.arange(10)) for ii in string_with_nums]
+    
+    nums = []
+    for jj, val in enumerate(idx_nums):
+        if val:
+            nums.append(string_with_nums[jj])
+    if not nums:
+        return None
+    nums = int(''.join(nums))
+    return nums
 
 
 def find_paths(
@@ -3451,7 +3558,7 @@ def remap_sparse_images(
         return warped_sparse_image
     
     wsi_partial = partial(warp_sparse_image, remappingIdx=remappingIdx)
-    ims_sparse_out = map_parallel(func=wsi_partial, args=[ims_sparse,], method='multithreading', workers=n_workers, prog_bar=verbose)
+    ims_sparse_out = map_parallel(func=wsi_partial, args=[ims_sparse,], method='multithreading', n_workers=n_workers, prog_bar=verbose)
     return ims_sparse_out
 
 
@@ -4286,7 +4393,7 @@ def map_parallel(
     func: Callable, 
     args: List[Any], 
     method: str = 'multithreading', 
-    workers: int = -1, 
+    n_workers: int = -1, 
     prog_bar: bool = True
 ) -> List[Any]:
     """
@@ -4321,40 +4428,28 @@ def map_parallel(
         .. highlight::python
         .. code-block::python
 
-            result = map_parallel(max, [[1,2,3,4],[5,6,7,8]], method='multiprocessing', workers=3)
+            result = map_parallel(max, [[1,2,3,4],[5,6,7,8]], method='multiprocessing', n_workers=3)
     """
-    if workers == -1:
-        workers = mp.cpu_count()
-
-    ## Get number of arguments. If args is a generator, make None.
-    n_args = len(args[0]) if hasattr(args, '__len__') else None
+    if n_workers == -1:
+        n_workers = mp.cpu_count()
 
     ## Assert that args is a list
     assert isinstance(args, list), "args must be a list"
+    ## Assert that each element of args is an iterable
+    assert all([hasattr(arg, '__iter__') for arg in args]), "All elements of args must be iterable"
 
+    ## Assert that each element has a length
+    assert all([hasattr(arg, '__len__') for arg in args]), "All elements of args must have a length"
+    ## Get number of arguments. If args is a generator, make None.
+    n_args = len(args[0]) if hasattr(args, '__len__') else None
     ## Assert that all args are the same length
     assert all([len(arg) == n_args for arg in args]), "All args must be the same length"
 
     ## Make indices
     indices = np.arange(n_args)
 
-    def wrapper(*args_index):
-        """
-        Wrapper function to catch exceptions.
-        
-        Args:
-        *args_index (tuple):
-            Tuple of arguments to be passed to the function.
-            Should take the form of (arg1, arg2, ..., argN, index)
-            The last element is the index of the job.
-        """
-        index = args_index[-1]
-        args = args_index[:-1]
-        
-        try:
-            return func(*args)
-        except Exception as e:
-            raise ParallelExecutionError(index, e)
+    ## Prepare args_map (input to map function)
+    args_map = [[func] * n_args, *args, indices]
         
     if method == 'multithreading':
         executor = ThreadPoolExecutor
@@ -4367,13 +4462,30 @@ def map_parallel(
     #     import joblib
     #     return joblib.Parallel(n_jobs=workers)(joblib.delayed(func)(arg) for arg in tqdm(args, total=n_args, disable=prog_bar!=True))
     elif method == 'serial':
-        # return [func(*arg) for arg in tqdm(args, disable=prog_bar!=True)]
-        return list(tqdm(map(wrapper, *(args + [indices])), total=n_args, disable=prog_bar!=True))
+        return    list(tqdm(map(_func_wrapper_helper, *args_map), total=n_args, disable=prog_bar!=True))
     else:
         raise ValueError(f"method {method} not recognized")
 
-    with executor(workers) as ex:
-        return list(tqdm(ex.map(wrapper, *(args + [indices])), total=n_args, disable=prog_bar!=True))
+    with executor(n_workers) as ex:
+        return list(tqdm(ex.map(_func_wrapper_helper, *args_map), total=n_args, disable=prog_bar!=True))
+def _func_wrapper_helper(*func_args_index):
+    """
+    Wrapper function to catch exceptions.
+    
+    Args:
+    *func_args_index (tuple):
+        Tuple of arguments to be passed to the function.
+        Should take the form of (func, arg1, arg2, ..., argN, index)
+        The last element is the index of the job.
+    """
+    func = func_args_index[0]
+    args = func_args_index[1:-1]
+    index = func_args_index[-1]
+
+    try:
+        return func(*args)
+    except Exception as e:
+        raise ParallelExecutionError(index, e)
 
 
 ######################################################################################################################################
@@ -4549,7 +4661,7 @@ class Equivalence_checker():
         test: Any,
         true: Any, 
         path: Optional[List[str]] = None,
-        ) -> bool:
+    ) -> bool:
         """
         Compares the test and true values using numpy's allclose function.
 
@@ -4571,9 +4683,15 @@ class Equivalence_checker():
                     Otherwise, returns False.
         """
         try:
-            out = np.allclose(test, true, **self._kwargs_allclose)
+            ## If the dtype is a kind of string (or byte string) or object, then allclose will raise an error. In this case, just check if the values are equal.
+            if np.issubdtype(test.dtype, np.str_) or np.issubdtype(test.dtype, np.bytes_) or test.dtype == np.object_:
+                out = bool(np.all(test == true))
+                print(f"Equivalence check {'passed' if out else 'failed'}. Path: {path}.") if self._verbose > 1 else None
+            else:
+                out = np.allclose(test, true, **self._kwargs_allclose)
+            print(f"Equivalence check passed. Path: {path}") if self._verbose > 1 else None
         except Exception as e:
-            out = None
+            out = None  ## This is not False because sometimes allclose will raise an error if the arrays have a weird dtype among other reasons.
             warnings.warn(f"WARNING. Equivalence check failed. Path: {path}. Error: {e}") if self._verbose else None
             
         if out == False:
@@ -4627,23 +4745,8 @@ class Equivalence_checker():
             if path[-1].startswith('_'):
                 return (None, 'excluded from testing')
 
-        ## DICT
-        if isinstance(true, dict):
-            result = {}
-            for key in true:
-                if key not in test:
-                    result[str(key)] = (False, 'key not found')
-                else:
-                    result[str(key)] = self.__call__(test[key], true[key], path=path + [str(key)])
-        ## ITERATABLE
-        elif isinstance(true, (list, tuple, set)):
-            if len(true) != len(test):
-                result = (False, 'length_mismatch')
-            result = {}
-            for idx, (i, j) in enumerate(zip(test, true)):
-                result[str(idx)] = self.__call__(i, j, path=path + [str(idx)])
         ## NP.NDARRAY
-        elif isinstance(true, np.ndarray):
+        if isinstance(true, np.ndarray):
             r = self._checker(test, true, path)
             result = (r, 'equivalence')
         ## NP.SCALAR
@@ -4653,25 +4756,44 @@ class Equivalence_checker():
                 result = (r, 'equivalence')
             else:
                 result = (test == true, 'equivalence')
-        ## STRING
-        elif isinstance(true, str):
-            result = (test == true, 'equivalence')
         ## NUMBER
         elif isinstance(true, (int, float, complex)):
             r = self._checker(test, true, path)
             result = (result, 'equivalence')
+        ## DICT
+        elif isinstance(true, dict):
+            result = {}
+            for key in true:
+                if key not in test:
+                    result[str(key)] = (False, 'key not found')
+                    print(f"Equivalence check failed. Path: {path}. Key {key} not found.") if self._verbose > 0 else None
+                else:
+                    result[str(key)] = self.__call__(test[key], true[key], path=path + [str(key)])
+        ## ITERATABLE
+        elif isinstance(true, (list, tuple, set)):
+            if len(true) != len(test):
+                result = (False, 'length_mismatch')
+                print(f"Equivalence check failed. Path: {path}. Length mismatch.") if self._verbose > 0 else None
+            else:
+                result = {}
+                for idx, (i, j) in enumerate(zip(test, true)):
+                    result[str(idx)] = self.__call__(i, j, path=path + [str(idx)])
+        ## STRING
+        elif isinstance(true, str):
+            result = (test == true, 'equivalence')
+            print(f"Equivalence check {'passed' if result[0] else 'failed'}. Path: {path}.") if self._verbose > 0 else None
         ## BOOL
         elif isinstance(true, bool):
             result = (test == true, 'equivalence')
+            print(f"Equivalence check {'passed' if result[0] else 'failed'}. Path: {path}.") if self._verbose > 0 else None
         ## NONE
         elif true is None:
             result = (test is None, 'equivalence')
+            print(f"Equivalence check {'passed' if result[0] else 'failed'}. Path: {path}.") if self._verbose > 0 else None
         ## N/A
         else:
             result = (None, 'not tested')
-
-        if self._verbose > 1:
-            print(f"{'.'.join(path)}: {result}")
+            print(f"Equivalence check not performed. Path: {path}.") if self._verbose > 0 else None
 
         return result
 

@@ -52,7 +52,7 @@ jobs:
         ]
         install-level: [
           system,
-          user,
+          # user,
         ]
 
     steps:
@@ -121,12 +121,12 @@ jobs:
         uname -a
     
 
-    - name: Install ROICaT with pip dependencies -- system-level
+    - name: Install repo with pip dependencies -- system-level
       if: matrix.install-level == 'system'
       run: |
         ## install dependencies with optional extras
         pip install -v -e .[${{ matrix.extra }}]
-    - name: Install ROICaT with pip dependencies -- user-level
+    - name: Install repo with pip dependencies -- user-level
       if: matrix.install-level == 'user'
       run: |
         pip install -v -e .[${{ matrix.extra }}] --user
