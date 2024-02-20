@@ -129,14 +129,13 @@ issue](https://github.com/RichieHakim/ROICaT/issues) with the error.
 ```
 conda create -n roicat python=3.11
 conda activate roicat
-pip install --upgrade pip
 ```
 You will need to activate the environment with `conda activate roicat` each time
 you want to use ROICaT.
 
 ### 2. Install ROICaT
 ```
-pip install --user roicat[all]
+pip install roicat[all]
 pip install git+https://github.com/RichieHakim/roiextractors
 ```
 Note: if you are using a zsh terminal, change command to: `pip3 install --user
@@ -150,8 +149,15 @@ git clone https://github.com/RichieHakim/ROICaT
 Then, navigate to the `ROICaT/notebooks/jupyter` directory to run the notebooks.
 
 # Troubleshooting Installation
-### Troubleshooting (Windows)
-If you receive the error: `ERROR: Could not build wheels for hdbscan, which is
+### Troubleshooting package installation issues
+If you have issues importing packages like `roicat` or any of its dependencies, try reinstalling `roicat` with the following commands within the environment:
+```
+pip uninstall roicat
+pip install --upgrade --force --no-cache-dir roicat[all]
+```
+
+### Troubleshooting HDBSCAN installation issues
+If you are using **Windows** receive the error: `ERROR: Could not build wheels for hdbscan, which is
 required to install pyproject.toml-based projects` on Windows, make sure that
 you have installed Microsoft C++ Build Tools. If not, download from
 [here](https://visualstudio.microsoft.com/visual-cpp-build-tools/) and run the
@@ -205,7 +211,7 @@ install the GPU version of pytorch, see the pytorch installation instructions.
 Links for the [latest version](https://pytorch.org/get-started/locally/) or
 [older versions](https://pytorch.org/get-started/previous-versions/). Example:
 ```
-pip install torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu118
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 ```
 
 **Outcome 3:** Output expected if CUDA version of PyTorch is installed but GPU
