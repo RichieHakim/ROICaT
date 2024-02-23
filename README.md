@@ -19,14 +19,14 @@ A simple-to-use Python package for automatically classifying images of cells and
 </div>
 
 **Why use ROICaT?**
+- **It's easy to use. You don't need to know how to code. You can use the
+  interactive notebooks to run the pipelines with just a few clicks.**
 - ROICaT was made to be better than existing tools. It is capable of classifying
   and tracking neuron ROIs at accuracies approaching human performance. Several
   labs currently use ROICaT to do automatic tracking and classification of ROIs
   with no post-hoc curation required. 
 - Great effort was taken to optimize performance. Computational requirements are
   minimal and run times are fast.
-- It's easy to use. You don't need to know how to code. You can use the
-  interactive notebooks to run the pipelines with just a few clicks.
 
 With ROICaT, you can:
 - **Classify ROIs** into different categories (e.g. neurons, dendrites, glia,
