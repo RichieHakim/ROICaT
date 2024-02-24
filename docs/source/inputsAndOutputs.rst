@@ -66,7 +66,7 @@ Quality Control
 
 Typically, little post-hoc curation is needed. However, defining inclusion
 criteria is useful for quality control. Below is a section from `Nguyen et al.
-(Nature 2023) <https://www.google.com>`_ that describes the inclusion criteria
+(Nature 2023) <https://www.nature.com/articles/s41586-023-06810-1>`_ that describes the inclusion criteria
 used in their study:
 
 .. admonition:: Nguyen et al. (2023)
