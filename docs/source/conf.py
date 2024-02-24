@@ -52,6 +52,7 @@ extensions = [
     'sphinx.ext.githubpages',  # allows integration with github
     'sphinx.ext.napoleon',  # parsing of different docstring styles
     'sphinx.ext.coverage',  # allows coverage of docstrings
+    'myst_parser',  # allows markdown parsing
 ]
 
 # Add any paths that contain templates here, relative to this directory.
