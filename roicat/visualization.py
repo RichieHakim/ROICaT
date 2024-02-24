@@ -15,7 +15,7 @@ from . import util, helpers
 
 def display_toggle_image_stack(
     images: Union[List[np.ndarray], List[torch.Tensor]],
-    image_size: Optional[Tuple[int, int]] = None,
+    image_size: Optional[Union[Tuple[int, int], int, float]] = None,
     clim: Optional[Tuple[float, float]] = None,
     interpolation: str = 'nearest',
 ) -> None:
@@ -27,8 +27,11 @@ def display_toggle_image_stack(
         images (Union[List[np.ndarray], List[torch.Tensor]]): 
             List of images as numpy arrays or PyTorch tensors.
         image_size (Optional[Tuple[int, int]]): 
-            Tuple of *(width, height)* for resizing images. If ``None``, images
-            are not resized. (Default is ``None``)
+            Tuple of *(width, height)* for resizing images.\n
+            If ``None``, images are not resized.\n
+            If a single integer or float is provided, the images are resized by
+            that factor.\n
+            (Default is ``None``)
         clim (Optional[Tuple[float, float]]): 
             Tuple of *(min, max)* values for scaling pixel intensities. If
             ``None``, min and max values are computed from the images and used
@@ -48,6 +51,16 @@ def display_toggle_image_stack(
     import hashlib
     import sys
     
+    # Get the image size for display
+    if image_size is None:
+        image_size = images[0].shape[:2]  
+    elif isinstance(image_size, (int, float)):
+        image_size = tuple((np.array(images[0].shape[:2]) * image_size).astype(np.int64))
+    elif isinstance(image_size, (tuple, list)):
+        image_size = tuple(image_size)
+    else:
+        raise ValueError("Invalid image size. Must be a tuple of (width, height) or a single integer or float.")
+
     def normalize_image(image, clim=None):
         """Normalize the input image using the min-max scaling method. Optionally, use the given clim values for scaling."""
         if isinstance(image, torch.Tensor):
@@ -112,9 +125,6 @@ def display_toggle_image_stack(
 
     # Process all images in the input list
     base64_images = [process_image(img) for img in images]
-
-    # Get the image size for display
-    image_size = images[0].shape[:2] if image_size is None else image_size
 
     # Generate the HTML code for the slider
     html_code = f"""
