@@ -9,6 +9,8 @@ Inputs
   can be facilitated through a custom data importing notebook found `here
   <https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/other/demo_data_importing.ipynb>`_.
 
+-------
+
 Outputs
 #######
 
@@ -38,12 +40,33 @@ ROIs
 - **idx_roi_session:** Session-wise ROI indices.
 - **n_sessions:** Number of sessions.
 
+-------
+
+Applying labels to Data
+~~~~~~~~~~~~~~~~~~~~~~~
+
+You can use the output labels to align any data with the same indexing as the
+ROIs like time series (calcium traces). ROICaT provides a set of functions to
+help with this. The term **"UCID" (Unique Cluster ID)** is used to
+refer to the cluster labels. All functions are within the :ref:`roicat.util
+<roicat-util-module>` module.
+
+- ``roicat.util.match_arrays_with_ucids``: Align data using UCIDs. This function
+  will align data arrays (e.g., calcium traces) using the UCIDs.
+- ``roicat.util.mask_UCIDs_with_iscell``: Update UCIDs based on an ``iscell``
+  array (provided by Suite2p or ROICaT classification). This function will set
+  the UCID of any ROI with ``iscell==0`` to -1.
+- ``roicat.util.discard_UCIDs_with_fewer_matches``: Discard UCIDs with fewer
+  than a specified number of matches.
+
+-------
+
 Quality Control
 ~~~~~~~~~~~~~~~
 
 Typically, little post-hoc curation is needed. However, defining inclusion
 criteria is useful for quality control. Below is a section from `Nguyen et al.
-(Nature 2023) <https://www.google.com>`_ that describes the inclusion criteria
+(Nature 2023) <https://www.nature.com/articles/s41586-023-06810-1>`_ that describes the inclusion criteria
 used in their study:
 
 .. admonition:: Nguyen et al. (2023)

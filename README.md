@@ -205,7 +205,7 @@ version as the PyTorch CUDA version you choose. All CUDA 11.x versions are
 intercompatible, so if you have CUDA 11.8 drivers, you can install
 `torch==2.0.1+cu117`.
 
-### **Solution 2:**
+**Solution:**<br>
 If you are sure you have a compatible GPU and correct drivers, you can force
 install the GPU version of pytorch, see the pytorch installation instructions.
 Links for the [latest version](https://pytorch.org/get-started/locally/) or
