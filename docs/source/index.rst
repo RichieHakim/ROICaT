@@ -4,6 +4,8 @@ ROICaT
 Region of Interest Classification and Tracking
 ##############################################
 
+ROICaT is a simple-to-use Python package for classifying images of cells and tracking them across imaging sessions/planes.
+
 `Github Repository <https://github.com/richiehakim/ROICaT>`_
 
 .. image:: ../media/logo1.png
@@ -14,11 +16,10 @@ Region of Interest Classification and Tracking
 |
 
 
-ROICaT is a simple-to-use Python package for classifying images of cells and tracking them across imaging sessions/planes.
+--------
 
---------
 Contents
---------
+========
 
 .. toctree::
    :maxdepth: 1
@@ -32,10 +33,11 @@ Contents
    roicat
 
 
+--------
+
 Indices and tables
 ------------------
 * :ref:`genindex`
 * :ref:`modindex`
-* :ref:`search`
 
 .. _github: https://github.com/RichieHakim/ROICaT

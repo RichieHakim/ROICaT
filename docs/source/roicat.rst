@@ -99,6 +99,9 @@ roicat.helpers module
    :undoc-members:
    :show-inheritance:
 
+
+.. _roicat-util-module:
+
 roicat.util module
 ------------------
 
