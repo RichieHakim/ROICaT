@@ -8,6 +8,7 @@ import importlib
 
 import numpy as np
 import scipy.sparse
+from tqdm import tqdm
 
 from . import helpers
 
@@ -900,6 +901,7 @@ def match_arrays_with_ucids(
     ucids: Union[List[np.ndarray], List[List[int]]], 
     squeeze: bool = False,
     force_sparse: bool = False,
+    prog_bar: bool = False,
 ) -> List[Union[np.ndarray, scipy.sparse.lil_matrix]]:
     """
     Matches the indices of the arrays using the UCIDs. Array indices with UCIDs
@@ -915,6 +917,12 @@ def match_arrays_with_ucids(
         squeeze (bool): 
             If ``True``, then UCIDs are squeezed to be contiguous integers.
             (Default is ``False``)
+        force_sparse (bool):
+            If ``True``, then the output will be a list of sparse matrices.
+            (Default is ``False``)
+        prog_bar (bool):
+            If ``True``, then a progress bar will be displayed. (Default is
+            ``False``)
 
     Returns:
         (List[Union[np.ndarray, scipy.sparse.lil_matrix]]): 
@@ -950,7 +958,7 @@ def match_arrays_with_ucids(
         raise ValueError(f'ROICaT ERROR: arrays[0] is not a numpy array or scipy.sparse matrix.')
     ## fill in the arrays with the data
     n_sesh = len(arrays)
-    for i_sesh in range(n_sesh):
+    for i_sesh in tqdm(range(n_sesh), disable=not prog_bar):
         for u, idx in dicts_ucids[i_sesh].items():
             if u >= 0:
                 arrays_out[i_sesh][u] = arrays[i_sesh][idx]
