@@ -3446,6 +3446,7 @@ def remap_sparse_images(
 ) -> List[scipy.sparse.csr_matrix]:
     """
     Remaps a list of sparse images using the given remap field.
+    RH 2023
 
     Args:
         ims_sparse (Union[scipy.sparse.spmatrix, List[scipy.sparse.spmatrix]]): 
