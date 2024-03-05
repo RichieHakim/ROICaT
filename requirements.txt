@@ -31,3 +31,4 @@ onnx==1.15.0
 onnxruntime==1.17.1
 jupyter_bokeh==4.0.0
 onnx2torch==1.5.13
+setuptools==69.1.0

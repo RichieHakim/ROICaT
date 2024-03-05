@@ -127,7 +127,7 @@ issue](https://github.com/RichieHakim/ROICaT/issues) with the error.
 
 ### 1. (Recommended) Create a new conda environment
 ```
-conda create -n roicat python=3.11
+conda create -n roicat python=3.12
 conda activate roicat
 ```
 You will need to activate the environment with `conda activate roicat` each time
