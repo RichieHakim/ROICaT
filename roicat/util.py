@@ -8,6 +8,7 @@ import importlib
 
 import numpy as np
 import scipy.sparse
+from tqdm import tqdm
 
 from . import helpers
 
@@ -721,9 +722,15 @@ def mask_UCIDs_with_iscell(
 
     Args:
         ucids (List[Union[List[int], np.ndarray]]): 
-            List of lists of UCIDs for each session.
+            List of lists of UCIDs for each session.\n
+            Shape outer list: *(n_sessions,)*\n
+            Shape inner list: *(n_roi_in_session,)*
         iscell (List[Union[List[bool], np.ndarray]]): 
-            List of lists of boolean indicators for each UCID. 
+            List of lists of boolean indicators for each UCID.\n
+            ``True`` means that ROI is a cell, ``False`` means that ROI is not a
+            cell.\n
+            Shape outer list: *(n_sessions,)*\n
+            Shape inner list: *(n_roi_in_session,)*
 
     Returns:
         (List[Union[List[int], np.ndarray]]): 
@@ -749,6 +756,54 @@ def mask_UCIDs_with_iscell(
     for i_sesh in range(n_sesh):
         ucids_out[i_sesh][~iscell[i_sesh]] = -1
     
+    return ucids_out
+
+
+def mask_UCIDs_by_label(
+    ucids: List[Union[List[int], np.ndarray]],
+    labels: Union[List[int], np.ndarray],
+) -> List[Union[List[int], np.ndarray]]:
+    """
+    Sets labels in the UCIDs to -1 if they are not present in the **labels**
+    array.\n
+    RH 2024
+
+    Args:
+        ucids (List[Union[List[int], np.ndarray]]): 
+            List of lists of UCIDs for each session.\n
+            Shape outer list: *(n_sessions,)*\n
+            Shape inner list: *(n_roi_in_session,)*
+        labels (Union[List[int], np.ndarray]): 
+            Array of labels to keep. All other labels are set to -1.
+            Shape: *(n_labels,)*
+
+    Returns:
+        (List[Union[List[int], np.ndarray]]): 
+            ucids_out (List[Union[List[int], np.ndarray]]): 
+                Masked list of lists of UCIDs. Elements that are not in the
+                **labels** array are set to -1 in each session.
+
+    Example:
+        .. highlight:: python
+        .. code-block:: python
+
+        ucids = [[1, 2, 3], [2, -1, 4], [3, 0, 5]]
+        labels = [2, 3]
+        ucids_out = mask_UCIDs_by_label(ucids, labels)
+        # ucids_out = [[-1, 2, 3], [2, -1, -1], [3, -1, -1]]
+    """
+    ucids_out = copy.deepcopy(ucids)
+    ucids_out = check_dataStructure__list_ofListOrArray_ofDtype(
+        lolod=ucids_out,
+        dtype=np.int64,
+        fix=True,
+        verbose=False,
+    )
+    labels = np.array(labels, dtype=np.int64)
+
+    iscell = [np.isin(u_sesh, labels) for u_sesh in ucids_out]
+    ucids_out = mask_UCIDs_with_iscell(ucids_out, iscell)
+
     return ucids_out
 
 
@@ -846,6 +901,7 @@ def match_arrays_with_ucids(
     ucids: Union[List[np.ndarray], List[List[int]]], 
     squeeze: bool = False,
     force_sparse: bool = False,
+    prog_bar: bool = False,
 ) -> List[Union[np.ndarray, scipy.sparse.lil_matrix]]:
     """
     Matches the indices of the arrays using the UCIDs. Array indices with UCIDs
@@ -861,6 +917,12 @@ def match_arrays_with_ucids(
         squeeze (bool): 
             If ``True``, then UCIDs are squeezed to be contiguous integers.
             (Default is ``False``)
+        force_sparse (bool):
+            If ``True``, then the output will be a list of sparse matrices.
+            (Default is ``False``)
+        prog_bar (bool):
+            If ``True``, then a progress bar will be displayed. (Default is
+            ``False``)
 
     Returns:
         (List[Union[np.ndarray, scipy.sparse.lil_matrix]]): 
@@ -896,7 +958,7 @@ def match_arrays_with_ucids(
         raise ValueError(f'ROICaT ERROR: arrays[0] is not a numpy array or scipy.sparse matrix.')
     ## fill in the arrays with the data
     n_sesh = len(arrays)
-    for i_sesh in range(n_sesh):
+    for i_sesh in tqdm(range(n_sesh), disable=not prog_bar):
         for u, idx in dicts_ucids[i_sesh].items():
             if u >= 0:
                 arrays_out[i_sesh][u] = arrays[i_sesh][idx]
@@ -974,3 +1036,31 @@ def match_arrays_with_ucids_inverse(
     
     return arrays_inv
     
+
+def labels_to_labelsBySession(labels, n_roi_bySession):
+    """
+    Converts a list of labels to a list of lists of labels by session.
+    RH 2024
+
+    Args:
+        labels (list or np.ndarray): 
+            List of labels.
+        n_roi_bySession (list or np.ndarray): 
+            Number of ROIs by session.
+
+    Returns:
+        (list): 
+            List of lists of labels by session.
+    """
+    assert isinstance(labels, (list, np.ndarray)), f'labels is not a list or np.ndarray. labels={labels}'
+    assert isinstance(n_roi_bySession, (list, np.ndarray)), f'n_roi_bySession is not a list or np.ndarray. n_roi_bySession={n_roi_bySession}'
+    labels = np.array(labels)
+    n_roi_bySession = np.array(n_roi_bySession, dtype=np.int64)
+    assert labels.ndim == 1, f'labels.ndim={labels.ndim}, but should be 1.'
+    assert n_roi_bySession.ndim == 1, f'n_roi_bySession.ndim={n_roi_bySession.ndim}, but should be 1.'
+
+    assert np.sum(n_roi_bySession) == len(labels), f'np.sum(n_roi_bySession)={np.sum(n_roi_bySession)} != len(labels)={len(labels)}'
+
+    labels_bySession = [labels[sum(n_roi_bySession[:ii]):sum(n_roi_bySession[:ii+1])] for ii in range(len(n_roi_bySession))]
+
+    return labels_bySession
