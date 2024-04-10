@@ -343,7 +343,8 @@ class ROI_graph(util.ROICaT_Module):
         Normalizes the similarity matrices **s_NN**, **s_SWT** (but not
         **s_sf**) by z-scoring using the mean and standard deviation from the
         distributions of pairwise similarities between ROIs that are spatially
-        distant from each other. 
+        distant from each other. This is done to make the similarity scores
+        more comparable across different regions of the field of view.
         RH 2022
 
         Args:
