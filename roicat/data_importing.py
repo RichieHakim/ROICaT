@@ -808,8 +808,10 @@ class Data_suite2p(Data_roicat):
             Type of suite2p output files. Matlab=old, Python=new. Should be:
             ``'new'`` or ``'old'``.
         out_height_width (tuple of int):
-            Height and width of output ROI images. Should be: *(int, int)* *(y,
-            x)*.
+            Height and width of output ROI images. These are the little images
+            of centered ROIs that are typically used for passing through the
+            neural net. Unless your ROIs are larger than the default size, it's
+            best to just leave it as default. Should be: *(int, int)* *(y, x)*.
         type_meanImg (str):
             Type of mean image to use. Should be: ``'meanImgE'`` or
             ``'meanImg'``.
