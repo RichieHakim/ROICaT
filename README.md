@@ -55,19 +55,21 @@ With ROICaT, you can:
 
 Listed below, we have a suite of easy to run notebooks for running the ROICaT
 pipelines. 
-- The Google CoLab notebooks can be run fully remotely without installing
-  anything on your computer.
-- The Jupyter notebooks can be run locally on your computer and require you to
-  install ROICaT.
+#### First time users:
+Try it out using our Google CoLab notebooks below which can be run fully
+remotely without installing anything on your computer.
+#### Normal usage:
+We recommend using our Jupyter notebooks which can be run locally on any
+computer.
 
-**TRACKING:** 
+### TRACKING: 
 - [Interactive
   notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/tracking_interactive_notebook.ipynb)
 - [Google
   CoLab](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/tracking/tracking_interactive_notebook.ipynb)
 <!-- - (TODO) [script](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/tracking_scripted_notebook.ipynb) -->
   
-**CLASSIFICATION:**
+### CLASSIFICATION:
 - [Interactive notebook -
   Drawing](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/classify_by_drawingSelection.ipynb)
 - [Google CoLab -
@@ -84,6 +86,8 @@ pipelines.
   notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/other/demo_data_importing.ipynb)
 - Use the API to integrate ROICaT functions into your own code:
   [Documentation](https://roicat.readthedocs.io/en/latest/roicat.html).
+- Run the full tracking pipeline using `roicat.pipelines.pipeline_tracking` with
+  default parameters generated from `roicat.util.get_default_paramaters()`.
 <!-- - Train a new ROInet model using the provided Jupyter Notebook [TODO: link]. -->
 
 # General workflow:
