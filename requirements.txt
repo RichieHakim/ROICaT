@@ -5,7 +5,7 @@ kymatio==0.3.0
 matplotlib==3.8.4
 natsort==8.4.0
 numpy==1.26.4
-opencv_contrib_python<=4.9.0.80
+opencv_contrib_python_headless<=4.9.0.80
 optuna==3.6.1
 Pillow==10.3.0
 pytest==8.1.1

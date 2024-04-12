@@ -138,9 +138,12 @@ you want to use ROICaT.
 pip install roicat[all]
 pip install git+https://github.com/RichieHakim/roiextractors
 ```
-Note: if you are using a zsh terminal, change command to: `pip3 install --user
-'roicat[all]'` For installing GPU support on Windows, see
-[Troubleshooting](#troubleshooting-gpu-support) below.
+**Note on zsh:** if you are using a zsh terminal, change command to: `pip3
+install --user 'roicat[all]'` For installing GPU support on Windows, see
+[Troubleshooting](#troubleshooting-gpu-support) below. 
+<br>
+**Note on opencv:** The headless version of opencv is installed by default. If
+the regular version is already installed, you will need to uninstall it first.
 
 ### 3. Clone the repo to get the scripts and notebooks
 ```
