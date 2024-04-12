@@ -82,7 +82,7 @@ deps_core = [deps_all_dict[dep] for dep in [
     'skl2onnx',
     'onnx',
     'onnxruntime',
-    'opencv_contrib_python',
+    'opencv_contrib_python_headless',
 ]]
 
 deps_classification = [deps_all_dict[dep] for dep in [
