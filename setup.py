@@ -43,14 +43,14 @@ if (system == "Darwin"):
     version_major_macos = int(version_parts[0])
 
     # Check macOS version and adjust the OpenCV version accordingly
-    if (version_major_macos < 12) and ('opencv_contrib_python' in deps_all_dict):
-        version_opencv_macos_sub12 = "opencv_contrib_python<=4.8.1.78"
+    if (version_major_macos < 12) and ('opencv_contrib_python_headless' in deps_all_dict):
+        version_opencv_macos_sub12 = "opencv_contrib_python_headless<=4.8.1.78"
         print(f"Detected macOS version {version_major_macos}, which is < 12. Installing an older version of OpenCV: {version_opencv_macos_sub12}")
-        deps_all_dict['opencv_contrib_python'] = version_opencv_macos_sub12
-        deps_all_latest['opencv_contrib_python'] = version_opencv_macos_sub12
+        deps_all_dict['opencv_contrib_python_headless'] = version_opencv_macos_sub12
+        deps_all_latest['opencv_contrib_python_headless'] = version_opencv_macos_sub12
 import re
 ## find the numbers in the string
-version_opencv = '.'.join(re.findall(r'[0-9]+', deps_all_dict['opencv_contrib_python']))
+version_opencv = '.'.join(re.findall(r'[0-9]+', deps_all_dict['opencv_contrib_python_headless']))
 if len(version_opencv) > 0:
     version_opencv = f"<={version_opencv}"
 
@@ -82,7 +82,7 @@ deps_core = [deps_all_dict[dep] for dep in [
     'skl2onnx',
     'onnx',
     'onnxruntime',
-    'opencv_contrib_python',
+    'opencv_contrib_python_headless',
 ]]
 
 deps_classification = [deps_all_dict[dep] for dep in [

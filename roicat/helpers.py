@@ -3887,7 +3887,6 @@ def add_text_to_images(
     color: Tuple[int, int, int] = (255,255,255), 
     line_width: int = 1, 
     font: Optional[str] = None, 
-    show: bool = False, 
     frameRate: int = 30
 ) -> np.array:
     """
@@ -3912,8 +3911,6 @@ def add_text_to_images(
         font (str):
             Font to use. If ``None``, then will use ``cv2.FONT_HERSHEY_SIMPLEX``.
             See ``cv2.FONT...`` for more options. (Default is ``None``)
-        show (bool):
-            If ``True``, then will show the images with text added. (Default is ``False``)
         frameRate (int):
             Frame rate of the video. (Default is *30*)
 
@@ -3936,12 +3933,6 @@ def add_text_to_images(
                 [fn_putText(frame[:,:,ii]) for ii in range(frame.shape[2])]
             else:
                 fn_putText(frame)
-        if show:
-            cv2.imshow('add_text_to_images', frame)
-            cv2.waitKey(int(1000/frameRate))
-    
-    if show:
-        cv2.destroyWindow('add_text_to_images')
     return images_cp
 
 
