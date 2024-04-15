@@ -28,6 +28,6 @@ torchaudio==2.2.2
 selenium==4.19.0
 skl2onnx==1.16.0
 onnx==1.16.0
-onnxruntime==1.17.1
+onnxruntime==1.17.3
 jupyter_bokeh==4.0.1
 onnx2torch==1.5.14
