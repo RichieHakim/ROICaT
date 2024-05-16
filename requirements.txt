@@ -2,7 +2,7 @@ hdbscan==0.8.33
 holoviews[recommended]==1.18.3
 jupyter==1.0.0
 kymatio==0.3.0
-matplotlib==3.8.4
+matplotlib==3.9.0
 natsort==8.4.0
 numpy==1.26.4
 opencv_contrib_python_headless<=4.9.0.80
