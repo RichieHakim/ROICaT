@@ -10,7 +10,7 @@ optuna==3.6.1
 Pillow==10.3.0
 pytest==8.2.1
 scikit_learn==1.5.0
-scipy==1.13.0
+scipy==1.13.1
 seaborn==0.13.2
 sparse==0.15.3
 tqdm==4.66.4
