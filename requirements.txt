@@ -1,4 +1,4 @@
-hdbscan==0.8.36
+hdbscan==0.8.37
 holoviews[recommended]==1.19.1
 jupyter==1.0.0
 kymatio==0.3.0
