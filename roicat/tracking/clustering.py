@@ -46,6 +46,17 @@ class Clusterer(util.ROICaT_Module):
             The similarity matrix for session similarity. Shape: *(n_rois,
             n_rois)*. Boolean, with 1s where the two ROIs are from different
             sessions.
+        n_bins (int): 
+            Number of bins to use for the pairwise similarity distribution. If
+            using automatic parameter finding, then using a large number of bins
+            makes finding the separation point more noisy, and only slightly
+            more accurate. If ``None``, then a heuristic is used to estimate the
+            value based on the number of ROIs. (Default is ``50``)
+        smoothing_window_bins (int): 
+            Number of bins to use when smoothing the distribution. Using a small
+            number of bins makes finding the separation point more noisy, and
+            only slightly more accurate. Aim for 5-10% of the number of bins. If
+            ``None``, then a heuristic is used. (Default is ``5``)
         verbose (bool):
             Specifies whether to print out information about the clustering
             process. (Default is ``True``)
@@ -65,19 +76,28 @@ class Clusterer(util.ROICaT_Module):
         s_sesh (scipy.sparse.csr_matrix):
             The similarity matrix for session similarity. It is symmetric and
             has a shape of *(n_rois, n_rois)*.
+        s_sesh_inv (scipy.sparse.csr_matrix):
+            The inverse of the session similarity matrix. It is symmetric and
+            has a shape of *(n_rois, n_rois)*.
+        n_bins Optional[int]:
+            Number of bins to use for the pairwise similarity distribution.
+        smoothing_window_bins Optional[int]:
+            Number of bins to use when smoothing the distribution.
         verbose (bool):
-            Specifies how much information to print out:
-                0/False: Warnings only
-                1/True: Basic info, progress bar
-                2: All info
+            Specifies how much information to print out: \n
+                * 0/False: Warnings only
+                * 1/True: Basic info, progress bar
+                * 2: All info
     """
     def __init__(
         self,
-        s_sf=None,
-        s_NN_z=None,
-        s_SWT_z=None,
-        s_sesh=None,
-        verbose=True,
+        s_sf: Optional[scipy.sparse.csr_matrix] = None,
+        s_NN_z: Optional[scipy.sparse.csr_matrix] = None,
+        s_SWT_z: Optional[scipy.sparse.csr_matrix] = None,
+        s_sesh: Optional[scipy.sparse.csr_matrix] = None,
+        n_bins: Optional[int] = None,
+        smoothing_window_bins: Optional[int] = None,
+        verbose: bool = True,
     ):
         """
         Initializes the Clusterer with the given similarity matrices and verbosity setting.
@@ -103,10 +123,12 @@ class Clusterer(util.ROICaT_Module):
 
         self._verbose = verbose
 
+        self.n_bins = max(min(self.s_sf.nnz // 10000, 200), 20) if n_bins is None else n_bins
+        self.smooth_window = self.n_bins // 10 if smoothing_window_bins is None else smoothing_window_bins
+        # print(f'Pruning similarity graphs with {self.n_bins} bins and smoothing window {smoothing_window}...') if self._verbose else None
+        
     def find_optimal_parameters_for_pruning(
         self,
-        n_bins: int = 50,
-        smoothing_window_bins: int = 5,
         kwargs_findParameters: Dict[str, Union[int, float, bool]] = {
             'n_patience': 100,
             'tol_frac': 0.05,
@@ -124,6 +146,8 @@ class Clusterer(util.ROICaT_Module):
             'sig_SWT_kwargs_b': (0.05, 2),
         },
         n_jobs_findParameters: int = -1,
+        n_bins: Optional[int] = None,
+        smoothing_window_bins: Optional[int] = None,
         seed=None,
     ) -> Dict:
         """
@@ -143,15 +167,6 @@ class Clusterer(util.ROICaT_Module):
         RH 2023
 
         Args:
-            n_bins (int): 
-                Number of bins to use when estimating the distributions. Using a
-                large number of bins makes finding the separation point more
-                noisy, and only slightly more accurate. (Default is ``50``)
-            smoothing_window_bins (int): 
-                Number of bins to use when smoothing the distributions. Using a
-                small number of bins makes finding the separation point more
-                noisy, and only slightly more accurate. Aim for 5-10% of the
-                number of bins. (Default is ``5``)
             kwargs_findParameters (Dict[str, Union[int, float, bool]]): 
                 Keyword arguments for the Convergence_checker class __init__.
             bounds_findParameters (Dict[str, Tuple[float, float]]):
@@ -159,6 +174,18 @@ class Clusterer(util.ROICaT_Module):
             n_jobs_findParameters (int):
                 Number of jobs to use when finding the optimal parameters. If
                 -1, use all available cores.
+            n_bins Optional[int]: 
+                Overwrites ``n_bins`` specified in __init__. \n
+                Number of bins to use when estimating the distributions. Using a
+                large number of bins makes finding the separation point more
+                noisy, and only slightly more accurate. (Default is ``None`` or
+                ``50``)
+            smoothing_window_bins (int): 
+                Overwrites ``smoothing_window_bins`` specified in __init__. \n
+                Number of bins to use when smoothing the distributions. Using a
+                small number of bins makes finding the separation point more
+                noisy, and only slightly more accurate. Aim for 5-10% of the
+                number of bins. (Default is ``None`` or ``5``)
             seed (int):
                 Seed for the random number generator in the optuna sampler.
                 None: use a random seed.
@@ -170,14 +197,14 @@ class Clusterer(util.ROICaT_Module):
                     self.make_conjunctive_distance_matrix function.
         """
         import optuna
+
+        self.n_bins = self.n_bins if n_bins is None else n_bins
+        self.smoothing_window_bins = self.smooth_window if smoothing_window_bins is None else smoothing_window_bins
+
         self.bounds_findParameters = bounds_findParameters
 
         self._seed = seed
         np.random.seed(self._seed)
-
-        self.n_bins = max(min(self.s_sf.nnz // 30000, 1000), 30) if n_bins is None else n_bins
-        self.smooth_window = self.n_bins // 10 if smoothing_window_bins is None else smoothing_window_bins
-        # print(f'Pruning similarity graphs with {self.n_bins} bins and smoothing window {smoothing_window}...') if self._verbose else None
 
         print('Finding mixing parameters using automated hyperparameter tuning...') if self._verbose else None
         optuna.logging.set_verbosity(optuna.logging.WARNING)
