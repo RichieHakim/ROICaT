@@ -140,6 +140,8 @@ class Clusterer(util.ROICaT_Module):
             'power_NN': (0.2, 2),
             'power_SWT': (0.1, 1),
             'p_norm': (-5, 5),
+            'sig_SF_kwargs_mu': (0, 0.5),
+            'sig_SF_kwargs_b': (0.05, 2),
             'sig_NN_kwargs_mu': (0, 0.5),
             'sig_NN_kwargs_b': (0.05, 2),
             'sig_SWT_kwargs_mu': (0, 0.5),
@@ -223,14 +225,14 @@ class Clusterer(util.ROICaT_Module):
 
         self.best_params = self.study.best_params.copy()
         [self.best_params.pop(p) for p in [
-            # 'sig_SF_kwargs_mu',
-            # 'sig_SF_kwargs_b',
+            'sig_SF_kwargs_mu',
+            'sig_SF_kwargs_b',
             'sig_NN_kwargs_mu',
             'sig_NN_kwargs_b',
             'sig_SWT_kwargs_mu',
             'sig_SWT_kwargs_b'] if p in self.best_params.keys()]
-        # # self.best_params['sig_SF_kwargs'] = {'mu': self.study.best_params['sig_SF_kwargs_mu'],
-        # #                                 'b': self.study.best_params['sig_SF_kwargs_b'],}
+        self.best_params['sig_SF_kwargs'] = {'mu': self.study.best_params['sig_SF_kwargs_mu'],
+                                        'b': self.study.best_params['sig_SF_kwargs_b'],}
         # self.best_params['sig_SF_kwargs'] = None
         self.best_params['sig_NN_kwargs'] = {'mu': self.study.best_params['sig_NN_kwargs_mu'],
                                         'b': self.study.best_params['sig_NN_kwargs_b'],}
