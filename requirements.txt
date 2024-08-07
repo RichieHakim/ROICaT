@@ -30,4 +30,4 @@ skl2onnx==1.17.0
 onnx==1.16.2
 onnxruntime==1.18.1
 jupyter_bokeh==4.0.5
-onnx2torch==1.5.14
+onnx2torch==1.5.15
