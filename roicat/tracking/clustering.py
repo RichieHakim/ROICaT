@@ -134,6 +134,7 @@ class Clusterer(util.ROICaT_Module):
             'tol_frac': 0.05,
             'max_trials': 350,
             'max_duration': 60*10,
+            'value_stop': 0.0,
         },
         bounds_findParameters: Dict[str, Tuple[float, float]] = {
             'power_SF': (0.3, 2),
@@ -781,7 +782,7 @@ class Clusterer(util.ROICaT_Module):
     def _activation_function(
         cls, 
         s: Optional[torch.Tensor] = None, 
-        sig_kwargs: Dict[str, float] = {'mu':0.0, 'b':1.0}, 
+        sig_kwargs: Optional[Dict[str, float]] = {'mu':0.0, 'b':1.0}, 
         power: Optional[float] = 1
     ) -> Optional[torch.Tensor]:
         """
@@ -806,15 +807,13 @@ class Clusterer(util.ROICaT_Module):
         """
         if s is None:
             return None
-        if (sig_kwargs is not None) and (power is not None):
-            return helpers.generalised_logistic_function(torch.as_tensor(s, dtype=torch.float32), **sig_kwargs)**power
-        elif (sig_kwargs is None) and (power is not None):
-            return torch.maximum(torch.as_tensor(s, dtype=torch.float32), torch.as_tensor([0], dtype=torch.float32))**power
-            # return torch.as_tensor(s, dtype=torch.float32)**power
-        elif (sig_kwargs is not None) and (power is None):
-            return helpers.generalised_logistic_function(torch.as_tensor(s, dtype=torch.float32), **sig_kwargs)
-        else:
-            return torch.as_tensor(s, dtype=torch.float32)
+        
+        s = torch.as_tensor(s, dtype=torch.float32)
+        ## make functions such that if the param is None, then no operation is applied
+        fn_sigmoid = lambda x, params: helpers.generalised_logistic_function(x, **params) if params is not None else x
+        fn_power = lambda x, p: x ** p if p is not None else x
+        
+        return fn_power(torch.clamp(fn_sigmoid(s, sig_kwargs), min=0), power)
         
     @classmethod
     def _pNorm(
