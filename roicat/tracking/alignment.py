@@ -601,6 +601,7 @@ class Aligner(util.ROICaT_Module):
         self, 
         H: Optional[int] = None, 
         W: Optional[int] = None,
+        normalize: bool = True,
     ) -> List[np.ndarray]:
         """
         Returns the max intensity projection of the ROIs aligned to the template
@@ -613,6 +614,9 @@ class Aligner(util.ROICaT_Module):
             W (Optional[int]): 
                 The width of the output projection. If not provided and if not
                 already set, an error will be thrown. (Default is ``None``)
+            normalize (bool):
+                If ``True``, the ROIs are normalized by the maximum value.
+                (Default is ``True``)
 
         Returns:
             (List[np.ndarray]): 
@@ -622,7 +626,7 @@ class Aligner(util.ROICaT_Module):
         if H is None:
             assert self._HW is not None, 'H and W must be provided if not already set.'
             H, W = self._HW
-        return [rois.max(0).toarray().reshape(H, W) for rois in self.ROIs_aligned]
+        return [(rois.multiply(rois.max(1).power(-1)) if normalize else rois).max(0).toarray().reshape(H, W) for rois in self.ROIs_aligned]
     
     def get_flowFields(
         self, 
