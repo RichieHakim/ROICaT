@@ -546,8 +546,9 @@ class ROI_graph(util.ROICaT_Module):
         im = np.zeros((self._frame_height, self._frame_width, 3))
         for ii, block in enumerate(self.blocks):
             im[block[0][0]:block[0][1], block[1][0]:block[1][1], :] = ((np.random.rand(1)+0.5)/2)
-        plt.figure()
+        fig = plt.figure()
         plt.imshow(im, vmin=0, vmax=1)
+        return fig
 
 
 def get_idx_in_kRange(
