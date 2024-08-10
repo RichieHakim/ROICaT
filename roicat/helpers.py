@@ -519,6 +519,10 @@ class Convergence_checker_optuna:
         max_duration (float): 
             Maximum number of seconds to run before stopping. 
             (Default is *600*)
+        value_stop (Optional[float]):
+            Value at which to stop the optimization. If the best value is equal
+            to or less than this value, the optimization will stop.
+            (Default is *None*)
         verbose (bool): 
             If ``True``, print messages. 
             (Default is ``True``)
@@ -552,6 +556,7 @@ class Convergence_checker_optuna:
         tol_frac: float = 0.05, 
         max_trials: int = 350, 
         max_duration: float = 60*10, 
+        value_stop: Optional[float] = None,
         verbose: bool = True,
     ):
         """
@@ -563,6 +568,7 @@ class Convergence_checker_optuna:
         self.tol_frac = tol_frac
         self.max_trials = max_trials
         self.max_duration = max_duration
+        self.value_stop = value_stop
         self.num_trial = 0
         self.verbose = verbose
         
@@ -601,6 +607,11 @@ class Convergence_checker_optuna:
         if duration > self.max_duration:
             print(f'Stopping. Duration limit reached. study.duration={duration}, max_duration={self.max_duration}.') if self.verbose else None
             study.stop()
+
+        if self.value_stop is not None:
+            if self.best <= self.value_stop:
+                print(f'Stopping. Best value ({self.best}) is less than or equal to value_stop ({self.value_stop}).') if self.verbose else None
+                study.stop()
             
         if self.verbose:
             print(f'Trial num: {self.num_trial}. Duration: {duration:.3f}s. Best value: {self.best:3e}. Current value:{trial.value:3e}') if self.verbose else None
@@ -1642,7 +1653,7 @@ def yaml_save(
     """
     path = prepare_filepath_for_saving(filepath, mkdir=mkdir, allow_overwrite=allow_overwrite)
     with open(path, mode) as f:
-        yaml.dump(obj, f, indent=indent)
+        yaml.dump(obj, f, indent=indent, sort_keys=False)
 
 def yaml_load(
     filepath: str, 

@@ -3,12 +3,13 @@ from pathlib import Path
 import copy
 import tempfile
 from IPython.display import display
+import time
 
 # import matplotlib.pyplot as plt
 import numpy as np
 
 ## Import roicat submodules
-from . import data_importing, ROInet, helpers, util, tracking, classification
+from . import data_importing, ROInet, helpers, util, visualization, tracking, classification
 
 def pipeline_tracking(params: dict):
     """
@@ -32,6 +33,8 @@ def pipeline_tracking(params: dict):
                 Parameters used in the pipeline. See
                 ``roicat.helpers.prepare_params()`` for details.
     """
+    ## Start timer
+    tic_start = time.time()
 
     ## Prepare params
     defaults = util.get_default_parameters(pipeline='tracking')
@@ -56,15 +59,13 @@ def pipeline_tracking(params: dict):
             find_folders=False,
             natsorted=True,
         )[:]
-        paths_allOps  = np.array([Path(path).resolve().parent / 'ops.npy' for path in paths_allStat])[:]
+        paths_allOps  = [str(Path(path).resolve().parent / 'ops.npy') for path in paths_allStat][:]
 
         print(f"Found the following stat.npy files:")
         [print(f"    {path}") for path in paths_allStat]
         print(f"Found the following corresponding ops.npy files:")
         [print(f"    {path}") for path in paths_allOps]
 
-        params['data_loading']['paths_allStat'] = paths_allStat
-        params['data_loading']['paths_allOps'] = paths_allOps
 
         ## Import data
         data = data_importing.Data_suite2p(
@@ -190,13 +191,19 @@ def pipeline_tracking(params: dict):
         s_sesh=sim.s_sesh,
         verbose=VERBOSE,
     )
-    kwargs_makeConjunctiveDistanceMatrix_best = clusterer.find_optimal_parameters_for_pruning(
-        seed=SEED,
-        **params['clustering']['automatic_mixing'],
-    )
-    kwargs_mcdm_tmp = kwargs_makeConjunctiveDistanceMatrix_best  ## Use the optimized parameters
+    if params['clustering']['mixing_method'] == 'automatic':
+        kwargs_makeConjunctiveDistanceMatrix_best = clusterer.find_optimal_parameters_for_pruning(
+            seed=SEED,
+            **params['clustering']['parameters_automatic_mixing'],
+        )
+    elif params['clustering']['mixing_method'] == 'manual':
+        kwargs_makeConjunctiveDistanceMatrix_best = params['clustering']['parameters_manual_mixing']
+    else:
+        ## Not implemented
+        raise NotImplementedError(f"Mixing method '{params['clustering']['mixing_method']}' is not implemented. Select from: ['automatic', 'manual']")
+
     clusterer.make_pruned_similarity_graphs(
-        kwargs_makeConjunctiveDistanceMatrix=kwargs_mcdm_tmp,
+        kwargs_makeConjunctiveDistanceMatrix=kwargs_makeConjunctiveDistanceMatrix_best,
         **params['clustering']['pruning'],
     )
 
@@ -267,7 +274,7 @@ def pipeline_tracking(params: dict):
     })
 
 
-    ## Visualize results
+    ## Print some results
     print(f'Number of clusters: {len(np.unique(results["clusters"]["labels"]))}')
     print(f'Number of discarded ROIs: {(results["clusters"]["labels"]==-1).sum()}')
 
@@ -276,14 +283,13 @@ def pipeline_tracking(params: dict):
     if params['results_saving']['dir_save'] is not None:
 
         dir_save = Path(params['results_saving']['dir_save']).resolve()
-        name_save = params['results_saving']['prefix_name_save']
+        name_save = str(params['results_saving']['prefix_name_save'])
 
-        path_save = dir_save / (name_save + '.ROICaT.tracking.results' + '.pkl')
-        print(f'path_save: {path_save}')
+        print(f'dir_save: {dir_save}')
 
         helpers.pickle_save(
             obj=results,
-            filepath=path_save,
+            filepath=str(dir_save / (name_save + '.ROICaT.tracking.results' + '.pkl')),
             mkdir=True,
         )
 
@@ -292,6 +298,89 @@ def pipeline_tracking(params: dict):
             filepath=str(dir_save / (name_save + '.ROICaT.tracking.rundata' + '.pkl')),
             mkdir=True,
         )
+
+        helpers.yaml_save(
+            obj=params,
+            filepath=str(dir_save / (name_save + '.ROICaT.tracking.params' + '.yaml')),
+            mkdir=True,
+        )
+
+    
+        ## Visualize results
+        ### Save some figures
+        
+        #### Save FOV_images as .png files
+        def save_image(array, path, normalize=True):
+            ## Use PIL to save the image
+            from PIL import Image
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Image.fromarray((np.array(array / array.max() if normalize else array) * 255).astype(np.uint8)).save(path)
+        [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'FOV_images' / f'FOV_images_{ii}.png') ) for ii, array in enumerate(data.FOV_images)]
+        [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'FOV_images_aligned_geometric' / f'FOV_images_aligned_geometric_{ii}.png') ) for ii, array in enumerate(aligner.ims_registered_geo)]
+        [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'FOV_images_aligned_nonrigid' / f'FOV_images_aligned_nonrigid_{ii}.png') ) for ii, array in enumerate(aligner.ims_registered_nonrigid)]
+        [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'ROIs' / f'ROIs_{ii}.png') ) for ii, array in enumerate(data.get_maxIntensityProjection_spatialFootprints())]
+        [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'ROIs_aligned' / f'ROIs_aligned_{ii}.png') ) for ii, array in enumerate(aligner.get_ROIsAligned_maxIntensityProjection(normalize=True))]
+        [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'ROIs_aligned_blurred' / f'ROIs_aligned_blurred_{ii}.png') ) for ii, array in enumerate(blurrer.get_ROIsBlurred_maxIntensityProjection())]
+        
+        #### Save some sample ROI images
+        [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'ROIs_sample' / f'ROIs_sample_{ii}.png') ) for ii, array in enumerate(roinet.ROI_images_rs[:100])]
+        
+        #### Save the similarity graphy blocks
+        fig = sim.visualize_blocks()
+        (Path(dir_save).resolve() / 'visualization' / 'similarity_graph').mkdir(parents=True, exist_ok=True)
+        fig.savefig(str(Path(dir_save).resolve() / 'visualization' / 'similarity_graph' / 'blocks.png'))
+        
+        #### Save the similarity / distance plots for the given conjunctive distance matrix kwargs
+        fig = clusterer.plot_distSame(kwargs_makeConjunctiveDistanceMatrix=kwargs_makeConjunctiveDistanceMatrix_best)
+        (Path(dir_save).resolve() / 'visualization' / 'clustering').mkdir(parents=True, exist_ok=True)
+        fig.savefig(str(Path(dir_save).resolve() / 'visualization' / 'clustering' / 'dist.png'))
+        fig, axs = clusterer.plot_similarity_relationships(
+            plots_to_show=[1,2,3], 
+            max_samples=100000,  ## Make smaller if it is running too slow
+            kwargs_scatter={'s':1, 'alpha':0.2},
+            kwargs_makeConjunctiveDistanceMatrix=kwargs_makeConjunctiveDistanceMatrix_best
+        )
+        (Path(dir_save).resolve() / 'visualization' / 'clustering').mkdir(parents=True, exist_ok=True)
+        fig.savefig(str(Path(dir_save).resolve() / 'visualization' / 'clustering' / 'similarity_relationships.png'))
+        
+        #### Save the clustering results
+        fig, axs = tracking.clustering.plot_quality_metrics(
+            quality_metrics=quality_metrics, 
+            labels=labels_squeezed, 
+            n_sessions=data.n_sessions,
+        )
+        (Path(dir_save).resolve() / 'visualization' / 'clustering').mkdir(parents=True, exist_ok=True)
+        fig.savefig(str(Path(dir_save).resolve() / 'visualization' / 'clustering' / 'quality_metrics.png'))
+        
+        ### Save a gif of the ROIs
+        FOV_clusters = visualization.compute_colored_FOV(
+            spatialFootprints=[r.power(1.0) for r in results['ROIs']['ROIs_aligned']],  ## Spatial footprint sparse arrays
+            FOV_height=results['ROIs']['frame_height'],
+            FOV_width=results['ROIs']['frame_width'],
+            labels=results["clusters"]["labels_bySession"],  ## cluster labels
+        #     labels=(np.array(results["clusters"]["labels"])!=-1).astype(np.int64),  ## cluster labels
+        #     alphas_labels=confidence*1.5,  ## Set brightness of each cluster based on some 1-D array
+        #     alphas_labels=(clusterer.quality_metrics['cluster_silhouette'] > 0) * (clusterer.quality_metrics['cluster_intra_means'] > 0.4),
+        #     alphas_sf=clusterer.quality_metrics['sample_silhouette'],  ## Set brightness of each ROI based on some 1-D array
+        )
+        helpers.save_gif(
+            array=helpers.add_text_to_images(
+                images=[(f * 255).astype(np.uint8) for f in FOV_clusters], 
+                text=[[f"{ii}",] for ii in range(len(FOV_clusters))], 
+                font_size=3,
+                line_width=10,
+                position=(30, 90),
+            ), 
+            path=str(Path(dir_save).resolve() / 'visualization' / 'FOV_clusters.gif'),
+            frameRate=10.0,
+            loop=0,
+        )
+
+
+
+    ## End timer
+    tic_end = time.time()
+    print(f"Elapsed time: {tic_end - tic_start:.2f} seconds")
     
     return results, run_data, params
 

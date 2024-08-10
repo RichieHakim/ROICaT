@@ -27,7 +27,7 @@ def test_pipeline_tracking_simple(dir_data_test):
             },
         },
         'clustering': {
-            'automatic_mixing': {
+            'parameters_automatic_mixing': {
                 'kwargs_findParameters': {
                     'n_patience': 30,  ## Reduced number to speed up
                     'max_trials': 100,  ## Reduced number to speed up

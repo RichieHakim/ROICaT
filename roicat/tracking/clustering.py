@@ -134,6 +134,7 @@ class Clusterer(util.ROICaT_Module):
             'tol_frac': 0.05,
             'max_trials': 350,
             'max_duration': 60*10,
+            'value_stop': 0.0,
         },
         bounds_findParameters: Dict[str, Tuple[float, float]] = {
             'power_SF': (0.3, 2),
@@ -781,7 +782,7 @@ class Clusterer(util.ROICaT_Module):
     def _activation_function(
         cls, 
         s: Optional[torch.Tensor] = None, 
-        sig_kwargs: Dict[str, float] = {'mu':0.0, 'b':1.0}, 
+        sig_kwargs: Optional[Dict[str, float]] = {'mu':0.0, 'b':1.0}, 
         power: Optional[float] = 1
     ) -> Optional[torch.Tensor]:
         """
@@ -806,15 +807,13 @@ class Clusterer(util.ROICaT_Module):
         """
         if s is None:
             return None
-        if (sig_kwargs is not None) and (power is not None):
-            return helpers.generalised_logistic_function(torch.as_tensor(s, dtype=torch.float32), **sig_kwargs)**power
-        elif (sig_kwargs is None) and (power is not None):
-            return torch.maximum(torch.as_tensor(s, dtype=torch.float32), torch.as_tensor([0], dtype=torch.float32))**power
-            # return torch.as_tensor(s, dtype=torch.float32)**power
-        elif (sig_kwargs is not None) and (power is None):
-            return helpers.generalised_logistic_function(torch.as_tensor(s, dtype=torch.float32), **sig_kwargs)
-        else:
-            return torch.as_tensor(s, dtype=torch.float32)
+        
+        s = torch.as_tensor(s, dtype=torch.float32)
+        ## make functions such that if the param is None, then no operation is applied
+        fn_sigmoid = lambda x, params: helpers.generalised_logistic_function(x, **params) if params is not None else x
+        fn_power = lambda x, p: x ** p if p is not None else x
+        
+        return fn_power(torch.clamp(fn_sigmoid(s, sig_kwargs), min=0), power)
         
     @classmethod
     def _pNorm(
@@ -948,7 +947,7 @@ class Clusterer(util.ROICaT_Module):
             print('No crossover found, not plotting')
             return None
         
-        plt.figure()
+        fig = plt.figure()
         plt.stairs(dens_same, edges, linewidth=5)
         plt.stairs(dens_same_crop, edges, linewidth=3)
         plt.stairs(dens_diff, edges)
@@ -962,6 +961,7 @@ class Clusterer(util.ROICaT_Module):
         plt.xlabel('distance or prob(different)')
         plt.ylabel('counts or density')
         plt.legend(['same', 'same (cropped)', 'diff', 'all', 'diff - same', 'all - diff', '(diff * same) * 1000', 'crossover'])
+        return fig
 
     def _separate_diffSame_distributions(
         self, 
@@ -1166,7 +1166,12 @@ class Clusterer(util.ROICaT_Module):
         d_dense.fill_value = (dist_mat.data.max() - dist_mat.data.min()).astype(np.float16) * 10
         d_dense = d_dense.todense()
         np.fill_diagonal(d_dense, 0)
-        rs_sil = sklearn.metrics.silhouette_samples(X=d_dense, labels=labels, metric='precomputed')
+        ## Number of labels must be at least 2
+        if len(np.unique(labels)) < 2:
+            warnings.warn(f"Silhouette samples calculation requires at least 2 labels. Returning None. Found {len(np.unique(labels))} labels.")
+            rs_sil = None
+        else:
+            rs_sil = sklearn.metrics.silhouette_samples(X=d_dense, labels=labels, metric='precomputed')
 
         self.quality_metrics = {
             'cluster_labels_unique': labels_unique,
@@ -1450,3 +1455,29 @@ def make_label_variants(
     assert np.all([np.allclose(np.where(labels_squeezed==u)[0], ldu) for u, ldu in labels_dict.items()])
 
     return labels_squeezed, labels_bySession, labels_bool, labels_bool_bySession, labels_dict
+
+
+def plot_quality_metrics(quality_metrics: dict, labels: Union[np.ndarray, list], n_sessions: int) -> None:
+    fig, axs = plt.subplots(nrows=2, ncols=2, figsize=(15,7))
+
+    axs[0,0].hist(quality_metrics['cluster_silhouette'], 50);
+    axs[0,0].set_xlabel('cluster_silhouette');
+    axs[0,0].set_ylabel('cluster counts');
+
+    axs[0,1].hist(quality_metrics['cluster_intra_means'], 50);
+    axs[0,1].set_xlabel('cluster_intra_means');
+    axs[0,1].set_ylabel('cluster counts');
+
+    axs[1,0].hist(quality_metrics['sample_silhouette'], 50);
+    axs[1,0].set_xlabel('sample_silhouette score');
+    axs[1,0].set_ylabel('roi sample counts');
+
+    _, counts = np.unique(labels[labels!=-1], return_counts=True)
+
+    axs[1,1].hist(counts, n_sessions*2 + 1, range=(0, n_sessions+1));
+    axs[1,1].set_xlabel('n_sessions')
+    axs[1,1].set_ylabel('cluster counts');
+    
+    # Make the title include the number of excluded (label==-1) ROIs
+    fig.suptitle(f'Quality metrics n_excluded: {np.sum(labels==-1)}, n_included: {np.sum(labels!=-1)}, n_total: {len(labels)}, n_clusters: {len(np.unique(labels[labels!=-1]))}, n_sessions: {n_sessions}')
+    return fig, axs
