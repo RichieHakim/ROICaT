@@ -78,9 +78,10 @@ def get_default_parameters(
             },
             'alignment': {
                 'augment': {
+                    'normalize_FOV_intensities': True,  ## Whether or not to normalize the FOV_images to the max value across all FOV images.
                     'roi_FOV_mixing_factor': 0.5,  ## default: 0.5. Fraction of the max intensity projection of ROIs that is added to the FOV image. 0.0 means only the FOV_images, larger values mean more of the ROIs are added.
                     'use_CLAHE': True,  ## Whether or not to use 'Contrast Limited Adaptive Histogram Equalization'. Useful if params['importing']['type_meanImg'] is not a contrast enhanced image (like 'meanImgE' in Suite2p)
-                    'CLAHE_grid_size': 1,  ## Size of the grid for CLAHE. 1 means no grid, 2 means 2x2 grid, etc.
+                    'CLAHE_grid_size': 100,  ## Size of the grid for CLAHE. 1 means no grid, 2 means 2x2 grid, etc.
                     'CLAHE_clipLimit': 1,  ## Clipping limit for CLAHE. Higher values mean more contrast.
                     'CLAHE_normalize': True,  ## Whether or not to normalize the CLAHE image.
                 },

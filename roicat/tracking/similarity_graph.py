@@ -610,7 +610,7 @@ def get_idx_in_kRange(
 
     idx_nz = np.stack((d.row, d.col), axis=0).reshape(2, d.shape[0], k_max)  ## get indices of the non-zero values in the distance graph
     idx_topk = np.argpartition(np.array(d.data).reshape(d.shape[0], k_max), kth=k_min, axis=1)  ## partition the non-zero values of the distance graph at the k_min-th value
-#     idx_topk = np.argpartition(d.A, kth=k_min, axis=1)  ## partition the distance graph at the k_min-th value
+#     idx_topk = np.argpartition(d.toarray(), kth=k_min, axis=1)  ## partition the distance graph at the k_min-th value
     mesh_i, mesh_j = np.meshgrid(np.arange(k_max), np.arange(d.shape[0]))  ## prep a meshgrid of the correct output size. Will only use the row idx since the column idx will be replaced with idx_topk
     idx_diff = np.array(idx_nz.data).reshape(2, d.shape[0], k_max)[:, mesh_j[:, k_min:], idx_topk[:, k_min:]][1]  ## put it all together. Get kRange  between k_min and k_max
     return idx_diff, d
