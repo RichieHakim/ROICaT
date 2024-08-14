@@ -94,7 +94,7 @@ def pipeline_tracking(params: dict):
     ## Alignment
     aligner = tracking.alignment.Aligner(verbose=True)
     FOV_images = aligner.augment_FOV_images(
-        ims=data.FOV_images,
+        FOV_images=data.FOV_images,
         spatialFootprints=data.spatialFootprints,
         **params['alignment']['augment'],
     )

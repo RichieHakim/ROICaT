@@ -37,8 +37,9 @@ class Aligner(util.ROICaT_Module):
     @classmethod
     def augment_FOV_images(
         cls,
-        ims: List[np.ndarray],
+        FOV_images: List[np.ndarray],
         spatialFootprints: Optional[List[scipy.sparse.csr_matrix]] = None,
+        normalize_FOV_intensities: bool = True,
         roi_FOV_mixing_factor: float = 0.5,
         use_CLAHE: bool = True,
         CLAHE_grid_size: int = 1,
@@ -51,11 +52,15 @@ class Aligner(util.ROICaT_Module):
         RH 2023
 
         Args:
-            ims (List[np.ndarray]): 
+            FOV_images (List[np.ndarray]): 
                 A list of FOV images.
             spatialFootprints (List[scipy.sparse.csr_matrix], optional):
                 A list of spatial footprints for each ROI. If ``None``, then no
                 mixing will be performed. (Default is ``None``)
+            normalize_FOV_intensities (bool):
+                Whether to normalize the FOV images. Setting this to ``True``
+                will divide each FOV image by the norm of all the FOV images.
+                (Default is ``True``)
             roi_FOV_mixing_factor (float):
                 The factor by which to mix the ROI images into the FOV images.
                 If 0, then no mixing will be performed. (Default is *0.5*)
@@ -83,10 +88,26 @@ class Aligner(util.ROICaT_Module):
         if (roi_FOV_mixing_factor != 0) and (spatialFootprints is None):
             warnings.warn("roi_FOV_mixing_factor != 0 but spatialFootprints is None. No mixing will be performed.")
         
-        h,w = ims[0].shape
+        h,w = FOV_images[0].shape
         sf = spatialFootprints
-        FOV_images = [f + np.array(roi_FOV_mixing_factor*(sf.multiply(1/sf.max(1).A)).sum(0).reshape(h, w)) for f, sf in zip(ims, sf)] if spatialFootprints is not None else ims
-        FOV_images = [clahe(im, grid_size=CLAHE_grid_size, clipLimit=CLAHE_clipLimit, normalize=CLAHE_normalize) for im in FOV_images] if use_CLAHE else FOV_images
+
+        ## Cast to float32
+        FOV_images = [im.astype(np.float32) for im in FOV_images]
+
+        ## Do the CLAHE first
+        if use_CLAHE:
+            FOV_images = [clahe(im, grid_size=CLAHE_grid_size, clipLimit=CLAHE_clipLimit, normalize=CLAHE_normalize) for im in FOV_images]
+
+        ## normalize FOV images
+        if normalize_FOV_intensities:
+            val_norm = np.max(np.concatenate([im.reshape(-1) for im in FOV_images]))
+            FOV_images = [im / val_norm for im in FOV_images]
+
+        ## mix ROI images into FOV images
+        if spatialFootprints is not None:
+            mixing_factor_final = roi_FOV_mixing_factor * np.mean(np.concatenate([im.reshape(-1) for im in FOV_images]))
+            fn_mix = lambda im, sf, f: (1 - f) * im + np.array((f) * mixing_factor_final * sf.multiply(1/sf.max(1).toarray()).sum(0).reshape(h, w))
+            FOV_images = [fn_mix(f, s, roi_FOV_mixing_factor) for f, s in zip(FOV_images, sf)]
 
         return FOV_images
 
@@ -1030,7 +1051,9 @@ def clahe(
             Clip limit. See ``cv2.createCLAHE`` for more info. 
             (Default is *0*)
         normalize (bool):
-            Whether to normalize the output image. 
+            Whether to normalize the image to the maximum value (0 - 1) during
+            the CLAHE process, then return the image to the original dtype and
+            range.
             (Default is ``True``)
         
     Returns:
@@ -1039,8 +1062,13 @@ def clahe(
                 Output image after applying CLAHE.
     """
     import cv2
-    im_tu = (im / im.max())*(2**8) if normalize else im
-    im_tu = (im_tu/10).astype(np.uint8)
+    dtype_in = im.dtype
+    if normalize:
+        val_max = np.nanmax(im)
+        im_tu = (im.astype(np.float32) / val_max)*(2**8 - 1)
     clahe = cv2.createCLAHE(clipLimit=clipLimit, tileGridSize=(grid_size, grid_size))
     im_c = clahe.apply(im_tu.astype(np.uint16))
+    if normalize:
+        im_c = (im_c / (2**8 - 1)) * val_max
+    im_c = im_c.astype(dtype_in)
     return im_c
