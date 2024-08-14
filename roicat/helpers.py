@@ -38,6 +38,7 @@ All of these are from basic_neural_processing_modules
 def set_device(
     use_GPU: bool = True, 
     device_num: int = 0, 
+    device_types: List[str] = ['cuda', 'mps', 'xpu', 'cpu'],
     verbose: bool = True
 ) -> str:
     """
@@ -55,6 +56,10 @@ def set_device(
             (Default is ``True``)
         device_num (int): 
             Specifies the index of the GPU to use. (Default is ``0``)
+        device_types (List[str]):
+            The types and order of devices to attempt to use. The first device
+            type that is available will be used. Options are ``'cuda'``,
+            ``'mps'``, ``'xpu'``, and ``'cpu'``.
         verbose (bool): 
             Determines whether to print the device information. \n
             * ``True``: the function will print out the device information.
@@ -67,18 +72,62 @@ def set_device(
                 A string specifying the device, either *"cpu"* or
                 *"cuda:<device_num>"*.
     """
-    if use_GPU:
-        print(f'devices available: {[torch.cuda.get_device_properties(ii) for ii in range(torch.cuda.device_count())]}') if verbose else None
-        device = f"cuda:{device_num}" if torch.cuda.is_available() else "cpu"
-        if device == "cpu":
-            print("no GPU available. Using CPU.") if verbose else None
-        else:
-            print(f"Using device: '{device}': {torch.cuda.get_device_properties(device_num)}") if verbose else None
+    devices = list_available_devices()
+
+    if not use_GPU:
+        device = 'cpu'
     else:
-        device = "cpu"
-        print(f"device: '{device}'") if verbose else None
+        device = None
+        for device_type in device_types:
+            if len(devices[device_type]) > 0:
+                device = devices[device_type][device_num]
+                break
+
+    if verbose:
+        print(f'Using device: {device}')
 
     return device
+    
+
+def list_available_devices() -> dict:
+    """
+    Lists all available PyTorch devices on the system.
+    RH 2024
+
+    Returns:
+        (dict): 
+            A dictionary with device types as keys and lists of available devices as values.
+    """
+    devices = {}
+
+    # Check for CPU devices
+    if torch.cpu.is_available():
+        devices['cpu'] = ['cpu']
+    else:
+        devices['cpu'] = []
+
+    # Check for CUDA devices
+    if torch.cuda.is_available():
+        devices['cuda'] = [f'cuda:{i}' for i in range(torch.cuda.device_count())]
+    else:
+        devices['cuda'] = []
+
+    # Check for MPS devices
+    if torch.backends.mps.is_available():
+        devices['mps'] = ['mps:0']
+    else:
+        devices['mps'] = []
+
+    # Check for XPU devices
+    if hasattr(torch, 'xpu'):
+        if torch.xpu.is_available():
+            devices['xpu'] = [f'xpu:{i}' for i in range(torch.xpu.device_count())]
+        else:
+            devices['xpu'] = []
+    else:
+        devices['xpu'] = []
+
+    return devices
 
 
 ######################################################################################################################################
@@ -470,6 +519,10 @@ class Convergence_checker_optuna:
         max_duration (float): 
             Maximum number of seconds to run before stopping. 
             (Default is *600*)
+        value_stop (Optional[float]):
+            Value at which to stop the optimization. If the best value is equal
+            to or less than this value, the optimization will stop.
+            (Default is *None*)
         verbose (bool): 
             If ``True``, print messages. 
             (Default is ``True``)
@@ -503,6 +556,7 @@ class Convergence_checker_optuna:
         tol_frac: float = 0.05, 
         max_trials: int = 350, 
         max_duration: float = 60*10, 
+        value_stop: Optional[float] = None,
         verbose: bool = True,
     ):
         """
@@ -514,6 +568,7 @@ class Convergence_checker_optuna:
         self.tol_frac = tol_frac
         self.max_trials = max_trials
         self.max_duration = max_duration
+        self.value_stop = value_stop
         self.num_trial = 0
         self.verbose = verbose
         
@@ -552,6 +607,11 @@ class Convergence_checker_optuna:
         if duration > self.max_duration:
             print(f'Stopping. Duration limit reached. study.duration={duration}, max_duration={self.max_duration}.') if self.verbose else None
             study.stop()
+
+        if self.value_stop is not None:
+            if self.best <= self.value_stop:
+                print(f'Stopping. Best value ({self.best}) is less than or equal to value_stop ({self.value_stop}).') if self.verbose else None
+                study.stop()
             
         if self.verbose:
             print(f'Trial num: {self.num_trial}. Duration: {duration:.3f}s. Best value: {self.best:3e}. Current value:{trial.value:3e}') if self.verbose else None
@@ -1593,7 +1653,7 @@ def yaml_save(
     """
     path = prepare_filepath_for_saving(filepath, mkdir=mkdir, allow_overwrite=allow_overwrite)
     with open(path, mode) as f:
-        yaml.dump(obj, f, indent=indent)
+        yaml.dump(obj, f, indent=indent, sort_keys=False)
 
 def yaml_load(
     filepath: str, 
@@ -3446,6 +3506,7 @@ def remap_sparse_images(
 ) -> List[scipy.sparse.csr_matrix]:
     """
     Remaps a list of sparse images using the given remap field.
+    RH 2023
 
     Args:
         ims_sparse (Union[scipy.sparse.spmatrix, List[scipy.sparse.spmatrix]]): 
@@ -3886,7 +3947,6 @@ def add_text_to_images(
     color: Tuple[int, int, int] = (255,255,255), 
     line_width: int = 1, 
     font: Optional[str] = None, 
-    show: bool = False, 
     frameRate: int = 30
 ) -> np.array:
     """
@@ -3911,8 +3971,6 @@ def add_text_to_images(
         font (str):
             Font to use. If ``None``, then will use ``cv2.FONT_HERSHEY_SIMPLEX``.
             See ``cv2.FONT...`` for more options. (Default is ``None``)
-        show (bool):
-            If ``True``, then will show the images with text added. (Default is ``False``)
         frameRate (int):
             Frame rate of the video. (Default is *30*)
 
@@ -3935,12 +3993,6 @@ def add_text_to_images(
                 [fn_putText(frame[:,:,ii]) for ii in range(frame.shape[2])]
             else:
                 fn_putText(frame)
-        if show:
-            cv2.imshow('add_text_to_images', frame)
-            cv2.waitKey(int(1000/frameRate))
-    
-    if show:
-        cv2.destroyWindow('add_text_to_images')
     return images_cp
 
 
