@@ -61,7 +61,7 @@ def get_default_parameters(
                 'random_seed': None,
             },
             'data_loading': {
-                'data_kind': 'suite2p',  ## Can be 'suite2p', 'roiextractors', or 'roicat'. See documentation and/or notebook on custom data loading for more details.
+                'data_kind': 'data_suite2p',  ## Can be 'suite2p', 'roiextractors', or 'roicat'. See documentation and/or notebook on custom data loading for more details.
                 'dir_outer': None,  ## directory where directories containing below 'pathSuffixTo...' are
                 'common': {
                     'um_per_pixel': 1.0,  ## Number of microns per pixel for the imaging dataset. Doesn't need to be exact. Used for resizing the ROIs. Check the images of the resized ROIs to tweak.
@@ -78,16 +78,17 @@ def get_default_parameters(
             },
             'alignment': {
                 'augment': {
+                    'normalize_FOV_intensities': True,  ## Whether or not to normalize the FOV_images to the max value across all FOV images.
                     'roi_FOV_mixing_factor': 0.5,  ## default: 0.5. Fraction of the max intensity projection of ROIs that is added to the FOV image. 0.0 means only the FOV_images, larger values mean more of the ROIs are added.
                     'use_CLAHE': True,  ## Whether or not to use 'Contrast Limited Adaptive Histogram Equalization'. Useful if params['importing']['type_meanImg'] is not a contrast enhanced image (like 'meanImgE' in Suite2p)
-                    'CLAHE_grid_size': 1,  ## Size of the grid for CLAHE. 1 means no grid, 2 means 2x2 grid, etc.
+                    'CLAHE_grid_size': 100,  ## Size of the grid for CLAHE. 1 means no grid, 2 means 2x2 grid, etc.
                     'CLAHE_clipLimit': 1,  ## Clipping limit for CLAHE. Higher values mean more contrast.
                     'CLAHE_normalize': True,  ## Whether or not to normalize the CLAHE image.
                 },
                 'fit_geometric': {
                     'template': 0.5,  ## Which session to use as a registration template. If input is float (ie 0.0, 0.5, 1.0, etc.), then it is the fractional position of the session to use; if input is int (ie 1, 2, 3), then it is the index of the session to use (0-indexed)
                     'template_method': 'sequential',  ## Can be 'sequential' or 'image'. If 'sequential', then the template is the FOV_image of the previous session. If 'image', then the template is the FOV_image of the session specified by 'template'.
-                    'mode_transform': 'homography',  ## Must be one of {'translation', 'affine', 'euclidean', 'homography'}. See documentation for more details.
+                    'mode_transform': 'euclidean',  ## Must be one of {'translation', 'affine', 'euclidean', 'homography'}. See documentation for more details.
                     'mask_borders': [50, 50, 50, 50],  ## Number of pixels to mask from the borders of the FOV_image. Useful for removing artifacts from the edges of the FOV_image.
                     'n_iter': 50,  ## Number of iterations to run the registration algorithm. More iterations means more accurate registration, but longer run time.
                     'termination_eps': 1e-09,  ## Termination criteria for the registration algorithm. See documentation for more details.
@@ -144,7 +145,8 @@ def get_default_parameters(
                 },
             },
             'clustering': {
-                'automatic_mixing': {
+                'mixing_method': 'automatic',  ## Can be 'automatic' or 'manual'. If 'automatic', then the parameters are found automatically. If 'manual', then the parameters are set manually.
+                'parameters_automatic_mixing': {
                     'n_bins': None,  ## Number of bins to use for the histograms of the distributions
                     'smoothing_window_bins': None,  ## Number of bins to use to smooth the distributions
                     'kwargs_findParameters': {
@@ -154,15 +156,27 @@ def get_default_parameters(
                         'max_duration': 60*10,  ## Max amount of time (in seconds) to allow optimization to proceed for
                     },
                     'bounds_findParameters': {
-                        'power_NN': [0., 5.],  ## Bounds for the exponent applied to s_NN
-                        'power_SWT': [0., 5.],  ## Bounds for the exponent applied to s_SWT
-                        'p_norm': [-5, 0],  ## Bounds for the p-norm p value (Minkowski) applied to mix the matrices
-                        'sig_NN_kwargs_mu': [0., 1.0],  ## Bounds for the sigmoid center for s_NN
-                        'sig_NN_kwargs_b': [0.00, 1.5],  ## Bounds for the sigmoid slope for s_NN
-                        'sig_SWT_kwargs_mu': [0., 1.0], ## Bounds for the sigmoid center for s_SWT
-                        'sig_SWT_kwargs_b': [0.00, 1.5],  ## Bounds for the sigmoid slope for s_SWT
+                        'power_NN': (0.0, 2.),  ## Bounds for the exponent applied to s_NN
+                        'power_SWT': (0.0, 2.),  ## Bounds for the exponent applied to s_SWT
+                        'p_norm': (-5, -0.1),  ## Bounds for the p-norm p value (Minkowski) applied to mix the matrices
+                        'sig_NN_kwargs_mu': (0., 1.0),  ## Bounds for the sigmoid center for s_NN
+                        'sig_NN_kwargs_b': (0.1, 1.5),  ## Bounds for the sigmoid slope for s_NN
+                        'sig_SWT_kwargs_mu': (0., 1.0),  ## Bounds for the sigmoid center for s_SWT
+                        'sig_SWT_kwargs_b': (0.1, 1.5),  ## Bounds for the sigmoid slope for s_SWT
                     },
                     'n_jobs_findParameters': -1,  ## Number of CPU cores to use (-1 is all cores)
+                },
+                'parameters_manual_mixing': {
+                    'power_SF': 1.0,   ## s_sf**power_SF   (Higher values means clustering is more sensitive to spatial overlap of ROIs)
+                    'power_NN': 0.5,   ## s_NN**power_NN   (Higher values means clustering is more sensitive to visual similarity of ROIs)
+                    'power_SWT': 0.5,  ## s_SWT**power_SWT (Higher values means clustering is more sensitive to visual similarity of ROIs)
+                    'p_norm': -1.0,    ## norm([s_sf, s_NN, s_SWT], p=p_norm) (Higher values means clustering requires all similarity metrics to be high)
+                #     'sig_SF_kwargs': {'mu':0.5, 'b':1.0},  ## Sigmoid parameters for s_sf (mu is the center, b is the slope)
+                    'sig_SF_kwargs': None,
+                    'sig_NN_kwargs': {'mu':0.5, 'b':1.0},    ## Sigmoid parameters for s_NN (mu is the center, b is the slope)
+                #     'sig_NN_kwargs': None,
+                    'sig_SWT_kwargs': {'mu':0.5, 'b':1.0}, ## Sigmoid parameters for s_SWT (mu is the center, b is the slope)
+                #     'sig_SWT_kwargs': None,
                 },
                 'pruning': {
                     'd_cutoff': None,  ## Optionally manually specify a distance cutoff
@@ -171,7 +185,7 @@ def get_default_parameters(
                 },
                 'cluster_method': {
                     'method': 'automatic',  ## 'automatic', 'hdbscan', or 'sequential_hungarian'. 'automatic': selects which clustering algorithm to use (generally if n_sessions >=8 then hdbscan, else sequential_hungarian)
-                    'n_sessions_switch': 8, ## Number of sessions to switch from sequential_hungarian to hdbscan
+                    'n_sessions_switch': 6, ## Number of sessions to switch from sequential_hungarian to hdbscan
                 },
                 'hdbscan': {
                     'min_cluster_size': 2,  ## Minimum number of ROIs that can be considered a 'cluster'
