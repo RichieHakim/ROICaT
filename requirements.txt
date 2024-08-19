@@ -15,7 +15,7 @@ seaborn==0.13.2
 sparse==0.15.4
 tqdm==4.66.5
 umap_learn==0.5.6
-xxhash==3.4.1
+xxhash==3.5.0
 bokeh==3.4.1
 psutil==6.0.0
 py_cpuinfo==9.0.0
