@@ -37,7 +37,28 @@ def test_pipeline_tracking_simple(dir_data_test):
         },
         'alignment': {
             'fit_geometric': {
-                'mask_borders': [5, 5, 5, 5],  ## Small border for small images
+                'template': 0.5,  ## Which session to use as a registration template. If input is float (ie 0.0, 0.5, 1.0, etc.), then it is the fractional position of the session to use; if input is int (ie 1, 2, 3), then it is the index of the session to use (0-indexed)
+                'template_method': 'sequential',  ## Can be 'sequential' or 'image'. If 'sequential', then the template is the FOV_image of the previous session. If 'image', then the template is the FOV_image of the session specified by 'template'.
+                'mode_transform': 'euclidean',  ## Can be 'homography', 'affine', 'rigid', or 'translation'. See documentation for more details.
+                'mask_borders': [5, 5, 5, 5],  ## Number of pixels to mask from the borders of the FOV_image. Useful for removing artifacts from the edges of the FOV_image.
+                'n_iter': 0,  ## Number of iterations to run the registration algorithm. More iterations means more accurate registration, but longer run time.
+                'termination_eps': 99999,  ## Termination criteria for the registration algorithm. See documentation for more details.
+                'gaussFiltSize': 31,  ## Size of the gaussian filter used to smooth the FOV_image before registration. Larger values mean more smoothing.
+                'auto_fix_gaussFilt_step': 10,  ## If the registration fails, then the gaussian filter size is reduced by this amount and the registration is tried again.
+            },
+            'fit_nonrigid': {
+                'template': 0.5,  ## Which session to use as a registration template. If input is float (ie 0.0, 0.5, 1.0, etc.), then it is the fractional position of the session to use; if input is int (ie 1, 2, 3), then it is the index of the session to use (0-indexed)
+                'template_method': 'image',  ## Can be 'sequential' or 'image'. If 'sequential', then the template is the FOV_image of the previous session. If 'image', then the template is the FOV_image of the session specified by 'template'.
+                'mode_transform': 'calcOpticalFlowFarneback',  ## Can be 'createOptFlow_DeepFlow' or 'createOptFlow_Farneback'. See documentation for more details.
+                'kwargs_mode_transform': {
+                    'pyr_scale': 0.0, 
+                    'levels': 0,
+                    'winsize': 0, 
+                    'iterations': 0,
+                    'poly_n': 0, 
+                    'poly_sigma': 0,
+                    'flags': 256, ## = 256
+                },  ## Keyword arguments for the mode_transform function. See documentation for more details.
             },
         },
         'results_saving': {
