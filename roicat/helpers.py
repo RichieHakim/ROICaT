@@ -4811,7 +4811,12 @@ class Equivalence_checker():
                     at = np.abs(true)
                     r_diff = diff / at if np.all(at != 0) else np.inf
                     r_diff_mean, r_diff_max, any_nan = np.nanmean(r_diff), np.nanmax(r_diff), np.any(np.isnan(r_diff))
-                    reason = f"Equivalence: Relative difference: mean={r_diff_mean}, max={r_diff_max}, any_nan={any_nan}"
+                    ## fraction of mismatches
+                    n_elements = np.prod(test.shape)
+                    n_mismatches = np.sum(diff > 0)
+                    frac_mismatches = n_mismatches / n_elements
+                    ## Use scientific notation and round to 3 decimal places
+                    reason = f"Equivalence: Relative difference: mean={r_diff_mean:.3e}, max={r_diff_max:.3e}, any_nan={any_nan}, n_elements={n_elements}, n_mismatches={n_mismatches}, frac_mismatches={frac_mismatches:.3e}"
                 else:
                     reason = f"Values are not numpy numeric types. types: {test.dtype}, {true.dtype}"
         else:
