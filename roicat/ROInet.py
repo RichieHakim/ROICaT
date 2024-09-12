@@ -404,7 +404,11 @@ class ROInet_embedder(util.ROICaT_Module):
             param.requires_grad = False
         self.net.eval()
 
-        self.net.load_state_dict(torch.load(paths_networkFiles['state_dict'], map_location=torch.device(self._device)))
+        self.net.load_state_dict(torch.load(
+            f=paths_networkFiles['state_dict'], 
+            map_location=torch.device(self._device),
+            weights_only=True,
+        ))
         print(f'Loaded state_dict into network from {paths_networkFiles["state_dict"]}') if self._verbose else None
 
         self.net = self.net.to(self._device)
