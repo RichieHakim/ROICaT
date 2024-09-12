@@ -415,6 +415,58 @@ def bounded_logspace(
     return exp ** np.linspace(np.log(start)/np.log(exp), np.log(stop)/np.log(exp), num, endpoint=True)
 
 
+def make_odd(n, mode='up'):
+    """
+    Make a number odd.
+    RH 2023
+
+    Args:
+        n (int):
+            Number to make odd
+        mode (str):
+            'up' or 'down'
+            Whether to round up or down to the nearest odd number
+
+    Returns:
+        output (int):
+            Odd number
+    """
+    if n % 2 == 0:
+        if mode == 'up':
+            return n + 1
+        elif mode == 'down':
+            return n - 1
+        else:
+            raise ValueError("mode must be 'up' or 'down'")
+    else:
+        return n
+def make_even(n, mode='up'):
+    """
+    Make a number even.
+    RH 2023
+
+    Args:
+        n (int):
+            Number to make even
+        mode (str):
+            'up' or 'down'
+            Whether to round up or down to the nearest even number
+
+    Returns:
+        output (int):
+            Even number
+    """
+    if n % 2 != 0:
+        if mode == 'up':
+            return n + 1
+        elif mode == 'down':
+            return n - 1
+        else:
+            raise ValueError("mode must be 'up' or 'down'")
+    else:
+        return n
+
+
 ######################################################################################################################################
 ####################################################### CLASSIFICATION ###############################################################
 ######################################################################################################################################
@@ -598,13 +650,16 @@ class Convergence_checker_optuna:
         self.bests.append(self.best)
             
         bests_recent = np.unique(self.bests[-self.n_patience:])
-        if self.num_trial > self.n_patience and ((np.abs(bests_recent.max() - bests_recent.min())/np.abs(self.best)) < self.tol_frac):
+        if self.best == 0:
+            print(f'Stopping. Best value is 0.') if self.verbose else None
+            study.stop()
+        elif self.num_trial > self.n_patience and ((np.abs(bests_recent.max() - bests_recent.min()) / np.abs(self.best)) < self.tol_frac):
             print(f'Stopping. Convergence reached. Best value ({self.best*10000}) over last ({self.n_patience}) trials fractionally changed less than ({self.tol_frac})') if self.verbose else None
             study.stop()
-        if self.num_trial >= self.max_trials:
+        elif self.num_trial >= self.max_trials:
             print(f'Stopping. Trial number limit reached. num_trial={self.num_trial}, max_trials={self.max_trials}.') if self.verbose else None
             study.stop()
-        if duration > self.max_duration:
+        elif duration > self.max_duration:
             print(f'Stopping. Duration limit reached. study.duration={duration}, max_duration={self.max_duration}.') if self.verbose else None
             study.stop()
 
@@ -4738,10 +4793,8 @@ class Equivalence_checker():
             ## If the dtype is a kind of string (or byte string) or object, then allclose will raise an error. In this case, just check if the values are equal.
             if np.issubdtype(test.dtype, np.str_) or np.issubdtype(test.dtype, np.bytes_) or test.dtype == np.object_:
                 out = bool(np.all(test == true))
-                print(f"Equivalence check {'passed' if out else 'failed'}. Path: {path}.") if self._verbose > 1 else None
             else:
                 out = np.allclose(test, true, **self._kwargs_allclose)
-            print(f"Equivalence check passed. Path: {path}") if self._verbose > 1 else None
         except Exception as e:
             out = None  ## This is not False because sometimes allclose will raise an error if the arrays have a weird dtype among other reasons.
             warnings.warn(f"WARNING. Equivalence check failed. Path: {path}. Error: {e}") if self._verbose else None
@@ -4755,11 +4808,15 @@ class Equivalence_checker():
                 dtypes_numeric = (np.number, np.bool_, np.integer, np.floating, np.complexfloating)
                 if any([np.issubdtype(test.dtype, dtype) and np.issubdtype(true.dtype, dtype) for dtype in dtypes_numeric]):
                     diff = np.abs(test - true)
-                    r_diff = diff / np.abs(true)
+                    at = np.abs(true)
+                    r_diff = diff / at if np.all(at != 0) else np.inf
                     r_diff_mean, r_diff_max, any_nan = np.nanmean(r_diff), np.nanmax(r_diff), np.any(np.isnan(r_diff))
                     print(f"Equivalence check failed. Path: {path}. Relative difference: mean={r_diff_mean}, max={r_diff_max}, any_nan={any_nan}") if self._verbose > 0 else None
                 else:
                     print(f"Equivalence check failed. Path: {path}. Value is non-numerical.") if self._verbose > 0 else None
+        elif out == True:
+            print(f"Equivalence check passed. Path: {path}.") if self._verbose > 1 else None
+
         return out
 
     def __call__(
@@ -4818,14 +4875,12 @@ class Equivalence_checker():
             for key in true:
                 if key not in test:
                     result[str(key)] = (False, 'key not found')
-                    print(f"Equivalence check failed. Path: {path}. Key {key} not found.") if self._verbose > 0 else None
                 else:
                     result[str(key)] = self.__call__(test[key], true[key], path=path + [str(key)])
         ## ITERATABLE
         elif isinstance(true, (list, tuple, set)):
             if len(true) != len(test):
                 result = (False, 'length_mismatch')
-                print(f"Equivalence check failed. Path: {path}. Length mismatch.") if self._verbose > 0 else None
             else:
                 result = {}
                 for idx, (i, j) in enumerate(zip(test, true)):
@@ -4833,19 +4888,30 @@ class Equivalence_checker():
         ## STRING
         elif isinstance(true, str):
             result = (test == true, 'equivalence')
-            print(f"Equivalence check {'passed' if result[0] else 'failed'}. Path: {path}.") if self._verbose > 0 else None
         ## BOOL
         elif isinstance(true, bool):
             result = (test == true, 'equivalence')
-            print(f"Equivalence check {'passed' if result[0] else 'failed'}. Path: {path}.") if self._verbose > 0 else None
         ## NONE
         elif true is None:
             result = (test is None, 'equivalence')
-            print(f"Equivalence check {'passed' if result[0] else 'failed'}. Path: {path}.") if self._verbose > 0 else None
         ## N/A
         else:
             result = (None, 'not tested')
-            print(f"Equivalence check not performed. Path: {path}.") if self._verbose > 0 else None
+
+        if isinstance(result, tuple):
+            if self._assert_mode:
+                assert (result[0] != False), f"Equivalence check failed. Path: {path}."
+
+            if self._verbose > 0:
+                ## Print False results
+                if result[0] == False:
+                    print(f"Equivalence check failed. Path: {path}.")
+            if self._verbose > 1:
+                ## Print True results
+                if result[0] == True:
+                    print(f"Equivalence check passed. Path: {path}.")
+                elif result[0] is None:
+                    print(f"Equivalence check not tested. Path: {path}.")
 
         return result
 
