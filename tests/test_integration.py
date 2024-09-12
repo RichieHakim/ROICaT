@@ -73,7 +73,7 @@ def test_pipeline_tracking_simple(dir_data_test):
     checker = helpers.Equivalence_checker(
         kwargs_allclose={'rtol': 1e-5, 'equal_nan': True},
         assert_mode=False,
-        verbose=1,
+        verbose=2,
     )
     checks = checker(test=run_data, true=run_data_true)
     fails = [key for key, val in helpers.flatten_dict(checks).items() if val[0]==False]
