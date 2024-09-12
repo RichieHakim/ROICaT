@@ -4814,7 +4814,7 @@ class Equivalence_checker():
                     reason = f"Equivalence: Relative difference: mean={r_diff_mean}, max={r_diff_max}, any_nan={any_nan}"
                 else:
                     reason = f"Values are not numpy numeric types. types: {test.dtype}, {true.dtype}"
-        elif out == True:
+        else:
             reason = "equivlance"
 
         return out, reason
