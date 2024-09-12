@@ -124,7 +124,7 @@ class Clusterer(util.ROICaT_Module):
         self._verbose = verbose
 
         self.n_bins = max(min(self.s_sf.nnz // 10000, 200), 20) if n_bins is None else n_bins
-        self.smooth_window = self.n_bins // 10 if smoothing_window_bins is None else smoothing_window_bins
+        self.smooth_window = helpers.make_odd(self.n_bins // 10, mode='up') if smoothing_window_bins is None else smoothing_window_bins
         # print(f'Pruning similarity graphs with {self.n_bins} bins and smoothing window {smoothing_window}...') if self._verbose else None
         
     def find_optimal_parameters_for_pruning(
