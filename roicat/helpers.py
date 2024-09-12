@@ -4811,13 +4811,15 @@ class Equivalence_checker():
                     at = np.abs(true)
                     r_diff = diff / at if np.all(at != 0) else np.inf
                     r_diff_mean, r_diff_max, any_nan = np.nanmean(r_diff), np.nanmax(r_diff), np.any(np.isnan(r_diff))
-                    print(f"Equivalence check failed. Path: {path}. Relative difference: mean={r_diff_mean}, max={r_diff_max}, any_nan={any_nan}") if self._verbose > 0 else None
+                    reason = f"Equivalence: Relative difference: mean={r_diff_mean}, max={r_diff_max}, any_nan={any_nan}"
                 else:
-                    print(f"Equivalence check failed. Path: {path}. Value is non-numerical.") if self._verbose > 0 else None
+                    reason = f"Values are not numpy numeric types. types: {test.dtype}, {true.dtype}"
+            else:
+                reason = "equivlance"
         elif out == True:
             print(f"Equivalence check passed. Path: {path}.") if self._verbose > 1 else None
 
-        return out
+        return out, reason
 
     def __call__(
         self,
@@ -4856,19 +4858,16 @@ class Equivalence_checker():
 
         ## NP.NDARRAY
         if isinstance(true, np.ndarray):
-            r = self._checker(test, true, path)
-            result = (r, 'equivalence')
+            result = self._checker(test, true, path)
         ## NP.SCALAR
         elif np.isscalar(true):
             if isinstance(test, (int, float, complex, np.number)):
-                r = self._checker(np.array(test), np.array(true), path)
-                result = (r, 'equivalence')
+                result = self._checker(np.array(test), np.array(true), path)
             else:
                 result = (test == true, 'equivalence')
         ## NUMBER
         elif isinstance(true, (int, float, complex)):
-            r = self._checker(test, true, path)
-            result = (result, 'equivalence')
+            result = self._checker(test, true, path)
         ## DICT
         elif isinstance(true, dict):
             result = {}
@@ -4900,18 +4899,18 @@ class Equivalence_checker():
 
         if isinstance(result, tuple):
             if self._assert_mode:
-                assert (result[0] != False), f"Equivalence check failed. Path: {path}."
+                assert (result[0] != False), f"Equivalence check failed. Path: {path}. Reason: {result[1]}"
 
             if self._verbose > 0:
                 ## Print False results
                 if result[0] == False:
-                    print(f"Equivalence check failed. Path: {path}.")
+                    print(f"Equivalence check failed. Path: {path}. Reason: {result[1]}")
             if self._verbose > 1:
                 ## Print True results
                 if result[0] == True:
-                    print(f"Equivalence check passed. Path: {path}.")
+                    print(f"Equivalence check passed. Path: {path}. Reason: {result[1]}")
                 elif result[0] is None:
-                    print(f"Equivalence check not tested. Path: {path}.")
+                    print(f"Equivalence check not tested. Path: {path}. Reason: {result[1]}")
 
         return result
 
