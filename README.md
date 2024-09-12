@@ -67,7 +67,7 @@ computer.
   notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/tracking_interactive_notebook.ipynb)
 - [Google
   CoLab](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/tracking/tracking_interactive_notebook.ipynb)
-<!-- - (TODO) [script](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/tracking_scripted_notebook.ipynb) -->
+- [Command line interface script](https://github.com/RichieHakim/ROICaT/blob/main/scripts/demo_run_tracking_pipeline.py)
   
 ### CLASSIFICATION:
 - [Interactive notebook -
@@ -131,7 +131,7 @@ issue](https://github.com/RichieHakim/ROICaT/issues) with the error.
 
 ### 1. (Recommended) Create a new conda environment
 ```
-conda create -n roicat python=3.11
+conda create -n roicat python=3.12
 conda activate roicat
 ```
 You will need to activate the environment with `conda activate roicat` each time
