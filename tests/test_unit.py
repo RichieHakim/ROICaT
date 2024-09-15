@@ -103,7 +103,7 @@ def test_data_suite2p(dir_data_test, array_hasher):
     assert all([p == p2 for p, p2 in zip(data.paths_stat, paths_stat)]), 'ROICaT Error: data.paths_stat != paths_stat'
     assert all([isinstance(p, str) for p in data.paths_ops]), 'ROICaT Error: data.paths_ops.dtype != str'
     assert all([p == p2 for p, p2 in zip(data.paths_ops, paths_ops)]), 'ROICaT Error: data.paths_ops != paths_ops'
-    assert data.um_per_pixel == params['data_loading']['common']['um_per_pixel'], 'ROICaT Error: data.um_per_pixel != params[data_loading][common][um_per_pixel]'
+    assert data.um_per_pixel == [params['data_loading']['common']['um_per_pixel'],] * len(paths_stat), 'ROICaT Error: data.um_per_pixel != [um_per_pixel,]*len(paths_stat)'
     assert data.n_sessions == len(paths_stat), 'ROICaT Error: data.n_sessions != len(paths_stat)'
     ### Types
     #### Centroids are of integer type.
@@ -125,7 +125,8 @@ def test_data_suite2p(dir_data_test, array_hasher):
     assert isinstance(data.shifts, (list, tuple)), 'ROICaT Error: data.shifts.dtype != list or tuple'
     assert all([isinstance(s, np.ndarray) for s in data.shifts]), 'ROICaT Error: data.shifts.dtype != list or tuple of np.ndarrays'
     assert all([s.dtype == np.uint64 for s in data.shifts]), 'ROICaT Error: data.shifts.dtype != list or tuple of np.ndarrays of dtype np.uint64'
-    assert isinstance(data.um_per_pixel, float), 'ROICaT Error: data.um_per_pixel.dtype != float'
+    assert isinstance(data.um_per_pixel, list), 'ROICaT Error: data.um_per_pixel.dtype != list'
+    assert all([isinstance(ump, float) for ump in data.um_per_pixel]), 'ROICaT Error: data.um_per_pixel.dtype != list of floats'
     assert isinstance(data.paths_stat, list), 'ROICaT Error: data.paths_stat.dtype != list'
     assert all([isinstance(p, str) for p in data.paths_stat]), 'ROICaT Error: data.paths_stat.dtype != list of strings'
     assert isinstance(data.paths_ops, list), 'ROICaT Error: data.paths_ops.dtype != list'

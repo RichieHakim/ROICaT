@@ -365,13 +365,13 @@ def system_info(verbose: bool = False,) -> Dict:
         print('== CUDA is not available ==') if verbose else None
 
     ## all packages in environment
-    import pkg_resources
-    pkgs_dict = {i.key: i.version for i in pkg_resources.working_set}
+    import importlib.metadata
+    pkgs_dict = {dist.metadata['Name'].lower(): dist.version for dist in importlib.metadata.distributions()}
 
     ## roicat
     import time
-    roicat_version = pkg_resources.get_distribution("roicat").version        
-    roicat_fileDate = time.ctime(os.path.getctime(pkg_resources.get_distribution("roicat").location))
+    roicat_version = importlib.metadata.version("roicat")
+    roicat_fileDate = time.ctime(os.path.getctime(importlib.metadata.distribution("roicat").locate_file('')))
     roicat_stuff = {'version': roicat_version, 'date_installed': roicat_fileDate}
     print(f'== ROICaT Version ==: {roicat_version}') if verbose else None
     print(f'== ROICaT date installed ==: {roicat_fileDate}') if verbose else None

@@ -10,12 +10,12 @@ optuna==3.6.1
 Pillow==10.4.0
 pytest==8.3.2
 scikit_learn==1.5.1
-scipy==1.13.1
+scipy==1.14.1
 seaborn==0.13.2
 sparse==0.15.4
-tqdm==4.66.4
+tqdm==4.66.5
 umap_learn==0.5.6
-xxhash==3.4.1
+xxhash==3.5.0
 bokeh==3.4.1
 psutil==6.0.0
 py_cpuinfo==9.0.0
@@ -28,6 +28,6 @@ torchaudio==2.4.0
 selenium==4.23.1
 skl2onnx==1.17.0
 onnx==1.16.2
-onnxruntime==1.18.1
+onnxruntime==1.19.0
 jupyter_bokeh==4.0.5
 onnx2torch==1.5.15

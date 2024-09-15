@@ -61,6 +61,10 @@ def test_pipeline_tracking_simple(dir_data_test):
                 },  ## Keyword arguments for the mode_transform function. See documentation for more details.
             },
         },
+        'results_saving': {
+            'dir_save': str(Path(dir_data_test).resolve() / 'pipeline_tracking'),
+            'prefix_name_save': 'test_pipeline_tracking',
+        },
     }
     params = helpers.prepare_params(params_partial, defaults)
     results, run_data, params = pipelines.pipeline_tracking(params)
@@ -141,4 +145,13 @@ def test_pipeline_tracking_simple(dir_data_test):
     
 
 
-    
+## Make a CLI to call the tests
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description='Run tests for the ROICaT package')
+    ## Add arguments
+    parser.add_argument('--dir_data_test', type=str, required=True, help='Path to the test data directory')
+    args = parser.parse_args()
+    dir_data_test = args.dir_data_test
+    test_pipeline_tracking_simple(dir_data_test)
+

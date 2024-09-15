@@ -87,9 +87,10 @@ class Data_roicat(util.ROICaT_Module):
             session and each element of the numpy array is the index of the
             class label obtained from passing the raw class label through
             np.unique(\*, return_inverse=True).
-        um_per_pixel (float): 
+        um_per_pixel (Union[float, List[float]]):
             The conversion factor from pixels to microns. This is used to scale
-            the ROI_images to a common size.
+            the ROI_images to a common size. Should either be a float or a list
+            of floats, one for each session.
         session_bool (np.ndarray): 
             A boolean matrix with shape *(n_roi_total, n_sessions)*. Each
             element is ``True`` if the ROI is present in the session.
@@ -115,7 +116,7 @@ class Data_roicat(util.ROICaT_Module):
     def set_ROI_images(
         self,
         ROI_images: List[np.ndarray],
-        um_per_pixel: Optional[float] = None,
+        um_per_pixel: Optional[List[float]] = None,
     ) -> None:
         """
         Imports ROI images into the class. Images are expected to be formatted
@@ -129,34 +130,25 @@ class Data_roicat(util.ROICaT_Module):
             ROI_images (List[np.ndarray]): 
                 List of numpy arrays each of shape *(n_roi, FOV_height,
                 FOV_width)*.
-            um_per_pixel (Optional[float]): 
-                The number of microns per pixel. This is used to resize the
-                images to a common size. (Default is ``None``)
+            um_per_pixel (Union[float, List[float]]):
+                The conversion factor from pixels to microns. This is used to scale
+                the ROI_images to a common size. Should either be a float or a list
+                of floats, one for each session.
         """
+        print(f"Starting: Importing ROI images") if self._verbose else None
+
+        ## Check the validity of the inputs
+        ROI_images = self._fix_ROI_images(ROI_images=ROI_images)
+
         ## Warn if no um_per_pixel is provided
         if um_per_pixel is None:
             ## Check if it is already set
             if hasattr(self, 'um_per_pixel'):
                 um_per_pixel = self.um_per_pixel
-            warnings.warn("RH WARNING: No um_per_pixel provided. We recommend making an educated guess. Assuming 1.0 um per pixel. This will affect the embedding results.")
-            um_per_pixel = 1.0
+            warnings.warn("RH WARNING: No um_per_pixel provided. We recommend making an educated guess. Assuming 1.0 um per pixel for each session. This will affect the embedding results.")
+            um_per_pixel = [1.0,] * len(ROI_images)
 
-        print(f"Starting: Importing ROI images") if self._verbose else None
-
-        ## Check the validity of the inputs
-        ### Check ROI_images
-        if isinstance(ROI_images, np.ndarray):
-            print("RH WARNING: ROI_images is a numpy array. Assuming n_sessions==1 and wrapping array in a list.")
-            ROI_images = [ROI_images]
-        assert isinstance(ROI_images, list), f"ROI_images should be a list. It is a {type(ROI_images)}"
-        assert all([isinstance(roi, np.ndarray) for roi in ROI_images]), f"ROI_images should be a list of numpy arrays. First element of list is of type {type(ROI_images[0])}"
-        assert all([roi.ndim==3 for roi in ROI_images]), f"ROI_images should be a list of numpy arrays of shape (n_roi, FOV_height, FOV_width). First element of list is of shape {ROI_images[0].shape}"
-        ### Assert that all the FOV heights and widths are the same
-        assert all([roi.shape[1]==ROI_images[0].shape[1] for roi in ROI_images]), f"All the FOV heights should be the same. First element of list is of shape {ROI_images[0].shape}"
-        assert all([roi.shape[2]==ROI_images[0].shape[2] for roi in ROI_images]), f"All the FOV widths should be the same. First element of list is of shape {ROI_images[0].shape}"
-
-        self._check_um_per_pixel(um_per_pixel)
-        um_per_pixel = float(um_per_pixel)
+        um_per_pixel = self._fix_um_per_pixel(um_per_pixel=um_per_pixel, n_sessions=len(ROI_images))
             
         ## Define some variables
         n_sessions = len(ROI_images)
@@ -285,16 +277,40 @@ class Data_roicat(util.ROICaT_Module):
 
         print(f"Completed: Imported labels for {n_sessions} sessions. Each session has {n_class_labels} class labels. Total number of class labels is {n_class_labels_total}.") if self._verbose else None
 
-    def _check_um_per_pixel(self, um_per_pixel: float,) -> None:
-        """
-        Checks whether um_per_pixel is of appropriate type and is positive.
+    @classmethod
+    def _fix_um_per_pixel(
+        cls,
+        um_per_pixel: Union[float, List[float]],
+        n_sessions: int,
+    ) -> List[float]:
+        if isinstance(um_per_pixel, float):
+            um_per_pixel = [um_per_pixel,] * n_sessions
+        elif isinstance(um_per_pixel, list):
+            assert all([isinstance(ump, float) for ump in um_per_pixel]), f"um_per_pixel should be a float or a list of floats. First element of list is of type {type(um_per_pixel[0])}"
+            um_per_pixel = [float(ump) for ump in um_per_pixel]
+        else:
+            raise ValueError(f"um_per_pixel should be a float or a list of floats. It is a {type(um_per_pixel)}")
+        assert len(um_per_pixel) == n_sessions, f"um_per_pixel should be a float or a list of floats of length equal to the number of sessions. It is of length {len(um_per_pixel)} and there are {n_sessions} sessions."
+        
+        return um_per_pixel
+    
+    @classmethod
+    def _fix_ROI_images(
+        cls,
+        ROI_images: List[np.ndarray],
+    ) -> List[np.ndarray]:
+        ### Check ROI_images
+        if isinstance(ROI_images, np.ndarray):
+            print("RH WARNING: ROI_images is a numpy array. Assuming n_sessions==1 and wrapping array in a list.")
+            ROI_images = [ROI_images,]
+        assert isinstance(ROI_images, list), f"ROI_images should be a list. It is a {type(ROI_images)}"
+        assert all([isinstance(roi, np.ndarray) for roi in ROI_images]), f"ROI_images should be a list of numpy arrays. First element of list is of type {type(ROI_images[0])}"
+        assert all([roi.ndim==3 for roi in ROI_images]), f"ROI_images should be a list of numpy arrays of shape (n_roi, FOV_height, FOV_width). First element of list is of shape {ROI_images[0].shape}"
+        ### Assert that all the FOV heights and widths are the same
+        assert all([roi.shape[1]==ROI_images[0].shape[1] for roi in ROI_images]), f"All the FOV heights should be the same. First element of list is of shape {ROI_images[0].shape}"
+        assert all([roi.shape[2]==ROI_images[0].shape[2] for roi in ROI_images]), f"All the FOV widths should be the same. First element of list is of shape {ROI_images[0].shape}"
 
-        Args:
-            um_per_pixel (float):
-                The number of microns per pixel.
-        """
-        assert isinstance(um_per_pixel, (int, float)), f"um_per_pixel should be a float. It is a {type(um_per_pixel)}"
-        assert um_per_pixel > 0, f"um_per_pixel should be a positive number. It is {um_per_pixel}"
+        return ROI_images
 
     def _checkValidity_classLabels_vs_ROIImages(
         self, 
@@ -334,7 +350,7 @@ class Data_roicat(util.ROICaT_Module):
     def set_spatialFootprints(
         self,
         spatialFootprints: List[Union[np.ndarray, scipy.sparse.csr_matrix, Dict[str, Any]]],
-        um_per_pixel: Optional[float] = None,
+        um_per_pixel: Optional[Union[float, List[float]]] = None,
     ):
         """
         Sets the **spatialFootprints** attribute.
@@ -352,19 +368,11 @@ class Data_roicat(util.ROICaT_Module):
                   should be a serialized **scipy.sparse.csr_matrix** object. It
                   should contains keys: 'data', 'indices', 'indptr', 'shape'.
                   See **scipy.sparse.csr_matrix** for more information.
-            um_per_pixel (Optional[float]): 
-                The number of microns per pixel. This is used to resize the
-                images to a common size. (Default is ``None``)
+            um_per_pixel (Union[float, List[float]]):
+                The conversion factor from pixels to microns. This is used to scale
+                the ROI_images to a common size. Should either be a float or a list
+                of floats, one for each session.
         """
-        ## Warn if no um_per_pixel is provided
-        if um_per_pixel is None:
-            ## Check if it is already set
-            if hasattr(self, 'um_per_pixel'):
-                um_per_pixel = self.um_per_pixel
-            else:
-                warnings.warn("RH WARNING: No um_per_pixel provided. We recommend making an educated guess. Assuming 1.0 um per pixel. This will affect the embedding results.")
-                um_per_pixel = 1.0
-
         ## Check inputs
         if isinstance(spatialFootprints, list)==False:
             print(f'RH WARNING: Input spatialFootprints is not a list. Converting to list.')
@@ -384,8 +392,16 @@ class Data_roicat(util.ROICaT_Module):
         else:
             raise ValueError(f"spatialFootprints should be a list of numpy.ndarray objects, scipy.sparse.csr_matrix objects, or dictionaries of csr_matrix input arguments (see documentation). Found elements of type: {type(spatialFootprints[0])}")
 
-        self._check_um_per_pixel(um_per_pixel)
-        um_per_pixel = float(um_per_pixel)
+        ## Warn if no um_per_pixel is provided
+        if um_per_pixel is None:
+            ## Check if it is already set
+            if hasattr(self, 'um_per_pixel'):
+                um_per_pixel = self.um_per_pixel
+            else:
+                warnings.warn("RH WARNING: No um_per_pixel provided. We recommend making an educated guess. Assuming 1.0 um per pixel. This will affect the embedding results.")
+                um_per_pixel = [1.0,] * len(sf_all)
+
+        um_per_pixel = self._fix_um_per_pixel(um_per_pixel=um_per_pixel, n_sessions=len(sf_all))
 
         ## Get some variables
         n_sessions = len(sf_all)
@@ -726,7 +742,6 @@ class Data_roicat(util.ROICaT_Module):
     def __repr__(self):
         ## Check which attributes are set
         attr_to_print = {key: val for key,val in self.__dict__.items() if key in [
-            'um_per_pixel', 
             'n_sessions', 
             'n_classes', 
             'n_class_labels', 
@@ -736,6 +751,7 @@ class Data_roicat(util.ROICaT_Module):
             'n_roi_total',
             'FOV_height',
             'FOV_width',
+            'um_per_pixel', 
         ]}
         return f"Data_roicat object: {attr_to_print}."
 
@@ -802,8 +818,11 @@ class Data_suite2p(Data_roicat):
             pathlib.Path, list of str or list of pathlib.Path. Optional. Used to
             get FOV_images, FOV_height, FOV_width, and shifts (if old matlab ops
             file).
-        um_per_pixel (float):
+        um_per_pixel (Union[float, List[float]]):
             Resolution in micrometers per pixel of the imaging field of view.
+            The conversion factor from pixels to microns. This is used to scale
+            the ROI_images to a common size. Should either be a float or a list
+            of floats, one for each session.
         new_or_old_suite2p (str):
             Type of suite2p output files. Matlab=old, Python=new. Should be:
             ``'new'`` or ``'old'``.
@@ -827,6 +846,13 @@ class Data_suite2p(Data_roicat):
             n_roi specifying the class label for each ROI. If list of str, each
             element should be a path to a .npy file containing an array of
             length n_roi specifying the class label for each ROI.
+        paths_iscell (str or pathlib.Path or list of str or list of pathlib.Path):
+            Optional. Paths to the iscell.npy files. Elements should be one of:
+            str, pathlib.Path, list of str or list of pathlib.Path. If provided,
+            the iscell.npy files are used to set the class labels. If not
+            provided, the class labels are set to None. An iscell.npy file is
+            assumed to be a 2D numpy array of shape *(n_ROIs, (iscell boolean,
+            probability float))*
         FOV_height_width (tuple of int, optional):
             FOV height and width. If ``None``, **paths_opsFiles** must be
             provided to get FOV height and width.
@@ -837,13 +863,14 @@ class Data_suite2p(Data_roicat):
         self,
         paths_statFiles: Union[str, pathlib.Path, List[Union[str, pathlib.Path]]],
         paths_opsFiles: Optional[Union[str, pathlib.Path, List[Union[str, pathlib.Path]]]] = None,
-        um_per_pixel: float = 1.0,
+        um_per_pixel: Union[float, List[float]] = 1.0,
         new_or_old_suite2p: str = 'new',
         out_height_width: Tuple[int, int] = (36, 36),
         type_meanImg: str = 'meanImgE',
         FOV_images: Optional[np.ndarray] = None,
         centroid_method: str = 'centerOfMass',
         class_labels: Optional[Union[List[np.ndarray], List[str], None]] = None,
+        paths_iscell: Optional[Union[str, pathlib.Path, List[Union[str, pathlib.Path]]]] = None,
         FOV_height_width: Optional[Tuple[int, int]] = None,
         verbose: bool = True,
     ):
@@ -892,7 +919,10 @@ class Data_suite2p(Data_roicat):
         self._transform_spatialFootprints_to_ROIImages(out_height_width=out_height_width)
 
         ## Make class labels
-        self.set_class_labels(labels=class_labels) if class_labels is not None else None
+        if class_labels is not None:
+            self.set_class_labels(labels=class_labels)
+        elif paths_iscell is not None:
+            self.set_class_labels(labels=[np.load(path)[:,0].astype(np.int64) for path in fix_paths(paths_iscell)])
 
 
     def import_FOV_images(
@@ -1185,8 +1215,11 @@ class Data_caiman(Data_roicat):
         include_discarded (bool):
             If ``True``, include ROIs that were discarded by CaImAn. Default is
             ``True``.
-        um_per_pixel (float):
-            Microns per pixel. Default is 1.0.
+        um_per_pixel (Union[float, List[float]]):
+            Resolution in micrometers per pixel of the imaging field of view.
+            The conversion factor from pixels to microns. This is used to scale
+            the ROI_images to a common size. Should either be a float or a list
+            of floats, one for each session.
         out_height_width (List[int]):
             Output height and width. Default is [36, 36].
         centroid_method (str):
@@ -1485,9 +1518,11 @@ class Data_roiextractors(Data_roicat):
         segmentation_extractor_objects (list): 
             List of segmentation extractor objects. All objects must be of the
             same type.
-        um_per_pixel (float, optional): 
-            The resolution, specified as 'micrometers per pixel' of the imaging
-            field of view. Defaults to 1.0.
+        um_per_pixel (Union[float, List[float]]):
+            Resolution in micrometers per pixel of the imaging field of view.
+            The conversion factor from pixels to microns. This is used to scale
+            the ROI_images to a common size. Should either be a float or a list
+            of floats, one for each session.
         out_height_width (tuple of int, optional): 
             The height and width of output ROI images, specified as *(y, x)*.
             Defaults to *[36,36]*.
