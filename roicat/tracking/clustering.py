@@ -105,6 +105,13 @@ class Clusterer(util.ROICaT_Module):
         ## Imports
         super().__init__()
 
+        ## Store parameter (but not data) args as attributes
+        self.params['__init__'] = {locals()[k] for k in [
+            'n_bins',
+            'smoothing_window_bins',
+            'verbose',
+        ]}
+
         self.s_sf = s_sf
         self.s_NN_z = s_NN_z
         self.s_SWT_z = s_SWT_z
@@ -199,6 +206,16 @@ class Clusterer(util.ROICaT_Module):
         """
         import optuna
 
+        ## Store parameter (but not data) args as attributes
+        self.params['find_optimal_parameters_for_pruning'] = {locals()[k] for k in [
+            'kwargs_findParameters',
+            'bounds_findParameters',
+            'n_jobs_findParameters',
+            'n_bins',
+            'smoothing_window_bins',
+            'seed',
+        ]}
+
         self.n_bins = self.n_bins if n_bins is None else n_bins
         self.smoothing_window_bins = self.smooth_window if smoothing_window_bins is None else smoothing_window_bins
 
@@ -282,6 +299,16 @@ class Clusterer(util.ROICaT_Module):
                 ``None``, then the optimal cutoff distance is inferred. (Default
                 is ``None``)
         """
+        ## Store parameter (but not data) args as attributes
+        self.params['make_pruned_similarity_graphs'] = {locals()[k] for k in [
+            'convert_to_probability',
+            'stringency',
+            'n_jobs_findParameters',
+            'n_bins',
+            'smoothing_window_bins',
+            'seed',
+        ]}
+
         if kwargs_makeConjunctiveDistanceMatrix is None:
             if hasattr(self, 'kwargs_makeConjunctiveDistanceMatrix_best'):
                 kwargs_makeConjunctiveDistanceMatrix = self.kwargs_makeConjunctiveDistanceMatrix_best
@@ -361,7 +388,7 @@ class Clusterer(util.ROICaT_Module):
 
     def fit(
         self,
-        d_conj: float,
+        d_conj: scipy.sparse.csr_matrix,
         session_bool: np.ndarray,
         min_cluster_size: int = 2,
         n_iter_violationCorrection: int = 5,
@@ -384,7 +411,7 @@ class Clusterer(util.ROICaT_Module):
            other ROIs outside the cluster that are from the same session. \n
 
         Args:
-            d_conj (float): 
+            d_conj (scipy.sparse.csr_matrix): 
                 Conjunctive distance matrix.
             session_bool (np.ndarray): 
                 Boolean array indicating which ROIs belong to which session.
@@ -427,6 +454,18 @@ class Clusterer(util.ROICaT_Module):
                 labels (np.ndarray): 
                     Cluster labels for each ROI, shape: *(n_rois_total)*
         """
+        ## Store parameter (but not data) args as attributes
+        self.params['fit'] = {locals()[k] for k in [
+            'min_cluster_size',
+            'n_iter_violationCorrection',
+            'cluster_selection_method',
+            'd_clusterMerge',
+            'alpha',
+            'split_intraSession_clusters',
+            'discard_failed_pruning',
+            'n_steps_clusterSplit',
+        ]}
+
         import hdbscan
         d = d_conj.copy().multiply(self.s_sesh)
 
@@ -585,6 +624,11 @@ class Clusterer(util.ROICaT_Module):
                 labels (np.ndarray): 
                     Cluster labels. Shape: *(n_rois,)*
         """
+        ## Store parameter (but not data) args as attributes
+        self.params['fit_sequentialHungarian'] = {locals()[k] for k in [
+            'thresh_cost',
+        ]}
+
         print(f"Clustering with CaImAn's sequential Hungarian algorithm method...") if self._verbose else None
         def find_matches(D_s):
             # todo todocument
@@ -675,9 +719,8 @@ class Clusterer(util.ROICaT_Module):
         self.labels = labels
         return self.labels
             
-    @classmethod
     def make_conjunctive_distance_matrix(
-        cls,
+        self,
         s_sf: Optional[scipy.sparse.csr_matrix] = None,
         s_NN: Optional[scipy.sparse.csr_matrix] = None,
         s_SWT: Optional[scipy.sparse.csr_matrix] = None,
@@ -751,15 +794,27 @@ class Clusterer(util.ROICaT_Module):
         assert (s_sf is not None) or (s_NN is not None) or (s_SWT is not None), \
             'At least one of s_sf, s_NN, or s_SWT must be provided.'
         
+        ## Store parameter (but not data) args as attributes
+        self.params['make_conjunctive_distance_matrix'] = {locals()[k] for k in [
+            'power_SF',
+            'power_NN',
+            'power_SWT',
+            'p_norm',
+            'sig_SF_kwargs',
+            'sig_NN_kwargs',
+            'sig_SWT_kwargs',
+        ]}
+
+        
         p_norm = 1e-9 if p_norm == 0 else p_norm
 
-        sSF_data = cls._activation_function(s_sf.data, sig_SF_kwargs, power_SF) if s_sf is not None else None
-        sNN_data = cls._activation_function(s_NN.data, sig_NN_kwargs, power_NN) if s_NN is not None else None
-        sSWT_data = cls._activation_function(s_SWT.data, sig_SWT_kwargs, power_SWT) if s_SWT is not None else None
+        sSF_data = self._activation_function(s_sf.data, sig_SF_kwargs, power_SF) if s_sf is not None else None
+        sNN_data = self._activation_function(s_NN.data, sig_NN_kwargs, power_NN) if s_NN is not None else None
+        sSWT_data = self._activation_function(s_SWT.data, sig_SWT_kwargs, power_SWT) if s_SWT is not None else None
 
         s_list = [s for s in [sSF_data, sNN_data, sSWT_data] if s is not None]
         
-        sConj_data = cls._pNorm(
+        sConj_data = self._pNorm(
             s_list=s_list,
             p=p_norm,
         )
@@ -778,9 +833,8 @@ class Clusterer(util.ROICaT_Module):
 
         return dConj, sConj, sSF_data, sNN_data, sSWT_data, sConj_data
 
-    @classmethod
     def _activation_function(
-        cls, 
+        self, 
         s: Optional[torch.Tensor] = None, 
         sig_kwargs: Optional[Dict[str, float]] = {'mu':0.0, 'b':1.0}, 
         power: Optional[float] = 1
@@ -815,9 +869,8 @@ class Clusterer(util.ROICaT_Module):
         
         return fn_power(torch.clamp(fn_sigmoid(s, sig_kwargs), min=0), power)
         
-    @classmethod
     def _pNorm(
-        cls, 
+        self, 
         s_list: List[Optional[torch.Tensor]], 
         p: float
     ) -> torch.Tensor:
@@ -963,6 +1016,29 @@ class Clusterer(util.ROICaT_Module):
         plt.legend(['same', 'same (cropped)', 'diff', 'all', 'diff - same', 'all - diff', '(diff * same) * 1000', 'crossover'])
         return fig
 
+    def _fn_smooth(
+        self,
+        x: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Smooths a 1D tensor using a convolution operation.
+
+        Args:
+            x (torch.Tensor): 
+                1D tensor to be smoothed.
+
+        Returns:
+            (torch.Tensor): 
+                Smoothed tensor.
+        """
+        return helpers.Convolver_1d(
+            kernel=torch.ones(self.smooth_window),
+            length_x=self.n_bins,
+            pad_mode='same',
+            correct_edge_effects=True,
+            device='cpu',
+        ).convolve(x)
+
     def _separate_diffSame_distributions(
         self, 
         d_conj: scipy.sparse.csr_matrix
@@ -998,14 +1074,6 @@ class Clusterer(util.ROICaT_Module):
                     Distance at which the same and different distributions
                     crossover.
         """
-        self._fn_smooth = helpers.Convolver_1d(
-            kernel=torch.ones(self.smooth_window),
-            length_x=self.n_bins,
-            pad_mode='same',
-            correct_edge_effects=True,
-            device='cpu',
-        ).convolve
-
         edges = torch.linspace(0,1, self.n_bins+1, dtype=torch.float32)
         
         d_all = d_conj.copy()

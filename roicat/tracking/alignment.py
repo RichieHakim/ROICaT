@@ -25,6 +25,10 @@ class Aligner(util.ROICaT_Module):
         self,
         verbose=True,
     ):
+        ## Store parameter (but not data) args as attributes
+        self.params = {}
+        self.params['__init__'] = {locals()[k] for k in ['verbose']}
+
         self._verbose = verbose
         
         self.remappingIdx_geo = None
@@ -34,9 +38,8 @@ class Aligner(util.ROICaT_Module):
 
         self._HW = None
 
-    @classmethod
     def augment_FOV_images(
-        cls,
+        self,
         FOV_images: List[np.ndarray],
         spatialFootprints: Optional[List[scipy.sparse.csr_matrix]] = None,
         normalize_FOV_intensities: bool = True,
@@ -87,6 +90,16 @@ class Aligner(util.ROICaT_Module):
         ## Warn if roi_FOV_mixing_factor != 0 but spatialFootprints is None
         if (roi_FOV_mixing_factor != 0) and (spatialFootprints is None):
             warnings.warn("roi_FOV_mixing_factor != 0 but spatialFootprints is None. No mixing will be performed.")
+
+        ## Store parameter (but not data) args as attributes
+        self.params['augment_FOV_images'] = {locals()[k] for k in [
+            'normalize_FOV_intensities',
+            'roi_FOV_mixing_factor',
+            'use_CLAHE',
+            'CLAHE_grid_size',
+            'CLAHE_clipLimit',
+            'CLAHE_normalize',
+        ]}
         
         h,w = FOV_images[0].shape
         sf = spatialFootprints
@@ -169,6 +182,18 @@ class Aligner(util.ROICaT_Module):
         """
         ## Imports
         super().__init__()
+
+        ## Store parameter (but not data) args as attributes
+        self.params['fit_geometric'] = {locals()[k] for k in [
+            'template' if isinstance(template, int) else None,
+            'template_method',
+            'mode_transform',
+            'gaussFiltSize',
+            'mask_borders',
+            'n_iter',
+            'termination_eps',
+            'auto_fix_gaussFilt_step',
+        ]}
         
         # Check if ims_moving is a non-empty list
         assert len(ims_moving) > 0, "ims_moving must be a non-empty list of images."
@@ -340,6 +365,14 @@ class Aligner(util.ROICaT_Module):
         # Check if mode_transform is valid
         valid_mode_transforms = {'createOptFlow_DeepFlow', 'calcOpticalFlowFarneback'}
         assert mode_transform in valid_mode_transforms, f"mode_transform must be one of {valid_mode_transforms}"
+
+        ## Store parameter (but not data) args as attributes
+        self.params['fit_nonrigid'] = {locals()[k] for k in [
+            'template' if isinstance(template, int) else None,
+            'template_method',
+            'mode_transform',
+            'kwargs_mode_transform',
+        ]}
 
         # Warn if any images have values below 0 or NaN
         found_0 = np.any([np.any(im < 0) for im in ims_moving])
@@ -584,6 +617,11 @@ class Aligner(util.ROICaT_Module):
                 ROIs_aligned (List[np.ndarray]): 
                     Transformed ROIs.
         """
+        ## Store parameter (but not data) args as attributes
+        self.params['transform_ROIs'] = {locals()[k] for k in [
+            'normalize',
+        ]}
+
         if remappingIdx is None:
             assert (self.remappingIdx_geo is not None) or (self.remappingIdx_nonrigid is not None), 'If remappingIdx is not provided, then geometric or nonrigid registration must be performed first.'
             remappingIdx = self.remappingIdx_nonrigid if self.remappingIdx_nonrigid is not None else self.remappingIdx_geo

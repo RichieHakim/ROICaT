@@ -4349,7 +4349,7 @@ class Toeplitz_convolution2d():
         self.k = k = np.flipud(k.copy())
         self.mode = mode
         self.x_shape = x_shape
-        self.dtype = k.dtype if dtype is None else dtype
+        dtype = k.dtype if dtype is None else dtype
 
         if mode == 'valid':
             assert x_shape[0] >= k.shape[0] and x_shape[1] >= k.shape[1], "x must be larger than k in both dimensions for mode='valid'"
@@ -4358,12 +4358,12 @@ class Toeplitz_convolution2d():
 
         ## make the toeplitz matrices
         t = toeplitz_matrices = [scipy.sparse.diags(
-            diagonals=np.ones((k.shape[1], x_shape[1]), dtype=self.dtype) * k_i[::-1][:,None], 
+            diagonals=np.ones((k.shape[1], x_shape[1]), dtype=dtype) * k_i[::-1][:,None], 
             offsets=np.arange(-k.shape[1]+1, 1), 
             shape=(so[1], x_shape[1]),
-            dtype=self.dtype,
+            dtype=dtype,
         ) for k_i in k[::-1]]  ## make the toeplitz matrices for the rows of the kernel
-        tc = toeplitz_concatenated = scipy.sparse.vstack(t + [scipy.sparse.dia_matrix((t[0].shape), dtype=self.dtype)]*(x_shape[0]-1))  ## add empty matrices to the bottom of the block due to padding, then concatenate
+        tc = toeplitz_concatenated = scipy.sparse.vstack(t + [scipy.sparse.dia_matrix((t[0].shape), dtype=dtype)]*(x_shape[0]-1))  ## add empty matrices to the bottom of the block due to padding, then concatenate
 
         ## make the double block toeplitz matrix
         self.dt = double_toeplitz = scipy.sparse.hstack([self._roll_sparse(
@@ -4976,3 +4976,32 @@ def get_balanced_sample_weights(
         weights = class_weights
     sample_weights = weights[labels]
     return sample_weights
+
+
+def safe_set_attr(
+    obj: Any, 
+    attr: str, 
+    value: Any, 
+    overwrite: bool = False,
+) -> None:
+    """
+    Safely sets an attribute on an object. If the attribute is not present, it
+    will be created. If the attribute is present, it will only be overwritten if
+    ``overwrite`` is set to ``True``.
+    RH 2024
+
+    Args:
+        obj (Any): 
+            Object to set the attribute on.
+        attr (str): 
+            Attribute name.
+        value (Any): 
+            Value to set the attribute to.
+        overwrite (bool): 
+            Whether to overwrite the attribute if it already exists.
+            (Default is ``False``)
+    """
+    if not hasattr(obj, attr):
+        setattr(obj, attr, value)
+    elif overwrite:
+        setattr(obj, attr, value)

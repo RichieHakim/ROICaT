@@ -46,6 +46,14 @@ class SWT(util.ROICaT_Module):
         ## Imports
         super().__init__()
 
+        ## Store parameter (but not data) args as attributes
+        self.params['make_pruned_similarity_graphs'] = {locals()[k] for k in [
+            'kwargs_Scattering2D',
+            'image_shape',
+            'device',
+            'verbose',
+        ]}
+
         from kymatio.torch import Scattering2D
 
         self._verbose = verbose
@@ -71,6 +79,11 @@ class SWT(util.ROICaT_Module):
                 latents (np.ndarray):
                     The transformed ROI images. *(n_ROIs, latent_size)*
         """
+        ## Store parameter (but not data) args as attributes
+        self.params['transform'] = {locals()[k] for k in [
+            'batch_size',
+        ]}
+
         print('Starting: SWT transform on ROIs') if self._verbose else None
         def helper_swt(ims_batch):
             sfs = torch.as_tensor(np.ascontiguousarray(ims_batch[None,...]), device=self._device, dtype=torch.float32)
