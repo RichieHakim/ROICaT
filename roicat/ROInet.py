@@ -74,6 +74,7 @@ class Resizer_ROI_images(util.ROICaT_Module):
         nan_to_num: bool=True, 
         nan_to_num_val: float=0.0, verbose: bool=True,
     ):
+        super().__init__()
         self.nan_to_num = nan_to_num
         self.nan_to_num_val = nan_to_num_val
         self._verbose = verbose
