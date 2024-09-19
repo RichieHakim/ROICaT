@@ -233,6 +233,8 @@ class Dataloader_ROInet(util.ROICaT_Module):
             drop_last_dataloader: bool = False,
             verbose: bool = True,
         ):
+        super().__init__()
+        
         self._verbose = verbose
         numWorkers_dataloader = mp.cpu_count() if numWorkers_dataloader == -1 else numWorkers_dataloader
 
