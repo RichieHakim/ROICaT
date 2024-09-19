@@ -47,12 +47,15 @@ class SWT(util.ROICaT_Module):
         super().__init__()
 
         ## Store parameter (but not data) args as attributes
-        self.params['make_pruned_similarity_graphs'] = {locals()[k] for k in [
-            'kwargs_Scattering2D',
-            'image_shape',
-            'device',
-            'verbose',
-        ]}
+        self.params['__init__'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'kwargs_Scattering2D',
+                'image_shape',
+                'device',
+                'verbose',
+            ],
+        )
 
         from kymatio.torch import Scattering2D
 
@@ -80,9 +83,9 @@ class SWT(util.ROICaT_Module):
                     The transformed ROI images. *(n_ROIs, latent_size)*
         """
         ## Store parameter (but not data) args as attributes
-        self.params['transform'] = {locals()[k] for k in [
-            'batch_size',
-        ]}
+        self.params['transform'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=['batch_size',],)
 
         print('Starting: SWT transform on ROIs') if self._verbose else None
         def helper_swt(ims_batch):

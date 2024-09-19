@@ -134,9 +134,12 @@ class Data_roicat(util.ROICaT_Module):
                 of floats, one for each session.
         """
         ## Store parameter (but not data) args as attributes
-        self.params['set_ROI_images'] = {locals()[k] for k in [
-            'um_per_pixel',
-        ]}
+        self.params['set_ROI_images'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'um_per_pixel',
+            ],
+        )
 
         print(f"Starting: Importing ROI images") if self._verbose else None
 
@@ -219,10 +222,13 @@ class Data_roicat(util.ROICaT_Module):
                 class labels. (Default is ``None``)
         """
         ## Store parameter (but not data) args as attributes
-        self.params['set_class_labels'] = {locals()[k] for k in [
-            'path_labels',
-            'n_classes',
-        ]}
+        self.params['set_class_labels'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'path_labels',
+                'n_classes',
+            ],
+        )
 
         print(f"Starting: Importing class labels") if self._verbose else None
 
@@ -383,9 +389,12 @@ class Data_roicat(util.ROICaT_Module):
                 of floats, one for each session.
         """
         ## Store parameter (but not data) args as attributes
-        self.params['set_spatialFootprints'] = {locals()[k] for k in [
-            'um_per_pixel',
-        ]}
+        self.params['set_spatialFootprints'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'um_per_pixel',
+            ],
+        )
 
         ## Check inputs
         if isinstance(spatialFootprints, list)==False:
@@ -454,8 +463,8 @@ class Data_roicat(util.ROICaT_Module):
                 array should have shape *(FOV_height, FOV_width)*.
         """
         ## Store parameter (but not data) args as attributes
-        self.params['set_FOV_images'] = {locals()[k] for k in []}
-        
+        ### Nothing to store        
+
         if isinstance(FOV_images, np.ndarray):
             assert FOV_images.ndim == 3, f"RH ERROR: FOV_images must be a list of 2D numpy arrays."
             FOV_images = [fov for fov in FOV_images]
@@ -496,10 +505,13 @@ class Data_roicat(util.ROICaT_Module):
                 The width of the field of view (FOV) in pixels.
         """
         ## Store parameter (but not data) args as attributes
-        self.params['set_FOVHeightWidth'] = {locals()[k] for k in [
-            'FOV_height',
-            'FOV_width',
-        ]}
+        self.params['set_FOVHeightWidth'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'FOV_height',
+                'FOV_width',
+            ],
+        )
 
         ## Check inputs
         assert isinstance(FOV_height, int), f"RH ERROR: FOV_height must be an integer."
@@ -909,13 +921,16 @@ class Data_suite2p(Data_roicat):
         self.n_sessions = len(self.paths_stat)
 
         ## Store parameter (but not data) args as attributes
-        self.params['__init__'] = {locals()[k] for k in [
-            'new_or_old_suite2p', 
-            'out_height_width', 
-            'type_meanImg', 
-            'centroid_method', 
-            'verbose',
-        ]}
+        self.params['__init__'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'new_or_old_suite2p', 
+                'out_height_width', 
+                'type_meanImg', 
+                'centroid_method', 
+                'verbose',
+            ],
+        )
 
         self._verbose = verbose
         
@@ -1282,11 +1297,14 @@ class Data_caiman(Data_roicat):
         self._verbose = verbose
 
         ## Store parameter (but not data) args as attributes
-        self.params['__init__'] = {locals()[k] for k in [
-            'out_height_width', 
-            'centroid_method', 
-            'verbose',
-        ]}
+        self.params['__init__'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'out_height_width', 
+                'centroid_method', 
+                'verbose',
+            ],
+        )
 
         # 1. import_caiman_results
         # # self.spatialFootprints
@@ -1603,13 +1621,16 @@ class Data_roiextractors(Data_roicat):
         super().__init__()
 
         ## Store parameter (but not data) args as attributes
-        self.params['__init__'] = {locals()[k] for k in [
-            'out_height_width', 
-            'FOV_image_name', 
-            'fallback_FOV_height_width', 
-            'centroid_method', 
-            'verbose',
-        ]}
+        self.params['__init__'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'out_height_width', 
+                'FOV_image_name', 
+                'fallback_FOV_height_width', 
+                'centroid_method', 
+                'verbose',
+            ],
+        )
 
         self._verbose = verbose
 

@@ -79,10 +79,13 @@ class Resizer_ROI_images(util.ROICaT_Module):
         self._verbose = verbose
 
         ## Store parameter (but not data) args as attributes
-        self.params['__init__'] = {locals()[k] for k in [
-            'nan_to_num',
-            'nan_to_num_val',
-        ]}
+        self.params['__init__'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'nan_to_num',
+                'nan_to_num_val',
+            ],
+        )
 
         self.function_scaleFactor = function_scaleFactor
         
@@ -147,9 +150,12 @@ class Resizer_ROI_images(util.ROICaT_Module):
                     The resized ROI images.
         """
         ## Store parameter (but not data) args as attributes
-        self.params['resize_ROIs'] = {locals()[k] for k in [
-            'um_per_pixel',
-        ]}
+        self.params['resize_ROIs'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'um_per_pixel',
+            ],
+        )
 
         self._check_ROI_images(ROI_images)
         assert isinstance(um_per_pixel, (int, float)), f'um_per_pixel should be an int or float, but is {type(um_per_pixel)}'
@@ -230,19 +236,22 @@ class Dataloader_ROInet(util.ROICaT_Module):
         numWorkers_dataloader = mp.cpu_count() if numWorkers_dataloader == -1 else numWorkers_dataloader
 
         ## Store parameter (but not data) args as attributes
-        self.params['__init__'] = {locals()[k] for k in [
-            'batchSize_dataloader',
-            'pinMemory_dataloader',
-            'numWorkers_dataloader',
-            'persistentWorkers_dataloader',
-            'prefetchFactor_dataloader',
-            'n_transforms',
-            'img_size_out',
-            'jit_script_transforms',
-            'shuffle_dataloader',
-            'drop_last_dataloader',
-            'verbose',
-        ]}
+        self.params['__init__'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'batchSize_dataloader',
+                'pinMemory_dataloader',
+                'numWorkers_dataloader',
+                'persistentWorkers_dataloader',
+                'prefetchFactor_dataloader',
+                'n_transforms',
+                'img_size_out',
+                'jit_script_transforms',
+                'shuffle_dataloader',
+                'drop_last_dataloader',
+                'verbose',
+            ],
+        )
 
         ## Type checking / correction
         if not isinstance(img_size_out, (tuple, list)):
@@ -364,16 +373,19 @@ class ROInet_embedder(util.ROICaT_Module):
         super().__init__()
 
         ## Store parameter (but not data) args as attributes
-        self.params['__init__'] = {locals()[k] for k in [
-            'dir_networkFiles',
-            'device',
-            'download_method',
-            'download_url',
-            'download_hash',
-            'names_networkFiles',
-            'forward_pass_version',
-            'verbose',
-        ]}
+        self.params['__init__'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'dir_networkFiles',
+                'device',
+                'download_method',
+                'download_url',
+                'download_hash',
+                'names_networkFiles',
+                'forward_pass_version',
+                'verbose',
+            ],
+        )
 
         self._device = device
         self._verbose = verbose
@@ -532,19 +544,22 @@ class ROInet_embedder(util.ROICaT_Module):
         ROI_images = data_importing.Data_roicat._fix_ROI_images(ROI_images=ROI_images)
 
         ## Store parameter (but not data) args as attributes
-        self.params['generate_dataloader'] = {locals()[k] for k in [
-            'um_per_pixel',
-            'nan_to_num',
-            'nan_to_num_val',
-            'pref_plot',
-            'batchSize_dataloader',
-            'pinMemory_dataloader',
-            'numWorkers_dataloader',
-            'persistentWorkers_dataloader',
-            'prefetchFactor_dataloader',
-            'img_size_out',
-            'jit_script_transforms',
-        ]}            
+        self.params['generate_dataloader'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'um_per_pixel',
+                'nan_to_num',
+                'nan_to_num_val',
+                'pref_plot',
+                'batchSize_dataloader',
+                'pinMemory_dataloader',
+                'numWorkers_dataloader',
+                'persistentWorkers_dataloader',
+                'prefetchFactor_dataloader',
+                'img_size_out',
+                'jit_script_transforms',
+            ],
+        )    
 
         roi_resizer = Resizer_ROI_images(
             nan_to_num=nan_to_num,

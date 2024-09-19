@@ -106,11 +106,14 @@ class Clusterer(util.ROICaT_Module):
         super().__init__()
 
         ## Store parameter (but not data) args as attributes
-        self.params['__init__'] = {locals()[k] for k in [
-            'n_bins',
-            'smoothing_window_bins',
-            'verbose',
-        ]}
+        self.params['__init__'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'n_bins',
+                'smoothing_window_bins',
+                'verbose',
+            ],
+        )
 
         self.s_sf = s_sf
         self.s_NN_z = s_NN_z
@@ -207,14 +210,17 @@ class Clusterer(util.ROICaT_Module):
         import optuna
 
         ## Store parameter (but not data) args as attributes
-        self.params['find_optimal_parameters_for_pruning'] = {locals()[k] for k in [
-            'kwargs_findParameters',
-            'bounds_findParameters',
-            'n_jobs_findParameters',
-            'n_bins',
-            'smoothing_window_bins',
-            'seed',
-        ]}
+        self.params['find_optimal_parameters_for_pruning'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'kwargs_findParameters',
+                'bounds_findParameters',
+                'n_jobs_findParameters',
+                'n_bins',
+                'smoothing_window_bins',
+                'seed',
+            ],
+        )
 
         self.n_bins = self.n_bins if n_bins is None else n_bins
         self.smoothing_window_bins = self.smooth_window if smoothing_window_bins is None else smoothing_window_bins
@@ -300,14 +306,17 @@ class Clusterer(util.ROICaT_Module):
                 is ``None``)
         """
         ## Store parameter (but not data) args as attributes
-        self.params['make_pruned_similarity_graphs'] = {locals()[k] for k in [
-            'convert_to_probability',
-            'stringency',
-            'n_jobs_findParameters',
-            'n_bins',
-            'smoothing_window_bins',
-            'seed',
-        ]}
+        self.params['make_pruned_similarity_graphs'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'convert_to_probability',
+                'stringency',
+                'n_jobs_findParameters',
+                'n_bins',
+                'smoothing_window_bins',
+                'seed',
+            ],
+        )
 
         if kwargs_makeConjunctiveDistanceMatrix is None:
             if hasattr(self, 'kwargs_makeConjunctiveDistanceMatrix_best'):
@@ -455,16 +464,19 @@ class Clusterer(util.ROICaT_Module):
                     Cluster labels for each ROI, shape: *(n_rois_total)*
         """
         ## Store parameter (but not data) args as attributes
-        self.params['fit'] = {locals()[k] for k in [
-            'min_cluster_size',
-            'n_iter_violationCorrection',
-            'cluster_selection_method',
-            'd_clusterMerge',
-            'alpha',
-            'split_intraSession_clusters',
-            'discard_failed_pruning',
-            'n_steps_clusterSplit',
-        ]}
+        self.params['fit'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'min_cluster_size',
+                'n_iter_violationCorrection',
+                'cluster_selection_method',
+                'd_clusterMerge',
+                'alpha',
+                'split_intraSession_clusters',
+                'discard_failed_pruning',
+                'n_steps_clusterSplit',
+            ],
+        )
 
         import hdbscan
         d = d_conj.copy().multiply(self.s_sesh)
@@ -625,9 +637,9 @@ class Clusterer(util.ROICaT_Module):
                     Cluster labels. Shape: *(n_rois,)*
         """
         ## Store parameter (but not data) args as attributes
-        self.params['fit_sequentialHungarian'] = {locals()[k] for k in [
-            'thresh_cost',
-        ]}
+        self.params['fit_sequentialHungarian'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=['thresh_cost',],)
 
         print(f"Clustering with CaImAn's sequential Hungarian algorithm method...") if self._verbose else None
         def find_matches(D_s):
@@ -795,16 +807,18 @@ class Clusterer(util.ROICaT_Module):
             'At least one of s_sf, s_NN, or s_SWT must be provided.'
         
         ## Store parameter (but not data) args as attributes
-        self.params['make_conjunctive_distance_matrix'] = {locals()[k] for k in [
-            'power_SF',
-            'power_NN',
-            'power_SWT',
-            'p_norm',
-            'sig_SF_kwargs',
-            'sig_NN_kwargs',
-            'sig_SWT_kwargs',
-        ]}
-
+        self.params['make_conjunctive_distance_matrix'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'power_SF',
+                'power_NN',
+                'power_SWT',
+                'p_norm',
+                'sig_SF_kwargs',
+                'sig_NN_kwargs',
+                'sig_SWT_kwargs',
+            ],
+        )
         
         p_norm = 1e-9 if p_norm == 0 else p_norm
 

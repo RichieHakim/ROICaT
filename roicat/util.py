@@ -416,6 +416,8 @@ class ROICaT_Module:
         Initializes the ROICaT_Module class by gathering system information.
         """
         self._system_info = system_info()
+        
+        self.params = {}
         pass
 
     @property
@@ -587,6 +589,29 @@ class ROICaT_Module:
 
         print(f"Loaded Data_roicat object from {path_load}.") if self._verbose else None
 
+    def _locals_to_params(
+        self,
+        locals_dict: Dict[str, Any],
+        keys: List[str],
+    ) -> None:
+        """
+        Returns a dictionary of the local variables with the specified keys.
+
+        Args:
+            locals_dict (Dict[str, Any]): 
+                Dictionary of local variables.
+            keys (List[str]): 
+                List of keys to extract from the local variables.
+        """
+        def safe_getitem(d, key):
+            try:
+                return d[key]
+            except KeyError:
+                warnings.warn(f'RH WARNING: key={key} not found in locals_dict. Skipping.')
+
+        return {key: safe_getitem(locals_dict, key) for key in keys}
+
+        
 
 def make_session_bool(n_roi: np.ndarray,) -> np.ndarray:
     """

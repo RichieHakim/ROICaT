@@ -53,12 +53,15 @@ class ROI_Blurrer(util.ROICaT_Module):
         super().__init__()
 
         ## Store parameter (but not data) args as attributes
-        self.params['__init__'] = {locals()[k] for k in [
-            'frame_shape',
-            'kernel_halfWidth',
-            'plot_kernel',
-            'verbose',
-        ]}
+        self.params['__init__'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'frame_shape',
+                'kernel_halfWidth',
+                'plot_kernel',
+                'verbose',
+            ],
+        )
 
 
         self._frame_shape = frame_shape
