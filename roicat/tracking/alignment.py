@@ -25,6 +25,8 @@ class Aligner(util.ROICaT_Module):
         self,
         verbose=True,
     ):
+        super().__init__()
+
         ## Store parameter (but not data) args as attributes
         self.params['__init__'] = self._locals_to_params(
             locals_dict=locals(),
@@ -185,9 +187,6 @@ class Aligner(util.ROICaT_Module):
                 remapIdx_geo (np.ndarray): 
                     An array of shape *(N, H, W, 2)* representing the remap field for N images.
         """
-        ## Imports
-        super().__init__()
-
         ## Store parameter (but not data) args as attributes
         self.params['fit_geometric'] = self._locals_to_params(
             locals_dict=locals(),
