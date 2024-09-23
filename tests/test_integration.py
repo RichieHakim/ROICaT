@@ -103,12 +103,10 @@ def test_pipeline_tracking_simple(dir_data_test):
         assert_mode=False,
         verbose=1,
     )
-    print(run_data_true.keys())
-    run_data_true['clusters']['quality_metrics']['cluster_intra_means'][4] = run_data_true['clusters']['quality_metrics']['cluster_intra_means'][4] + 10
     checks = checker(test=run_data, true=run_data_true)
     fails = [key for key, val in helpers.flatten_dict(checks).items() if val[0]==False]
     if len(fails) > 0:
-        warnings.warn(f"run_data equality check failed for keys: {fails}")
+        warnings.warn(f"run_data equality check failed for keys: {fails}. Checks: {checks}")
     else:
         print(f"run_data equality check finished successfully")
     
