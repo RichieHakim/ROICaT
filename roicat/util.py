@@ -799,7 +799,7 @@ class RichFile_ROICaT(rf.RichFile):
             Loads the repr of an object from the given path.
             """
             with open(path, 'r') as f:
-                return eval(f.read())
+                return f.read()
 
         import hdbscan
 
