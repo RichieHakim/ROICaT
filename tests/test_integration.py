@@ -79,29 +79,24 @@ def test_pipeline_tracking_simple(dir_data_test):
     assert len(results['clusters']['labels_dict']) == results['clusters']['labels_bool_bySession'][0].shape[1], "Error: Cluster data is mismatched"
 
     ## Save results
-    print(f"Saving to: {str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'results_data_output.richfile')}")
-    # helpers.pickle_save(
-    #     obj=run_data,
-    #     filepath=str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'run_data_output.pkl'),
-    # )
-    # util.RichFile_ROICaT(path=Path(dir_data_test).resolve() / 'pipeline_tracking' / 'results_data_output.richfile').save(results, overwrite=True)
-    util.RichFile_ROICaT(path=str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'results_data_output.richfile')).save(results, overwrite=True)
+    path_results_output = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'results_output.richfile')
+    print(f"Saving to: {path_results_output}")
+    util.RichFile_ROICaT(path=path_results_output).save(results, overwrite=True)
+
+    path_run_data_output = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'run_data_output.richfile')
+    print(f"Saving to: {path_run_data_output}")
+    util.RichFile_ROICaT(path=path_run_data_output).save(run_data, overwrite=True)
 
     ## Check run_data equality
-    print(f"Checking run_data equality")
-    # path_run_data_true = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'run_data.pkl')
-    # print(f"Loading true run_data from {path_run_data_true}")
-    # run_data_true = helpers.pickle_load(path_run_data_true)
-    
     path_run_data_true = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'run_data.richfile')
+    print(f"Loading true run_data from {path_run_data_true}")
     run_data_true = util.RichFile_ROICaT(path=path_run_data_true).load()
-
 
     print(f"run_data_true loaded. Checking equality")
     checker = helpers.Equivalence_checker(
         kwargs_allclose={'rtol': 1e-5, 'equal_nan': True},
         assert_mode=False,
-        verbose=1,
+        verbose=2,
     )
     checks = checker(test=run_data, true=run_data_true)
     fails = [key for key, val in helpers.flatten_dict(checks).items() if val[0]==False]

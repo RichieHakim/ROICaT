@@ -76,7 +76,7 @@ def get_default_parameters(
                     'type_meanImg': 'meanImgE',  ## Can be 'meanImg' or 'meanImgE'. 'meanImg' is the mean image of the dataset, 'meanImgE' is the mean image of the dataset after contrast enhancement.
                 },
                 'data_roicat': {
-                    'filename_search': r'data_roicat.pkl',  ## Name stem of the single file (as a regex search string) in 'dir_outer' to look for. The files should be saved Data_roicat object.
+                    'filename_search': r'data_roicat.richfile',  ## Name stem of the single file (as a regex search string) in 'dir_outer' to look for. The files should be saved Data_roicat object.
                 },
             },
             'alignment': {
