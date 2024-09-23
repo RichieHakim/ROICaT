@@ -20,8 +20,8 @@ def test_pipeline_tracking_simple(dir_data_test):
             'random_seed': seed,
         },
         'data_loading': {
-            # 'dir_outer': str(Path(dir_data_test).resolve() / 'pipeline_tracking'),
-            'dir_outer': '/media/rich/bigSSD/data_tmp/test_data/',
+            'dir_outer': str(Path(dir_data_test).resolve() / 'pipeline_tracking'),
+            # 'dir_outer': '/media/rich/bigSSD/data_tmp/test_data/',
             'data_kind': 'roicat',
             'data_roicat': {
                 # 'filename_search': r'data_roicat_obj.pkl'
