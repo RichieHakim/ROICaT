@@ -22,12 +22,13 @@ py_cpuinfo==9.0.0
 GPUtil==1.4.0
 PyYAML==6.0.2
 mat73==0.65
-torch==2.4.0
+torch==2.4.1
 torchvision==0.19.1
-torchaudio==2.4.0
+torchaudio==2.4.1
 selenium==4.23.1
 skl2onnx==1.17.0
 onnx==1.16.2
 onnxruntime==1.19.0
 jupyter_bokeh==4.0.5
 onnx2torch==1.5.15
+richfile>=0.3.3

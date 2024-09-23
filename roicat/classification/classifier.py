@@ -116,6 +116,8 @@ class Autotuner_regression(util.ROICaT_Module):
         """
         Initializes the AutotunerRegression with the given model class, parameters, data, and settings.
         """
+        super().__init__()
+        
         ## Set model variables
         self.X = X  ## shape (n_samples, n_features)
         self.y = y  ## shape (n_samples,)

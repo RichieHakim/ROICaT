@@ -80,14 +80,18 @@ def pipeline_tracking(params: dict):
             dir_outer=params['data_loading']['dir_outer'],
             reMatch=params['data_loading']['data_roicat']['filename_search'],
             depth=1,
-            find_files=True,
-            find_folders=False,
+            find_files=False,
+            find_folders=True,
             natsorted=True,
         )[:]
         assert len(paths_allDataObjs) == 1, f"ERROR: Found {len(paths_allDataObjs)} files matching the search pattern '{params['data_loading']['data_roicat']['filename_search']}' in '{params['data_loading']['dir_outer']}'. Exactly one file must be found."
         
         data = data_importing.Data_roicat()
-        data.load(path_load=paths_allDataObjs[0])
+        # data.load(path_load=paths_allDataObjs[0])
+
+        data.import_from_dict(
+            dict_load=util.RichFile_ROICaT(path=paths_allDataObjs[0]).load(),
+        )
     else:
         raise NotImplementedError(f"params['data_loading']['data_kind'] == '{params['data_loading']['data_kind']}' is not yet implemented.")
 
@@ -240,13 +244,21 @@ def pipeline_tracking(params: dict):
     ## Collect results
     labels_squeezed, labels_bySession, labels_bool, labels_bool_bySession, labels_dict = tracking.clustering.make_label_variants(labels=labels, n_roi_bySession=data.n_roi)
 
-    results = {
+    results_clusters = {
+        'labels': labels_squeezed,
+        'labels_bySession': labels_bySession,
+        'labels_dict': labels_dict,
+        'quality_metrics': quality_metrics,
+    }
+
+    results_all = {
         "clusters":{
-            "labels": labels_squeezed,
-            "labels_bySession": labels_bySession,
+            "labels": util.JSON_List(labels_squeezed),
+            "labels_bySession": util.JSON_List(labels_bySession),
             "labels_bool": labels_bool,
             "labels_bool_bySession": labels_bool_bySession,
-            "labels_dict": labels_dict,
+            "labels_dict": util.JSON_Dict(labels_dict),
+            "quality_metrics": util.JSON_Dict(clusterer.quality_metrics) if hasattr(clusterer, 'quality_metrics') else None,
         },
         "ROIs": {
             "ROIs_aligned": aligner.ROIs_aligned,
@@ -257,27 +269,25 @@ def pipeline_tracking(params: dict):
             "n_sessions": data.n_sessions,
         },
         "input_data": {
-            "paths_stat": data.paths_stat,
-            "paths_ops": data.paths_ops,
+            "paths_stat": data.paths_stat if hasattr(data, 'paths_stat') else None,
+            "paths_ops": data.paths_ops if hasattr(data, 'paths_ops') else None,
         },
-        "quality_metrics": clusterer.quality_metrics,
     }
 
-    run_data = copy.deepcopy({
-        'data': data.serializable_dict,
-        'aligner': aligner.serializable_dict,
-        'blurrer': blurrer.serializable_dict,
-        'roinet': roinet.serializable_dict,
-        'swt': swt.serializable_dict,
-        'sim': sim.serializable_dict,
-        'clusterer': clusterer.serializable_dict,
-    })
-
+    run_data = {
+        'data': data.__dict__,
+        'aligner': aligner.__dict__,
+        'blurrer': blurrer.__dict__,
+        'roinet': roinet.__dict__,
+        'swt': swt.__dict__,
+        'sim': sim.__dict__,
+        'clusterer': clusterer.__dict__,
+    }
+    params_used = {name: mod['params'] for name, mod in run_data.items()}
 
     ## Print some results
-    print(f'Number of clusters: {len(np.unique(results["clusters"]["labels"]))}')
-    print(f'Number of discarded ROIs: {(results["clusters"]["labels"]==-1).sum()}')
-
+    print(f'Number of clusters: {len(np.unique(results_clusters["labels"]))}')
+    print(f'Number of discarded ROIs: {(np.array(results_clusters["labels"])==-1).sum()}')
 
     ## Save results
     if params['results_saving']['dir_save'] is not None:
@@ -287,23 +297,33 @@ def pipeline_tracking(params: dict):
 
         print(f'dir_save: {dir_save}')
 
-        helpers.pickle_save(
-            obj=results,
-            filepath=str(dir_save / (name_save + '.ROICaT.tracking.results' + '.pkl')),
-            mkdir=True,
-        )
+        paths_save = {
+            'results_clusters': str(Path(dir_save) / f'{name_save}.tracking.results_clusters.json'),
+            'params_used':      str(Path(dir_save) / f'{name_save}.tracking.params_used.json'),
+            'results_all':      str(Path(dir_save) / f'{name_save}.tracking.results_all.richfile'),
+            'run_data':         str(Path(dir_save) / f'{name_save}.tracking.run_data.richfile'),
+        }
 
-        helpers.pickle_save(
-            obj=run_data,
-            filepath=str(dir_save / (name_save + '.ROICaT.tracking.rundata' + '.pkl')),
-            mkdir=True,
-        )
+        helpers.json_save(obj=results_clusters, filepath=paths_save['results_clusters']);
+        helpers.json_save(obj=params_used, filepath=paths_save['params_used']);
+        util.RichFile_ROICaT(path=paths_save['results_all']).save(obj=results_all, overwrite=True);
+        util.RichFile_ROICaT(path=paths_save['run_data']).save(obj=run_data, overwrite=True);
 
-        helpers.yaml_save(
-            obj=params,
-            filepath=str(dir_save / (name_save + '.ROICaT.tracking.params' + '.yaml')),
-            mkdir=True,
-        )
+        # helpers.pickle_save(
+        #     obj=results,
+        #     filepath=str(dir_save / (name_save + '.ROICaT.tracking.results' + '.pkl')),
+        #     mkdir=True,
+        # )
+        # helpers.pickle_save(
+        #     obj=run_data,
+        #     filepath=str(dir_save / (name_save + '.ROICaT.tracking.rundata' + '.pkl')),
+        #     mkdir=True,
+        # )
+        # helpers.yaml_save(
+        #     obj=params,
+        #     filepath=str(dir_save / (name_save + '.ROICaT.tracking.params' + '.yaml')),
+        #     mkdir=True,
+        # )
 
     
         ## Visualize results
@@ -354,10 +374,10 @@ def pipeline_tracking(params: dict):
         
         ### Save a gif of the ROIs
         FOV_clusters = visualization.compute_colored_FOV(
-            spatialFootprints=[r.power(1.0) for r in results['ROIs']['ROIs_aligned']],  ## Spatial footprint sparse arrays
-            FOV_height=results['ROIs']['frame_height'],
-            FOV_width=results['ROIs']['frame_width'],
-            labels=results["clusters"]["labels_bySession"],  ## cluster labels
+            spatialFootprints=[r.power(1.0) for r in results_all['ROIs']['ROIs_aligned']],  ## Spatial footprint sparse arrays
+            FOV_height=results_all['ROIs']['frame_height'],
+            FOV_width=results_all['ROIs']['frame_width'],
+            labels=results_all["clusters"]["labels_bySession"],  ## cluster labels
         #     labels=(np.array(results["clusters"]["labels"])!=-1).astype(np.int64),  ## cluster labels
         #     alphas_labels=confidence*1.5,  ## Set brightness of each cluster based on some 1-D array
         #     alphas_labels=(clusterer.quality_metrics['cluster_silhouette'] > 0) * (clusterer.quality_metrics['cluster_intra_means'] > 0.4),
@@ -382,7 +402,7 @@ def pipeline_tracking(params: dict):
     tic_end = time.time()
     print(f"Elapsed time: {tic_end - tic_start:.2f} seconds")
     
-    return results, run_data, params
+    return results_all, run_data, params
 
 def _set_random_seed(seed=None, deterministic=False):
     """

@@ -74,6 +74,22 @@ class ROI_graph(util.ROICaT_Module):
         ## Imports
         super().__init__()
 
+        ## Store parameter (but not data) args as attributes
+        self.params['__init__'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'n_workers',
+                'frame_height',
+                'frame_width',
+                'block_height',
+                'block_width',
+                'overlapping_width_Multiplier',
+                'algorithm_nearestNeigbors_spatialFootprints',
+                'verbose',
+                'kwargs_nearestNeigbors_spatialFootprints',
+            ],
+        )
+
         self._algo_sf = algorithm_nearestNeigbors_spatialFootprints
         self._kwargs_sf = kwargs_nearestNeigbors_spatialFootprints
 
@@ -145,6 +161,11 @@ class ROI_graph(util.ROICaT_Module):
                 s_sesh (scipy.sparse.csr_matrix): 
                     Pairwise similarity matrix based on which session the ROIs belong to.
         """
+        ## Store parameter (but not data) args as attributes
+        self.params['compute_similarity_blockwise'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=['spatialFootprint_maskPower',],)
+
         self._n_sessions = ROI_session_bool.shape[1]
         self._sf_maskPower = spatialFootprint_maskPower
 
@@ -394,6 +415,17 @@ class ROI_graph(util.ROICaT_Module):
                 total)*. Note: This matrix is not symmetric and therefore should
                 be treated as a directed graph.
         """
+        ## Store parameter (but not data) args as attributes
+        self.params['make_normalized_similarities'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'k_max',
+                'k_min',
+                'algo_NN',
+                'device',
+            ],
+        )
+
         k_max = min(k_max, self.s_NN.shape[0])
 
         print('Finding k-range of center of mass distance neighbors for each ROI...')
