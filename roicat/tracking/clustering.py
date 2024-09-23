@@ -311,10 +311,7 @@ class Clusterer(util.ROICaT_Module):
             keys=[
                 'convert_to_probability',
                 'stringency',
-                'n_jobs_findParameters',
-                'n_bins',
-                'smoothing_window_bins',
-                'seed',
+                'kwargs_makeConjunctiveDistanceMatrix',
             ],
         )
 
@@ -1255,24 +1252,27 @@ class Clusterer(util.ROICaT_Module):
         else:
             rs_sil = sklearn.metrics.silhouette_samples(X=d_dense, labels=labels, metric='precomputed')
 
-        self.quality_metrics = {
-            'cluster_labels_unique': labels_unique,
-            'cluster_intra_means': cs_intra_means,
-            'cluster_intra_mins': cs_intra_mins,
-            'cluster_intra_maxs': cs_intra_maxs,
-            'cluster_silhouette': cs_sil,
-            'sample_silhouette': rs_sil,
+        def to_list_of_floats(x):
+            return [float(i) for i in x]
+
+        self.quality_metrics = util.JSON_Dict({
+            'cluster_labels_unique': to_list_of_floats(labels_unique),
+            'cluster_intra_means': to_list_of_floats(cs_intra_means),
+            'cluster_intra_mins': to_list_of_floats(cs_intra_mins),
+            'cluster_intra_maxs': to_list_of_floats(cs_intra_maxs),
+            'cluster_silhouette': to_list_of_floats(cs_sil),
+            'sample_silhouette': to_list_of_floats(rs_sil),
             'hdbscan': {
-                'sample_outlierScores': self.hdbs.outlier_scores_[:-1],  ## Remove last element which is the outlier score for the new fully connected node
-                'sample_probabilities': self.hdbs.probabilities_[:-1],  ## Remove last element which is the outlier score for the new fully connected node
+                'sample_outlierScores': to_list_of_floats(self.hdbs.outlier_scores_[:-1]),  ## Remove last element which is the outlier score for the new fully connected node
+                'sample_probabilities': to_list_of_floats(self.hdbs.probabilities_[:-1]),  ## Remove last element which is the outlier score for the new fully connected node
             }  if hasattr(self, 'hdbs') else None,
             'sequentialHungarian': {
-                'performance_recall': self.seqHung_performance['recall'],
-                'performance_precision': self.seqHung_performance['precision'],
-                'performance_f1': self.seqHung_performance['f1_score'],
-                'performance_accuracy': self.seqHung_performance['accuracy'],
+                'performance_recall': float(self.seqHung_performance['recall']),
+                'performance_precision': float(self.seqHung_performance['precision']),
+                'performance_f1': float(self.seqHung_performance['f1_score']),
+                'performance_accuracy': float(self.seqHung_performance['accuracy']),
             } if hasattr(self, 'seqHung_performance') else None,
-        }
+        })
         return self.quality_metrics
         
 
@@ -1535,6 +1535,11 @@ def make_label_variants(
     assert np.allclose(np.concatenate(labels_bySession), labels_squeezed)
     assert np.allclose(labels_bool.nonzero()[1] - 1, labels_squeezed)
     assert np.all([np.allclose(np.where(labels_squeezed==u)[0], ldu) for u, ldu in labels_dict.items()])
+
+    ## Convert everything to native python types for JSON compatibility
+    labels_squeezed = util.JSON_List([int(u) for u in labels_squeezed])
+    labels_bySession = util.JSON_List([[int(u) for u in l] for l in labels_bySession])
+    labels_dict = util.JSON_Dict({str(k): [int(v_i) for v_i in v] for k, v in labels_dict.items()})  ## Make keys strings for JSON compatibility
 
     return labels_squeezed, labels_bySession, labels_bool, labels_bool_bySession, labels_dict
 

@@ -61,7 +61,9 @@ class SWT(util.ROICaT_Module):
 
         self._verbose = verbose
         self._device = device
-        self.swt = Scattering2D(shape=image_shape, **kwargs_Scattering2D).to(device)
+        self.swt = Scattering2D(shape=image_shape, **kwargs_Scattering2D)
+        self.swt = util.Model_SWT(self.swt)
+        self.swt.to(device)
         print('SWT initialized') if self._verbose else None
 
     def transform(self, ROI_images: np.ndarray, batch_size: int = 100) -> np.ndarray:

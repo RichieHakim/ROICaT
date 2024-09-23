@@ -213,7 +213,7 @@ def compute_colored_FOV(
     def _fix_list_of_arrays(v):
         if isinstance(v, np.ndarray) or (isinstance(v, list) and isinstance(v[0], (np.ndarray, list)) is False):
             v = [v[b_l: b_u] for b_l, b_u in zip(n_roi_cumsum[:-1], n_roi_cumsum[1:])]
-        assert (isinstance(v, list) and isinstance(v[0], (np.ndarray, list))), "input must be a list of arrays or a single array of integers"
+        assert (isinstance(v, (list, util.JSON_List)) and isinstance(v[0], (np.ndarray, list, util.JSON_List))), "input must be a list of arrays or a single array of integers"
         return v
     
     labels = _fix_list_of_arrays(labels)

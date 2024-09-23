@@ -800,7 +800,8 @@ class Data_roicat(util.ROICaT_Module):
 
         Args:
             dict_load (Dict[str, Any]): 
-                Dictionary containing attributes to load.
+                Dictionary containing args to load. Format:
+                {'method': [arg1, arg2, ...], ...}
 
         Note: 
             This method does not return anything. It modifies the object state
@@ -808,13 +809,23 @@ class Data_roicat(util.ROICaT_Module):
         """
         ## Go through each important attribute in Data_roicat and look for it in dict_load
         methods = {
-            self.set_ROI_images: ['ROI_images', 'um_per_pixel'],
-            self.set_spatialFootprints: ['spatialFootprints', 'um_per_pixel'],
-            self.set_FOV_images: ['FOV_images'],
-            self.set_class_labels: ['class_labels_raw'],
+            self.set_ROI_images: {
+                'ROI_images': 'ROI_images',  ## 'arg_name': 'key_in_dict_load'
+                'um_per_pixel': 'um_per_pixel',
+            },
+            self.set_spatialFootprints: {
+                'spatialFootprints': 'spatialFootprints', 
+                'um_per_pixel': 'um_per_pixel',
+            },
+            self.set_FOV_images: {
+                'FOV_images': 'FOV_images',
+            },
+            self.set_class_labels: {
+                'labels': 'class_labels_raw',
+            },
         }
 
-        methodKeys_all = list(set(sum(list(methods.values()), [])))
+        methodKeys_all = list(set(sum([list(args_keys.values()) for args_keys in methods.values()], [])))
         
         ## Set other attributes
         for key, val in dict_load.items():
@@ -822,11 +833,11 @@ class Data_roicat(util.ROICaT_Module):
                 setattr(self, key, val)
 
         ## Set attributes using methods
-        for method, methodKeys in methods.items():
-            if all([key in dict_load for key in methodKeys]):
-                method(**{key: dict_load[key] for key in methodKeys})
+        for method, args_keys in methods.items():
+            if all([key in dict_load for key in args_keys.values()]):
+                method(**{arg: dict_load[key] for arg, key in args_keys.items()})
             else:
-                print(f"RH WARNING: Could not load attribute using method {method.__name__}. Keys {methodKeys} not found in dict_load.") if self._verbose else None
+                print(f"RH WARNING: Could not load attribute using method {method.__name__}. Keys {args_keys.values()} not found in dict_load.") if self._verbose else None
         
 
 ############################################################################################################################
@@ -1155,8 +1166,8 @@ class Data_suite2p(Data_roicat):
             raise ValueError(f"RH ERROR: new_or_old_suite2p should be 'new' or 'old'. Got {new_or_old_suite2p}")
         return shifts
 
-    @staticmethod
     def _transform_statFile_to_spatialFootprints(
+        self,
         frame_height_width: Tuple[int, int], 
         stat: np.ndarray, 
         shifts: Tuple[int, int] = (0, 0), 
