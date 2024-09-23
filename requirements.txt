@@ -31,4 +31,4 @@ onnx==1.16.2
 onnxruntime==1.19.0
 jupyter_bokeh==4.0.5
 onnx2torch==1.5.15
-richfile>=0.3
+richfile>=0.3.3
