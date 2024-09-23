@@ -4884,9 +4884,12 @@ class Equivalence_checker():
             if len(true) != len(test):
                 result = (False, 'length_mismatch')
             else:
-                result = {}
-                for idx, (i, j) in enumerate(zip(test, true)):
-                    result[str(idx)] = self.__call__(i, j, path=path + [str(idx)])
+                if all([isinstance(i, (int, float, complex, np.number)) for i in true]):
+                    result = self._checker(np.array(test), np.array(true), path)
+                else:
+                    result = {}
+                    for idx, (i, j) in enumerate(zip(test, true)):
+                        result[str(idx)] = self.__call__(i, j, path=path + [str(idx)])
         ## STRING
         elif isinstance(true, str):
             result = (test == true, 'equivalence')
@@ -4896,6 +4899,17 @@ class Equivalence_checker():
         ## NONE
         elif true is None:
             result = (test is None, 'equivalence')
+
+        ## OBJECT with __dict__
+        elif hasattr(true, '__dict__'):
+            result = {}
+            for key in true.__dict__:
+                if key.startswith('_'):
+                    continue
+                if not hasattr(test, key):
+                    result[str(key)] = (False, 'key not found')
+                else:
+                    result[str(key)] = self.__call__(getattr(test, key), getattr(true, key), path=path + [str(key)])
         ## N/A
         else:
             result = (None, 'not tested')
