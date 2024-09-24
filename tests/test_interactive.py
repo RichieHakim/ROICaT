@@ -284,8 +284,9 @@ def test_interactive_drawing():
                 else:
                     warnings.warn("indices.csv is not created!")
                     webdriver_iter += 1
+
         except Exception as e:
-            warnings.warn(f"Exception occured: {str{e}}, Kill the Bokeh server...")
+            warnings.warn(f"Exception occured: {e}, Kill the Bokeh server...")
             server_process.terminate()
             server_process.join()
 
