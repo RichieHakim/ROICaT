@@ -134,18 +134,18 @@ def check_server():
     try:
         response = requests.get("http://localhost:5006/test_drawing")
         if response.status_code == 200:
-            warnings.warn("Server is up and running!")
+            print("Server is up and running!")
             return 1
         else:
-            warnings.warn(f"Server responded with status code: {response.status_code}")
+            print(f"Server responded with status code: {response.status_code}")
             return 0
     except requests.ConnectionError:
-        warnings.warn("Cannot connect to the server!")
+        print("Cannot connect to the server!")
         return 0
 
 
 def test_interactive_drawing():
-    warnings.warn("Interactive GUI Drawing Test is running. Please wait...")
+    print("Interactive GUI Drawing Test is running. Please wait...")
     ## Parameter setting
     port = 5006
     server_iter = 0
@@ -155,25 +155,25 @@ def test_interactive_drawing():
     path_tempfile = os.path.join(path_tempdir, "indices.csv")
 
     ## Make sure the tempdir has enough space
-    warnings.warn("Check if tempdir has enough space...")
+    print("Check if tempdir has enough space...")
     free_space = get_tempdir_free_space()
-    warnings.warn(f"Free space in tempdir: {free_space / (1024**3):.2f} GB")
+    print(f"Free space in tempdir: {free_space / (1024**3):.2f} GB")
 
     ## Start iteration. Iteration will stop if indices.csv is created.
     while server_iter <= max_server_iter:
         ## First, check if the port for Bokeh server is available
         # if is_port_available(port):
         if False:
-            warnings.warn(f"Port {port} is available!")
+            print(f"Port {port} is available!")
         else:
-            warnings.warn(f"Port {port} is not available!")
-            warnings.warn(f"Kill process using port {port}...")
+            print(f"Port {port} is not available!")
+            print(f"Kill process using port {port}...")
             kill_process_on_port(port)
 
         ## Bokeh server deployment at http://localhost:5006/test_drawing
         apps = {"/test_drawing": Application(FunctionHandler(deploy_bokeh))}
 
-        warnings.warn("Deploy Bokeh server to localhost:5006/test_drawing...")
+        print("Deploy Bokeh server to localhost:5006/test_drawing...")
         ## Let it run in the background so that the test can continue
         query = Queue()
         server_process = mp.Process(target=start_server, args=(apps, query))
@@ -187,22 +187,22 @@ def test_interactive_drawing():
             ## Start webdriver iteration using selenium
             webdriver_iter = 0
             while webdriver_iter <= max_webdriver_iter:
-                warnings.warn(f"Iteration {webdriver_iter} starts...")
+                print(f"Iteration {webdriver_iter} starts...")
                 ## Get server info
                 server_query = query.get()
 
-                warnings.warn(f"Server address: {server_query['address']}")
-                warnings.warn(f"Server port: {server_query['port']}")
+                print(f"Server address: {server_query['address']}")
+                print(f"Server port: {server_query['port']}")
 
                 ## Check if the server is up and running
-                warnings.warn("Check if Bokeh server is up and running...")
+                print("Check if Bokeh server is up and running...")
                 server_status = check_server()
                 if not server_status:
                     server_process.terminate()
                     server_process.join()
                     raise Exception("Server is not up and running!")
 
-                warnings.warn("Setup chrome webdriver...")
+                print("Setup chrome webdriver...")
                 service = Service()
                 chrome_options = Options()
                 chrome_options.add_argument("--window-size=1280,1280")
@@ -212,43 +212,43 @@ def test_interactive_drawing():
                 chrome_options.add_argument("--disable-gpu")
 
                 ## if you are on latest version say selenium v4.6.0 or higher, you don't have to use third party library such as WebDriverManager
-                warnings.warn("Driver parameter sanity check...")
+                print("Driver parameter sanity check...")
                 driver = webdriver.Chrome(service=service, options=chrome_options)
                 capabilities = driver.capabilities
-                warnings.warn("Browser Name: {}".format(capabilities.get("browserName")))
-                warnings.warn("Browser Version: {}".format(capabilities.get("browserVersion")))
-                warnings.warn("Platform Name: {}".format(capabilities.get("platformName")))
-                warnings.warn(
+                print("Browser Name: {}".format(capabilities.get("browserName")))
+                print("Browser Version: {}".format(capabilities.get("browserVersion")))
+                print("Platform Name: {}".format(capabilities.get("platformName")))
+                print(
                     "Chrome Driver Version: {}".format(
                         capabilities.get("chrome").get("chromedriverVersion")
                     )
                 )
 
-                warnings.warn("Get to the Bokeh server...")
+                print("Get to the Bokeh server...")
                 driver.get("http://localhost:5006/test_drawing")
                 wait = WebDriverWait(driver, 10)
-                warnings.warn("Found the Bokeh server, locate drawing Bokeh element...")
+                print("Found the Bokeh server, locate drawing Bokeh element...")
                 try:
                     element = wait.until(EC.presence_of_element_located((By.XPATH, "//*")))
-                    warnings.warn("Found Bokeh drawing element!")
+                    print("Found Bokeh drawing element!")
                 except Exception as e:
-                    warnings.warn(f"Failed to locate element: {str(e)}")
+                    print(f"Failed to locate element: {str(e)}")
 
                 ## Create movement set
                 driver.execute_script("document.body.style.zoom='60%'") ## Zoom out
                 size = element.size
                 width, height = size["width"], size["height"]
 
-                warnings.warn("element size: {}".format(size))
-                warnings.warn("element tagname: {}".format(element.tag_name))
-                warnings.warn("element text: {}".format(element.text))
-                warnings.warn("element location: {}".format(element.location))
-                warnings.warn("element displayed: {}".format(element.is_displayed()))
-                warnings.warn("element enabled: {}".format(element.is_enabled()))
-                warnings.warn("element selected: {}".format(element.is_selected()))
+                print("element size: {}".format(size))
+                print("element tagname: {}".format(element.tag_name))
+                print("element text: {}".format(element.text))
+                print("element location: {}".format(element.location))
+                print("element displayed: {}".format(element.is_displayed()))
+                print("element enabled: {}".format(element.is_enabled()))
+                print("element selected: {}".format(element.is_selected()))
 
                 ## Move to the center of the element
-                warnings.warn("Start mouse movement...")
+                print("Start mouse movement...")
                 actions = ActionChains(driver)
 
                 ## Surprisingly, this pause seems to be crucial.
@@ -271,7 +271,7 @@ def test_interactive_drawing():
                 actions.release()
                 actions.perform()
 
-                warnings.warn("Mouse movement done! Detach Selenium from Bokeh server...")
+                print("Mouse movement done! Detach Selenium from Bokeh server...")
                 driver.quit()
 
                 ## Wait for the server to save indices.csv
@@ -279,19 +279,19 @@ def test_interactive_drawing():
 
                 ## Test if indices.csv is created before we kill the server
                 if os.path.exists(path_tempfile):
-                    warnings.warn("indices.csv is created!")
+                    print("indices.csv is created!")
                     break
                 else:
-                    warnings.warn("indices.csv is not created!")
+                    print("indices.csv is not created! Repeat the interaction...")
                     webdriver_iter += 1
 
         except Exception as e:
-            warnings.warn(f"Exception occured: {e}, Kill the Bokeh server...")
+            print(f"Exception occured: {e}, Kill the Bokeh server...")
             server_process.terminate()
             server_process.join()
 
         ## Kill the process to prevent potential race condition
-        warnings.warn("Kill the Bokeh server...")
+        print("Kill the Bokeh server...")
         server_process.terminate()
         server_process.join()
 
@@ -300,28 +300,28 @@ def test_interactive_drawing():
 
         ## If indices.csv is created, break the loop
         if os.path.exists(path_tempfile):
-            warnings.warn("indices.csv is created!")
+            print("indices.csv is created!")
             break
         else:
-            warnings.warn("indices.csv is not created!")
+            print("indices.csv is not created!")
             server_iter += 1
 
-    warnings.warn("Test if indices.csv has correct permission...")
+    print("Test if indices.csv has correct permission...")
     if not os.access(path_tempfile, os.R_OK):
-        warnings.warn("indices.csv is not readable!")
+        print("indices.csv is not readable!")
         server_process.terminate()
         server_process.join()
         raise Exception("indices.csv is not readable!")
 
-    warnings.warn("Test if indices are correctly saved...")
+    print("Test if indices are correctly saved...")
     indices = get_indices(path_tempfile)
 
     if indices is None:
-        warnings.warn("indices.csv is created, but no indices are saved!")
+        print("indices.csv is created, but no indices are saved!")
         server_process.terminate()
         server_process.join()
         raise Exception("indices.csv is created, but no indices are saved!")
 
     ## Check if the indices are correct
     assert indices == [3]
-    warnings.warn("Test is done.")
+    print("Test is done.")
