@@ -162,8 +162,7 @@ def test_interactive_drawing():
     ## Start iteration. Iteration will stop if indices.csv is created.
     while server_iter <= max_server_iter:
         ## First, check if the port for Bokeh server is available
-        # if is_port_available(port):
-        if False:
+        if is_port_available(port):
             print(f"Port {port} is available!")
         else:
             print(f"Port {port} is not available!")
