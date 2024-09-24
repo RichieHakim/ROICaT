@@ -114,15 +114,19 @@ def start_server(apps, query):
 
 
 def kill_process_on_port(port):
-    for proc in psutil.process_iter(attrs=["pid", "connections"]):
-        if (proc.info["connections"] != []) and (proc.info["connections"] is not None):
-            for connection in proc.info["connections"]:
-                if connection.status == psutil.CONN_LISTEN and connection.laddr.port == port:
+    for proc in psutil.process_iter(attrs=["pid", "name"]): ## Updated to new psutil API: 2024.09.24
+        try:
+            connections = proc.connections()
+            for conn in connections:
+                if conn.status == psutil.CONN_LISTEN and conn.laddr.port == port:
                     try:
                         psutil.Process(proc.info["pid"]).terminate()
                         return True
                     except psutil.AccessDenied:
                         return False
+        except (psutil.AccessDenied, psutil.ZombieProcess):
+            ## Happens when you don't have permission to access the process
+            pass
     return False
 
 
@@ -158,7 +162,8 @@ def test_interactive_drawing():
     ## Start iteration. Iteration will stop if indices.csv is created.
     while server_iter <= max_server_iter:
         ## First, check if the port for Bokeh server is available
-        if is_port_available(port):
+        # if is_port_available(port):
+        if False:
             warnings.warn(f"Port {port} is available!")
         else:
             warnings.warn(f"Port {port} is not available!")
@@ -177,104 +182,112 @@ def test_interactive_drawing():
         ## Wait for the server to start
         time.sleep(5)
 
-        ## Start webdriver iteration using selenium
-        webdriver_iter = 0
-        while webdriver_iter <= max_webdriver_iter:
-            warnings.warn(f"Iteration {webdriver_iter} starts...")
-            ## Get server info
-            server_query = query.get()
+        ## Prevent permanant hang: If bug occurs, kill the server
+        try:
+            ## Start webdriver iteration using selenium
+            webdriver_iter = 0
+            while webdriver_iter <= max_webdriver_iter:
+                warnings.warn(f"Iteration {webdriver_iter} starts...")
+                ## Get server info
+                server_query = query.get()
 
-            warnings.warn(f"Server address: {server_query['address']}")
-            warnings.warn(f"Server port: {server_query['port']}")
+                warnings.warn(f"Server address: {server_query['address']}")
+                warnings.warn(f"Server port: {server_query['port']}")
 
-            ## Check if the server is up and running
-            warnings.warn("Check if Bokeh server is up and running...")
-            server_status = check_server()
-            if not server_status:
-                server_process.terminate()
-                server_process.join()
-                raise Exception("Server is not up and running!")
+                ## Check if the server is up and running
+                warnings.warn("Check if Bokeh server is up and running...")
+                server_status = check_server()
+                if not server_status:
+                    server_process.terminate()
+                    server_process.join()
+                    raise Exception("Server is not up and running!")
 
-            warnings.warn("Setup chrome webdriver...")
-            service = Service()
-            chrome_options = Options()
-            chrome_options.add_argument("--window-size=1280,1280")
+                warnings.warn("Setup chrome webdriver...")
+                service = Service()
+                chrome_options = Options()
+                chrome_options.add_argument("--window-size=1280,1280")
 
-            ## For local testing, comment out these options to visualize actions in bokeh / selenium server.
-            chrome_options.add_argument("--headless")
-            chrome_options.add_argument("--disable-gpu")
+                ## For local testing, comment out these options to visualize actions in bokeh / selenium server.
+                chrome_options.add_argument("--headless")
+                chrome_options.add_argument("--disable-gpu")
 
-            ## if you are on latest version say selenium v4.6.0 or higher, you don't have to use third party library such as WebDriverManager
-            warnings.warn("Driver parameter sanity check...")
-            driver = webdriver.Chrome(service=service, options=chrome_options)
-            capabilities = driver.capabilities
-            warnings.warn("Browser Name: {}".format(capabilities.get("browserName")))
-            warnings.warn("Browser Version: {}".format(capabilities.get("browserVersion")))
-            warnings.warn("Platform Name: {}".format(capabilities.get("platformName")))
-            warnings.warn(
-                "Chrome Driver Version: {}".format(
-                    capabilities.get("chrome").get("chromedriverVersion")
+                ## if you are on latest version say selenium v4.6.0 or higher, you don't have to use third party library such as WebDriverManager
+                warnings.warn("Driver parameter sanity check...")
+                driver = webdriver.Chrome(service=service, options=chrome_options)
+                capabilities = driver.capabilities
+                warnings.warn("Browser Name: {}".format(capabilities.get("browserName")))
+                warnings.warn("Browser Version: {}".format(capabilities.get("browserVersion")))
+                warnings.warn("Platform Name: {}".format(capabilities.get("platformName")))
+                warnings.warn(
+                    "Chrome Driver Version: {}".format(
+                        capabilities.get("chrome").get("chromedriverVersion")
+                    )
                 )
-            )
 
-            warnings.warn("Get to the Bokeh server...")
-            driver.get("http://localhost:5006/test_drawing")
-            wait = WebDriverWait(driver, 10)
-            warnings.warn("Found the Bokeh server, locate drawing Bokeh element...")
-            try:
-                element = wait.until(EC.presence_of_element_located((By.XPATH, "//*")))
-                warnings.warn("Found Bokeh drawing element!")
-            except Exception as e:
-                warnings.warn(f"Failed to locate element: {str(e)}")
+                warnings.warn("Get to the Bokeh server...")
+                driver.get("http://localhost:5006/test_drawing")
+                wait = WebDriverWait(driver, 10)
+                warnings.warn("Found the Bokeh server, locate drawing Bokeh element...")
+                try:
+                    element = wait.until(EC.presence_of_element_located((By.XPATH, "//*")))
+                    warnings.warn("Found Bokeh drawing element!")
+                except Exception as e:
+                    warnings.warn(f"Failed to locate element: {str(e)}")
 
-            ## Create movement set
-            driver.execute_script("document.body.style.zoom='60%'") ## Zoom out
-            size = element.size
-            width, height = size["width"], size["height"]
+                ## Create movement set
+                driver.execute_script("document.body.style.zoom='60%'") ## Zoom out
+                size = element.size
+                width, height = size["width"], size["height"]
 
-            warnings.warn("element size: {}".format(size))
-            warnings.warn("element tagname: {}".format(element.tag_name))
-            warnings.warn("element text: {}".format(element.text))
-            warnings.warn("element location: {}".format(element.location))
-            warnings.warn("element displayed: {}".format(element.is_displayed()))
-            warnings.warn("element enabled: {}".format(element.is_enabled()))
-            warnings.warn("element selected: {}".format(element.is_selected()))
+                warnings.warn("element size: {}".format(size))
+                warnings.warn("element tagname: {}".format(element.tag_name))
+                warnings.warn("element text: {}".format(element.text))
+                warnings.warn("element location: {}".format(element.location))
+                warnings.warn("element displayed: {}".format(element.is_displayed()))
+                warnings.warn("element enabled: {}".format(element.is_enabled()))
+                warnings.warn("element selected: {}".format(element.is_selected()))
 
-            ## Move to the center of the element
-            warnings.warn("Start mouse movement...")
-            actions = ActionChains(driver)
+                ## Move to the center of the element
+                warnings.warn("Start mouse movement...")
+                actions = ActionChains(driver)
 
-            ## Surprisingly, this pause seems to be crucial.
-            actions.pause(5)
+                ## Surprisingly, this pause seems to be crucial.
+                actions.pause(5)
 
-            ## Move to the center of the element
-            actions.move_to_element(element)
-            actions.click_and_hold()
+                ## Move to the center of the element
+                actions.move_to_element(element)
+                actions.click_and_hold()
 
-            ## Draw!
-            actions.move_by_offset(
-                int(width / 2), int(0)
-            )  ## Move from center to midpoint of right edge
-            actions.move_by_offset(
-                int(0), int(-height / 2)
-            )  ## Move from midpoint of right edge to top right corner
-            actions.move_by_offset(
-                int(-width / 2), int(0)
-            )  ## Move from top right corner to midpoint of top edge
-            actions.release()
-            actions.perform()
+                ## Draw!
+                actions.move_by_offset(
+                    int(width / 2), int(0)
+                )  ## Move from center to midpoint of right edge
+                actions.move_by_offset(
+                    int(0), int(-height / 2)
+                )  ## Move from midpoint of right edge to top right corner
+                actions.move_by_offset(
+                    int(-width / 2), int(0)
+                )  ## Move from top right corner to midpoint of top edge
+                actions.release()
+                actions.perform()
 
-            warnings.warn("Mouse movement done! Detach Selenium from Bokeh server...")
-            driver.quit()
+                warnings.warn("Mouse movement done! Detach Selenium from Bokeh server...")
+                driver.quit()
 
-            ## Wait for the server to save indices.csv
-            time.sleep(5)
+                ## Wait for the server to save indices.csv
+                time.sleep(5)
 
-            ## Test if indices.csv is created
-            if os.path.exists(path_tempfile):
-                break
-            else:
-                webdriver_iter += 1
+                ## Test if indices.csv is created before we kill the server
+                if os.path.exists(path_tempfile):
+                    warnings.warn("indices.csv is created!")
+                    break
+                else:
+                    warnings.warn("indices.csv is not created!")
+                    webdriver_iter += 1
+        except Exception as e:
+            warnings.warn(f"Exception occured: {str{e}}, Kill the Bokeh server...")
+            server_process.terminate()
+            server_process.join()
 
         ## Kill the process to prevent potential race condition
         warnings.warn("Kill the Bokeh server...")
