@@ -1,5 +1,5 @@
 import os
-import warnings
+import sys
 import pytest
 import tempfile
 import shutil
@@ -52,7 +52,7 @@ def get_indices(path_tempFile):
     return indices
 
 
-def deploy_bokeh(instance):
+def deploy_bokeh(instance, tmp_path):
     ## Draw test plot and add to Bokeh document
     hv.extension("bokeh")
 
@@ -66,6 +66,7 @@ def deploy_bokeh(instance):
         images_overlay=mock_images_overlay,
         size_images_overlay=0.01,
         frac_overlap_allowed=0.5,
+        path=tmp_path,
         figsize=(1200, 1200),
         alpha_points=1.0,
         size_points=10,
@@ -170,7 +171,8 @@ def test_interactive_drawing():
             kill_process_on_port(port)
 
         ## Bokeh server deployment at http://localhost:5006/test_drawing
-        apps = {"/test_drawing": Application(FunctionHandler(deploy_bokeh))}
+        partial_deploy_bokeh = partial(deploy_bokeh, tmp_path=path_tempfile)
+        apps = {"/test_drawing": Application(FunctionHandler(partial_deploy_bokeh))}
 
         print("Deploy Bokeh server to localhost:5006/test_drawing...")
         ## Let it run in the background so that the test can continue
@@ -288,6 +290,7 @@ def test_interactive_drawing():
             print(f"Exception occured: {e}, Kill the Bokeh server...")
             server_process.terminate()
             server_process.join()
+            sys.exit(1)
 
         ## Kill the process to prevent potential race condition
         print("Kill the Bokeh server...")
