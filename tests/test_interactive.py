@@ -183,18 +183,17 @@ def test_interactive_drawing():
         ## Wait for the server to start
         time.sleep(5)
 
+        ## Get server info
+        server_query = query.get()
+        print(f"Server address: {server_query['address']}")
+        print(f"Server port: {server_query['port']}")
+
         ## Prevent permanant hang: If bug occurs, kill the server
         try:
             ## Start webdriver iteration using selenium
             webdriver_iter = 0
             while webdriver_iter <= max_webdriver_iter:
                 print(f"Iteration {webdriver_iter} starts...")
-                ## Get server info
-                server_query = query.get()
-
-                print(f"Server address: {server_query['address']}")
-                print(f"Server port: {server_query['port']}")
-
                 ## Check if the server is up and running
                 print("Check if Bokeh server is up and running...")
                 server_status = check_server()
@@ -239,6 +238,7 @@ def test_interactive_drawing():
                 driver.execute_script("document.body.style.zoom='60%'") ## Zoom out
                 size = element.size
                 width, height = size["width"], size["height"]
+                
 
                 print("element size: {}".format(size))
                 print("element tagname: {}".format(element.tag_name))
@@ -249,11 +249,12 @@ def test_interactive_drawing():
                 print("element selected: {}".format(element.is_selected()))
 
                 ## Move to the center of the element
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center', inline: 'center'});", element)
                 print("Start mouse movement...")
                 actions = ActionChains(driver)
 
                 ## Surprisingly, this pause seems to be crucial.
-                actions.pause(5)
+                actions.pause(20)
 
                 ## Move to the center of the element
                 actions.move_to_element(element)
@@ -264,7 +265,7 @@ def test_interactive_drawing():
                     int(width / 2), int(0)
                 )  ## Move from center to midpoint of right edge
                 actions.move_by_offset(
-                    int(0), int(-height / 2)
+                    int(0), int(-height / 2)*0.9
                 )  ## Move from midpoint of right edge to top right corner
                 actions.move_by_offset(
                     int(-width / 2), int(0)
