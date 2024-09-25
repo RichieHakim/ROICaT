@@ -662,8 +662,11 @@ def display_labeled_ROIs(
             Array of images. Shape: *(num_images, height, width)* or
             *(num_images, height, width, num_channels)*
         labels (Union[np.ndarray, Dict[str, Any]]): 
-            If dict, it must contain keys 'index' and 'label'. If ndarray, it
-            must be a 1D array of labels.
+            If dict, it must contain keys 'index' and 'label', where 'index' is
+            an array (or list) of indices corresponding to the indices of the
+            images, and 'label' is an array (or list) of labels with the same
+            length as 'index'. If ndarray, it must be a 1D array of labels
+            corresponding to each image.
         max_images_per_label (int): 
             Maximum number of images to display per label. (Default is *10*)
         figsize (Tuple[int, int]): 
@@ -683,7 +686,10 @@ def display_labeled_ROIs(
             'label': labels,
         }
     elif isinstance(labels, dict):
-        labels_dict = labels
+        labels_dict = {
+            'index': np.array(labels['index'], dtype=np.int64),
+            'label': np.array(labels['label']),
+        }
     else:
         raise Exception(f'labels must be a list, np.ndarray, or dict. Got {type(labels)}.')
 
@@ -693,9 +699,9 @@ def display_labeled_ROIs(
         n_l = min(len(idx_l), max_images_per_label)
 
         fig, axs = helpers.plot_image_grid(
-            images=images[labels['index'][idx_l]],
+            images=images[labels_dict['index'][idx_l]],
             # images=images[idx_l],
-            labels=labels['index'][idx_l],
+            labels=labels_dict['index'][idx_l],
             grid_shape=(1, n_l),
             kwargs_subplots={'figsize': figsize}
         );
