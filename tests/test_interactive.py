@@ -190,71 +190,68 @@ def test_interactive_drawing():
 
         ## Prevent permanant hang: If bug occurs, kill the server
         try:
-            ## Start webdriver iteration using selenium
+            ## Check if the server is up and running
+            print("Check if Bokeh server is up and running...")
+            server_status = check_server()
+            if not server_status:
+                server_process.terminate()
+                server_process.join()
+                raise Exception("Server is not up and running!")
+
+            print("Setup chrome webdriver...")
+            service = Service()
+            chrome_options = Options()
+            chrome_options.add_argument("--window-size=1280,1280")
+
+            ## For local testing, comment out these options to visualize actions in bokeh / selenium server.
+            chrome_options.add_argument("--headless")
+            chrome_options.add_argument("--disable-gpu")
+
+            ## if you are on latest version say selenium v4.6.0 or higher, you don't have to use third party library such as WebDriverManager
+            print("Driver parameter sanity check...")
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+            capabilities = driver.capabilities
+            print("Browser Name: {}".format(capabilities.get("browserName")))
+            print("Browser Version: {}".format(capabilities.get("browserVersion")))
+            print("Platform Name: {}".format(capabilities.get("platformName")))
+            print(
+                "Chrome Driver Version: {}".format(
+                    capabilities.get("chrome").get("chromedriverVersion")
+                )
+            )
+
+            print("Get to the Bokeh server...")
+            driver.get("http://localhost:5006/test_drawing")
+            wait = WebDriverWait(driver, 10)
+            print("Found the Bokeh server, locate drawing Bokeh element...")
+            try:
+                element = wait.until(EC.presence_of_element_located((By.XPATH, "//*")))
+                print("Found Bokeh drawing element!")
+            except Exception as e:
+                print(f"Failed to locate element: {str(e)}")
+
+            ## Create movement set
+            size = element.size
+            width, height = size["width"], size["height"]
+
+            print("element size: {}".format(size))
+            print("element tagname: {}".format(element.tag_name))
+            print("element text: {}".format(element.text))
+            print("element location: {}".format(element.location))
+            print("element displayed: {}".format(element.is_displayed()))
+            print("element enabled: {}".format(element.is_enabled()))
+            print("element selected: {}".format(element.is_selected()))
+
+            ## iterate over actions until indices.csv is created
             webdriver_iter = 0
             while webdriver_iter <= max_webdriver_iter:
-                print(f"Iteration {webdriver_iter} starts...")
-                ## Check if the server is up and running
-                print("Check if Bokeh server is up and running...")
-                server_status = check_server()
-                if not server_status:
-                    server_process.terminate()
-                    server_process.join()
-                    raise Exception("Server is not up and running!")
-
-                print("Setup chrome webdriver...")
-                service = Service()
-                chrome_options = Options()
-                chrome_options.add_argument("--window-size=1280,1280")
-
-                ## For local testing, comment out these options to visualize actions in bokeh / selenium server.
-                # chrome_options.add_argument("--headless")
-                # chrome_options.add_argument("--disable-gpu")
-
-                ## if you are on latest version say selenium v4.6.0 or higher, you don't have to use third party library such as WebDriverManager
-                print("Driver parameter sanity check...")
-                driver = webdriver.Chrome(service=service, options=chrome_options)
-                capabilities = driver.capabilities
-                print("Browser Name: {}".format(capabilities.get("browserName")))
-                print("Browser Version: {}".format(capabilities.get("browserVersion")))
-                print("Platform Name: {}".format(capabilities.get("platformName")))
-                print(
-                    "Chrome Driver Version: {}".format(
-                        capabilities.get("chrome").get("chromedriverVersion")
-                    )
-                )
-
-                print("Get to the Bokeh server...")
-                driver.get("http://localhost:5006/test_drawing")
-                wait = WebDriverWait(driver, 10)
-                print("Found the Bokeh server, locate drawing Bokeh element...")
-                try:
-                    element = wait.until(EC.presence_of_element_located((By.XPATH, "//*")))
-                    print("Found Bokeh drawing element!")
-                except Exception as e:
-                    print(f"Failed to locate element: {str(e)}")
-
-                ## Create movement set
-                driver.execute_script("document.body.style.zoom='60%'") ## Zoom out
-                size = element.size
-                width, height = size["width"], size["height"]
-                
-
-                print("element size: {}".format(size))
-                print("element tagname: {}".format(element.tag_name))
-                print("element text: {}".format(element.text))
-                print("element location: {}".format(element.location))
-                print("element displayed: {}".format(element.is_displayed()))
-                print("element enabled: {}".format(element.is_enabled()))
-                print("element selected: {}".format(element.is_selected()))
-
+                print(f"Action iteration {webdriver_iter} starts...")
                 ## Move to the center of the element
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center', inline: 'center'});", element)
                 print("Start mouse movement...")
                 actions = ActionChains(driver)
 
                 ## Surprisingly, this pause seems to be crucial.
-                actions.pause(30)
+                actions.pause(30 * (webdriver_iter + 1))
 
                 ## Move to the center of the element
                 actions.move_to_element(element)
@@ -273,20 +270,19 @@ def test_interactive_drawing():
                 actions.release()
                 actions.perform()
 
-                print("Mouse movement done! Detach Selenium from Bokeh server...")
-                driver.quit()
+                print("Mouse movement done!")
 
                 ## Wait for the server to save indices.csv
                 time.sleep(5)
 
                 ## Test if indices.csv is created before we kill the server
                 if os.path.exists(path_tempfile):
-                    print("indices.csv is created!")
+                    print("indices.csv is created! Detach Selenium from Bokeh server...")
+                    driver.quit()
                     break
                 else:
                     print("indices.csv is not created! Repeat the interaction...")
                     webdriver_iter += 1
-
         except Exception as e:
             print(f"Exception occured: {e}, Kill the Bokeh server...")
             server_process.terminate()
