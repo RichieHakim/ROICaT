@@ -2637,7 +2637,7 @@ class ImageLabeler:
             return self.labels_.items()
         elif kind == 'dataframe':
             # return {'index': np.array([x[0] for x in self.labels_], dtype=np.int64), 'label': np.array([x[1] for x in self.labels_])}
-            return {'index': np.array(list(self.labels_.keys()), dtype=np.int64), 'label': np.array(list(self.labels_.values()), dtype=str)}
+            return {'index': list(self.labels_.keys()), 'label': list(self.labels_.values())}
 
 
 def export_svg_hv_bokeh(
