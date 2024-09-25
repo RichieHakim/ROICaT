@@ -151,7 +151,7 @@ def test_interactive_drawing():
     port = 5006
     server_iter = 0
     max_server_iter = 3
-    max_webdriver_iter = 10
+    max_webdriver_iter = 3
     path_tempdir = tempfile.gettempdir()
     path_tempfile = os.path.join(path_tempdir, "indices.csv")
 
@@ -208,8 +208,8 @@ def test_interactive_drawing():
                 chrome_options.add_argument("--window-size=1280,1280")
 
                 ## For local testing, comment out these options to visualize actions in bokeh / selenium server.
-                chrome_options.add_argument("--headless")
-                chrome_options.add_argument("--disable-gpu")
+                # chrome_options.add_argument("--headless")
+                # chrome_options.add_argument("--disable-gpu")
 
                 ## if you are on latest version say selenium v4.6.0 or higher, you don't have to use third party library such as WebDriverManager
                 print("Driver parameter sanity check...")
@@ -254,7 +254,7 @@ def test_interactive_drawing():
                 actions = ActionChains(driver)
 
                 ## Surprisingly, this pause seems to be crucial.
-                actions.pause(20)
+                actions.pause(30)
 
                 ## Move to the center of the element
                 actions.move_to_element(element)
@@ -291,7 +291,6 @@ def test_interactive_drawing():
             print(f"Exception occured: {e}, Kill the Bokeh server...")
             server_process.terminate()
             server_process.join()
-            sys.exit(1)
 
         ## Kill the process to prevent potential race condition
         print("Kill the Bokeh server...")
