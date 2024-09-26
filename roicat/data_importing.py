@@ -304,10 +304,9 @@ class Data_roicat(util.ROICaT_Module):
             ROI_images = [ROI_images,]
         assert isinstance(ROI_images, list), f"ROI_images should be a list. It is a {type(ROI_images)}"
         assert all([isinstance(roi, np.ndarray) for roi in ROI_images]), f"ROI_images should be a list of numpy arrays. First element of list is of type {type(ROI_images[0])}"
-        assert all([roi.ndim==3 for roi in ROI_images]), f"ROI_images should be a list of numpy arrays of shape (n_roi, FOV_height, FOV_width). First element of list is of shape {ROI_images[0].shape}"
-        ### Assert that all the FOV heights and widths are the same
-        assert all([roi.shape[1]==ROI_images[0].shape[1] for roi in ROI_images]), f"All the FOV heights should be the same. First element of list is of shape {ROI_images[0].shape}"
-        assert all([roi.shape[2]==ROI_images[0].shape[2] for roi in ROI_images]), f"All the FOV widths should be the same. First element of list is of shape {ROI_images[0].shape}"
+        assert all([roi.ndim==3 for roi in ROI_images]), f"ROI_images should be a list of numpy arrays of shape (n_roi, height, width). First element of list is of shape {ROI_images[0].shape}"
+        ### Assert that all the ROI heights and widths are the same
+        assert all([tuple(roi.shape[1:]) == tuple(ROI_images[0].shape[1:]) for roi in ROI_images]), f"ROI_images should be a list of numpy arrays of shape (n_roi, height, width). All elements should have the same height and width as the first element."
 
         return ROI_images
 
