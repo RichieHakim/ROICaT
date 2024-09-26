@@ -14,8 +14,10 @@ Inputs
 Outputs
 #######
 
-The outputs of ROICaT are encapsulated in a ``results.pkl`` file, which is a
-Python dictionary containing the following fields:
+The outputs of ROICaT tracking are encapsulated in a set of files. The main file
+is a ``...tracking.results_all.richfile`` directory that can be loaded using
+``roicat.util.RichFile_ROICaT``. It is a python dictionary with the following
+fields:
 
 Clusters
 ~~~~~~~~
@@ -30,6 +32,8 @@ Clusters
 - **labels_bool_bySession:** Same as ``labels_bool``, but by session.
 - **labels_dict:** Dictionary mapping UCIDs to ROI indices. Keys are UCIDs,
   values are lists of ROI indices.
+- **quality_metrics:** Dictionary of quality metrics for each cluster. See below
+  section `Quality Metrics <quality-metrics>`_ for more details.
 
 ROIs
 ~~~~

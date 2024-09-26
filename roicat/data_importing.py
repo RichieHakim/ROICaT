@@ -180,42 +180,40 @@ class Data_roicat(util.ROICaT_Module):
 
     def set_class_labels(
         self,
-        labels: Optional[Union[List[np.ndarray], np.ndarray]] = None,
+        labels: Optional[List[Union[np.ndarray, List[Union[int, str, float]]]]] = None,
         path_labels: Optional[Union[str, List[str]]] = None,
         n_classes: Optional[int] = None,
     ) -> None:
         """
         Imports class labels into the class. 
 
-        * labels are expected to be formatted as a list of numpy arrays or
-          strings. Each element in the list is a session, and each element in
-          the numpy array is associated with the nth element of the
-          self.ROI_images list. Each element is a numpy array of shape
-          *(n_roi,)*.
-
-        * Sets the attributes: self.class_labels_raw, self.class_labels_index,
-          self.n_classes, self.n_class_labels, self.n_class_labels_total,
-          self.unique_class_labels. If any of these attributes are already set,
-          they will verify the new values match the existing ones.
+        * labels are expected to be formatted as a list of arrays. The outer
+          list should have length equal to the number of sessions (n_sessions).
+          Each element in the list is either a 1D array or list of integers or
+          strings and should have length equal to the number of ROIs in that
+          session (n_roi). Each element in the array or list is the class label
+          for the corresponding ROI and can be a number or a string.
+          List[Union[np.ndarray, List[Union[int, str, float]]]]. \n
 
         Args:
-            labels (Optional[Union[List[np.ndarray], np.ndarray]]): \n
+            labels (Optional[List[Union[np.ndarray, List[Union[int, str, float]]]]]): \n
                 * If ``None``: path_labels must be specified. 
-                * If a ``list`` of ``np.ndarray``: each element should be a 1D
-                  array of integers or strings of length *n_roi* specifying the
-                  class label for each ROI. \n
-                (Default is ``None``)
+                * Else: ``labels`` are expected to be a list of arrays. The
+                  outer list should have length equal to the number of sessions
+                  (``n_sessions``). Each element in the list is either a 1D
+                  array or list of integers or strings and should have length
+                  equal to the number of ROIs in that session (``n_roi``). Each
+                  element in the array or list is the class label for the
+                  corresponding ROI and can be a number or a string. 
+                  List[Union[np.ndarray, List[Union[int, str, float]]]]. \n
             path_labels (Optional[Union[str, List[str]]]): \n
                 * If ``None``: labels must be specified.
-                * If a ``list`` of ``str``: each element should be a path to a
-                  either: \n
-                    * A ``.npy`` file containing a numpy array of shape
-                      *(n_roi,)* OR
-                    * A ``.pkl`` or ``.npy`` file containing a dictionary with
-                      an item that has key 'labels' and value of a numpy
-                      array of shape *(n_roi,)*.  \n
-                The numpy array should be of integers or strings specifying the
-                class label
+                * Else: ``path_labels`` is expected to be a list of strings. Each
+                  element in the list is a path to a file containing the class
+                  labels. The outer list should have length equal to
+                  the number of sessions (``n_sessions``). Each file should be a
+                  json file containing a list of integers or strings corresponding
+                  to the class labels for each ROI in that session.
 
             n_classes (Optional[int]): 
                 Number of classes. If not provided, it will be inferred from the
@@ -232,53 +230,39 @@ class Data_roicat(util.ROICaT_Module):
 
         print(f"Starting: Importing class labels") if self._verbose else None
 
-        if path_labels is not None:
-            assert labels is None, f"labels is not None but path_labels is not None. Please specify only one of them."
-            ## Convert to a list if it is not already
-            if isinstance(path_labels, list) == False:
-                print(f'Input labels is not a list. Wrapping it in a list.') if self._verbose else None
-                path_labels =[path_labels]
-            ## Assert that all the elements are strings
+        ## Check inputs
+        if labels is not None:
+            assert isinstance(labels, list), f"labels should be a list. It is a {type(labels)}"
+            ## make sure all elements are numpy arrays or lists
+            assert all([isinstance(l, (np.ndarray, list)) for l in labels]), f"labels should be a list of numpy arrays or lists of integers or strings. First element of list is of type {type(labels[0])}"
+            ## convert lists to numpy arrays
+            labels_raw = [np.array(l, dtype=str) if isinstance(l, list) else l for l in labels]
+            ## make sure all elements are 1D
+            assert all([l.ndim==1 for l in labels_raw]), f"labels should be a list of 1D numpy arrays or lists of integers or strings. First element of list is of shape {labels[0].shape}"
+        elif path_labels is not None:
+            ## It should be a csv file (or list of files) with the first column as the index and second column as the class label
+            assert isinstance(path_labels, (str, list)), f"path_labels should be a string or a list of strings. It is a {type(path_labels)}"
+            if isinstance(path_labels, str):
+                path_labels = [path_labels]
+            ## make sure all elements are strings
             assert all([isinstance(l, str) for l in path_labels]), f"path_labels should be a list of strings. First element of list is of type {type(path_labels[0])}"
-            ## Check the file extension
-            extension = Path(path_labels[0]).suffix
-            ## Load the labels
-            if extension == '.npy':
-                self.class_labels_raw = [np.load(p, allow_pickle=True)[()] for p in path_labels]
-            elif extension == '.pkl':
-                self.class_labels_raw = [helpers.pickle_load(p) for p in path_labels]
-            else:
-                raise ValueError(f"File extension {extension} is not supported. Please use either .npy or .pkl")
-            ## Check that if the inputs are dictionaries, we extract the labels
-            if isinstance(self.class_labels_raw[0], dict):
-                assert all(['labels' in l for l in self.class_labels_raw]), f"Found a dictionary in the .npy file. The dictionary should have a key 'labels' with a value of a numpy array of shape (n_roi,)."
-                self.class_labels_raw = [l['labels'] for l in self.class_labels_raw]
+            ## make sure all files exist
+            assert all([Path(l).exists() for l in path_labels]), f"Files in path_labels do not exist. Please check the paths."
+            ## make sure all files are json files containing lists of integers or strings or floats
+            assert all([Path(l).suffix in ['.json',] for l in path_labels]), f"Files in path_labels should be json files. Please check the file extensions."
+            ## load the files
+            labels_raw = [np.array(helpers.json_load(l), dtype=str) for l in path_labels]
         else:
-            assert labels is not None, f"Either labels or path_labels must be specified."
-            assert isinstance(labels, str) == False, f"labels is a string. Did you mean to specify path_labels?"
-            self.class_labels_raw = labels
-
-        ## Convert to a list if it is not already
-        if isinstance(self.class_labels_raw, list) == False:
-            print(f'Input labels is not a list. Wrapping it in a list.') if self._verbose else None
-            self.class_labels_raw = [self.class_labels_raw]
-        ## Assert that all the elements are numpy arrays
-        assert all([isinstance(l, np.ndarray) for l in self.class_labels_raw]), f"labels should be a list of numpy arrays. First element of list is of type {type(self.class_labels_raw[0])}"
-        ## Assert that all the elements are 1D
-        assert all([l.ndim==1 for l in self.class_labels_raw]), f"labels should be a list of 1D numpy arrays. First element of list is of shape {self.class_labels_raw[0].shape}"
-
-        ## Define some variables
-        n_sessions = len(self.class_labels_raw)
-        labels_cat = np.concatenate(self.class_labels_raw, axis=0)
-        labels_cat_squeezeInt = np.unique(labels_cat, return_inverse=True)[1].astype(np.int64)
-        unique_class_labels = np.unique(labels_cat)
-        if n_classes is not None:
-            assert len(unique_class_labels) <= n_classes, f"RH ERROR: User provided n_classes={n_classes} but there are {len(unique_class_labels)} unique class labels in the provided class_labels." if self._verbose else None
-        else:
-            n_classes = len(unique_class_labels)
-        n_class_labels = [lbls.shape[0] for lbls in self.class_labels_raw]
+            raise ValueError(f"Either labels or path_labels must be specified.")
+        
+        ## convert lists to numpy arrays of unique integers
+        labels_cat = np.concatenate(labels_raw, axis=0)
+        unique_class_labels, labels_cat_squeezeInt = np.unique(labels_cat, return_inverse=True)
+        n_classes = len(unique_class_labels)
+        n_class_labels = [lbls.shape[0] for lbls in labels_raw]
         n_class_labels_total = sum(n_class_labels)
-        class_labels_squeezeInt = [labels_cat_squeezeInt[sum(n_class_labels[:ii]):sum(n_class_labels[:ii+1])] for ii in range(n_sessions)]
+        n_sessions = len(labels_raw)
+        class_labels_squeezeInt = util.labels_to_labelsBySession(labels=labels_cat_squeezeInt, n_roi_bySession=n_class_labels)
 
         ## Set attributes
         self.class_labels_index = class_labels_squeezeInt

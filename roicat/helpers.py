@@ -2603,7 +2603,8 @@ class ImageLabeler:
             kind (str): 
                 The type of object to return. (Default is ``'dict'``) \n
                 * ``'dict'``: {idx: label, idx: label, ...}
-                * ``'list'``: [(idx, label), (idx, label), ...]
+                * ``'list'``: [label, label, ...] where the index is the image
+                  index and unlabeled images are represented as ``'None'``.
                 * ``'dataframe'``: {'index': [idx, idx, ...], 'label': [label, label, ...]}
                   This can be converted to a pandas dataframe with:
                   pd.DataFrame(self.get_labels('dataframe'))
@@ -2626,18 +2627,15 @@ class ImageLabeler:
             return None
         
         if kind == 'dict':
-            # out = dict(self.labels_)
-            # ## Check for duplicate indices
-            # if len(out) != len(self.labels_):
-            #     warnings.warn('Duplicate indices found in labels. Only the last label for each index is returned.')
-            # return out
             return self.labels_
         elif kind == 'list':
-            # return self.labels_
-            return self.labels_.items()
+            out = ['None',] * len(self.images)
+            for idx, label in self.labels_.items():
+                out[idx] = label
+            return out
         elif kind == 'dataframe':
-            # return {'index': np.array([x[0] for x in self.labels_], dtype=np.int64), 'label': np.array([x[1] for x in self.labels_])}
-            return {'index': list(self.labels_.keys()), 'label': list(self.labels_.values())}
+            import pandas as pd
+            return pd.DataFrame(index=list(self.labels_.keys()), data={'label': list(self.labels_.values())})
 
 
 def export_svg_hv_bokeh(

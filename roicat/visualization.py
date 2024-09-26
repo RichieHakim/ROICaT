@@ -9,6 +9,7 @@ import seaborn as sns
 import numpy as np
 import scipy.sparse
 import torch
+import pandas as pd
 
 from . import util, helpers
 
@@ -688,6 +689,11 @@ def display_labeled_ROIs(
     elif isinstance(labels, dict):
         labels_dict = {
             'index': np.array(labels['index'], dtype=np.int64),
+            'label': np.array(labels['label']),
+        }
+    elif isinstance(labels, pd.DataFrame):
+        labels_dict = {
+            'index': np.array(labels.index, dtype=np.int64),
             'label': np.array(labels['label']),
         }
     else:

@@ -644,6 +644,7 @@ class RichFile_ROICaT(rf.RichFile):
         super().__init__(path=path, check=check, safe_save=safe_save)
 
 
+        ## NUMPY ARRAY
         import numpy as np
 
         def save_npy_array(
@@ -666,6 +667,7 @@ class RichFile_ROICaT(rf.RichFile):
             return np.load(path, **kwargs)
         
 
+        ## SCIPY SPARSE MATRIX
         import scipy.sparse
 
         def save_sparse_array(
@@ -687,6 +689,8 @@ class RichFile_ROICaT(rf.RichFile):
             """        
             return scipy.sparse.load_npz(path, **kwargs)
         
+
+        ## JSON DICT
         import collections
         import json
 
@@ -710,7 +714,9 @@ class RichFile_ROICaT(rf.RichFile):
             """
             with open(path, 'r') as f:
                 return JSON_Dict(json.load(f, **kwargs))
-            
+
+
+        ## JSON LIST   
         def save_json_list(
             obj: collections.UserList,
             path: Union[str, Path],
@@ -732,6 +738,8 @@ class RichFile_ROICaT(rf.RichFile):
             with open(path, 'r') as f:
                 return JSON_List(json.load(f, **kwargs))
             
+
+        ## OPTUNA STUDY
         import optuna
         import pickle
 
@@ -758,6 +766,7 @@ class RichFile_ROICaT(rf.RichFile):
                 return pickle.load(f, **kwargs)
             
         
+        ## TORCH TENSOR
         import torch
 
         def save_torch_tensor(
@@ -780,6 +789,7 @@ class RichFile_ROICaT(rf.RichFile):
             return torch.from_numpy(np.load(path, **kwargs))
 
 
+        ## REPR
         def save_repr(
             obj: object,
             path: Union[str, Path],
@@ -803,6 +813,31 @@ class RichFile_ROICaT(rf.RichFile):
 
         import hdbscan
 
+        
+        ## PANDAS DATAFRAME
+        import pandas as pd
+        
+        def save_pandas_dataframe(
+            obj: pd.DataFrame,
+            path: Union[str, Path],
+            **kwargs,
+        ) -> None:
+            """
+            Saves a Pandas DataFrame to the given path.
+            """
+            ## Save as a CSV file
+            obj.to_csv(path, index=True, **kwargs)
+
+        def load_pandas_dataframe(
+            path: Union[str, Path],
+            **kwargs,
+        ) -> pd.DataFrame:
+            """
+            Loads a Pandas DataFrame from the given path.
+            """
+            ## Load as a CSV file
+            return pd.read_csv(path, index_col=0, **kwargs)
+        
 
         roicat_module_tds = [rf.functions.Type_container(
             type_name=type_name,
@@ -944,6 +979,15 @@ class RichFile_ROICaT(rf.RichFile):
                 "object_class":       hdbscan.HDBSCAN,
                 "suffix":             "hdbscan",
                 "library":            "torch",
+                "versions_supported": [],
+            },
+            {
+                "type_name":          "pandas_dataframe",
+                "function_load":      load_pandas_dataframe,
+                "function_save":      save_pandas_dataframe,
+                "object_class":       pd.DataFrame,
+                "suffix":             "csv",
+                "library":            "pandas",
                 "versions_supported": [],
             },
         ] + [t.get_property_dict() for t in roicat_module_tds]

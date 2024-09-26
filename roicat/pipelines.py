@@ -309,22 +309,6 @@ def pipeline_tracking(params: dict):
         util.RichFile_ROICaT(path=paths_save['results_all']).save(obj=results_all, overwrite=True);
         util.RichFile_ROICaT(path=paths_save['run_data']).save(obj=run_data, overwrite=True);
 
-        # helpers.pickle_save(
-        #     obj=results,
-        #     filepath=str(dir_save / (name_save + '.ROICaT.tracking.results' + '.pkl')),
-        #     mkdir=True,
-        # )
-        # helpers.pickle_save(
-        #     obj=run_data,
-        #     filepath=str(dir_save / (name_save + '.ROICaT.tracking.rundata' + '.pkl')),
-        #     mkdir=True,
-        # )
-        # helpers.yaml_save(
-        #     obj=params,
-        #     filepath=str(dir_save / (name_save + '.ROICaT.tracking.params' + '.yaml')),
-        #     mkdir=True,
-        # )
-
     
         ## Visualize results
         ### Save some figures
