@@ -83,6 +83,7 @@ deps_core = [deps_all_dict[dep] for dep in [
     'onnx',
     'onnxruntime',
     'opencv_contrib_python_headless',
+    'richfile',
 ]]
 
 deps_classification = [deps_all_dict[dep] for dep in [
