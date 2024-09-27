@@ -702,7 +702,7 @@ class Data_roicat(util.ROICaT_Module):
         print(f"Completed: Created centroids.") if self._verbose else None
 
     
-    def _transform_spatialFootprints_to_ROIImages(
+    def transform_spatialFootprints_to_ROIImages(
         self, 
         out_height_width: Tuple[int, int] = (36, 36)
     ) -> np.ndarray:
@@ -957,7 +957,7 @@ class Data_suite2p(Data_roicat):
         self._make_spatialFootprintCentroids(method=centroid_method)
         
         ## Transform spatial footprints to ROI images
-        self._transform_spatialFootprints_to_ROIImages(out_height_width=out_height_width)
+        self.transform_spatialFootprints_to_ROIImages(out_height_width=out_height_width)
 
         ## Make class labels
         if class_labels is not None:
@@ -1320,7 +1320,7 @@ class Data_caiman(Data_roicat):
         self.set_FOV_images(FOV_images=FOV_images)
         self._make_spatialFootprintCentroids(method=centroid_method)
         self._make_session_bool()
-        self._transform_spatialFootprints_to_ROIImages(out_height_width=out_height_width)
+        self.transform_spatialFootprints_to_ROIImages(out_height_width=out_height_width)
         self.set_class_labels(labels=class_labels) if class_labels is not None else None
 
     def set_caimanLabels(self, overall_caimanLabels: List[List[bool]]) -> None:
@@ -1682,7 +1682,7 @@ class Data_roiextractors(Data_roicat):
         self._make_spatialFootprintCentroids(method=centroid_method)
 
         ## Transform spatial footprints to ROI images
-        self._transform_spatialFootprints_to_ROIImages(out_height_width=out_height_width)
+        self.transform_spatialFootprints_to_ROIImages(out_height_width=out_height_width)
 
         ## Make class labels
         self.set_class_labels(labels=class_labels) if class_labels is not None else None
@@ -1817,7 +1817,7 @@ def make_smaller_data(
     )
 
     data_out._make_spatialFootprintCentroids()
-    data_out._transform_spatialFootprints_to_ROIImages()
+    data_out.transform_spatialFootprints_to_ROIImages()
     data_out._make_session_bool()
 
     return data_out
