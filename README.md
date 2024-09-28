@@ -236,12 +236,28 @@ intercompatible, so if you have CUDA 11.8 drivers, you can install
 
 
 # TODO:
-- Some more integration tests
-- Switch to ONNX for ROINet
-- Add more documentation / tutorials
-- Make a GUI
-- Finish ROIextractors integration
-- Make a Docker container
-- Make a standard classifier
-- Write the paper
-- Make tweet about it
+#### algorithmic improvements:
+- [ ] Add in method to use more similarity metrics for tracking
+- [ ] Coordinate descent on each similarity metric
+- [ ] Add F and Fneu to data_roicat, dFoF and trace quality metric functions
+- [ ] Add in notebook for demonstrating using temporal similarity metrics (SWT on dFoF)
+- [ ] Make a standard classifier
+- [ ] Try other clustering methods
+- [ ] Make image aligner based on image similarity + RANSAC of centroids or s_SF
+- [ ] Better post-hoc curation metrics and visualizations
+#### code improvements:
+- [ ] Update automatic regression module (make new repo for it)
+- [ ] Switch to ONNX for ROINet
+- [ ] Some more integration tests
+- [ ] Add more documentation / tutorials
+- [ ] Make a GUI
+- [ ] Finish ROIextractors integration
+- [ ] Make a Docker container
+- [ ] Make colab demo notebook not require user data
+#### other:
+- [ ] Write the paper
+- [ ] Make tweet about it
+- [ ] Make a video or two on how to use it
+- [ ] Maybe use lightthetorch for torch installation
+- [ ] Better Readme
+- [ ] More documentation
