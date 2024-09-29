@@ -1340,6 +1340,7 @@ def squeeze_UCID_labels(
 def match_arrays_with_ucids(
     arrays: Union[np.ndarray, List[np.ndarray]], 
     ucids: Union[List[np.ndarray], List[List[int]]], 
+    return_indices: bool = False,
     squeeze: bool = False,
     force_sparse: bool = False,
     prog_bar: bool = False,
@@ -1355,6 +1356,9 @@ def match_arrays_with_ucids(
             first dimension.
         ucids (Union[List[np.ndarray], List[List[int]]]): 
             List of lists of UCIDs for each session.
+        return_indices (bool):
+            If ``True``, then the indices of the UCIDs will also be returned.
+            (Default is ``False``)
         squeeze (bool): 
             If ``True``, then UCIDs are squeezed to be contiguous integers.
             (Default is ``False``)
@@ -1404,7 +1408,17 @@ def match_arrays_with_ucids(
             if u >= 0:
                 arrays_out[i_sesh][u] = arrays[i_sesh][idx]
 
-    return arrays_out
+    if not return_indices:
+        return arrays_out
+    else:
+        return arrays_out, match_arrays_with_ucids(
+            arrays=[np.arange(len(a), dtype=np.int64) for a in arrays],
+            ucids=ucids,
+            return_indices=False,
+            squeeze=squeeze,
+            force_sparse=False,
+            prog_bar=False,
+        )
 
 def match_arrays_with_ucids_inverse(
     arrays: Union[np.ndarray, List[np.ndarray]], 
