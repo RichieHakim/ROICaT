@@ -1358,6 +1358,7 @@ def match_arrays_with_ucids(
             List of lists of UCIDs for each session.
         return_indices (bool):
             If ``True``, then the indices of the UCIDs will also be returned.
+            The indices will be of dtype np.float32 because it may contain NaNs.
             (Default is ``False``)
         squeeze (bool): 
             If ``True``, then UCIDs are squeezed to be contiguous integers.
@@ -1388,6 +1389,10 @@ def match_arrays_with_ucids(
         fix=True,
         verbose=False,
     )
+    ## Error if dtype is not NaN compatible
+    if not np.issubdtype(arrays[0].dtype, np.floating):
+        raise ValueError(f'ROICaT ERROR: This function requires inputs to be of a dtype that is compatible with NaNs, like np.floating types: np.float32, np.float64, etc.')
+    ## Squeeze UCIDs
     ucids_tu = squeeze_UCID_labels(ucids_tu) if squeeze else ucids_tu
     # max_ucid = (np.unique(np.concatenate(ucids_tu, axis=0)) >= 0).max()
     max_ucid = (np.unique(np.concatenate(ucids_tu, axis=0))).max().astype(int) + 1
@@ -1412,7 +1417,7 @@ def match_arrays_with_ucids(
         return arrays_out
     else:
         return arrays_out, match_arrays_with_ucids(
-            arrays=[np.arange(len(a), dtype=np.int64) for a in arrays],
+            arrays=[np.arange(len(a), dtype=np.float32) for a in arrays],
             ucids=ucids,
             return_indices=False,
             squeeze=squeeze,
