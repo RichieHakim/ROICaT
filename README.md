@@ -261,3 +261,4 @@ intercompatible, so if you have CUDA 11.8 drivers, you can install
 - [ ] Maybe use lightthetorch for torch installation
 - [ ] Better Readme
 - [ ] More documentation
+- [ ] Make a regression model for in-plane-ness
