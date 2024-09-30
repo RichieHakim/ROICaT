@@ -3305,8 +3305,8 @@ def find_geometric_transformation(
 def apply_warp_transform(
     im_in: np.ndarray,
     warp_matrix: np.ndarray,
-    interpolation_method: int = cv2.INTER_LINEAR, 
-    borderMode: int = cv2.BORDER_CONSTANT, 
+    interpolation_method: int = 1, 
+    borderMode: int = 0, 
     borderValue: int = 0
 ) -> np.ndarray:
     """
@@ -3323,11 +3323,11 @@ def apply_warp_transform(
             info.
         interpolation_method (int): 
             Interpolation method. See ``cv2.warpAffine`` for more info. (Default
-            is ``cv2.INTER_LINEAR``)
+            is ``cv2.INTER_LINEAR`` which = 1)
         borderMode (int): 
             Border mode. Determines how to handle pixels from outside the image
             boundaries. See ``cv2.warpAffine`` for more info. (Default is
-            ``cv2.BORDER_CONSTANT``)
+            ``cv2.BORDER_CONSTANT`` which = 0)
         borderValue (int): 
             Value to use for border pixels if borderMode is set to
             ``cv2.BORDER_CONSTANT``. (Default is *0*)
