@@ -64,22 +64,22 @@ computer.
 
 ### TRACKING: 
 - [Interactive
-  notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/tracking_interactive_notebook.ipynb)
+  notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/1_tracking_interactive_notebook.ipynb)
 - [Google
-  CoLab](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/tracking/tracking_interactive_notebook.ipynb)
+  CoLab](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/tracking/1_tracking_interactive_notebook.ipynb)
 - [Command line interface script](https://github.com/RichieHakim/ROICaT/blob/main/scripts/demo_run_tracking_pipeline.py)
   
 ### CLASSIFICATION:
 - [Interactive notebook -
-  Drawing](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/classify_by_drawingSelection.ipynb)
+  Drawing](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/A1_classify_by_drawingSelection.ipynb)
 - [Google CoLab -
-  Drawing](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/classification/classify_by_drawingSelection_colab.ipynb)
+  Drawing](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/classification/A1_classify_by_drawingSelection_colab.ipynb)
 - [Interactive notebook -
-  Labeling](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/labeling_interactive.ipynb)
+  Labeling](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/B1_labeling_interactive.ipynb)
 - [Interactive notebook - Train
-  classifier](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/classifier_train_interactive.ipynb)
+  classifier](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/B2_classifier_train_interactive.ipynb)
 - [Interactive notebook - Inference with
-  classifier](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/classifier_inference_interactive.ipynb)
+  classifier](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/B3_classifier_inference_interactive.ipynb)
 
 **OTHER:** 
 - [Custom data importing
