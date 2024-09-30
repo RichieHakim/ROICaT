@@ -1182,6 +1182,10 @@ def index_with_nans(values, indices):
             Indexed array. Positions where `indices` was NaN will be filled with
             NaNs.
     """
+    ## Warn if input dtype is not NaN compatible
+    if not np.issubdtype(indices.dtype, np.floating):
+        raise ValueError('Input indices should be floating point because NaNs are used for masking. Convert to float if necessary.')
+    
     indices = np.array(indices, dtype=float) if not isinstance(indices, np.ndarray) else indices
     values = np.concatenate((np.full(shape=values.shape[1:], fill_value=np.nan, dtype=values.dtype)[None,...], values), axis=0)
     idx = indices.copy() + 1

@@ -1297,7 +1297,8 @@ def discard_UCIDs_with_fewer_matches(
     
 
 def squeeze_UCID_labels(
-    ucids: List[Union[List[int], np.ndarray]]
+    ucids: List[Union[List[int], np.ndarray]],
+    return_array: bool = False,
 ) -> List[Union[List[int], np.ndarray]]:
     """
     Squeezes the UCID labels. Finds all the unique UCIDs across all sessions,
@@ -1308,6 +1309,9 @@ def squeeze_UCID_labels(
     Args:
         ucids (List[Union[List[int], np.ndarray]]): 
             List of lists of UCIDs for each session.
+        return_array (bool):
+            If ``True``, then the output will be a numpy array.
+            (Default is ``False``)
 
     Returns:
         (List[Union[List[int], np.ndarray]]): 
@@ -1334,7 +1338,10 @@ def squeeze_UCID_labels(
     for i_sesh in range(n_sesh):
         ucids_out[i_sesh] = [int(mapping[val]) for val in ucids_out[i_sesh]]
 
-    return ucids_out
+    if not return_array:
+        return ucids_out
+    else:
+        return [np.array(u) for u in ucids_out]
 
 
 def match_arrays_with_ucids(
