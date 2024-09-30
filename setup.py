@@ -82,7 +82,6 @@ deps_core = [deps_all_dict[dep] for dep in [
     'skl2onnx',
     'onnx',
     'onnxruntime',
-    'opencv_contrib_python_headless',
     'richfile',
 ]]
 
@@ -94,6 +93,7 @@ deps_classification = [deps_all_dict[dep] for dep in [
 ]] + deps_core
 
 deps_tracking = [deps_all_dict[dep] for dep in [
+    'opencv_contrib_python_headless',
     'hdbscan',
     'kymatio',
 ]] + deps_core

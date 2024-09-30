@@ -22,7 +22,6 @@ import torchvision
 import scipy.sparse
 import sparse
 from tqdm import tqdm
-import cv2
 import matplotlib.pyplot as plt
 import yaml
 
@@ -3253,6 +3252,7 @@ def find_geometric_transformation(
                 Warp matrix. See cv2.findTransformECC for more info. Can be
                 applied using cv2.warpAffine or cv2.warpPerspective.
     """
+    import cv2
     LUT_modes = {
         'translation': cv2.MOTION_TRANSLATION,
         'euclidean': cv2.MOTION_EUCLIDEAN,
@@ -3338,6 +3338,7 @@ def apply_warp_transform(
                 Transformed output image with the same dimensions as the input
                 image.
     """
+    import cv2
     if warp_matrix.shape == (2, 3):
         im_out = cv2.warpAffine(
             src=im_in,
@@ -3466,6 +3467,7 @@ def remap_images(
                 The warped images. The shape will be the same as the input
                 images, which can be *(N, C, H, W)*, *(C, H, W)*, or *(H, W)*.
     """
+    import cv2
     # Check inputs
     assert isinstance(images, (np.ndarray, torch.Tensor)), f"images must be a np.ndarray or torch.Tensor"
     assert isinstance(remappingIdx, (np.ndarray, torch.Tensor)), f"remappingIdx must be a np.ndarray or torch.Tensor"
