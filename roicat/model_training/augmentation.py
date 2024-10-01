@@ -273,7 +273,7 @@ class WarpPoints(Module):
             im_newPos = torch.tile(im_newPos, (tensor.shape[0], 1, 1, 1))
         ret = torch.nn.functional.grid_sample( tensor, 
                                                 im_newPos, 
-                                                mode='bilinear',
+                                                mode='bicubic',
                                                 # mode='bicubic', 
                                                 padding_mode='zeros', 
                                                 align_corners=True)
