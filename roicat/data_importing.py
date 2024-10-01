@@ -733,25 +733,32 @@ class Data_roicat(util.ROICaT_Module):
 
         ## Make helper function
         def sf_to_centeredROIs(sf, centroids):
-            half_widths = np.ceil(np.array(out_height_width)/2).astype(int)
-            sf_rs = sparse.COO(sf).reshape((sf.shape[0], self.FOV_height, self.FOV_width))
+            ## Check if any ROI image has violations: all zero, has NaNs
+            sf_sum = sf.sum(1)
+            if np.any(sf_sum==0):
+                warnings.warn(f"RH WARNING: Found ROIs with all zero spatial footprints. Setting them to zero. This will affect the embedding results. Indices with all zero: {np.where(sf_sum==0)[0]}")
+            if np.any(np.isnan(sf_sum)):
+                warnings.warn(f"RH WARNING: Found NaNs in the sum of the spatial footprints. Setting them to zero. This will affect the embedding results. Indices with NaN: {np.where(np.isnan(sf_sum))[0]}")
+                sf.data = np.nan_to_num(sf.data)
+            
+            half_widths = np.ceil(np.array(out_height_width)/2).astype(int)    
+            sf_rs_centered = sparse.COO(sf).reshape((sf.shape[0], self.FOV_height, self.FOV_width))  ## shape: (n_roi, FOV_height, FOV_width)
 
-            coords_diff = np.diff(sf_rs.coords[0])
-            assert np.all(coords_diff < 1.01) and np.all(coords_diff > -0.01), \
-                "RH ERROR: sparse.COO object has strange .coords attribute. sf_rs.coords[0] should all be 0 or 1. An ROI is possibly all zeros."
-            
-            idx_split = (sf_rs>0).astype(np.bool_).sum((1,2)).todense().cumsum()[:-1]
-            coords_split = [np.split(sf_rs.coords[ii], idx_split) for ii in [0,1,2]]
-            coords_split[1] = [coords - centroids[0][ii] + half_widths[0] for ii,coords in enumerate(coords_split[1])]
-            coords_split[2] = [coords - centroids[1][ii] + half_widths[1] for ii,coords in enumerate(coords_split[2])]
-            sf_rs_centered = sf_rs.copy()
-            sf_rs_centered.coords = np.array([np.concatenate(c) for c in coords_split])
-            sf_rs_centered = sf_rs_centered[:, :out_height_width[0], :out_height_width[1]]
-            return sf_rs_centered.todense().astype(np.float32)
-            
+            ## Shift coords to be centered on centroids
+            sf_rs_centered.coords[1:3] = sf_rs_centered.coords[1:3] - (centroids[sf_rs_centered.coords[0]].T - half_widths[:, None])
+            ## Set values with coords outside of out_height_width to 0
+            sf_rs_centered.data[(sf_rs_centered.coords[1:3] < 0).any(axis=0) | (sf_rs_centered.coords[1] >= out_height_width[0]) | (sf_rs_centered.coords[2] >= out_height_width[1])] = 0
+            ## Clip coords to within out_height_width
+            sf_rs_centered.coords[1] = np.clip(sf_rs_centered.coords[1], 0, out_height_width[0]-1)
+            sf_rs_centered.coords[2] = np.clip(sf_rs_centered.coords[2], 0, out_height_width[1]-1)
+            ## Crop to out_height_width
+            sf_rs_centered = sf_rs_centered[:, 0:out_height_width[0], 0:out_height_width[1]]
+            ## Cast and densify
+            return sf_rs_centered.astype(np.float32).todense()
+
         ## Transform
         print(f"Staring: Creating centered ROI images from spatial footprints...") if self._verbose else None
-        self.ROI_images = [sf_to_centeredROIs(sf, centroids.T) for sf, centroids in zip(self.spatialFootprints, self.centroids)]
+        self.ROI_images = [sf_to_centeredROIs(sf, centroids) for sf, centroids in zip(self.spatialFootprints, self.centroids)]
         print(f"Completed: Created ROI images.") if self._verbose else None
 
         return self.ROI_images
