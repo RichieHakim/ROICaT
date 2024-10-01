@@ -758,7 +758,7 @@ class Data_roicat(util.ROICaT_Module):
 
         ## Transform
         print(f"Staring: Creating centered ROI images from spatial footprints...") if self._verbose else None
-        self.ROI_images = [sf_to_centeredROIs(sf, centroids) for sf, centroids in zip(self.spatialFootprints, self.centroids)]
+        self.ROI_images = [sf_to_centeredROIs(sf.copy(), centroids) for sf, centroids in zip(self.spatialFootprints, self.centroids)]
         print(f"Completed: Created ROI images.") if self._verbose else None
 
         return self.ROI_images

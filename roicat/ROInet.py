@@ -585,7 +585,7 @@ class ROInet_embedder(util.ROICaT_Module):
         roi_resizer = Resizer_ROI_images(
             nan_to_num=nan_to_num,
             nan_to_num_val=nan_to_num_val,
-            verbose=self._verbose,
+            verbose=False,
         )
         self.ROI_images_rs = np.concatenate([
             roi_resizer.resize_ROIs(
