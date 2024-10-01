@@ -73,10 +73,12 @@ class Resizer_ROI_images(util.ROICaT_Module):
         function_scaleFactor: Callable[[float, int], float]=lambda um_per_pixel, size_im: 1.2 * um_per_pixel * (size_im / 36),
         nan_to_num: bool=True, 
         nan_to_num_val: float=0.0, verbose: bool=True,
+        batch_size: int=10000,
     ):
         super().__init__()
         self.nan_to_num = nan_to_num
         self.nan_to_num_val = nan_to_num_val
+        self.batch_size = batch_size
         self._verbose = verbose
 
         ## Store parameter (but not data) args as attributes
@@ -162,11 +164,26 @@ class Resizer_ROI_images(util.ROICaT_Module):
         assert isinstance(um_per_pixel, (int, float)), f'um_per_pixel should be an int or float, but is {type(um_per_pixel)}'
 
         if self.nan_to_num:
+            print(f'ROICaT: replacing NaNs with {self.nan_to_num_val}') if self._verbose else None
             ROI_images = np.nan_to_num(ROI_images, nan=self.nan_to_num_val)
 
         scale_forRS = self.function_scaleFactor(um_per_pixel=float(um_per_pixel), size_im=ROI_images.shape[1])
 
-        return np.stack([resize_affine(img, scale=scale_forRS, clamp_range=True) for img in tqdm(ROI_images, mininterval=5, disable=not self._verbose)], axis=0)
+        print(f'ROICaT: resizing ROIs') if self._verbose else None
+        # return np.stack([resize_affine(img, scale=scale_forRS, clamp_range=True) for img in tqdm(ROI_images, mininterval=5, disable=not self._verbose)], axis=0)
+        return np.concatenate(
+            [resize_images(
+                batch, 
+                scale=scale_forRS, 
+                clamp_range=True,
+            ) for batch in tqdm(
+                helpers.make_batches(ROI_images, batch_size=self.batch_size), 
+                total=np.ceil(len(ROI_images)/self.batch_size), 
+                mininterval=5, 
+                unit='images',
+                unit_scale=self.batch_size,
+                disable=not self._verbose,
+            )], axis=0)
 
 
 class Dataloader_ROInet(util.ROICaT_Module):
@@ -564,10 +581,11 @@ class ROInet_embedder(util.ROICaT_Module):
             ],
         )    
 
+        print(f'Starting Image Resizer') if self._verbose else None
         roi_resizer = Resizer_ROI_images(
             nan_to_num=nan_to_num,
             nan_to_num_val=nan_to_num_val,
-            verbose=False,
+            verbose=self._verbose,
         )
         self.ROI_images_rs = np.concatenate([
             roi_resizer.resize_ROIs(
@@ -581,6 +599,7 @@ class ROInet_embedder(util.ROICaT_Module):
             ROI_images_rs=self.ROI_images_rs,
         ) if pref_plot else None
 
+        print(f'Creating dataloader') if self._verbose else None
         dataloader_generator = Dataloader_ROInet(
             ROI_images=self.ROI_images_rs,
             batchSize_dataloader=batchSize_dataloader,
@@ -1025,6 +1044,52 @@ def resize_affine(
         img_rs[img_rs<clamp_low] = clamp_low
 
     return img_rs
+
+def resize_images(
+    imgs: np.ndarray,
+    scale: float,
+    clamp_range: bool = False,
+) -> np.ndarray:
+    """
+    Resizes images using an affine transformation, scaled by a factor.
+    Uses torch.nn.functional.grid_sample to perform the resizing.
+    
+    Args:
+        imgs (np.ndarray): 
+            The input images to resize. Shape: *(N, H, W)*
+        scale (float): 
+            The scale factor to apply for resizing.
+        clamp_range (bool): 
+            If ``True``, the image will be clamped to the range [min(img),
+            max(img)] to prevent interpolation from extending outside of the
+            image's range. (Default is ``False``)
+
+    Returns:
+        (np.ndarray): 
+            resized_images (np.ndarray): 
+                The resized images. Shape: *(N, H, W)*
+    """
+    imgs = imgs[None, ...] if imgs.ndim == 2 else imgs
+    img_rs = img_size = imgs.shape[1:]
+
+    meshgrid_out = torch.stack(torch.meshgrid(torch.linspace(-1, 1, img_size[0]), torch.linspace(-1, 1, img_size[1]), indexing='xy'), dim=-1)
+
+    img_rs = torch.nn.functional.grid_sample(
+        input=torch.as_tensor(imgs)[None, ...],
+        grid=meshgrid_out[None, ...] / scale,
+        mode='bilinear',
+        padding_mode='zeros',
+        align_corners=True,
+    )[0].numpy()
+
+    if clamp_range:
+        clamp_high = imgs.max(axis=(1,2))
+        clamp_low = imgs.min(axis=(1,2))
+
+        imgs = np.minimum(imgs, clamp_high[:,None,None])
+        imgs = np.maximum(imgs, clamp_low[:,None,None])
+    return img_rs
+
 
 
 ###################################
