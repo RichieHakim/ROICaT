@@ -170,20 +170,21 @@ class Resizer_ROI_images(util.ROICaT_Module):
         scale_forRS = self.function_scaleFactor(um_per_pixel=float(um_per_pixel), size_im=ROI_images.shape[1])
 
         print(f'ROICaT: resizing ROIs') if self._verbose else None
-        # return np.stack([resize_affine(img, scale=scale_forRS, clamp_range=True) for img in tqdm(ROI_images, mininterval=5, disable=not self._verbose)], axis=0)
-        return np.concatenate(
-            [resize_images(
-                batch, 
-                scale=scale_forRS, 
-                clamp_range=True,
-            ) for batch in tqdm(
-                helpers.make_batches(ROI_images, batch_size=self.batch_size), 
-                total=np.ceil(len(ROI_images)/self.batch_size), 
-                mininterval=5, 
-                unit='images',
-                unit_scale=self.batch_size,
-                disable=not self._verbose,
-            )], axis=0)
+        return np.stack([resize_affine(img, scale=scale_forRS, clamp_range=True) for img in tqdm(ROI_images, mininterval=5, disable=not self._verbose)], axis=0)
+        ## Faster but slightly different results
+        # return np.concatenate(
+        #     [resize_images(
+        #         batch, 
+        #         scale=scale_forRS, 
+        #         clamp_range=True,
+        #     ) for batch in tqdm(
+        #         helpers.make_batches(ROI_images, batch_size=self.batch_size), 
+        #         total=np.ceil(len(ROI_images)/self.batch_size), 
+        #         mininterval=5, 
+        #         unit='images',
+        #         unit_scale=self.batch_size,
+        #         disable=not self._verbose,
+        #     )], axis=0)
 
 
 class Dataloader_ROInet(util.ROICaT_Module):
@@ -488,6 +489,7 @@ class ROInet_embedder(util.ROICaT_Module):
         self,
         ROI_images: List[np.ndarray],
         um_per_pixel: Union[float, List[float]],
+        resize_ROI_images: bool = True,
         nan_to_num: bool = True,
         nan_to_num_val: float = 0.0,
         pref_plot: bool = False,
@@ -514,6 +516,9 @@ class ROInet_embedder(util.ROICaT_Module):
                 The conversion factor from pixels to microns. This is used to scale
                 the ROI_images to a common size. Should either be a float or a list
                 of floats, one for each session.
+            resize_ROI_images (bool):
+                If ``True``, resizes the ROI images to a common size. (Default is
+                ``True``)
             nan_to_num (bool): 
                 Whether to replace NaNs with a specific value. (Default is
                 ``True``)
@@ -581,23 +586,26 @@ class ROInet_embedder(util.ROICaT_Module):
             ],
         )    
 
-        print(f'Starting Image Resizer') if self._verbose else None
-        roi_resizer = Resizer_ROI_images(
-            nan_to_num=nan_to_num,
-            nan_to_num_val=nan_to_num_val,
-            verbose=False,
-        )
-        self.ROI_images_rs = np.concatenate([
-            roi_resizer.resize_ROIs(
-                ROI_images=ROI_images[ii], 
-                um_per_pixel=um_per_pixel[ii],
-            ) for ii in range(len(ROI_images))
-        ], axis=0)
+        if resize_ROI_images:
+            print(f'Starting Image Resizer') if self._verbose else None
+            roi_resizer = Resizer_ROI_images(
+                nan_to_num=nan_to_num,
+                nan_to_num_val=nan_to_num_val,
+                verbose=False,
+            )
+            self.ROI_images_rs = np.concatenate([
+                roi_resizer.resize_ROIs(
+                    ROI_images=ROI_images[ii], 
+                    um_per_pixel=um_per_pixel[ii],
+                ) for ii in range(len(ROI_images))
+            ], axis=0)
 
-        roi_resizer.plot_resized_comparison(
-            ROI_images_cat=np.concatenate(ROI_images, axis=0),
-            ROI_images_rs=self.ROI_images_rs,
-        ) if pref_plot else None
+            roi_resizer.plot_resized_comparison(
+                ROI_images_cat=np.concatenate(ROI_images, axis=0),
+                ROI_images_rs=self.ROI_images_rs,
+            ) if pref_plot else None
+        else:
+            self.ROI_images_rs = np.concatenate(ROI_images, axis=0)
 
         print(f'Creating dataloader') if self._verbose else None
         dataloader_generator = Dataloader_ROInet(
@@ -1006,6 +1014,11 @@ class ROInet_embedder_original(util.ROICaT_Module):
         return self.latents
 
 
+###################################
+########### RESIZING ##############
+###################################
+
+
 def resize_affine(
     img: np.ndarray, 
     scale: float, 
@@ -1070,26 +1083,57 @@ def resize_images(
                 The resized images. Shape: *(N, H, W)*
     """
     imgs = imgs[None, ...] if imgs.ndim == 2 else imgs
-    img_rs = img_size = imgs.shape[1:]
+    imgs_rs = img_size = imgs.shape[1:]
 
     meshgrid_out = torch.stack(torch.meshgrid(torch.linspace(-1, 1, img_size[0]), torch.linspace(-1, 1, img_size[1]), indexing='xy'), dim=-1)
 
-    img_rs = torch.nn.functional.grid_sample(
+    imgs_rs = torch.nn.functional.grid_sample(
         input=torch.as_tensor(imgs)[None, ...],
         grid=meshgrid_out[None, ...] / scale,
-        mode='bilinear',
+        mode='bicubic',
         padding_mode='zeros',
         align_corners=True,
     )[0].numpy()
 
     if clamp_range:
-        clamp_high = imgs.max(axis=(1,2))
-        clamp_low = imgs.min(axis=(1,2))
+        imgs_rs = np.clip(imgs_rs, a_min=imgs.min(axis=(1,2), keepdims=True), a_max=imgs.max(axis=(1,2), keepdims=True))
 
-        imgs = np.minimum(imgs, clamp_high[:,None,None])
-        imgs = np.maximum(imgs, clamp_low[:,None,None])
+    return imgs_rs
+
+def resize_affine2(
+    imgs: np.ndarray, 
+    scale: float, 
+    clamp_range: bool = False,
+) -> np.ndarray:
+    """
+    Resizes an image using an affine transformation, scaled by a factor.
+
+    Args:
+        img (np.ndarray): 
+            The input images to resize. Shape: *(N, H, W)*
+        scale (float): 
+            The scale factor to apply for resizing.
+        clamp_range (bool): 
+            If ``True``, the image will be clamped to the range [min(img),
+            max(img)] to prevent interpolation from extending outside of the
+            image's range. (Default is ``False``)
+
+    Returns:
+        (np.ndarray): 
+            resized_image (np.ndarray): 
+                The resized image.
+    """
+    img_rs = np.array(torchvision.transforms.functional.affine(
+        img=PIL.Image.fromarray(imgs.transpose(1,2,0)),
+        angle=0, translate=[0,0], shear=0,
+        scale=scale,
+        interpolation=torchvision.transforms.InterpolationMode.BICUBIC
+    )).transpose(2,0,1)
+
+    if clamp_range:
+        imgs_rs = np.clip(imgs_rs, a_min=imgs.min(axis=(1,2), keepdims=True), a_max=imgs.max(axis=(1,2), keepdims=True))
+
     return img_rs
-
 
 
 ###################################
