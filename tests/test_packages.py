@@ -51,7 +51,7 @@ def test_internal_package_tests():
         'optuna',
         'cv2',
         'skl2onnx',
-        'holoviews',
+        # 'holoviews',
         'bokeh',
         'sparse',
     ]

@@ -22,7 +22,6 @@ import torchvision
 import scipy.sparse
 import sparse
 from tqdm import tqdm
-import cv2
 import matplotlib.pyplot as plt
 import yaml
 
@@ -1182,6 +1181,10 @@ def index_with_nans(values, indices):
             Indexed array. Positions where `indices` was NaN will be filled with
             NaNs.
     """
+    ## Warn if input dtype is not NaN compatible
+    if not np.issubdtype(indices.dtype, np.floating):
+        raise ValueError('Input indices should be floating point because NaNs are used for masking. Convert to float if necessary.')
+    
     indices = np.array(indices, dtype=float) if not isinstance(indices, np.ndarray) else indices
     values = np.concatenate((np.full(shape=values.shape[1:], fill_value=np.nan, dtype=values.dtype)[None,...], values), axis=0)
     idx = indices.copy() + 1
@@ -2603,7 +2606,8 @@ class ImageLabeler:
             kind (str): 
                 The type of object to return. (Default is ``'dict'``) \n
                 * ``'dict'``: {idx: label, idx: label, ...}
-                * ``'list'``: [(idx, label), (idx, label), ...]
+                * ``'list'``: [label, label, ...] where the index is the image
+                  index and unlabeled images are represented as ``'None'``.
                 * ``'dataframe'``: {'index': [idx, idx, ...], 'label': [label, label, ...]}
                   This can be converted to a pandas dataframe with:
                   pd.DataFrame(self.get_labels('dataframe'))
@@ -2626,18 +2630,15 @@ class ImageLabeler:
             return None
         
         if kind == 'dict':
-            # out = dict(self.labels_)
-            # ## Check for duplicate indices
-            # if len(out) != len(self.labels_):
-            #     warnings.warn('Duplicate indices found in labels. Only the last label for each index is returned.')
-            # return out
             return self.labels_
         elif kind == 'list':
-            # return self.labels_
-            return self.labels_.items()
+            out = ['None',] * len(self.images)
+            for idx, label in self.labels_.items():
+                out[idx] = label
+            return out
         elif kind == 'dataframe':
-            # return {'index': np.array([x[0] for x in self.labels_], dtype=np.int64), 'label': np.array([x[1] for x in self.labels_])}
-            return {'index': np.array(list(self.labels_.keys()), dtype=np.int64), 'label': np.array(list(self.labels_.values()), dtype=str)}
+            import pandas as pd
+            return pd.DataFrame(index=list(self.labels_.keys()), data={'label': list(self.labels_.values())})
 
 
 def export_svg_hv_bokeh(
@@ -3251,6 +3252,7 @@ def find_geometric_transformation(
                 Warp matrix. See cv2.findTransformECC for more info. Can be
                 applied using cv2.warpAffine or cv2.warpPerspective.
     """
+    import cv2
     LUT_modes = {
         'translation': cv2.MOTION_TRANSLATION,
         'euclidean': cv2.MOTION_EUCLIDEAN,
@@ -3303,8 +3305,8 @@ def find_geometric_transformation(
 def apply_warp_transform(
     im_in: np.ndarray,
     warp_matrix: np.ndarray,
-    interpolation_method: int = cv2.INTER_LINEAR, 
-    borderMode: int = cv2.BORDER_CONSTANT, 
+    interpolation_method: int = 1, 
+    borderMode: int = 0, 
     borderValue: int = 0
 ) -> np.ndarray:
     """
@@ -3321,11 +3323,11 @@ def apply_warp_transform(
             info.
         interpolation_method (int): 
             Interpolation method. See ``cv2.warpAffine`` for more info. (Default
-            is ``cv2.INTER_LINEAR``)
+            is ``cv2.INTER_LINEAR`` which = 1)
         borderMode (int): 
             Border mode. Determines how to handle pixels from outside the image
             boundaries. See ``cv2.warpAffine`` for more info. (Default is
-            ``cv2.BORDER_CONSTANT``)
+            ``cv2.BORDER_CONSTANT`` which = 0)
         borderValue (int): 
             Value to use for border pixels if borderMode is set to
             ``cv2.BORDER_CONSTANT``. (Default is *0*)
@@ -3336,6 +3338,7 @@ def apply_warp_transform(
                 Transformed output image with the same dimensions as the input
                 image.
     """
+    import cv2
     if warp_matrix.shape == (2, 3):
         im_out = cv2.warpAffine(
             src=im_in,
@@ -3464,6 +3467,7 @@ def remap_images(
                 The warped images. The shape will be the same as the input
                 images, which can be *(N, C, H, W)*, *(C, H, W)*, or *(H, W)*.
     """
+    import cv2
     # Check inputs
     assert isinstance(images, (np.ndarray, torch.Tensor)), f"images must be a np.ndarray or torch.Tensor"
     assert isinstance(remappingIdx, (np.ndarray, torch.Tensor)), f"remappingIdx must be a np.ndarray or torch.Tensor"
@@ -4349,7 +4353,7 @@ class Toeplitz_convolution2d():
         self.k = k = np.flipud(k.copy())
         self.mode = mode
         self.x_shape = x_shape
-        self.dtype = k.dtype if dtype is None else dtype
+        dtype = k.dtype if dtype is None else dtype
 
         if mode == 'valid':
             assert x_shape[0] >= k.shape[0] and x_shape[1] >= k.shape[1], "x must be larger than k in both dimensions for mode='valid'"
@@ -4358,12 +4362,12 @@ class Toeplitz_convolution2d():
 
         ## make the toeplitz matrices
         t = toeplitz_matrices = [scipy.sparse.diags(
-            diagonals=np.ones((k.shape[1], x_shape[1]), dtype=self.dtype) * k_i[::-1][:,None], 
+            diagonals=np.ones((k.shape[1], x_shape[1]), dtype=dtype) * k_i[::-1][:,None], 
             offsets=np.arange(-k.shape[1]+1, 1), 
             shape=(so[1], x_shape[1]),
-            dtype=self.dtype,
+            dtype=dtype,
         ) for k_i in k[::-1]]  ## make the toeplitz matrices for the rows of the kernel
-        tc = toeplitz_concatenated = scipy.sparse.vstack(t + [scipy.sparse.dia_matrix((t[0].shape), dtype=self.dtype)]*(x_shape[0]-1))  ## add empty matrices to the bottom of the block due to padding, then concatenate
+        tc = toeplitz_concatenated = scipy.sparse.vstack(t + [scipy.sparse.dia_matrix((t[0].shape), dtype=dtype)]*(x_shape[0]-1))  ## add empty matrices to the bottom of the block due to padding, then concatenate
 
         ## make the double block toeplitz matrix
         self.dt = double_toeplitz = scipy.sparse.hstack([self._roll_sparse(
@@ -4884,9 +4888,12 @@ class Equivalence_checker():
             if len(true) != len(test):
                 result = (False, 'length_mismatch')
             else:
-                result = {}
-                for idx, (i, j) in enumerate(zip(test, true)):
-                    result[str(idx)] = self.__call__(i, j, path=path + [str(idx)])
+                if all([isinstance(i, (int, float, complex, np.number)) for i in true]):
+                    result = self._checker(np.array(test), np.array(true), path)
+                else:
+                    result = {}
+                    for idx, (i, j) in enumerate(zip(test, true)):
+                        result[str(idx)] = self.__call__(i, j, path=path + [str(idx)])
         ## STRING
         elif isinstance(true, str):
             result = (test == true, 'equivalence')
@@ -4896,6 +4903,17 @@ class Equivalence_checker():
         ## NONE
         elif true is None:
             result = (test is None, 'equivalence')
+
+        ## OBJECT with __dict__
+        elif hasattr(true, '__dict__'):
+            result = {}
+            for key in true.__dict__:
+                if key.startswith('_'):
+                    continue
+                if not hasattr(test, key):
+                    result[str(key)] = (False, 'key not found')
+                else:
+                    result[str(key)] = self.__call__(getattr(test, key), getattr(true, key), path=path + [str(key)])
         ## N/A
         else:
             result = (None, 'not tested')
@@ -4976,3 +4994,32 @@ def get_balanced_sample_weights(
         weights = class_weights
     sample_weights = weights[labels]
     return sample_weights
+
+
+def safe_set_attr(
+    obj: Any, 
+    attr: str, 
+    value: Any, 
+    overwrite: bool = False,
+) -> None:
+    """
+    Safely sets an attribute on an object. If the attribute is not present, it
+    will be created. If the attribute is present, it will only be overwritten if
+    ``overwrite`` is set to ``True``.
+    RH 2024
+
+    Args:
+        obj (Any): 
+            Object to set the attribute on.
+        attr (str): 
+            Attribute name.
+        value (Any): 
+            Value to set the attribute to.
+        overwrite (bool): 
+            Whether to overwrite the attribute if it already exists.
+            (Default is ``False``)
+    """
+    if not hasattr(obj, attr):
+        setattr(obj, attr, value)
+    elif overwrite:
+        setattr(obj, attr, value)

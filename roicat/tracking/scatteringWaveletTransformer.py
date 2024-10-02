@@ -46,11 +46,24 @@ class SWT(util.ROICaT_Module):
         ## Imports
         super().__init__()
 
+        ## Store parameter (but not data) args as attributes
+        self.params['__init__'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'kwargs_Scattering2D',
+                'image_shape',
+                'device',
+                'verbose',
+            ],
+        )
+
         from kymatio.torch import Scattering2D
 
         self._verbose = verbose
         self._device = device
-        self.swt = Scattering2D(shape=image_shape, **kwargs_Scattering2D).to(device)
+        self.swt = Scattering2D(shape=image_shape, **kwargs_Scattering2D)
+        self.swt = util.Model_SWT(self.swt)
+        self.swt.to(device)
         print('SWT initialized') if self._verbose else None
 
     def transform(self, ROI_images: np.ndarray, batch_size: int = 100) -> np.ndarray:
@@ -71,6 +84,11 @@ class SWT(util.ROICaT_Module):
                 latents (np.ndarray):
                     The transformed ROI images. *(n_ROIs, latent_size)*
         """
+        ## Store parameter (but not data) args as attributes
+        self.params['transform'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=['batch_size',],)
+
         print('Starting: SWT transform on ROIs') if self._verbose else None
         def helper_swt(ims_batch):
             sfs = torch.as_tensor(np.ascontiguousarray(ims_batch[None,...]), device=self._device, dtype=torch.float32)

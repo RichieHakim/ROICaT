@@ -64,22 +64,22 @@ computer.
 
 ### TRACKING: 
 - [Interactive
-  notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/tracking_interactive_notebook.ipynb)
+  notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/1_tracking_interactive_notebook.ipynb)
 - [Google
-  CoLab](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/tracking/tracking_interactive_notebook.ipynb)
+  CoLab](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/tracking/1_tracking_interactive_notebook.ipynb)
 - [Command line interface script](https://github.com/RichieHakim/ROICaT/blob/main/scripts/demo_run_tracking_pipeline.py)
   
 ### CLASSIFICATION:
 - [Interactive notebook -
-  Drawing](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/classify_by_drawingSelection.ipynb)
+  Drawing](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/A1_classify_by_drawingSelection.ipynb)
 - [Google CoLab -
-  Drawing](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/classification/classify_by_drawingSelection_colab.ipynb)
+  Drawing](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/classification/A1_classify_by_drawingSelection_colab.ipynb)
 - [Interactive notebook -
-  Labeling](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/labeling_interactive.ipynb)
+  Labeling](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/B1_labeling_interactive.ipynb)
 - [Interactive notebook - Train
-  classifier](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/classifier_train_interactive.ipynb)
+  classifier](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/B2_classifier_train_interactive.ipynb)
 - [Interactive notebook - Inference with
-  classifier](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/classifier_inference_interactive.ipynb)
+  classifier](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/B3_classifier_inference_interactive.ipynb)
 
 **OTHER:** 
 - [Custom data importing
@@ -236,12 +236,29 @@ intercompatible, so if you have CUDA 11.8 drivers, you can install
 
 
 # TODO:
-- Some more integration tests
-- Switch to ONNX for ROINet
-- Add more documentation / tutorials
-- Make a GUI
-- Finish ROIextractors integration
-- Make a Docker container
-- Make a standard classifier
-- Write the paper
-- Make tweet about it
+#### algorithmic improvements:
+- [ ] Add in method to use more similarity metrics for tracking
+- [ ] Coordinate descent on each similarity metric
+- [ ] Add F and Fneu to data_roicat, dFoF and trace quality metric functions
+- [ ] Add in notebook for demonstrating using temporal similarity metrics (SWT on dFoF)
+- [ ] Make a standard classifier
+- [ ] Try other clustering methods
+- [ ] Make image aligner based on image similarity + RANSAC of centroids or s_SF
+- [ ] Better post-hoc curation metrics and visualizations
+#### code improvements:
+- [ ] Update automatic regression module (make new repo for it)
+- [ ] Switch to ONNX for ROINet
+- [ ] Some more integration tests
+- [ ] Add more documentation / tutorials
+- [ ] Make a GUI
+- [ ] Finish ROIextractors integration
+- [ ] Make a Docker container
+- [ ] Make colab demo notebook not require user data
+#### other:
+- [ ] Write the paper
+- [ ] Make tweet about it
+- [ ] Make a video or two on how to use it
+- [ ] Maybe use lightthetorch for torch installation
+- [ ] Better Readme
+- [ ] More documentation
+- [ ] Make a regression model for in-plane-ness

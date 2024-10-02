@@ -23,7 +23,7 @@ def test_pipeline_tracking_simple(dir_data_test):
             'dir_outer': str(Path(dir_data_test).resolve() / 'pipeline_tracking'),
             'data_kind': 'roicat',
             'data_roicat': {
-                'filename_search': r'data_roicat_obj.pkl'
+                'filename_search': r'data_roicat_obj.richfile'
             },
         },
         'clustering': {
@@ -73,23 +73,25 @@ def test_pipeline_tracking_simple(dir_data_test):
     assert results['clusters'] != 0, "Error: clusters field is empty"
     assert results['ROIs'] != 0, "Error: ROIs field is empty"
     assert results['input_data'] != 0, "Error: input_data field is empty"
-    assert results['quality_metrics'] != 0, "Error: quality_metrics field is empty"
+    assert results['clusters']['quality_metrics'] != 0, "Error: quality_metrics field is empty"
     
-    assert len(results['clusters']['labels_dict']) == len(results['quality_metrics']['cluster_intra_means']), "Error: Cluster data is mismatched"
+    assert len(results['clusters']['labels_dict']) == len(results['clusters']['quality_metrics']['cluster_intra_means']), "Error: Cluster data is mismatched"
     assert len(results['clusters']['labels_dict']) == results['clusters']['labels_bool_bySession'][0].shape[1], "Error: Cluster data is mismatched"
 
     ## Save results
-    print(f"Saving to: {str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'results.pkl')}")
-    helpers.pickle_save(
-        obj=run_data,
-        filepath=str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'run_data_output.pkl'),
-    )
+    path_results_output = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'results_output.richfile')
+    print(f"Saving to: {path_results_output}")
+    util.RichFile_ROICaT(path=path_results_output).save(results, overwrite=True)
+
+    path_run_data_output = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'run_data_output.richfile')
+    print(f"Saving to: {path_run_data_output}")
+    util.RichFile_ROICaT(path=path_run_data_output).save(run_data, overwrite=True)
 
     ## Check run_data equality
-    print(f"Checking run_data equality")
-    path_run_data_true = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'run_data.pkl')
+    path_run_data_true = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'run_data.richfile')
     print(f"Loading true run_data from {path_run_data_true}")
-    run_data_true = helpers.pickle_load(path_run_data_true)
+    run_data_true = util.RichFile_ROICaT(path=path_run_data_true).load()
+
     print(f"run_data_true loaded. Checking equality")
     checker = helpers.Equivalence_checker(
         kwargs_allclose={'rtol': 1e-5, 'equal_nan': True},
@@ -99,7 +101,7 @@ def test_pipeline_tracking_simple(dir_data_test):
     checks = checker(test=run_data, true=run_data_true)
     fails = [key for key, val in helpers.flatten_dict(checks).items() if val[0]==False]
     if len(fails) > 0:
-        warnings.warn(f"run_data equality check failed for keys: {fails}")
+        warnings.warn(f"run_data equality check failed for keys: {fails}. Checks: {checks}")
     else:
         print(f"run_data equality check finished successfully")
     

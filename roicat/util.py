@@ -3,12 +3,15 @@ import warnings
 import copy
 from typing import Dict, Any, Optional, Union, List, Tuple, Callable, Iterable, Iterator, Type
 import datetime
-
+import collections
 import importlib
 
 import numpy as np
 import scipy.sparse
 from tqdm import tqdm
+import torch
+
+import richfile as rf
 
 from . import helpers
 
@@ -73,7 +76,7 @@ def get_default_parameters(
                     'type_meanImg': 'meanImgE',  ## Can be 'meanImg' or 'meanImgE'. 'meanImg' is the mean image of the dataset, 'meanImgE' is the mean image of the dataset after contrast enhancement.
                 },
                 'data_roicat': {
-                    'filename_search': r'data_roicat.pkl',  ## Name stem of the single file (as a regex search string) in 'dir_outer' to look for. The files should be saved Data_roicat object.
+                    'filename_search': r'data_roicat.richfile',  ## Name stem of the single file (as a regex search string) in 'dir_outer' to look for. The files should be saved Data_roicat object.
                 },
             },
             'alignment': {
@@ -416,176 +419,600 @@ class ROICaT_Module:
         Initializes the ROICaT_Module class by gathering system information.
         """
         self._system_info = system_info()
+        
+        self.params = {}
         pass
 
-    @property
-    def serializable_dict(self) -> Dict[str, Any]:
-        """
-        Returns a serializable dictionary that can be saved to disk. This method
-        goes through all items in self.__dict__ and checks if they are
-        serializable. If they are, add them to a dictionary to be returned.
+    # @property
+    # def serializable_dict(self) -> Dict[str, Any]:
+    #     """
+    #     Returns a serializable dictionary that can be saved to disk. This method
+    #     goes through all items in self.__dict__ and checks if they are
+    #     serializable. If they are, add them to a dictionary to be returned.
 
-        Returns:
-            (Dict[str, Any]): 
-                serializable_dict (Dict[str, Any]): 
-                    Dictionary containing serializable items.
+    #     Returns:
+    #         (Dict[str, Any]): 
+    #             serializable_dict (Dict[str, Any]): 
+    #                 Dictionary containing serializable items.
+    #     """
+    #     from functools import partial
+    #     ## Go through all items in self.__dict__ and check if they are serializable.
+    #     ### If they are, add them to a dictionary to be returned.
+    #     import pickle
+
+    #     ## Define a list of libraries and classes that are allowed to be serialized.
+    #     allowed_libraries = [
+    #         'roicat',
+    #         'builtins',
+    #         'collections',
+    #         'datetime',
+    #         'itertools',
+    #         'math',
+    #         'numbers',
+    #         'os',
+    #         'pathlib',
+    #         'string',
+    #         'time',
+    #         'numpy',
+    #         'scipy',
+    #         'sklearn',
+    #     ]
+    #     def is_library_allowed(obj):
+    #         try:
+    #             try:
+    #                 module_name = obj.__module__.split('.')[0]
+    #             except:
+    #                 success = False
+    #             try:
+    #                 module_name = obj.__class__.__module__.split('.')[0]
+    #             except:
+    #                 success = False
+    #         except:
+    #             success = False
+    #         else:
+    #             ## Check if the module_name is in the allowed_libraries list.
+    #             if module_name in allowed_libraries:
+    #                 success = True
+    #             else:
+    #                 success = False
+    #         return success
+        
+    #     def make_serializable_dict(obj, depth=0, max_depth=100, name=None):
+    #         """
+    #         Recursively go through all items in self.__dict__ and check if they are serializable.
+    #         """
+    #         # print(name)
+    #         msd_partial = partial(make_serializable_dict, depth=depth+1, max_depth=max_depth)
+    #         if depth > max_depth:
+    #             raise Exception(f'RH ERROR: max_depth of {max_depth} reached with object: {obj}')
+                
+    #         serializable_dict = {}
+    #         if hasattr(obj, '__dict__') and is_library_allowed(obj):
+    #             for key, val in obj.__dict__.items():
+    #                 try:
+    #                     serializable_dict[key] = msd_partial(val, name=key)
+    #                 except:
+    #                     pass
+
+    #         elif isinstance(obj, (list, tuple, set, frozenset)):
+    #             serializable_dict = [msd_partial(v, name=f'{name}_{ii}') for ii,v in enumerate(obj)]
+    #         elif isinstance(obj, dict):
+    #             serializable_dict = {k: msd_partial(v, name=f'{name}_{k}') for k,v in obj.items()}
+    #         else:
+    #             try:
+    #                 assert is_library_allowed(obj), f'RH ERROR: object {obj} is not serializable'
+    #                 pickle.dumps(obj)
+    #             except:
+    #                 return {'__repr__': repr(obj)} if hasattr(obj, '__repr__') else {'__str__': str(obj)} if hasattr(obj, '__str__') else None
+
+    #             serializable_dict = obj
+
+    #         return serializable_dict
+        
+    #     serializable_dict = make_serializable_dict(self, depth=0, max_depth=100, name='self')
+    #     return serializable_dict
+
+    # @property
+    # def serializable_dict(self) -> Dict[str, Any]:
+    #     def walk_through_dicts(obj, depth=0, max_depth=10):
+    #         depth += 1
+    #         print(depth)
+    #         if depth > max_depth:
+    #             return obj
+            
+    #         elif isinstance(obj, dict):
+    #             return {k: walk_through_dicts(v, depth) for k,v in obj.items()}
+    #         elif isinstance(obj, (list, tuple, set, frozenset)):
+    #             return [walk_through_dicts(v, depth) for v in obj]
+    #         elif hasattr(obj, '__dict__'):
+    #             return {k: walk_through_dicts(v, depth) for k,v in obj.__dict__.items()}
+    #         else:
+    #             return obj
+            
+    #     return walk_through_dicts(self, depth=0, max_depth=10)
+
+    # def save(
+    #     self, 
+    #     path_save: Union[str, Path],
+    #     save_as_serializable_dict: bool = False,
+    #     allow_overwrite: bool = False,
+    # ) -> None:
+    #     """
+    #     Saves Data_roicat object to pickle file.
+
+    #     Args:
+    #         path_save (Union[str, pathlib.Path]): 
+    #             Path to save pickle file.
+    #         save_as_serializable_dict (bool): 
+    #             An archival-type format that is easy to load data from, but typically 
+    #             cannot be used to re-instantiate the object. If ``True``, save the object 
+    #             as a serializable dictionary. If ``False``, save the object as a Data_roicat 
+    #             object. (Default is ``False``)
+    #         allow_overwrite (bool): 
+    #             If ``True``, allow overwriting of existing file. (Default is ``False``)
+
+    #     """
+    #     from pathlib import Path
+    #     ## Check if file already exists
+    #     if not allow_overwrite:
+    #         assert not Path(path_save).exists(), f"RH ERROR: File already exists: {path_save}. Set allow_overwrite=True to overwrite."
+
+    #     helpers.pickle_save(
+    #         obj=self.serializable_dict if save_as_serializable_dict else self,
+    #         filepath=path_save,
+    #         mkdir=True,
+    #         allow_overwrite=allow_overwrite,
+    #     )
+    #     print(f"Saved Data_roicat as a pickled object to {path_save}.") if self._verbose else None
+
+    # def load(
+    #     self,
+    #     path_load: Union[str, Path],
+    # ) -> None:
+    #     """
+    #     Loads attributes from a Data_roicat object from a pickle file.
+
+    #     Args:
+    #         path_load (Union[str, Path]): 
+    #             Path to the pickle file.
+
+    #     Note: 
+    #         After calling this method, the attributes of this object are updated with those 
+    #         loaded from the pickle file. If an object in the pickle file is a dictionary, 
+    #         the object's attributes are set directly from the dictionary. Otherwise, if 
+    #         the object in the pickle file has a 'import_from_dict' method, it is used 
+    #         to load attributes. If it does not, the attributes are directly loaded from 
+    #         the object's `__dict__` attribute.
+
+    #     Example:
+    #         .. highlight:: python
+    #         .. code-block:: python
+
+    #             obj = Data_roicat()
+    #             obj.load('/path/to/pickle/file')
+    #     """
+    #     from pathlib import Path
+    #     assert Path(path_load).exists(), f"RH ERROR: File does not exist: {path_load}."
+    #     obj = helpers.pickle_load(path_load)
+    #     assert isinstance(obj, (type(self), dict)), f"RH ERROR: Loaded object is not a Data_roicat object or dictionary. Loaded object is of type {type(obj)}."
+
+    #     if isinstance(obj, dict):
+    #         ## Set attributes from dict
+    #         ### If the subclass has a load_from_dict method, use that.
+    #         if hasattr(self, 'import_from_dict'):
+    #             self.import_from_dict(obj)
+    #         else:
+    #             for key, val in obj.items():
+    #                 setattr(self, key, val)
+    #     else:
+    #         ## Set attributes from object
+    #         for key, val in obj.__dict__.items():
+    #             setattr(self, key, val)
+
+    #     print(f"Loaded Data_roicat object from {path_load}.") if self._verbose else None
+
+    def _locals_to_params(
+        self,
+        locals_dict: Dict[str, Any],
+        keys: List[str],
+    ) -> None:
         """
-        from functools import partial
-        ## Go through all items in self.__dict__ and check if they are serializable.
-        ### If they are, add them to a dictionary to be returned.
+        Returns a dictionary of the local variables with the specified keys.
+
+        Args:
+            locals_dict (Dict[str, Any]): 
+                Dictionary of local variables.
+            keys (List[str]): 
+                List of keys to extract from the local variables.
+        """
+        def safe_getitem(d, key):
+            try:
+                return d[key]
+            except KeyError:
+                warnings.warn(f'RH WARNING: key={key} not found in locals_dict. Skipping.')
+
+        return {key: safe_getitem(locals_dict, key) for key in keys}
+
+
+class RichFile_ROICaT(rf.RichFile):
+    def __init__(
+        self,
+        path: Optional[Union[str, Path]] = None,
+        check: Optional[bool] = True,
+        safe_save: Optional[bool] = True,
+    ):
+        super().__init__(path=path, check=check, safe_save=safe_save)
+
+
+        ## NUMPY ARRAY
+        import numpy as np
+
+        def save_npy_array(
+            obj: np.ndarray,
+            path: Union[str, Path],
+            **kwargs,
+        ) -> None:
+            """
+            Saves a NumPy array to the given path.
+            """
+            np.save(path, obj, **kwargs)
+
+        def load_npy_array(
+            path: Union[str, Path],
+            **kwargs,
+        ) -> np.ndarray:
+            """
+            Loads an array from the given path.
+            """    
+            return np.load(path, **kwargs)
+        
+
+        ## SCIPY SPARSE MATRIX
+        import scipy.sparse
+
+        def save_sparse_array(
+            obj: scipy.sparse.spmatrix,
+            path: Union[str, Path],
+            **kwargs,
+        ) -> None:
+            """
+            Saves a SciPy sparse matrix to the given path.
+            """
+            scipy.sparse.save_npz(path, obj, **kwargs)
+
+        def load_sparse_array(
+            path: Union[str, Path],
+            **kwargs,
+        ) -> scipy.sparse.csr_matrix:
+            """
+            Loads a sparse array from the given path.
+            """        
+            return scipy.sparse.load_npz(path, **kwargs)
+        
+
+        ## JSON DICT
+        import collections
+        import json
+
+        def save_json_dict(
+            obj: collections.UserDict,
+            path: Union[str, Path],
+            **kwargs,
+        ) -> None:
+            """
+            Saves a dictionary to the given path.
+            """
+            with open(path, 'w') as f:
+                json.dump(dict(obj), f, **kwargs)
+
+        def load_json_dict(
+            path: Union[str, Path],
+            **kwargs,
+        ) -> collections.UserDict:
+            """
+            Loads a dictionary from the given path.
+            """
+            with open(path, 'r') as f:
+                return JSON_Dict(json.load(f, **kwargs))
+
+
+        ## JSON LIST   
+        def save_json_list(
+            obj: collections.UserList,
+            path: Union[str, Path],
+            **kwargs,
+        ) -> None:
+            """
+            Saves a list to the given path.
+            """
+            with open(path, 'w') as f:
+                json.dump(list(obj), f, **kwargs)
+
+        def load_json_list(
+            path: Union[str, Path],
+            **kwargs,
+        ) -> collections.UserList:
+            """
+            Loads a list from the given path.
+            """
+            with open(path, 'r') as f:
+                return JSON_List(json.load(f, **kwargs))
+            
+
+        ## OPTUNA STUDY
+        import optuna
         import pickle
 
-        ## Define a list of libraries and classes that are allowed to be serialized.
-        allowed_libraries = [
-            'roicat',
-            'builtins',
-            'collections',
-            'datetime',
-            'itertools',
-            'math',
-            'numbers',
-            'os',
-            'pathlib',
-            'string',
-            'time',
-            'numpy',
-            'scipy',
-            'sklearn',
-        ]
-        def is_library_allowed(obj):
-            try:
-                try:
-                    module_name = obj.__module__.split('.')[0]
-                except:
-                    success = False
-                try:
-                    module_name = obj.__class__.__module__.split('.')[0]
-                except:
-                    success = False
-            except:
-                success = False
-            else:
-                ## Check if the module_name is in the allowed_libraries list.
-                if module_name in allowed_libraries:
-                    success = True
-                else:
-                    success = False
-            return success
-        
-        def make_serializable_dict(obj, depth=0, max_depth=100, name=None):
+        ## load and save functions for optuna study
+        def save_optuna_study(
+            obj: optuna.study.Study,
+            path: Union[str, Path],
+            **kwargs,
+        ) -> None:
             """
-            Recursively go through all items in self.__dict__ and check if they are serializable.
+            Saves an Optuna study to the given path.
             """
-            # print(name)
-            msd_partial = partial(make_serializable_dict, depth=depth+1, max_depth=max_depth)
-            if depth > max_depth:
-                raise Exception(f'RH ERROR: max_depth of {max_depth} reached with object: {obj}')
-                
-            serializable_dict = {}
-            if hasattr(obj, '__dict__') and is_library_allowed(obj):
-                for key, val in obj.__dict__.items():
-                    try:
-                        serializable_dict[key] = msd_partial(val, name=key)
-                    except:
-                        pass
+            with open(path, 'wb') as f:
+                pickle.dump(obj, f, **kwargs)
 
-            elif isinstance(obj, (list, tuple, set, frozenset)):
-                serializable_dict = [msd_partial(v, name=f'{name}_{ii}') for ii,v in enumerate(obj)]
-            elif isinstance(obj, dict):
-                serializable_dict = {k: msd_partial(v, name=f'{name}_{k}') for k,v in obj.items()}
-            else:
-                try:
-                    assert is_library_allowed(obj), f'RH ERROR: object {obj} is not serializable'
-                    pickle.dumps(obj)
-                except:
-                    return {'__repr__': repr(obj)} if hasattr(obj, '__repr__') else {'__str__': str(obj)} if hasattr(obj, '__str__') else None
-
-                serializable_dict = obj
-
-            return serializable_dict
+        def load_optuna_study(
+            path: Union[str, Path],
+            **kwargs,
+        ) -> optuna.study.Study:
+            """
+            Loads an Optuna study from the given path.
+            """
+            with open(path, 'rb') as f:
+                return pickle.load(f, **kwargs)
+            
         
-        serializable_dict = make_serializable_dict(self, depth=0, max_depth=100, name='self')
-        return serializable_dict
+        ## TORCH TENSOR
+        import torch
 
-    def save(
-        self, 
-        path_save: Union[str, Path],
-        save_as_serializable_dict: bool = False,
-        allow_overwrite: bool = False,
-    ) -> None:
-        """
-        Saves Data_roicat object to pickle file.
+        def save_torch_tensor(
+            obj: torch.Tensor,
+            path: Union[str, Path],
+            **kwargs,
+        ) -> None:
+            """
+            Saves a PyTorch tensor to the given path as a NumPy array.
+            """
+            np.save(path, obj.detach().cpu().numpy(), **kwargs)
 
-        Args:
-            path_save (Union[str, pathlib.Path]): 
-                Path to save pickle file.
-            save_as_serializable_dict (bool): 
-                An archival-type format that is easy to load data from, but typically 
-                cannot be used to re-instantiate the object. If ``True``, save the object 
-                as a serializable dictionary. If ``False``, save the object as a Data_roicat 
-                object. (Default is ``False``)
-            allow_overwrite (bool): 
-                If ``True``, allow overwriting of existing file. (Default is ``False``)
+        def load_torch_tensor(
+            path: Union[str, Path],
+            **kwargs,
+        ) -> torch.Tensor:
+            """
+            Loads a PyTorch tensor from the given path.
+            """
+            return torch.from_numpy(np.load(path, **kwargs))
 
-        """
-        from pathlib import Path
-        ## Check if file already exists
-        if not allow_overwrite:
-            assert not Path(path_save).exists(), f"RH ERROR: File already exists: {path_save}. Set allow_overwrite=True to overwrite."
 
-        helpers.pickle_save(
-            obj=self.serializable_dict if save_as_serializable_dict else self,
-            filepath=path_save,
-            mkdir=True,
-            allow_overwrite=allow_overwrite,
-        )
-        print(f"Saved Data_roicat as a pickled object to {path_save}.") if self._verbose else None
+        ## REPR
+        def save_repr(
+            obj: object,
+            path: Union[str, Path],
+            **kwargs,
+        ) -> None:
+            """
+            Saves the repr of an object to the given path.
+            """
+            with open(path, 'w') as f:
+                f.write(repr(obj))
 
-    def load(
-        self,
-        path_load: Union[str, Path],
-    ) -> None:
-        """
-        Loads attributes from a Data_roicat object from a pickle file.
+        def load_repr(
+            path: Union[str, Path],
+            **kwargs,
+        ) -> object:
+            """
+            Loads the repr of an object from the given path.
+            """
+            with open(path, 'r') as f:
+                return f.read()
 
-        Args:
-            path_load (Union[str, Path]): 
-                Path to the pickle file.
+        import hdbscan
 
-        Note: 
-            After calling this method, the attributes of this object are updated with those 
-            loaded from the pickle file. If an object in the pickle file is a dictionary, 
-            the object's attributes are set directly from the dictionary. Otherwise, if 
-            the object in the pickle file has a 'import_from_dict' method, it is used 
-            to load attributes. If it does not, the attributes are directly loaded from 
-            the object's `__dict__` attribute.
+        
+        ## PANDAS DATAFRAME
+        import pandas as pd
+        
+        def save_pandas_dataframe(
+            obj: pd.DataFrame,
+            path: Union[str, Path],
+            **kwargs,
+        ) -> None:
+            """
+            Saves a Pandas DataFrame to the given path.
+            """
+            ## Save as a CSV file
+            obj.to_csv(path, index=True, **kwargs)
 
-        Example:
-            .. highlight:: python
-            .. code-block:: python
+        def load_pandas_dataframe(
+            path: Union[str, Path],
+            **kwargs,
+        ) -> pd.DataFrame:
+            """
+            Loads a Pandas DataFrame from the given path.
+            """
+            ## Load as a CSV file
+            return pd.read_csv(path, index_col=0, **kwargs)
+        
 
-                obj = Data_roicat()
-                obj.load('/path/to/pickle/file')
-        """
-        from pathlib import Path
-        assert Path(path_load).exists(), f"RH ERROR: File does not exist: {path_load}."
-        obj = helpers.pickle_load(path_load)
-        assert isinstance(obj, (type(self), dict)), f"RH ERROR: Loaded object is not a Data_roicat object or dictionary. Loaded object is of type {type(obj)}."
+        roicat_module_tds = [rf.functions.Type_container(
+            type_name=type_name,
+            object_class=object_class,
+            suffix="roicat",
+            library="roicat",
+            versions_supported=[">=1.1", "<2"],
+        ) for type_name, object_class in [
+            # ("data_suite2p", data_importing.Data_suite2p),
+            # ("data_caiman", data_importing.Data_caiman),
+            # ("data_roiextractors", data_importing.Data_roiextractors),
+            # ("data_roicat", data_importing.Data_roicat),
+            # ("aligner", alignment.Aligner),
+            # ("blurrer", blurring.ROI_Blurrer),
+            # ("roinet", ROInet.ROInet_embedder),
+            # ("swt", scatteringWaveletTransformer.SWT),
+            # ("similarity_graph", similarity_graph.ROI_graph),
+            # ("clusterer", clustering.Clusterer),
 
-        if isinstance(obj, dict):
-            ## Set attributes from dict
-            ### If the subclass has a load_from_dict method, use that.
-            if hasattr(self, 'import_from_dict'):
-                self.import_from_dict(obj)
-            else:
-                for key, val in obj.items():
-                    setattr(self, key, val)
-        else:
-            ## Set attributes from object
-            for key, val in obj.__dict__.items():
-                setattr(self, key, val)
+            ("toeplitz_conv", helpers.Toeplitz_convolution2d),
+            ("convergence_checker_optuna", helpers.Convergence_checker_optuna),
+        ]]
+        # roicat_module_tds = []
+        
 
-        print(f"Loaded Data_roicat object from {path_load}.") if self._verbose else None
+        type_dicts = [
+            {
+                "type_name":          "numpy_array",
+                "function_load":      load_npy_array,
+                "function_save":      save_npy_array,
+                "object_class":       np.ndarray,
+                "suffix":             "npy",
+                "library":            "numpy",
+                "versions_supported": [],
+            },
+            {
+                "type_name":          "numpy_scalar",
+                "function_load":      load_npy_array,
+                "function_save":      save_npy_array,
+                "object_class":       np.number,
+                "suffix":             "npy",
+                "library":            "numpy",
+                "versions_supported": [],
+            },
+            {
+                "type_name":          "scipy_sparse_array",
+                "function_load":      load_sparse_array,
+                "function_save":      save_sparse_array,
+                "object_class":       scipy.sparse.spmatrix,
+                "suffix":             "npz",
+                "library":            "scipy",
+                "versions_supported": [],
+            },
+            {
+                "type_name":          "json_dict",
+                "function_load":      load_json_dict,
+                "function_save":      save_json_dict,
+                "object_class":       JSON_Dict,
+                "suffix":             "json",
+                "library":            "python",
+                "versions_supported": [],
+            },
+            {
+                "type_name":          "json_list",
+                "function_load":      load_json_list,
+                "function_save":      save_json_list,
+                "object_class":       JSON_List,
+                "suffix":             "json",
+                "library":            "python",
+                "versions_supported": [],
+            },
+            {
+                "type_name":          "optuna_study",
+                "function_load":      load_optuna_study,
+                "function_save":      save_optuna_study,
+                "object_class":       optuna.study.Study,
+                "suffix":             "optuna",
+                "library":            "optuna",
+                "versions_supported": [],
+            },
+            {
+                "type_name":          "torch_tensor",
+                "function_load":      load_torch_tensor,
+                "function_save":      save_torch_tensor,
+                "object_class":       torch.Tensor,
+                "suffix":             "npy",
+                "library":            "torch",
+                "versions_supported": [],
+            },
+            {
+                "type_name":          "model_swt",
+                "function_load":      load_repr,
+                "function_save":      save_repr,
+                "object_class":       Model_SWT,
+                "suffix":             "swt",
+                "library":            "onnx2torch",
+                "versions_supported": [],
+            },
+            {
+                "type_name":          "torch_module",
+                "function_load":      load_repr,
+                "function_save":      save_repr,
+                "object_class":       torch.nn.Module,
+                "suffix":             "torch_module",
+                "library":            "torch",
+                "versions_supported": [],
+            },
+            {
+                "type_name":          "torch_sequence",
+                "function_load":      load_repr,
+                "function_save":      save_repr,
+                "object_class":       torch.nn.Sequential,
+                "suffix":             "torch_sequence",
+                "library":            "torch",
+                "versions_supported": [],
+            },
+            {
+                "type_name":          "torch_dataset",
+                "function_load":      load_repr,
+                "function_save":      save_repr,
+                "object_class":       torch.utils.data.Dataset,
+                "suffix":             "torch_dataset",
+                "library":            "torch",
+                "versions_supported": [],
+            },
+            {
+                "type_name":          "torch_dataloader",
+                "function_load":      load_repr,
+                "function_save":      save_repr,
+                "object_class":       torch.utils.data.DataLoader,
+                "suffix":             "torch_dataloader",
+                "library":            "torch",
+                "versions_supported": [],
+            },
+            {
+                "type_name":          "hdbscan",
+                "function_load":      load_repr,
+                "function_save":      save_repr,
+                "object_class":       hdbscan.HDBSCAN,
+                "suffix":             "hdbscan",
+                "library":            "torch",
+                "versions_supported": [],
+            },
+            {
+                "type_name":          "pandas_dataframe",
+                "function_load":      load_pandas_dataframe,
+                "function_save":      save_pandas_dataframe,
+                "object_class":       pd.DataFrame,
+                "suffix":             "csv",
+                "library":            "pandas",
+                "versions_supported": [],
+            },
+        ] + [t.get_property_dict() for t in roicat_module_tds]
+
+        [self.register_type_from_dict(d) for d in type_dicts]
+        
+
+######################################
+######## CUSTOM DATA CLASSES #########
+######################################
+
+class JSON_Dict(dict):
+    def __init__(self, *args, **kwargs):
+        super(JSON_Dict, self).__init__(*args, **kwargs)
+class JSON_List(list):
+    def __init__(self, *args, **kwargs):
+        super(JSON_List, self).__init__(*args, **kwargs)
+
+## Wrapper for SWT
+class Model_SWT(torch.nn.Module):
+    def __init__(self, model: torch.nn.Module):
+        super(Model_SWT, self).__init__()
+        self.add_module('model', model)
+    def forward(self, x):
+        return self.model(x)
 
 
 def make_session_bool(n_roi: np.ndarray,) -> np.ndarray:
@@ -870,7 +1297,8 @@ def discard_UCIDs_with_fewer_matches(
     
 
 def squeeze_UCID_labels(
-    ucids: List[Union[List[int], np.ndarray]]
+    ucids: List[Union[List[int], np.ndarray]],
+    return_array: bool = False,
 ) -> List[Union[List[int], np.ndarray]]:
     """
     Squeezes the UCID labels. Finds all the unique UCIDs across all sessions,
@@ -881,6 +1309,9 @@ def squeeze_UCID_labels(
     Args:
         ucids (List[Union[List[int], np.ndarray]]): 
             List of lists of UCIDs for each session.
+        return_array (bool):
+            If ``True``, then the output will be a numpy array.
+            (Default is ``False``)
 
     Returns:
         (List[Union[List[int], np.ndarray]]): 
@@ -907,12 +1338,16 @@ def squeeze_UCID_labels(
     for i_sesh in range(n_sesh):
         ucids_out[i_sesh] = [int(mapping[val]) for val in ucids_out[i_sesh]]
 
-    return ucids_out
+    if not return_array:
+        return ucids_out
+    else:
+        return [np.array(u) for u in ucids_out]
 
 
 def match_arrays_with_ucids(
     arrays: Union[np.ndarray, List[np.ndarray]], 
     ucids: Union[List[np.ndarray], List[List[int]]], 
+    return_indices: bool = False,
     squeeze: bool = False,
     force_sparse: bool = False,
     prog_bar: bool = False,
@@ -928,6 +1363,10 @@ def match_arrays_with_ucids(
             first dimension.
         ucids (Union[List[np.ndarray], List[List[int]]]): 
             List of lists of UCIDs for each session.
+        return_indices (bool):
+            If ``True``, then the indices of the UCIDs will also be returned.
+            The indices will be of dtype np.float32 because it may contain NaNs.
+            (Default is ``False``)
         squeeze (bool): 
             If ``True``, then UCIDs are squeezed to be contiguous integers.
             (Default is ``False``)
@@ -957,6 +1396,10 @@ def match_arrays_with_ucids(
         fix=True,
         verbose=False,
     )
+    ## Error if dtype is not NaN compatible
+    if not np.issubdtype(arrays[0].dtype, np.floating):
+        raise ValueError(f'ROICaT ERROR: This function requires inputs to be of a dtype that is compatible with NaNs, like np.floating types: np.float32, np.float64, etc.')
+    ## Squeeze UCIDs
     ucids_tu = squeeze_UCID_labels(ucids_tu) if squeeze else ucids_tu
     # max_ucid = (np.unique(np.concatenate(ucids_tu, axis=0)) >= 0).max()
     max_ucid = (np.unique(np.concatenate(ucids_tu, axis=0))).max().astype(int) + 1
@@ -977,7 +1420,17 @@ def match_arrays_with_ucids(
             if u >= 0:
                 arrays_out[i_sesh][u] = arrays[i_sesh][idx]
 
-    return arrays_out
+    if not return_indices:
+        return arrays_out
+    else:
+        return arrays_out, match_arrays_with_ucids(
+            arrays=[np.arange(len(a), dtype=np.float32) for a in arrays],
+            ucids=ucids,
+            return_indices=False,
+            squeeze=squeeze,
+            force_sparse=False,
+            prog_bar=False,
+        )
 
 def match_arrays_with_ucids_inverse(
     arrays: Union[np.ndarray, List[np.ndarray]], 

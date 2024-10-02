@@ -52,7 +52,7 @@ def download_data_test_zip(directory):
         check_local_first=True, 
         check_hash=True, 
         hash_type='MD5', 
-        hash_hex=r'aec4284b7f0a25e5e8eec85ed659d532',
+        hash_hex=r'2fcd64902d3c71eb0a85bbdb15a7d68e',
         mkdir=True,
         allow_overwrite=True,
         write_mode='wb',
