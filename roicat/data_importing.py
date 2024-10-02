@@ -265,6 +265,7 @@ class Data_roicat(util.ROICaT_Module):
         class_labels_squeezeInt = util.labels_to_labelsBySession(labels=labels_cat_squeezeInt, n_roi_bySession=n_class_labels)
 
         ## Set attributes
+        self.class_labels_raw = labels_raw
         self.class_labels_index = class_labels_squeezeInt
         self.n_classes = n_classes
         self.n_class_labels = n_class_labels
@@ -757,13 +758,140 @@ class Data_roicat(util.ROICaT_Module):
             return sf_rs_centered.astype(np.float32).todense()
 
         ## Transform
-        print(f"Staring: Creating centered ROI images from spatial footprints...") if self._verbose else None
+        print(f"Starting: Creating centered ROI images from spatial footprints...") if self._verbose else None
         self.ROI_images = [sf_to_centeredROIs(sf.copy(), centroids) for sf, centroids in zip(self.spatialFootprints, self.centroids)]
         print(f"Completed: Created ROI images.") if self._verbose else None
 
         return self.ROI_images
         
+    def remove_rois_by_classLabel(
+        self,
+        classLabel_to_keep:   Optional[Union[int, List[int]]] = None,
+        classLabel_to_remove: Optional[Union[int, List[int]]] = None,
+        in_place: bool = True,
+        verbose: Optional[bool] = None,
+    ):
+        """
+        Removes ROIs based on their class label. Remakes all attributes that are
+        affected by the removal of
+        ROIs. This includes:
+            * spatialFootprints
+            * ROI_images
+            * centroids
+            * class_labels_raw
+            * class_labels_index
+            * session_bool
+            * all attributes related to above attributes
 
+        Args:
+            classLabel_to_keep (Optional[Union[int, List[int]]]):
+                Class label(s) to keep. If ``None``, ``classLabel_to_remove``
+                must be provided. The values should correspond to the values
+                seen in the ``self.class_labels_raw`` attribute.
+            classLabel_to_remove (Optional[Union[int, List[int]]]):
+                Class label(s) to remove. If ``None``, ``classLabel_to_keep`` must
+                be provided. The values should correspond to the values seen in
+                the ``self.class_labels_raw`` attribute.
+            in_place (bool):
+                If ``True``, the object is modified in place. A new object is
+                returned with the ROIs removed either way.
+            verbose (Optional[bool]):
+                Whether to print progress messages. If ``None``, the verbosity
+                level set in the class is used.
+
+        Returns:
+            self (Data_roicat):
+                The object with the ROIs removed.
+        """
+        if verbose is None:
+            verbose = self._verbose
+
+        ## Check that class labels are set
+        assert hasattr(self, 'class_labels_raw'),    f"RH ERROR: class_labels_raw must be set before ROIs can be removed by class label. Use set_class_labels() to set class_labels_raw."
+        assert hasattr(self, 'unique_class_labels'), f"RH ERROR: unique_class_labels must be set before ROIs can be removed by class label. Use set_class_labels() to set unique_class_labels."
+        ## Check that classLabel_to_keep or classLabel_to_remove is provided
+        assert (classLabel_to_keep is not None) or (classLabel_to_remove is not None), f"RH ERROR: Either classLabel_to_keep or classLabel_to_remove must be provided."
+        ## Check that only one of classLabel_to_keep or classLabel_to_remove is provided
+        assert (classLabel_to_keep is None) or (classLabel_to_remove is None), f"RH ERROR: Only one of classLabel_to_keep or classLabel_to_remove can be provided."
+        ## Check that classLabel_to_keep or classLabel_to_remove is an int or a list of ints
+        if isinstance(classLabel_to_keep, np.ndarray):
+            classLabel_to_keep = classLabel_to_keep.tolist()
+        if isinstance(classLabel_to_remove, np.ndarray):
+            classLabel_to_remove = classLabel_to_remove.tolist()
+        if isinstance(classLabel_to_keep, int):
+            classLabel_to_keep = [classLabel_to_keep,]
+        if isinstance(classLabel_to_remove, int):
+            classLabel_to_remove = [classLabel_to_remove,]
+        assert (classLabel_to_keep is None)   or (isinstance(classLabel_to_keep, int)   or (isinstance(classLabel_to_keep, list)   and all([isinstance(cl, int) for cl in classLabel_to_keep]))),   f"RH ERROR: classLabel_to_keep must be an int or a list of ints."
+        assert (classLabel_to_remove is None) or (isinstance(classLabel_to_remove, int) or (isinstance(classLabel_to_remove, list) and all([isinstance(cl, int) for cl in classLabel_to_remove]))), f"RH ERROR: classLabel_to_remove must be an int or a list of ints."
+
+        print(f"Starting: Removing ROIs based on class labels...") if verbose else None
+
+        ## Get the class labels to keep
+        if classLabel_to_remove is not None:
+            classLabel_to_keep = [cl for cl in self.unique_class_labels if cl not in classLabel_to_remove]
+            print(f"Converted classLabel_to_remove: {classLabel_to_remove} to classLabel_to_keep: {classLabel_to_keep}.") if verbose else None
+
+        ## Get the indices of the class labels to keep for each session
+        idx_keep = [np.where(np.isin(cl, classLabel_to_keep))[0] for cl in self.class_labels_raw]
+
+        ## Make new object
+        print(f"Making new Data_roicat object with ROIs removed based on class labels...") if verbose else None
+        data_new = Data_roicat(verbose=verbose)
+
+        ## Remove the ROIs
+        if hasattr(self, 'spatialFootprints'):
+            print(f"Removing ROIs from spatialFootprints...") if verbose else None
+            sf = [sf[idx_keep[ii]] for ii, sf in enumerate(self.spatialFootprints)]
+            data_new.set_spatialFootprints(
+                spatialFootprints=sf,
+                um_per_pixel=self.um_per_pixel,
+            )
+        if hasattr(self, 'centroids'):
+            print(f"Removing ROIs from centroids...") if verbose else None
+            c = [c[idx_keep[ii]] for ii, c in enumerate(self.centroids)]
+            data_new.centroids = c
+            print(f"Centroids removed.") if verbose else None
+        if hasattr(self, 'ROI_images'):
+            print(f"Removing ROIs from ROI_images...") if verbose else None
+            ri = [ri[idx_keep[ii]] for ii, ri in enumerate(self.ROI_images)]
+            data_new.set_ROI_images(
+                ROI_images=ri,
+                um_per_pixel=self.um_per_pixel,
+            )
+        if hasattr(self, 'class_labels_raw'):
+            print(f"Removing ROIs from class_labels...") if verbose else None
+            cl = [cl[idx_keep[ii]] for ii, cl in enumerate(self.class_labels_raw)]
+            data_new.set_class_labels(
+                labels=cl,
+                n_classes=self.n_classes,
+            )
+        if hasattr(self, 'session_bool'):
+            print(f"Recomputing session_bool...") if verbose else None
+            data_new._make_session_bool()
+                
+        print(f"Completed: Removed ROIs based on class labels. New object created. Old n_roi_total={self.n_roi_total}, new n_roi_total={data_new.n_roi_total}. Old unique_class_labels={self.unique_class_labels}, new unique_class_labels={data_new.unique_class_labels}.") if verbose else None
+
+        if in_place:
+            ## Replace self with new object
+            ### Check to see if there are any attributes in the old object that are not in the new object
+            keys_old = set(self.__dict__.keys())
+            keys_new = set(data_new.__dict__.keys())
+            keys_missing = keys_old - keys_new
+            keys_extra = keys_new - keys_old
+            keys_in_both = keys_old.intersection(keys_new)
+            ## Print old keys
+            print(f"Existing attributes that will persist in new data object: {keys_missing}.") if verbose else None
+            ## Print intersection keys
+            print(f"Existing attributes that will be replaced in new data object: {keys_in_both}.") if verbose else None
+            if len(keys_extra) > 0:
+                warnings.warn(f"RH WARNING: The following attributes are in the new data object but not in the old data object: {keys_extra}. This is unexpected.")
+            self.__dict__.update(data_new.__dict__)
+            print(f"Performed in-place replacement of self with new data object.") if verbose else None
+            return self
+
+        return data_new
+                   
     def __repr__(self):
         ## Check which attributes are set
         attr_to_print = {key: val for key,val in self.__dict__.items() if key in [
@@ -1058,7 +1186,7 @@ class Data_suite2p(Data_roicat):
 
         n = self.n_sessions
         spatialFootprints = [
-            self._transform_statFile_to_spatialFootprints(
+            _transform_statFile_to_spatialFootprints(
                 frame_height_width=frame_height_width,
                 stat=statFiles[ii],
                 shifts=self.shifts[ii],
@@ -1109,7 +1237,7 @@ class Data_suite2p(Data_roicat):
 
         n = self.n_sessions
         neuropilMasks = [
-            self._transform_statFile_to_neuropilMasks(
+            _transform_statFile_to_neuropilMasks(
                 frame_height_width=frame_height_width,
                 stat=statFiles[ii],
                 shifts=self.shifts[ii],
@@ -1156,96 +1284,94 @@ class Data_suite2p(Data_roicat):
             raise ValueError(f"RH ERROR: new_or_old_suite2p should be 'new' or 'old'. Got {new_or_old_suite2p}")
         return shifts
 
-    def _transform_statFile_to_spatialFootprints(
-        self,
-        frame_height_width: Tuple[int, int], 
-        stat: np.ndarray, 
-        shifts: Tuple[int, int] = (0, 0), 
-        dtype: Optional[np.dtype] = None, 
-        normalize_mask: bool = True,
-    ) -> scipy.sparse.csr_matrix:
-        """
-        Populates a sparse array with the spatial footprints from ROIs in a stat
-        file.
+def _transform_statFile_to_spatialFootprints(
+    frame_height_width: Tuple[int, int], 
+    stat: np.ndarray, 
+    shifts: Tuple[int, int] = (0, 0), 
+    dtype: Optional[np.dtype] = None, 
+    normalize_mask: bool = True,
+) -> scipy.sparse.csr_matrix:
+    """
+    Populates a sparse array with the spatial footprints from ROIs in a stat
+    file.
 
-        Args:
-            frame_height_width (Tuple[int, int]):
-                Height and width of the frame.
-            stat (np.ndarray):
-                Stat file containing ROIs information.
-            shifts (Tuple[int, int]):
-                Shifts in x and y coordinates to apply to ROIs. Default is (0,
-                0).
-            dtype (Optional[np.dtype]):
-                Data type of the array elements. If ``None``, it will be
-                inferred from the data. Default is ``None``.
-            normalize_mask (bool):
-                If True, normalize the mask. Default is ``True``.
+    Args:
+        frame_height_width (Tuple[int, int]):
+            Height and width of the frame.
+        stat (np.ndarray):
+            Stat file containing ROIs information.
+        shifts (Tuple[int, int]):
+            Shifts in x and y coordinates to apply to ROIs. Default is (0,
+            0).
+        dtype (Optional[np.dtype]):
+            Data type of the array elements. If ``None``, it will be
+            inferred from the data. Default is ``None``.
+        normalize_mask (bool):
+            If True, normalize the mask. Default is ``True``.
 
-        Returns:
-            (scipy.sparse.csr_matrix):
-                spatialFootprints (scipy.sparse.csr_matrix):
-                    Sparse array of shape *(n_roi, frame_height * frame_width)*
-                    containing the spatial footprints of the ROIs.
-        """
-        isInt = np.issubdtype(dtype, np.integer)
+    Returns:
+        (scipy.sparse.csr_matrix):
+            spatialFootprints (scipy.sparse.csr_matrix):
+                Sparse array of shape *(n_roi, frame_height * frame_width)*
+                containing the spatial footprints of the ROIs.
+    """
+    isInt = np.issubdtype(dtype, np.integer)
 
-        rois_to_stack = []
-        
-        for jj, roi in enumerate(stat):
-            lam = np.array(roi['lam'], ndmin=1)
-            dtype = dtype if dtype is not None else lam.dtype
-            if isInt:
-                lam = dtype(lam / lam.sum() * np.iinfo(dtype).max) if normalize_mask else dtype(lam)
-            else:
-                lam = lam / lam.sum() if normalize_mask else lam
-            ypix = np.array(roi['ypix'], dtype=np.uint64, ndmin=1) + shifts[0]
-            xpix = np.array(roi['xpix'], dtype=np.uint64, ndmin=1) + shifts[1]
-        
-            tmp_roi = scipy.sparse.csr_matrix((lam, (ypix, xpix)), shape=(frame_height_width[0], frame_height_width[1]), dtype=dtype)
-            rois_to_stack.append(tmp_roi.reshape(1,-1))
+    rois_to_stack = []
+    
+    for jj, roi in enumerate(stat):
+        lam = np.array(roi['lam'], ndmin=1)
+        dtype = dtype if dtype is not None else lam.dtype
+        if isInt:
+            lam = dtype(lam / lam.sum() * np.iinfo(dtype).max) if normalize_mask else dtype(lam)
+        else:
+            lam = lam / lam.sum() if normalize_mask else lam
+        ypix = np.array(roi['ypix'], dtype=np.uint64, ndmin=1) + shifts[0]
+        xpix = np.array(roi['xpix'], dtype=np.uint64, ndmin=1) + shifts[1]
+    
+        tmp_roi = scipy.sparse.csr_matrix((lam, (ypix, xpix)), shape=(frame_height_width[0], frame_height_width[1]), dtype=dtype)
+        rois_to_stack.append(tmp_roi.reshape(1,-1))
 
-        return scipy.sparse.vstack(rois_to_stack).tocsr()
+    return scipy.sparse.vstack(rois_to_stack).tocsr()
 
-    @staticmethod
-    def _transform_statFile_to_neuropilMasks(
-        frame_height_width: Tuple[int, int], 
-        stat: np.ndarray, 
-        shifts: Tuple[int, int] = (0, 0)
-    ) -> scipy.sparse.csr_matrix:
-        """
-        Populates a sparse array with the neuropil masks from ROIs in a stat
-        file.
+def _transform_statFile_to_neuropilMasks(
+    frame_height_width: Tuple[int, int], 
+    stat: np.ndarray, 
+    shifts: Tuple[int, int] = (0, 0)
+) -> scipy.sparse.csr_matrix:
+    """
+    Populates a sparse array with the neuropil masks from ROIs in a stat
+    file.
 
-        Args:
-            frame_height_width (Tuple[int, int]):
-                Height and width of the frame.
-            stat (np.ndarray):
-                Stat file containing ROIs information.
-            shifts (Tuple[int, int]):
-                Shifts in x and y coordinates to apply to ROIs. Default is (0,
-                0).
+    Args:
+        frame_height_width (Tuple[int, int]):
+            Height and width of the frame.
+        stat (np.ndarray):
+            Stat file containing ROIs information.
+        shifts (Tuple[int, int]):
+            Shifts in x and y coordinates to apply to ROIs. Default is (0,
+            0).
 
-        Returns:
-            (scipy.sparse.csr_matrix):
-                neuropilMasks (scipy.sparse.csr_matrix):
-                    Sparse array of shape *(n_roi, frame_height * frame_width)*
-                    containing the neuropil masks of the ROIs.
-        """
-        
-        rois_to_stack = []
-        
-        for jj, roi in enumerate(stat):
-            lam = np.ones(len(roi['neuropil_mask']), dtype=np.bool_)
-            dtype = np.bool_
-            ypix, xpix = np.unravel_index(roi['neuropil_mask'], shape=(frame_height_width[0], frame_height_width[1]), order='C')
-            ypix = ypix + shifts[0]
-            xpix = xpix + shifts[1]
-        
-            tmp_roi = scipy.sparse.csr_matrix((lam, (ypix, xpix)), shape=(frame_height_width[0], frame_height_width[1]), dtype=dtype)
-            rois_to_stack.append(tmp_roi.reshape(1,-1))
+    Returns:
+        (scipy.sparse.csr_matrix):
+            neuropilMasks (scipy.sparse.csr_matrix):
+                Sparse array of shape *(n_roi, frame_height * frame_width)*
+                containing the neuropil masks of the ROIs.
+    """
+    
+    rois_to_stack = []
+    
+    for jj, roi in enumerate(stat):
+        lam = np.ones(len(roi['neuropil_mask']), dtype=np.bool_)
+        dtype = np.bool_
+        ypix, xpix = np.unravel_index(roi['neuropil_mask'], shape=(frame_height_width[0], frame_height_width[1]), order='C')
+        ypix = ypix + shifts[0]
+        xpix = xpix + shifts[1]
+    
+        tmp_roi = scipy.sparse.csr_matrix((lam, (ypix, xpix)), shape=(frame_height_width[0], frame_height_width[1]), dtype=dtype)
+        rois_to_stack.append(tmp_roi.reshape(1,-1))
 
-        return scipy.sparse.vstack(rois_to_stack).tocsr()
+    return scipy.sparse.vstack(rois_to_stack).tocsr()
 
 
 #########################################################
