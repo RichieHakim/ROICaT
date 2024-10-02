@@ -145,7 +145,7 @@ jobs:
       run: |
         # pip install tox tox-gh-actions
         pip install pytest pytest-cov
-        # python -m pytest -v -rP --capture=tee-sys --cov=roicat --cov-report=xml:coverage.xml --color=yes --ignore=tests/test_packages.py --ignore=tests/test_interactive.py
+        # python -m pytest -v -rP --capture=tee-sys --cov=roicat --cov-report=xml:coverage.xml --color=yes
         python -m pytest -v -rP --capture=tee-sys --cov=roicat --cov-report=xml:coverage.xml --color=yes
 
     - name: Upload coverage reports to Codecov
