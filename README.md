@@ -155,6 +155,21 @@ git clone https://github.com/RichieHakim/ROICaT
 ```
 Then, navigate to the `ROICaT/notebooks/jupyter` directory to run the notebooks.
 
+
+# Upgrading versions
+There are 2 parts to upgrading ROICaT: the **Python package** and the
+**repository files** which contain the notebooks and scripts.\
+Activate your environment first, then...\
+To upgrade the Python package, run:
+```
+pip install --upgrade roicat[all]
+```
+To upgrade the repository files, navigate your terminal to the `ROICaT` folder and run:
+```
+git pull
+```
+
+
 # Troubleshooting Installation
 ### Troubleshooting package installation issues
 If you have issues importing packages like `roicat` or any of its dependencies, try reinstalling `roicat` with the following commands within the environment:
