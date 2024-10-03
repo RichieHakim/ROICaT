@@ -1,0 +1,51 @@
+name: 🐛 Bug Report
+description: File a bug report
+title: "[BUG]: "
+labels: ["bug"]
+
+body:
+- type: textarea
+  attributes:
+    label: Describe the bug
+    description: |
+      Thank you for taking the time to file a bug report. Please provide a
+      description of the bug encountered. Consider including the following if
+      relevant:
+      - Code that was run
+      - Expected behavior
+      - Actual behavior
+      - Steps to reproduce the bug. Including a minimal code example sufficient to reproduce the bug.
+      - Outputs or errors. Try to include the **full** traceback of any exception.
+      - Anything else like screenshots, did this used to work? etc.
+
+      Note that it is useful to format code blocks by wrapping text in ```` ```triple quotes blocks``` ````.
+  validations:
+    required: true
+
+- type: textarea
+  attributes:
+    label: Versions + System info
+    description: |
+      Optional. Please run the following and paste the output below:
+      ```sh
+      python3
+      import roicat
+      print(roicat.util.system_info())
+      exit()
+      ```
+  validations:
+    required: false
+
+- type: textarea
+  attributes:
+    label: Additional context
+    description: |
+      If you are willing to share, tell us a bit about your research use case for ROICaT.
+  validations:
+    required: false
+
+- type: markdown
+  attributes:
+    value: >
+      Thanks for contributing 🎉!
+      
