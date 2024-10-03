@@ -8,9 +8,7 @@ body:
   attributes:
     label: Describe the bug
     description: |
-      Thank you for taking the time to file a bug report. Please provide a
-      description of the bug encountered. Consider including the following if
-      relevant:
+      Thank you for taking the time to file a bug report. Please provide a description of the bug encountered. Consider including the following if relevant:
       - Code that was run
       - Expected behavior
       - Actual behavior
@@ -26,7 +24,10 @@ body:
   attributes:
     label: Versions + System info
     description: |
-      Optional. Please run the following and paste the output below:
+      Optional. 
+      It is useful to know about which package versions and system you are using. Please print the output of the `roicat.util.system_info()` function and paste the output below. This can be done from a terminal / command line:
+      
+      Activate the appropriate environment and run:
       ```sh
       python3
       import roicat
