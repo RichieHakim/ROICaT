@@ -8,18 +8,14 @@ body:
   attributes:
     label: Describe the feature request
     description: |
-      Thank you for taking the time to file a feature request. Please provide a
-      description of the feature you would like to see. Consider the following
-      if relevant:
+      Thank you for taking the time to file a feature request. Please provide a description of the feature you would like to see. Consider the following if relevant:
       - Motivation
       - Specific use case
       - Expected behavior
       - Work required to implement
       - Code examples or drawings
       
-      Note that you can also send a pull request if you know how to implement
-      the feature yourself. We are always looking for contributors and are happy
-      to guide you through the process.
+      Note that you can also send a pull request if you know how to implement the feature yourself. We are always looking for contributors and are happy to guide you through the process.
   validations:
     required: true
 
