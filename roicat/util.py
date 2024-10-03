@@ -290,7 +290,7 @@ def system_info(verbose: bool = False,) -> Dict:
         try:
             return fn()
         except:
-            return None
+            return None        
     fns = {key: val for key, val in platform.__dict__.items() if (callable(val) and key[0] != '_')}
     operating_system = {key: try_fns(val) for key, val in fns.items() if (callable(val) and key[0] != '_')}
     print(f'== Operating System ==: {operating_system["uname"]}') if verbose else None
@@ -400,6 +400,18 @@ def system_info(verbose: bool = False,) -> Dict:
         'torch_devices': torch_devices,
         'pkgs': pkgs_dict,
     }
+
+    def conv_str(obj):
+        if isinstance(obj, (dict, collections.OrderedDict)):
+            return {key: conv_str(val) for key, val in obj.items()}
+        elif isinstance(obj, (list, tuple, set, frozenset)):
+            return [conv_str(val) for val in obj]
+        elif isinstance(obj, (int, float, bool, type(None))):
+            return obj
+        else:
+            return str(obj)
+        
+    versions = conv_str(versions)
 
     return versions
 
