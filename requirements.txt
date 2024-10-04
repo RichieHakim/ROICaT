@@ -16,7 +16,7 @@ sparse==0.15.4
 tqdm==4.66.5
 umap_learn==0.5.6
 xxhash==3.5.0
-bokeh==3.5.2
+bokeh==3.6.0
 psutil==6.0.0
 py_cpuinfo==9.0.0
 GPUtil==1.4.0
@@ -31,4 +31,4 @@ onnx==1.17.0
 onnxruntime==1.19.2
 jupyter_bokeh==4.0.5
 onnx2torch==1.5.15
-richfile>=0.4.3
+richfile>=0.4.4
