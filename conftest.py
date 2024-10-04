@@ -81,7 +81,8 @@ def make_ROIs(
     import torchvision
 
     roi_prototype = torch.zeros(size_im, dtype=torch.uint8)
-    roi_prototype[*torch.meshgrid(torch.arange(size_im[0]//2-8, size_im[0]//2+8), torch.arange(size_im[1]//2-8, size_im[1]//2+8), indexing='xy')] = 255
+    grid = torch.meshgrid(torch.arange(size_im[0]//2-8, size_im[0]//2+8), torch.arange(size_im[1]//2-8, size_im[1]//2+8), indexing='xy')
+    roi_prototype[grid[0], grid[1]] = 255
     transforms = torch.nn.Sequential(*[
         torchvision.transforms.RandomPerspective(distortion_scale=0.9, p=1.0),
         torchvision.transforms.RandomAffine(0, scale=(2.0, 2.0))
