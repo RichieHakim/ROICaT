@@ -435,113 +435,95 @@ class ROICaT_Module:
         self.params = {}
         pass
 
-    # @property
-    # def serializable_dict(self) -> Dict[str, Any]:
-    #     """
-    #     Returns a serializable dictionary that can be saved to disk. This method
-    #     goes through all items in self.__dict__ and checks if they are
-    #     serializable. If they are, add them to a dictionary to be returned.
+    @property
+    def serializable_dict(self) -> Dict[str, Any]:
+        """
+        Returns a serializable dictionary that can be saved to disk. This method
+        goes through all items in self.__dict__ and checks if they are
+        serializable. If they are, add them to a dictionary to be returned.
 
-    #     Returns:
-    #         (Dict[str, Any]): 
-    #             serializable_dict (Dict[str, Any]): 
-    #                 Dictionary containing serializable items.
-    #     """
-    #     from functools import partial
-    #     ## Go through all items in self.__dict__ and check if they are serializable.
-    #     ### If they are, add them to a dictionary to be returned.
-    #     import pickle
+        Returns:
+            (Dict[str, Any]): 
+                serializable_dict (Dict[str, Any]): 
+                    Dictionary containing serializable items.
+        """
+        from functools import partial
+        ## Go through all items in self.__dict__ and check if they are serializable.
+        ### If they are, add them to a dictionary to be returned.
+        import pickle
 
-    #     ## Define a list of libraries and classes that are allowed to be serialized.
-    #     allowed_libraries = [
-    #         'roicat',
-    #         'builtins',
-    #         'collections',
-    #         'datetime',
-    #         'itertools',
-    #         'math',
-    #         'numbers',
-    #         'os',
-    #         'pathlib',
-    #         'string',
-    #         'time',
-    #         'numpy',
-    #         'scipy',
-    #         'sklearn',
-    #     ]
-    #     def is_library_allowed(obj):
-    #         try:
-    #             try:
-    #                 module_name = obj.__module__.split('.')[0]
-    #             except:
-    #                 success = False
-    #             try:
-    #                 module_name = obj.__class__.__module__.split('.')[0]
-    #             except:
-    #                 success = False
-    #         except:
-    #             success = False
-    #         else:
-    #             ## Check if the module_name is in the allowed_libraries list.
-    #             if module_name in allowed_libraries:
-    #                 success = True
-    #             else:
-    #                 success = False
-    #         return success
+        ## Define a list of libraries and classes that are allowed to be serialized.
+        allowed_libraries = [
+            'roicat',
+            'builtins',
+            'collections',
+            'datetime',
+            'itertools',
+            'math',
+            'numbers',
+            'os',
+            'pathlib',
+            'string',
+            'time',
+            'numpy',
+            'scipy',
+            'sklearn',
+        ]
+        def is_library_allowed(obj):
+            try:
+                try:
+                    module_name = obj.__module__.split('.')[0]
+                except:
+                    success = False
+                try:
+                    module_name = obj.__class__.__module__.split('.')[0]
+                except:
+                    success = False
+            except:
+                success = False
+            else:
+                ## Check if the module_name is in the allowed_libraries list.
+                if module_name in allowed_libraries:
+                    success = True
+                else:
+                    success = False
+            return success
         
-    #     def make_serializable_dict(obj, depth=0, max_depth=100, name=None):
-    #         """
-    #         Recursively go through all items in self.__dict__ and check if they are serializable.
-    #         """
-    #         # print(name)
-    #         msd_partial = partial(make_serializable_dict, depth=depth+1, max_depth=max_depth)
-    #         if depth > max_depth:
-    #             raise Exception(f'RH ERROR: max_depth of {max_depth} reached with object: {obj}')
+        def make_serializable_dict(obj, depth=0, max_depth=100, name=None):
+            """
+            Recursively go through all items in self.__dict__ and check if they are serializable.
+            """
+            # print(name)
+            msd_partial = partial(make_serializable_dict, depth=depth+1, max_depth=max_depth)
+            if depth > max_depth:
+                raise Exception(f'RH ERROR: max_depth of {max_depth} reached with object: {obj}')
                 
-    #         serializable_dict = {}
-    #         if hasattr(obj, '__dict__') and is_library_allowed(obj):
-    #             for key, val in obj.__dict__.items():
-    #                 try:
-    #                     serializable_dict[key] = msd_partial(val, name=key)
-    #                 except:
-    #                     pass
+            serializable_dict = {}
+            if hasattr(obj, '__dict__') and is_library_allowed(obj):
+                for key, val in obj.__dict__.items():
+                    try:
+                        serializable_dict[key] = msd_partial(val, name=key)
+                    except:
+                        pass
 
-    #         elif isinstance(obj, (list, tuple, set, frozenset)):
-    #             serializable_dict = [msd_partial(v, name=f'{name}_{ii}') for ii,v in enumerate(obj)]
-    #         elif isinstance(obj, dict):
-    #             serializable_dict = {k: msd_partial(v, name=f'{name}_{k}') for k,v in obj.items()}
-    #         else:
-    #             try:
-    #                 assert is_library_allowed(obj), f'RH ERROR: object {obj} is not serializable'
-    #                 pickle.dumps(obj)
-    #             except:
-    #                 return {'__repr__': repr(obj)} if hasattr(obj, '__repr__') else {'__str__': str(obj)} if hasattr(obj, '__str__') else None
+            elif isinstance(obj, (list, tuple, set, frozenset)):
+                serializable_dict = [msd_partial(v, name=f'{name}_{ii}') for ii,v in enumerate(obj)]
+            elif isinstance(obj, dict):
+                serializable_dict = {k: msd_partial(v, name=f'{name}_{k}') for k,v in obj.items()}
+            else:
+                try:
+                    assert is_library_allowed(obj), f'RH ERROR: object {obj} is not serializable'
+                    pickle.dumps(obj)
+                except:
+                    return {'__repr__': repr(obj)} if hasattr(obj, '__repr__') else {'__str__': str(obj)} if hasattr(obj, '__str__') else None
 
-    #             serializable_dict = obj
+                serializable_dict = obj
 
-    #         return serializable_dict
+            return serializable_dict
         
-    #     serializable_dict = make_serializable_dict(self, depth=0, max_depth=100, name='self')
-    #     return serializable_dict
+        serializable_dict = make_serializable_dict(self, depth=0, max_depth=100, name='self')
+        return serializable_dict
 
-    # @property
-    # def serializable_dict(self) -> Dict[str, Any]:
-    #     def walk_through_dicts(obj, depth=0, max_depth=10):
-    #         depth += 1
-    #         print(depth)
-    #         if depth > max_depth:
-    #             return obj
-            
-    #         elif isinstance(obj, dict):
-    #             return {k: walk_through_dicts(v, depth) for k,v in obj.items()}
-    #         elif isinstance(obj, (list, tuple, set, frozenset)):
-    #             return [walk_through_dicts(v, depth) for v in obj]
-    #         elif hasattr(obj, '__dict__'):
-    #             return {k: walk_through_dicts(v, depth) for k,v in obj.__dict__.items()}
-    #         else:
-    #             return obj
-            
-    #     return walk_through_dicts(self, depth=0, max_depth=10)
 
     # def save(
     #     self, 
