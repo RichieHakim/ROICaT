@@ -136,4 +136,5 @@ setup(
         'classification': deps_classification,
         'tracking': deps_tracking,
     },
+    python_requires='>=3.10',  ## RH 20241004
 )
