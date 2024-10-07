@@ -833,7 +833,7 @@ class RichFile_ROICaT(rf.RichFile):
             return pd.read_csv(path, index_col=0, **kwargs)
         
 
-        roicat_module_tds = [rf.functions.Type_container(
+        roicat_module_tds = [rf.functions.Container(
             type_name=type_name,
             object_class=object_class,
             suffix="roicat",
