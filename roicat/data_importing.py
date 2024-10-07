@@ -460,6 +460,7 @@ class Data_roicat(util.ROICaT_Module):
         assert all([img.shape[1] == FOV_images[0].shape[1] for img in FOV_images]), f"RH ERROR: All elements in FOV_images must have the same height and width."
 
         ## Set attributes
+        print("Setting FOV_images...") if self._verbose else None
         self.FOV_images = [np.array(f, dtype=np.float32) for f in FOV_images]
         self.FOV_height = int(FOV_images[0].shape[0])
         self.FOV_width = int(FOV_images[0].shape[1])
@@ -1126,7 +1127,7 @@ class Data_suite2p(Data_roicat):
         
         assert self.paths_ops is not None, "RH ERROR: paths_ops is None. Please set paths_ops before calling this function."
         assert len(self.paths_ops) > 0, "RH ERROR: paths_ops is empty. Please set paths_ops before calling this function."
-        assert all([Path(path).exists() for path in self.paths_ops]), "RH ERROR: One or more paths in paths_ops do not exist."
+        assert all([Path(path).exists() for path in self.paths_ops]), f"RH ERROR: One or more paths in paths_ops do not exist: {[path for path in self.paths_ops if not Path(path).exists()]}"
 
         FOV_images = [np.load(path, allow_pickle=True)[()][type_meanImg] for path in self.paths_ops]
 
@@ -1178,7 +1179,7 @@ class Data_suite2p(Data_roicat):
 
         assert self.paths_stat is not None, "RH ERROR: paths_stat is None. Please set paths_stat before calling this function."
         assert len(self.paths_stat) > 0, "RH ERROR: paths_stat is empty. Please set paths_stat before calling this function."
-        assert all([Path(path).exists() for path in self.paths_stat]), "RH ERROR: One or more paths in paths_stat do not exist."
+        assert all([Path(path).exists() for path in self.paths_stat]), f"RH ERROR: One or more paths in paths_stat do not exist: {[path for path in self.paths_stat if not Path(path).exists()]}"
 
         assert hasattr(self, 'shifts'), "RH ERROR: shifts is not defined. Please call ._make_shifts before calling this function."
 
@@ -1229,7 +1230,7 @@ class Data_suite2p(Data_roicat):
 
         assert self.paths_stat is not None, "RH ERROR: paths_stat is None. Please set paths_stat before calling this function."
         assert len(self.paths_stat) > 0, "RH ERROR: paths_stat is empty. Please set paths_stat before calling this function."
-        assert all([Path(path).exists() for path in self.paths_stat]), "RH ERROR: One or more paths in paths_stat do not exist."
+        assert all([Path(path).exists() for path in self.paths_stat]), f"RH ERROR: One or more paths in paths_stat do not exist: {[path for path in self.paths_stat if not Path(path).exists()]}"
 
         assert hasattr(self, 'shifts'), "RH ERROR: shifts is not defined. Please call ._make_shifts before calling this function."
 
