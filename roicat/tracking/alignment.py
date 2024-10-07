@@ -191,7 +191,7 @@ class Aligner(util.ROICaT_Module):
         self.params['fit_geometric'] = self._locals_to_params(
             locals_dict=locals(),
             keys=[
-                'template' if isinstance(template, int) else None,
+                'template',
                 'template_method',
                 'mode_transform',
                 'gaussFiltSize',
@@ -377,7 +377,7 @@ class Aligner(util.ROICaT_Module):
         self.params['fit_nonrigid'] = self._locals_to_params(
             locals_dict=locals(),
             keys=[
-                'template' if isinstance(template, int) else None,
+                'template',
                 'template_method',
                 'mode_transform',
                 'kwargs_mode_transform',
