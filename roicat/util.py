@@ -1038,6 +1038,26 @@ def make_session_bool(n_roi: np.ndarray,) -> np.ndarray:
     return session_bool
 
 
+def split_iby_session(
+    x: Any,
+    n_roi_per_session: Union[np.ndarray, List[int]],
+):
+    """
+    Splits an array or iterable into a list of arrays or iterables based on the
+    number of ROIs per session.
+
+    Args:
+        arr (Any): 
+            Array to split.
+        n_roi_per_session (Union[np.ndarray, List[int]]): 
+            Number of ROIs per session.
+
+    Returns:
+        (List[Any]): 
+            List of arrays split by session.
+    """
+    return [x[sum(n_roi_per_session[:ii]):sum(n_roi_per_session[:ii+1])] for ii in range(len(n_roi_per_session))]
+
 ##########################################################################################################################
 ############################################### UCID handling ############################################################
 ##########################################################################################################################
@@ -1522,6 +1542,6 @@ def labels_to_labelsBySession(labels, n_roi_bySession):
 
     assert np.sum(n_roi_bySession) == len(labels), f'np.sum(n_roi_bySession)={np.sum(n_roi_bySession)} != len(labels)={len(labels)}'
 
-    labels_bySession = [labels[sum(n_roi_bySession[:ii]):sum(n_roi_bySession[:ii+1])] for ii in range(len(n_roi_bySession))]
+    labels_bySession = split_iby_session(x=labels, n_roi_per_session=n_roi_bySession)
 
     return labels_bySession

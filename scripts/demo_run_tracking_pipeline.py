@@ -10,19 +10,26 @@ import roicat
 ## Ingest command line arguments
 parser = argparse.ArgumentParser(description='Run the tracking pipeline on a dataset')
 ### path_params
-parser.add_argument('--path_params', type=str, default=None, help='Path to the parameters .yaml file to use')
+parser.add_argument('--path_params',      type=str, default=None, help='Path to the parameters .yaml file to use')
 ### dir_outer
-parser.add_argument('--dir_outer', type=str, default=None, help='Path to the directory containing the dataset')
+parser.add_argument('--dir_outer',        type=str, default=None, help='Path to the directory containing the dataset')
 ### dir_save
-parser.add_argument('--dir_save', type=str, default=None, help='Path to the directory to save the results')
+parser.add_argument('--dir_save',         type=str, default=None, help='Path to the directory to save the results')
 ### prefix_name_save. Default is the current date and time
 parser.add_argument('--prefix_name_save', type=str, default=None, help='Prefix to append to the saved files')
 
 args = parser.parse_args()
 
-path_params = args.path_params
-dir_outer = args.dir_outer
-dir_save = args.dir_save
+def clean_path(path, must_exist=False):
+    if path is not None:
+        path = str(Path(path).resolve())
+        if not Path(path).exists() and must_exist:
+            raise FileNotFoundError(f'Path not found: {path}')
+    return path
+
+path_params = clean_path(args.path_params, must_exist=True)
+dir_outer =   clean_path(args.dir_outer, must_exist=True)
+dir_save =    clean_path(args.dir_save, must_exist=False)
 prefix_name_save = args.prefix_name_save if args.prefix_name_save is not None else str(datetime.datetime.now().strftime("%Y%m%d_%H%M%S"))
 
 

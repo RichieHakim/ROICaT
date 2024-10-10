@@ -5,8 +5,10 @@ from typing import List, Tuple, Union, Optional, Dict, Any, Sequence, Callable
 import functools
 
 import numpy as np
+import scipy.optimize
 import scipy.sparse
-from tqdm import tqdm
+import torch
+from tqdm.auto import tqdm
 import matplotlib.pyplot as plt
 
 from .. import helpers, util
@@ -49,7 +51,7 @@ class Aligner(util.ROICaT_Module):
         normalize_FOV_intensities: bool = True,
         roi_FOV_mixing_factor: float = 0.5,
         use_CLAHE: bool = True,
-        CLAHE_grid_size: int = 1,
+        CLAHE_grid_block_size: int = 50,
         CLAHE_clipLimit: int = 1,
         CLAHE_normalize: bool = True,
     ) -> None:
@@ -73,9 +75,11 @@ class Aligner(util.ROICaT_Module):
                 If 0, then no mixing will be performed. (Default is *0.5*)
             use_CLAHE (bool):
                 Whether to apply CLAHE to the images. (Default is ``True``)
-            CLAHE_grid_size (int):
-                The grid size for CLAHE. See alignment.clahe for more details.
-                (Default is *1*)
+            CLAHE_grid_block_size (int):
+                The size of the blocks in the gride for CLAHE. Used to divide
+                the image into small blocks and create the grid_size parameter
+                for the cv2.createCLAHE function. Smaller block sizes will
+                result in more local CLAHE. (Default is *50*)
             CLAHE_clipLimit (int):
                 The clip limit for CLAHE. See alignment.clahe for more details.
                 (Default is *1*)
@@ -102,7 +106,7 @@ class Aligner(util.ROICaT_Module):
                 'normalize_FOV_intensities',
                 'roi_FOV_mixing_factor',
                 'use_CLAHE',
-                'CLAHE_grid_size',
+                'CLAHE_grid_block_size',
                 'CLAHE_clipLimit',
                 'CLAHE_normalize',
             ],
@@ -116,12 +120,14 @@ class Aligner(util.ROICaT_Module):
 
         ## Do the CLAHE first
         if use_CLAHE:
+            CLAHE_grid_size = (max(1, h // CLAHE_grid_block_size), max(1, w // CLAHE_grid_block_size))
             FOV_images = [clahe(im, grid_size=CLAHE_grid_size, clipLimit=CLAHE_clipLimit, normalize=CLAHE_normalize) for im in FOV_images]
 
         ## normalize FOV images
         if normalize_FOV_intensities:
-            val_norm = np.max(np.concatenate([im.reshape(-1) for im in FOV_images]))
-            FOV_images = [im / val_norm for im in FOV_images]
+            val_max = max([np.max(im) for im in FOV_images])
+            val_min = min([np.min(im) for im in FOV_images])
+            FOV_images = [(im - val_min) / (val_max - val_min) for im in FOV_images]
 
         ## mix ROI images into FOV images
         if spatialFootprints is not None:
@@ -136,12 +142,23 @@ class Aligner(util.ROICaT_Module):
         template: Union[int, np.ndarray],
         ims_moving: List[np.ndarray],
         template_method: str = 'sequential',
-        mode_transform: str = 'affine',
-        gaussFiltSize: int = 11,
         mask_borders: Tuple[int, int, int, int] = (0, 0, 0, 0),
-        n_iter: int = 1000,
-        termination_eps: float = 1e-9,
-        auto_fix_gaussFilt_step: Union[bool, int] = 10,
+        algorithm: str = 'LoFTR',
+        kwargs_algo_findTransformECC: Optional[Dict[str, Any]] = {
+            'mode_transform': 'affine',
+            'gaussFiltSize': 11,
+            'n_iter': 1000,
+            'termination_eps': 1e-9,
+            'auto_fix_gaussFilt_step': 10,
+        },
+        kwargs_algo_LoFTR: Optional[Dict[str, Any]] = {
+            'mode_transform': 'affine',
+            'gaussFiltSize': 11,
+            'confidence_LoFTR': 0.2,
+            'confidence_RANSAC': 0.99,
+            'ransacReprojThreshold': 3.0,
+            'maxIters': 2000,
+        },
     ) -> np.ndarray:
         """
         Performs geometric registration of ``ims_moving`` to a template, using 
@@ -163,24 +180,51 @@ class Aligner(util.ROICaT_Module):
                 * 'image': use the image specified by 'template'. 
                 * 'sequential': register each image to the previous or next image \n
                 (Default is 'sequential')
-            mode_transform (str): 
-                Mode of geometric transformation. Can be 'translation', 'euclidean', 
-                'affine', or 'homography'. See ``cv2.findTransformECC`` for more details. 
-                (Default is 'affine')
-            gaussFiltSize (int): 
-                Size of the Gaussian filter. (Default is *11*)
             mask_borders (Tuple[int, int, int, int]): 
                 Border mask for the image. Format is (top, bottom, left, right). 
                 (Default is (0, 0, 0, 0))
-            n_iter (int): 
-                Number of iterations for ``cv2.findTransformECC``. (Default is *1000*)
-            termination_eps (float): 
-                Termination criteria for ``cv2.findTransformECC``. (Default is *1e-9*)
-            auto_fix_gaussFilt_step (Union[bool, int]): 
-                Automatically fixes convergence issues by increasing the gaussFiltSize. 
-                If ``False``, no automatic fixing is performed. If ``True``, the 
-                gaussFiltSize is increased by 2 until convergence. If int, the gaussFiltSize 
-                is increased by this amount until convergence. (Default is *10*)
+            algorithm (str):
+                The algorithm to use for registration. Either 'LoFTR' or 'findTransformECC'. \n
+                    * 'LoFTR': Feature-based registration. Uses LoFTR for
+                      feature detection and matching. Use kornia's pretrained
+                      LoFTR model with pretrained='indoor_new'. \n
+                    * 'findTransformECC': Direct / intensity-based registration.
+                      Use cv2's findTransformECC method. \n
+            kwargs_algo_findTransformECC (Optional[Dict[str, Any]]):
+                Keyword arguments for the findTransformECC method. \n
+                * mode_transform (str): 
+                    * Mode of geometric transformation. Can be 'translation',
+                      'euclidean', 'affine', or 'homography'. See
+                      ``cv2.findTransformECC`` for more details. (Default is
+                      'affine')
+                * gaussFiltSize (int): 
+                    * Size of the Gaussian filter. (Default is *11*)
+                * n_iter (int): 
+                    * Number of iterations for ``cv2.findTransformECC``.
+                * termination_eps (float): 
+                    * Termination criteria for ``cv2.findTransformECC``.
+                * auto_fix_gaussFilt_step (Union[bool, int]): 
+                    * Automatically fixes convergence issues by increasing the
+                      gaussFiltSize. If ``False``, no automatic fixing is
+                      performed. If ``True``, the gaussFiltSize is increased by
+                      2 until convergence. If int, the gaussFiltSize is
+                      increased by this amount until convergence.
+            kwargs_algo_LoFTR (Optional[Dict[str, Any]]):
+                Keyword arguments for the LoFTR method. \n
+                * mode_transform (str): 
+                    * Mode of geometric transformation. Can be 'euclidean',
+                      'similarity', 'affine', or 'projective',
+                * gaussFiltSize (int): 
+                    * Size of the Gaussian filter. (Default is *11*)
+                * confidence_LoFTR (float):
+                    * Confidence threshold for LoFTR matches. Matches with
+                      confidence values below this threshold will be discarded.
+                * confidence_RANSAC (float):
+                    * Confidence threshold for RANSAC inliers.
+                * ransacReprojThreshold (float):
+                    * Reprojection threshold for RANSAC.
+                * maxIters (int):
+                    * Maximum number of iterations for RANSAC.
 
         Returns:
             (np.ndarray): 
@@ -193,14 +237,32 @@ class Aligner(util.ROICaT_Module):
             keys=[
                 'template',
                 'template_method',
-                'mode_transform',
-                'gaussFiltSize',
                 'mask_borders',
-                'n_iter',
-                'termination_eps',
-                'auto_fix_gaussFilt_step',
+                'algorithm',
+                'kwargs_algo_findTransformECC',
+                'kwargs_algo_LoFTR',
             ],
         )
+
+        ## Fill missing kwargs with defaults
+        default_kwargs_algo_findTransformECC = {
+            'mode_transform': 'affine',
+            'gaussFiltSize': 11,
+            'n_iter': 1000,
+            'termination_eps': 1e-9,
+            'auto_fix_gaussFilt_step': 10,
+        }
+        default_kwargs_algo_LoFTR = {
+            'mode_transform': 'affine',
+            'gaussFiltSize': 11,
+            'confidence_LoFTR': 0.2,
+            'confidence_RANSAC': 0.99,
+            'ransacReprojThreshold': 3.0,
+            'maxIters': 2000,
+            'device': 'cpu',
+        }
+        kwargs_algo_findTransformECC = default_kwargs_algo_findTransformECC if kwargs_algo_findTransformECC is None else {**default_kwargs_algo_findTransformECC, **kwargs_algo_findTransformECC}
+        kwargs_algo_LoFTR = default_kwargs_algo_LoFTR if kwargs_algo_LoFTR is None else {**default_kwargs_algo_LoFTR, **kwargs_algo_LoFTR}
         
         # Check if ims_moving is a non-empty list
         assert len(ims_moving) > 0, "ims_moving must be a non-empty list of images."
@@ -211,13 +273,6 @@ class Aligner(util.ROICaT_Module):
         # Check if template_method is valid
         valid_template_methods = {'sequential', 'image'}
         assert template_method in valid_template_methods, f"template_method must be one of {valid_template_methods}"
-        # Check if mode_transform is valid
-        valid_mode_transforms = {'translation', 'euclidean', 'affine', 'homography'}
-        assert mode_transform in valid_mode_transforms, f"mode_transform must be one of {valid_mode_transforms}"
-        # Check if gaussFiltSize is a number (float or int)
-        assert isinstance(gaussFiltSize, (float, int)), "gaussFiltSize must be a number."
-        # Convert gaussFiltSize to an odd integer
-        gaussFiltSize = int(np.round(gaussFiltSize))
 
         H, W = ims_moving[0].shape
         self._HW = (H,W) if self._HW is None else self._HW
@@ -230,7 +285,7 @@ class Aligner(util.ROICaT_Module):
             mask_value=0,
         )
 
-        print(f'Finding geometric registration warps with mode: {mode_transform}, template_method: {template_method}, mask_borders: {mask_borders is not None}') if self._verbose else None
+        print(f'Finding geometric registration warps with template_method: {template_method}, mask_borders: {mask_borders is not None}, algorithm: {algorithm}') if self._verbose else None
         warp_matrices_raw = []
         for ii, im_moving in tqdm(enumerate(ims_moving), desc='Finding geometric registration warps', total=len(ims_moving), disable=not self._verbose):
             if template_method == 'sequential':
@@ -247,6 +302,18 @@ class Aligner(util.ROICaT_Module):
                 im_template = template
             
             def _safe_find_geometric_transformation(gaussFiltSize):
+                mode_transform, n_iter, termination_eps, auto_fix_gaussFilt_step = [kwargs_algo_findTransformECC[key] for key in [
+                    'mode_transform', 'n_iter', 'termination_eps', 'auto_fix_gaussFilt_step'
+                ]]
+
+                # Check if mode_transform is valid
+                valid_mode_transforms = {'translation', 'euclidean', 'affine', 'homography'}
+                assert mode_transform in valid_mode_transforms, f"mode_transform must be one of {valid_mode_transforms}"
+                # Check if gaussFiltSize is a number (float or int)
+                assert isinstance(gaussFiltSize, (float, int)), "gaussFiltSize must be a number."
+                # Convert gaussFiltSize to an odd integer
+                gaussFiltSize = int(np.round(gaussFiltSize))
+
                 try:
                     warp_matrix = helpers.find_geometric_transformation(
                         im_template=im_template,
@@ -273,7 +340,182 @@ class Aligner(util.ROICaT_Module):
                     warp_matrix = np.eye(3)[:2,:]
                 return warp_matrix
             
-            warp_matrix = _safe_find_geometric_transformation(gaussFiltSize=gaussFiltSize)
+            def _LoFTR_fit():
+                import kornia
+                import skimage
+                import cv2
+
+                mode_transform, gaussFiltSize, confidence_LoFTR, confidence_RANSAC, ransacReprojThreshold, maxIters = [kwargs_algo_LoFTR[key] for key in [
+                    'mode_transform', 'gaussFiltSize', 'confidence_LoFTR', 'confidence_RANSAC', 'ransacReprojThreshold', 'maxIters'
+                ]]
+
+                ## Confirm that the images are floats between 0 and 1
+                assert all([np.issubdtype(im.dtype, np.floating) for im in [im_template, im_moving]]), 'Images must be floating dtype.'
+                assert all([np.min(im) >= 0 and np.max(im) <= 1 for im in [im_template, im_moving]]), 'Images must be between 0 and 1.'
+                ## Prepare input dictionary
+                input_dict = {
+                    'image0': torch.as_tensor(im_template, dtype=torch.float32)[None, None, :, :],
+                    'image1': torch.as_tensor(im_moving, dtype=torch.float32)[None, None, :, :],
+                }
+                ## Mask the images by cropping out the borders
+                b_top, b_bottom, b_left, b_right = mask_borders[0], input_dict['image0'].shape[2] - mask_borders[1], mask_borders[2], input_dict['image0'].shape[3] - mask_borders[3]
+                input_dict['image0'] = input_dict['image0'][:, :, b_top:b_bottom][:, :, :, b_left:b_right]
+                input_dict['image1'] = input_dict['image1'][:, :, b_top:b_bottom][:, :, :, b_left:b_right]
+
+                # ## Normalize the images for LoFTR
+                # ### LoFTR expects images to be in the range [0, 1]
+                # input_dict['image0'] = input_dict['image0'] / input_dict['image0'].max()
+                # input_dict['image1'] = input_dict['image1'] / input_dict['image1'].max()
+
+                ## Blur the images
+                if gaussFiltSize > 0:
+                    input_dict['image0'] = kornia.filters.gaussian_blur2d(input=input_dict['image0'], kernel_size=gaussFiltSize, sigma=((s:=gaussFiltSize/6), s))
+                    input_dict['image1'] = kornia.filters.gaussian_blur2d(input=input_dict['image1'], kernel_size=gaussFiltSize, sigma=((s:=gaussFiltSize/6), s))
+
+                ## Load LoFTR model
+                model = kornia.feature.LoFTR(pretrained="indoor_new")
+                ## Get the keypoints and descriptors
+                with torch.inference_mode():
+                    matches = model(input_dict)
+                ## Clean up matches with low confidence
+                mkpts0 = matches["keypoints0"].cpu().numpy()
+                mkpts1 = matches["keypoints1"].cpu().numpy()
+                print(f"Found {mkpts0.shape[0]} matches.") if self._verbose else None
+                mkpts0 = mkpts0[(matches["confidence"] > confidence_LoFTR).cpu().numpy().astype(np.bool_)]
+                mkpts1 = mkpts1[(matches["confidence"] > confidence_LoFTR).cpu().numpy().astype(np.bool_)]
+                ## Throw an error if no matches are found
+                print(f"Found {mkpts0.shape[0]} matches.") if self._verbose else None
+                if mkpts0.shape[0] < 2:
+                    print(f'Registration Failed for image_moving: {ii}. Not enough matches found. Setting warp matrix to identity. Found: {mkpts0.shape[0]} matches. Try adjusting one of the following: decrease confidence_LoFTR, decrease gaussFiltSize, increase mask_borders.')
+                    return np.eye(3)
+                ## Get inliers
+                try:
+                    fund_mat, inliers = cv2.findFundamentalMat(
+                        points1=mkpts0,
+                        points2=mkpts1,
+                        method=cv2.USAC_MAGSAC,
+                        ransacReprojThreshold=ransacReprojThreshold,
+                        confidence=confidence_RANSAC,
+                        maxIters=maxIters,
+                        # mask=self.mask_geo,
+                    )
+                except Exception as e:
+                    print(f'Registration Failed for image_moving: {ii}. Error finding fundamental matrix. Setting warp matrix to identity. Likely not enough matches found. Found: {mkpts0.shape[0]} matches. Try adjusting one of the following: decrease confidence_LoFTR, decrease gaussFiltSize, increase mask_borders. \nError: {e}')
+                    return np.eye(3)
+                inliers = np.array(inliers > 0, dtype=np.bool_).ravel()
+                # ## Remove outliers
+                # mkpts0 = mkpts0[inliers].astype(np.float32)
+                # mkpts1 = mkpts1[inliers].astype(np.float32)
+
+                ## Use skimage's estimate_transform
+                tforms = ['euclidean', 'similarity', 'affine', 'projective']
+                assert mode_transform in tforms, f'Found mode_transform={mode_transform}. Must be one of {tforms.keys()}'
+                warp_matrix = skimage.transform.estimate_transform(
+                    ttype=mode_transform,
+                    src=mkpts0,
+                    dst=mkpts1,
+                ).params
+
+               # plt.figure()
+                # plt.scatter(mkpts0[:,0,0], mkpts1[:,0,0], c='r')
+                # plt.scatter(mkpts0[:,0,1], mkpts1[:,0,1], c='b')
+                # plt.show()
+
+                ## Get the transformation matrix (can be homography or affine, etc.)
+                # if mode_transform == 'homography':
+                #     warp_matrix, inliers = cv2.findHomography(
+                #         mkpts0,
+                #         mkpts1,
+                #         method=cv2.RANSAC,
+                #         ransacReprojThreshold=ransacReprojThreshold,
+                #         confidence=confidence_RANSAC,
+                #         maxIters=maxIters,
+                #         mask=self.mask_geo,
+                #     )
+                #     # print(warp_matrix.shape)
+                #     # warp_matrix = np.linalg.inv(warp_matrix)
+                #     # warp_matrix = warp_matrix[:2, :].astype(np.float32)
+                # elif mode_transform == 'affine':
+                #     ## Don't use estimateAffinePartial2D because it doesn't work well
+                #     warp_matrix, mask = cv2.estimate(
+                #         mkpts0,
+                #         mkpts1,
+                #         method=cv2.RANSAC,
+                #         ransacReprojThreshold=ransacReprojThreshold,
+                #         maxIters=maxIters,
+                #         confidence=confidence_RANSAC,
+                #         # mask=self.mask_geo,
+                #     )
+                ## Use skimage's estimate_transform
+
+                # # print(warp_matrix)
+                # warp_matrix = np.linalg.inv(warp_matrix)
+                # # else:
+                # #     raise ValueError(f'LoFTR does not support mode_transform={mode_transform}')
+
+                
+                # print(warp_matrix)
+                # warp_matrix = warp_matrix[:2, :].astype(np.float32)
+                ## Warp image
+                # im_moving_warped = cv2.warpAffine(
+                #     im_moving,
+                #     warp_matrix,
+                #     (W, H),
+                #     flags=cv2.INTER_LINEAR,
+                #     borderMode=cv2.BORDER_CONSTANT,
+                #     borderValue=float(im_moving.mean()),
+                # )
+                # im_moving_warped = cv2.warpPerspective(
+                #     im_moving,
+                #     warp_matrix,
+                #     (W, H),
+                #     flags=cv2.INTER_LINEAR,
+                #     borderMode=cv2.BORDER_CONSTANT,
+                #     borderValue=float(im_moving.mean()),
+                # )
+                # im_moving_warped = kornia.geometry.warp_perspective(
+                #     torch.as_tensor(im_moving).view(1, 1, H, W),
+                #     torch.as_tensor(warp_matrix).view(1, 3, 3),
+                #     dsize=(H, W),
+                #     align_corners=False,
+                # ).squeeze().numpy()[]
+                ## Show the images
+                # from .. import visualization
+                # visualization.display_toggle_image_stack([im_template, im_moving_warped],)
+                # from kornia_moons.viz import draw_LAF_matches
+                # draw_LAF_matches(
+                #     kornia.feature.laf_from_center_scale_ori(
+                #         torch.from_numpy(mkpts0).view(1, -1, 2),
+                #         torch.ones(mkpts0.shape[0]).view(1, -1, 1, 1),
+                #         torch.ones(mkpts0.shape[0]).view(1, -1, 1),
+                #     ),
+                #     kornia.feature.laf_from_center_scale_ori(
+                #         torch.from_numpy(mkpts1).view(1, -1, 2),
+                #         torch.ones(mkpts1.shape[0]).view(1, -1, 1, 1),
+                #         torch.ones(mkpts1.shape[0]).view(1, -1, 1),
+                #     ),
+                #     torch.arange(mkpts0.shape[0]).view(-1, 1).repeat(1, 2),
+                #     kornia.tensor_to_image(torch.as_tensor(input_dict['image0'])),
+                #     kornia.tensor_to_image(torch.as_tensor(input_dict['image1'])),
+                #     inliers,
+                #     draw_dict={"inlier_color": (0.2, 1, 0.2), "tentative_color": None, "feature_color": (0.2, 0.5, 1), "vertical": False},
+                # )
+
+                ## Extend 2x3 affine warp matrix into 3x3 homography matrix if necessary
+                if warp_matrix.shape == (2, 3):
+                    warp_matrix = np.vstack([warp_matrix, [0, 0, 1]])
+                elif warp_matrix.shape == (3, 3):
+                    pass
+                else:
+                    raise ValueError(f'Unexpected warp_matrix shape: {warp_matrix.shape}')
+
+                return warp_matrix
+
+                                            
+            if algorithm == 'LoFTR':
+                warp_matrix = _LoFTR_fit()
+            elif algorithm == 'findTransformECC':
+                warp_matrix = _safe_find_geometric_transformation(gaussFiltSize=kwargs_algo_findTransformECC['gaussFiltSize'])
             warp_matrices_raw.append(warp_matrix)
 
         
@@ -1085,7 +1327,7 @@ def make_spectral_mask(
 
 def clahe(
     im: np.ndarray, 
-    grid_size: int = 50, 
+    grid_size: Union[int, Tuple[int, int]] = 50,
     clipLimit: int = 0, 
     normalize: bool = True,
 ) -> np.ndarray:
@@ -1113,13 +1355,83 @@ def clahe(
                 Output image after applying CLAHE.
     """
     import cv2
+    assert isinstance(grid_size, (int, tuple)), 'grid_size must be int or tuple'
+    if isinstance(grid_size, int):
+        grid_size = (grid_size, grid_size)
+    elif isinstance(grid_size, tuple):
+        assert len(grid_size) == 2, 'grid_size must be a tuple of length 2'
+        assert all(isinstance(x, int) for x in grid_size), 'grid_size must be a tuple of integers'
+
     dtype_in = im.dtype
     if normalize:
         val_max = np.nanmax(im)
         im_tu = (im.astype(np.float32) / val_max)*(2**8 - 1)
-    clahe = cv2.createCLAHE(clipLimit=clipLimit, tileGridSize=(grid_size, grid_size))
+    clahe = cv2.createCLAHE(clipLimit=clipLimit, tileGridSize=grid_size)
     im_c = clahe.apply(im_tu.astype(np.uint16))
     if normalize:
         im_c = (im_c / (2**8 - 1)) * val_max
     im_c = im_c.astype(dtype_in)
     return im_c
+
+
+def adaptive_brute_force_matcher(
+    features_template: torch.Tensor,
+    features_moving: torch.Tensor,
+    thresh_prob: float = 0.05,
+    metric: str = 'normalized_euclidean',
+    moat_prob_ratio: float = 10,
+    batch_size: int = 100,
+):
+    """
+    Perform adaptive brute force matching between two sets of features.
+    Similar to brute force matching, but converts the distance threshold to a
+    probability using statistics of the distances.
+    """
+    ## Compute distances ('normalized_euclidean' or 'cosine')
+    if metric == 'normalized_euclidean':
+        precomputed_mat_template = torch.var(features_template, dim=1)
+        precomputed_mat_moving   = torch.var(features_moving, dim=1)
+        fn_dist = lambda x, y, var_x: (1/2) * (torch.var(x[:, None, :] - y[None, :, :], dim=2) / (var_x[:, None] + torch.var(y, dim=1)[None, :]))
+    elif metric == 'cosine':
+        precomputed_mat_template = torch.linalg.norm(features_template, dim=1)
+        precomputed_mat_moving   = torch.linalg.norm(features_moving, dim=1)
+        fn_dist = lambda x, y, norm_x: 1 - (x @ y.T) / (norm_x[:, None] @ torch.linalg.norm(y, dim=1)[None, :])
+    else:
+        raise ValueError(f"metric must be one of ['normalized_euclidean', 'cosine'], not {metric}")
+
+    def _compute_distance_pvals(mat1, mat2, fn_dist, precomputed_mat):
+        ## get stats for mat1 for distance calculation
+        idx_top_out = []
+        mask_out = []
+        for batch2 in helpers.make_batches(mat2, batch_size):
+            ## compute distances
+            d = fn_dist(mat1, batch2, precomputed_mat)
+            ## get stats for z-scoring
+            d_mean = d.mean(dim=1)
+            d_std  = d.std(dim=1)
+            ## get smallest 2 matches using topk
+            d_top2 = torch.topk(d, 2, largest=False, dim=1, sorted=True)
+            ## convert to z, then p-values
+            d_pval = (1 + torch.erf((d_top2.values - d_mean[:, None]) / (d_std[:, None] * np.sqrt(2)))) / 2
+            ## get moat probability ratio
+            moat_prob = d_pval[:, 1] / d_pval[:, 0]
+            ## get matches that pass threshold
+            mask_moat = moat_prob > moat_prob_ratio
+            ## get indices of matches that pass absolute probability threshold
+            mask_thresh = d_pval[:, 0] < thresh_prob
+            ## get indices of matches that pass both thresholds
+            mask = mask_moat & mask_thresh
+            ## append
+            idx_top_out.append(d_top2.indices[:, 0])
+            mask_out.append(mask)
+        idx_top_out = torch.cat(idx_top_out)
+        mask_out = torch.cat(mask_out, dim=0)
+        return idx_top_out, mask_out
+
+    idx_t2m, mask_t2m = _compute_distance_pvals(features_template, features_moving, fn_dist, precomputed_mat_template)
+    idx_m2t, mask_m2t = _compute_distance_pvals(features_moving, features_template, fn_dist, precomputed_mat_moving)
+    ## get matches that are mutual
+    bool_m2t_mutual = idx_t2m[idx_m2t] == torch.arange(len(idx_m2t))
+    mask_mutual = mask_m2t & bool_m2t_mutual & mask_t2m[idx_m2t]
+    idx_m2t_mutual = (torch.arange(len(idx_m2t))[mask_mutual], idx_m2t[mask_mutual])
+    return idx_m2t_mutual
