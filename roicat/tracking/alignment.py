@@ -1,8 +1,8 @@
-import copy
-import typing
-import warnings
 from typing import List, Tuple, Union, Optional, Dict, Any, Sequence, Callable
+
+import warnings
 import functools
+import copy
 
 import numpy as np
 import scipy.optimize
@@ -20,21 +20,70 @@ class Aligner(util.ROICaT_Module):
     RH 2023
 
     Args:
+        use_match_search (bool):
+            Whether to densely search all possible paths to match images to the
+            template upon failure.
+        radius_in (float):
+            Value in micrometers used to define the maximum shift/offset between
+            two images that are considered to be aligned. Use larger values for
+            more lenient alignment requirements. (Default is *4*)
+        radius_out (float):
+            Value in micrometers used to define the minimum shift/offset between
+            two images that are considered to be misaligned. Use smaller values
+            for more stringent alignment requirements. (Default is *10*)
+        order (int):
+            The order of the butterworth filter used to define the 'in' and 'out'
+            regions of the ImageAlignmentChecker class. (Default is *5*)
+        probability_threshold (float):
+            Probability required to define two images as aligned. Smaller values
+            results in more stringent alignment requirements and possibly slower
+            registration. Value is the probability threshold used on the 'z_in'
+            output of the ImageAlignmentChecker class to determine if two images
+            are properly aligned. (Default is *0.01*)
+        um_per_pixel (float):
+            The number of micrometers per pixel in the FOV_images.
+        device (str):
+            The torch device used for various steps in the alignment process.
         verbose (bool):
             Whether to print progress updates. (Default is ``True``)
     """
     def __init__(
         self,
-        verbose=True,
+        use_match_search: bool = True,
+        radius_in: float = 4,
+        radius_out: float = 20,
+        order: int = 5,
+        probability_threshold: float = 0.01,
+        um_per_pixel: float = 1.0,
+        device: str = 'cpu',
+        verbose: bool = True,
     ):
         super().__init__()
 
         ## Store parameter (but not data) args as attributes
         self.params['__init__'] = self._locals_to_params(
             locals_dict=locals(),
-            keys=['verbose'],
+            keys=[
+                'use_match_search',
+                'radius_in',
+                'radius_out',
+                'order',
+                'probability_threshold',
+                'um_per_pixel',
+                'device',
+                'verbose',
+            ],
         )
 
+        self.use_match_search = use_match_search
+        self.radius_in = radius_in
+        self.radius_out = radius_out
+        self.order = order
+        self.probability_threshold = probability_threshold
+        self.device = device
+
+        assert isinstance(um_per_pixel, (int, float, np.number)), 'um_per_pixel must be a single value. If the FOV images have different pixel sizes, then our approach to checking image alignment (using the ImageAlignmentChecker class) will not work smoothly. Please preprocess the images to have the same pixel size or contact the developers for a custom solution.'
+        self.um_per_pixel = float(um_per_pixel)
         self._verbose = verbose
         
         self.remappingIdx_geo = None
@@ -159,6 +208,7 @@ class Aligner(util.ROICaT_Module):
             'ransacReprojThreshold': 3.0,
             'maxIters': 2000,
         },
+        device: Optional[str] = None,
     ) -> np.ndarray:
         """
         Performs geometric registration of ``ims_moving`` to a template, using 
@@ -241,8 +291,11 @@ class Aligner(util.ROICaT_Module):
                 'algorithm',
                 'kwargs_algo_findTransformECC',
                 'kwargs_algo_LoFTR',
+                'device',
             ],
         )
+
+        device = self.device if device is None else device
 
         ## Fill missing kwargs with defaults
         default_kwargs_algo_findTransformECC = {
@@ -285,272 +338,196 @@ class Aligner(util.ROICaT_Module):
             mask_value=0,
         )
 
-        print(f'Finding geometric registration warps with template_method: {template_method}, mask_borders: {mask_borders is not None}, algorithm: {algorithm}') if self._verbose else None
-        warp_matrices_raw = []
-        for ii, im_moving in tqdm(enumerate(ims_moving), desc='Finding geometric registration warps', total=len(ims_moving), disable=not self._verbose):
-            if template_method == 'sequential':
-                ## warp images before template forward (t1->t2->t3->t4)
-                if ii < template:
-                    im_template = ims_moving[ii+1]
-                ## warp template to itself
-                elif ii == template:
-                    im_template = ims_moving[ii]
-                ## warp images after template backward (t4->t3->t2->t1)
-                elif ii > template:
-                    im_template = ims_moving[ii-1]
-            elif template_method == 'image':
-                im_template = template
-            
-            def _safe_find_geometric_transformation(gaussFiltSize):
-                mode_transform, n_iter, termination_eps, auto_fix_gaussFilt_step = [kwargs_algo_findTransformECC[key] for key in [
-                    'mode_transform', 'n_iter', 'termination_eps', 'auto_fix_gaussFilt_step'
-                ]]
-
-                # Check if mode_transform is valid
-                valid_mode_transforms = {'translation', 'euclidean', 'affine', 'homography'}
-                assert mode_transform in valid_mode_transforms, f"mode_transform must be one of {valid_mode_transforms}"
-                # Check if gaussFiltSize is a number (float or int)
-                assert isinstance(gaussFiltSize, (float, int)), "gaussFiltSize must be a number."
-                # Convert gaussFiltSize to an odd integer
-                gaussFiltSize = int(np.round(gaussFiltSize))
-
-                try:
-                    warp_matrix = helpers.find_geometric_transformation(
+        def _register(
+            template: np.ndarray,
+            template_method: str,
+        ):
+            print(f'Finding geometric registration warps with template_method: {template_method}, mask_borders: {mask_borders is not None}, algorithm: {algorithm}') if self._verbose else None
+            warp_matrices_raw = []
+            for ii, im_moving in tqdm(enumerate(ims_moving), desc='Finding geometric registration warps', total=len(ims_moving), disable=not self._verbose):
+                if template_method == 'sequential':
+                    ## warp images before template forward (t1->t2->t3->t4)
+                    if ii < template:
+                        im_template = ims_moving[ii+1]
+                    ## warp template to itself
+                    elif ii == template:
+                        im_template = ims_moving[ii]
+                    ## warp images after template backward (t4->t3->t2->t1)
+                    elif ii > template:
+                        im_template = ims_moving[ii-1]
+                elif template_method == 'image':
+                    im_template = template
+                                                
+                if algorithm == 'LoFTR':
+                    warp_matrix = _LoFTR_fit(
                         im_template=im_template,
                         im_moving=im_moving,
-                        warp_mode=mode_transform,
-                        n_iter=n_iter,
+                        mask_borders=mask_borders,
+                        image_id=ii,
+                        verbose=self._verbose,
+                        **kwargs_algo_LoFTR,
+                    )
+                elif algorithm == 'findTransformECC':
+                    warp_matrix = _safe_find_geometric_transformation(
+                        im_template=im_template,
+                        im_moving=im_moving,
                         mask=self.mask_geo,
-                        termination_eps=termination_eps,
-                        gaussFiltSize=gaussFiltSize,
+                        gaussFiltSize=kwargs_algo_findTransformECC['gaussFiltSize'],
+                        image_id=ii,
+                        verbose=self._verbose,
+                        **kwargs_algo_findTransformECC,
                     )
-                except Exception as e:
-                    if auto_fix_gaussFilt_step:
-                        print(f'Error finding geometric registration warp for image {ii}: {e}') if self._verbose else None
-                        print(f'Increasing gaussFiltSize by {auto_fix_gaussFilt_step} to {gaussFiltSize + auto_fix_gaussFilt_step}') if self._verbose else None
-                        return _safe_find_geometric_transformation(gaussFiltSize + auto_fix_gaussFilt_step)
+                warp_matrices_raw.append(warp_matrix)
 
-                    print(f'Error finding geometric registration warp for image {ii}: {e}')
-                    print(f'Defaulting to identity matrix warp.')
-                    print(f'Consider doing one of the following:')
-                    print(f'  - Make better images to input. You can add the spatialFootprints images to the FOV images to make them better.')
-                    print(f'  - Increase the gaussFiltSize parameter. This will make the images blurrier, but may help with registration.')
-                    print(f'  - Decrease the termination_eps parameter. This will make the registration less accurate, but may help with registration.')
-                    print(f'  - Increase the mask_borders parameter. This will make the images smaller, but may help with registration.')
-                    warp_matrix = np.eye(3)[:2,:]
-                return warp_matrix
-            
-            def _LoFTR_fit():
-                import kornia
-                import skimage
-                import cv2
-
-                mode_transform, gaussFiltSize, confidence_LoFTR, confidence_RANSAC, ransacReprojThreshold, maxIters = [kwargs_algo_LoFTR[key] for key in [
-                    'mode_transform', 'gaussFiltSize', 'confidence_LoFTR', 'confidence_RANSAC', 'ransacReprojThreshold', 'maxIters'
-                ]]
-
-                ## Confirm that the images are floats between 0 and 1
-                assert all([np.issubdtype(im.dtype, np.floating) for im in [im_template, im_moving]]), 'Images must be floating dtype.'
-                assert all([np.min(im) >= 0 and np.max(im) <= 1 for im in [im_template, im_moving]]), 'Images must be between 0 and 1.'
-                ## Prepare input dictionary
-                input_dict = {
-                    'image0': torch.as_tensor(im_template, dtype=torch.float32)[None, None, :, :],
-                    'image1': torch.as_tensor(im_moving, dtype=torch.float32)[None, None, :, :],
-                }
-                ## Mask the images by cropping out the borders
-                b_top, b_bottom, b_left, b_right = mask_borders[0], input_dict['image0'].shape[2] - mask_borders[1], mask_borders[2], input_dict['image0'].shape[3] - mask_borders[3]
-                input_dict['image0'] = input_dict['image0'][:, :, b_top:b_bottom][:, :, :, b_left:b_right]
-                input_dict['image1'] = input_dict['image1'][:, :, b_top:b_bottom][:, :, :, b_left:b_right]
-
-                # ## Normalize the images for LoFTR
-                # ### LoFTR expects images to be in the range [0, 1]
-                # input_dict['image0'] = input_dict['image0'] / input_dict['image0'].max()
-                # input_dict['image1'] = input_dict['image1'] / input_dict['image1'].max()
-
-                ## Blur the images
-                if gaussFiltSize > 0:
-                    input_dict['image0'] = kornia.filters.gaussian_blur2d(input=input_dict['image0'], kernel_size=gaussFiltSize, sigma=((s:=gaussFiltSize/6), s))
-                    input_dict['image1'] = kornia.filters.gaussian_blur2d(input=input_dict['image1'], kernel_size=gaussFiltSize, sigma=((s:=gaussFiltSize/6), s))
-
-                ## Load LoFTR model
-                model = kornia.feature.LoFTR(pretrained="indoor_new")
-                ## Get the keypoints and descriptors
-                with torch.inference_mode():
-                    matches = model(input_dict)
-                ## Clean up matches with low confidence
-                mkpts0 = matches["keypoints0"].cpu().numpy()
-                mkpts1 = matches["keypoints1"].cpu().numpy()
-                print(f"Found {mkpts0.shape[0]} matches.") if self._verbose else None
-                mkpts0 = mkpts0[(matches["confidence"] > confidence_LoFTR).cpu().numpy().astype(np.bool_)]
-                mkpts1 = mkpts1[(matches["confidence"] > confidence_LoFTR).cpu().numpy().astype(np.bool_)]
-                ## Throw an error if no matches are found
-                print(f"Found {mkpts0.shape[0]} matches.") if self._verbose else None
-                if mkpts0.shape[0] < 2:
-                    print(f'Registration Failed for image_moving: {ii}. Not enough matches found. Setting warp matrix to identity. Found: {mkpts0.shape[0]} matches. Try adjusting one of the following: decrease confidence_LoFTR, decrease gaussFiltSize, increase mask_borders.')
-                    return np.eye(3)
-                ## Get inliers
-                try:
-                    fund_mat, inliers = cv2.findFundamentalMat(
-                        points1=mkpts0,
-                        points2=mkpts1,
-                        method=cv2.USAC_MAGSAC,
-                        ransacReprojThreshold=ransacReprojThreshold,
-                        confidence=confidence_RANSAC,
-                        maxIters=maxIters,
-                        # mask=self.mask_geo,
+            # compose warp transforms
+            print('Composing geometric warp matrices...') if self._verbose else None
+            warp_matrices = []
+            if template_method == 'sequential':
+                ## compose warps before template forward (t1->t2->t3->t4)
+                for ii in np.arange(0, template):
+                    warp_composed = self._compose_warps(
+                        warp_0=warp_matrices_raw[ii], 
+                        warps_to_add=warp_matrices_raw[ii+1:template+1],
+                        warpMat_or_remapIdx='warpMat',
                     )
-                except Exception as e:
-                    print(f'Registration Failed for image_moving: {ii}. Error finding fundamental matrix. Setting warp matrix to identity. Likely not enough matches found. Found: {mkpts0.shape[0]} matches. Try adjusting one of the following: decrease confidence_LoFTR, decrease gaussFiltSize, increase mask_borders. \nError: {e}')
-                    return np.eye(3)
-                inliers = np.array(inliers > 0, dtype=np.bool_).ravel()
-                # ## Remove outliers
-                # mkpts0 = mkpts0[inliers].astype(np.float32)
-                # mkpts1 = mkpts1[inliers].astype(np.float32)
+                    warp_matrices.append(warp_composed)
+                ## compose template to itself
+                warp_matrices.append(warp_matrices_raw[template])
+                ## compose warps after template backward (t4->t3->t2->t1)
+                for ii in np.arange(template+1, len(ims_moving)):
+                    warp_composed = self._compose_warps(
+                        warp_0=warp_matrices_raw[ii], 
+                        warps_to_add=warp_matrices_raw[template:ii][::-1],
+                        warpMat_or_remapIdx='warpMat',
+                    )
+                    warp_matrices.append(warp_composed)
+            ## no composition when template_method == 'image'
+            elif template_method == 'image':
+                warp_matrices = warp_matrices_raw
 
-                ## Use skimage's estimate_transform
-                tforms = ['euclidean', 'similarity', 'affine', 'projective']
-                assert mode_transform in tforms, f'Found mode_transform={mode_transform}. Must be one of {tforms.keys()}'
-                warp_matrix = skimage.transform.estimate_transform(
-                    ttype=mode_transform,
-                    src=mkpts0,
-                    dst=mkpts1,
-                ).params
-
-               # plt.figure()
-                # plt.scatter(mkpts0[:,0,0], mkpts1[:,0,0], c='r')
-                # plt.scatter(mkpts0[:,0,1], mkpts1[:,0,1], c='b')
-                # plt.show()
-
-                ## Get the transformation matrix (can be homography or affine, etc.)
-                # if mode_transform == 'homography':
-                #     warp_matrix, inliers = cv2.findHomography(
-                #         mkpts0,
-                #         mkpts1,
-                #         method=cv2.RANSAC,
-                #         ransacReprojThreshold=ransacReprojThreshold,
-                #         confidence=confidence_RANSAC,
-                #         maxIters=maxIters,
-                #         mask=self.mask_geo,
-                #     )
-                #     # print(warp_matrix.shape)
-                #     # warp_matrix = np.linalg.inv(warp_matrix)
-                #     # warp_matrix = warp_matrix[:2, :].astype(np.float32)
-                # elif mode_transform == 'affine':
-                #     ## Don't use estimateAffinePartial2D because it doesn't work well
-                #     warp_matrix, mask = cv2.estimate(
-                #         mkpts0,
-                #         mkpts1,
-                #         method=cv2.RANSAC,
-                #         ransacReprojThreshold=ransacReprojThreshold,
-                #         maxIters=maxIters,
-                #         confidence=confidence_RANSAC,
-                #         # mask=self.mask_geo,
-                #     )
-                ## Use skimage's estimate_transform
-
-                # # print(warp_matrix)
-                # warp_matrix = np.linalg.inv(warp_matrix)
-                # # else:
-                # #     raise ValueError(f'LoFTR does not support mode_transform={mode_transform}')
-
-                
-                # print(warp_matrix)
-                # warp_matrix = warp_matrix[:2, :].astype(np.float32)
-                ## Warp image
-                # im_moving_warped = cv2.warpAffine(
-                #     im_moving,
-                #     warp_matrix,
-                #     (W, H),
-                #     flags=cv2.INTER_LINEAR,
-                #     borderMode=cv2.BORDER_CONSTANT,
-                #     borderValue=float(im_moving.mean()),
-                # )
-                # im_moving_warped = cv2.warpPerspective(
-                #     im_moving,
-                #     warp_matrix,
-                #     (W, H),
-                #     flags=cv2.INTER_LINEAR,
-                #     borderMode=cv2.BORDER_CONSTANT,
-                #     borderValue=float(im_moving.mean()),
-                # )
-                # im_moving_warped = kornia.geometry.warp_perspective(
-                #     torch.as_tensor(im_moving).view(1, 1, H, W),
-                #     torch.as_tensor(warp_matrix).view(1, 3, 3),
-                #     dsize=(H, W),
-                #     align_corners=False,
-                # ).squeeze().numpy()[]
-                ## Show the images
-                # from .. import visualization
-                # visualization.display_toggle_image_stack([im_template, im_moving_warped],)
-                # from kornia_moons.viz import draw_LAF_matches
-                # draw_LAF_matches(
-                #     kornia.feature.laf_from_center_scale_ori(
-                #         torch.from_numpy(mkpts0).view(1, -1, 2),
-                #         torch.ones(mkpts0.shape[0]).view(1, -1, 1, 1),
-                #         torch.ones(mkpts0.shape[0]).view(1, -1, 1),
-                #     ),
-                #     kornia.feature.laf_from_center_scale_ori(
-                #         torch.from_numpy(mkpts1).view(1, -1, 2),
-                #         torch.ones(mkpts1.shape[0]).view(1, -1, 1, 1),
-                #         torch.ones(mkpts1.shape[0]).view(1, -1, 1),
-                #     ),
-                #     torch.arange(mkpts0.shape[0]).view(-1, 1).repeat(1, 2),
-                #     kornia.tensor_to_image(torch.as_tensor(input_dict['image0'])),
-                #     kornia.tensor_to_image(torch.as_tensor(input_dict['image1'])),
-                #     inliers,
-                #     draw_dict={"inlier_color": (0.2, 1, 0.2), "tentative_color": None, "feature_color": (0.2, 0.5, 1), "vertical": False},
-                # )
-
-                ## Extend 2x3 affine warp matrix into 3x3 homography matrix if necessary
+            ## Extend 2x3 affine warp matrix into 3x3 homography matrix if necessary
+            def _extend_warp_matrix(warp_matrix):
                 if warp_matrix.shape == (2, 3):
                     warp_matrix = np.vstack([warp_matrix, [0, 0, 1]])
                 elif warp_matrix.shape == (3, 3):
                     pass
                 else:
                     raise ValueError(f'Unexpected warp_matrix shape: {warp_matrix.shape}')
-
                 return warp_matrix
+            warp_matrices = [_extend_warp_matrix(warp_matrix) for warp_matrix in warp_matrices]
 
-                                            
-            if algorithm == 'LoFTR':
-                warp_matrix = _LoFTR_fit()
-            elif algorithm == 'findTransformECC':
-                warp_matrix = _safe_find_geometric_transformation(gaussFiltSize=kwargs_algo_findTransformECC['gaussFiltSize'])
-            warp_matrices_raw.append(warp_matrix)
-
+            return warp_matrices
         
-        # compose warp transforms
-        print('Composing geometric warp matrices...') if self._verbose else None
-        self.warp_matrices = []
-        if template_method == 'sequential':
-            ## compose warps before template forward (t1->t2->t3->t4)
-            for ii in np.arange(0, template):
-                warp_composed = self._compose_warps(
-                    warp_0=warp_matrices_raw[ii], 
-                    warps_to_add=warp_matrices_raw[ii+1:template+1],
-                    warpMat_or_remapIdx='warpMat',
+        ## Run initial registration
+        warp_matrices_all_to_template = _register(template=template, template_method=template_method)
+
+        # check alignment
+        im_template_global = ims_moving[template] if template_method == 'sequential' else template
+        z_threshold = helpers.pvalue_to_zscore(p=self.probability_threshold, two_tailed=False)
+        ## warp the images
+        remappingIdx_geo_all_to_template = [helpers.warp_matrix_to_remappingIdx(warp_matrix=warp_matrix, x=W, y=H) for warp_matrix in warp_matrices_all_to_template]
+        images_warped_all_to_template = self.transform_images(ims_moving=ims_moving, remappingIdx=remappingIdx_geo_all_to_template)
+
+        ## Prepare the ImageAlignmentChecker object
+        iac = ImageAlignmentChecker(
+            hw=tuple(self._HW),
+            radius_in=self.radius_in * self.um_per_pixel,
+            radius_out=self.radius_out * self.um_per_pixel,
+            order=self.order,
+            device=device,
+        )
+        alignment_template_to_all = iac.score_alignment(
+            images=images_warped_all_to_template,
+            images_ref=im_template_global,
+        )['z_in'][:, 0] > z_threshold
+        idx_not_aligned = np.where(alignment_template_to_all == False)[0]
+
+        if len(idx_not_aligned) > 0:
+            print(f'Warning: Alignment failed for some images (probability_not_aligned > probability_threshold) for images idx: {idx_not_aligned}')
+            if self.use_match_search:
+                print('Attempting to find best matches for misaligned images...')
+                ## Make a function that wraps up all the above steps
+                def update_warps_to_template(
+                    idx: Union[np.ndarray, List[int]],
+                    warp_matrices_all_to_all: np.ndarray,
+                    alignment_all_to_all: np.ndarray,
+                ):
+                    ## Register the images in idx to the template
+                    for ii in idx:
+                        ## Run the registration algo
+                        warp_matrices_all_to_all[ii] = _register(template=ims_moving[ii], template_method='image')
+                        ## warp the images
+                        remappingIdx_geo_all_to_current = [helpers.warp_matrix_to_remappingIdx(warp_matrix=warp_matrix, x=W, y=H) for warp_matrix in warp_matrices_all_to_all[ii]]
+                        images_warped_all_to_current = self.transform_images(ims_moving=ims_moving, remappingIdx=remappingIdx_geo_all_to_current)
+                        ## Check alignment
+                        alignment_all_to_all[ii] = iac.score_alignment(images=images_warped_all_to_current, images_ref=im_template_global)['z_in'][:, 0] > z_threshold
+                    ## Append the template alignment_matrix (1D) on top of the all_to_all alignment_matrix (N x N)
+                    alignment_matrix_all_to_all_and_template = np.concatenate([np.concatenate([np.array(0)[None,], alignment_template_to_all])[None, :], np.concatenate([alignment_template_to_all[:, None], alignment_all_to_all], axis=1)], axis=0)
+                    ## Use dijkstra's algorithm to find the shortest path from every image to the template
+                    distances, predecessors = scipy.sparse.csgraph.shortest_path(
+                        csgraph=scipy.sparse.csr_matrix(alignment_matrix_all_to_all_and_template.astype(np.float32)),  ## 0s are disconnected, 1s are connected
+                        method='D',  ## Dijkstra's algorithm
+                        directed=True,
+                        return_predecessors=True,
+                        unweighted=True,  ## Just count the number of connected edges
+                    )
+                    ## Check if there are any failed paths to the template
+                    if not np.any(np.isinf(distances[0])):  ## if there are no failed paths to the template
+                        ## There's a path. Now compose the warp matrices by combining the all_to_template warp and the path of warps from each image to the template
+                        warp_matrices_all_to_template_new = [self._compose_warps(
+                            warp_0=warp_matrices_all_to_template[idx],
+                            warps_to_add=[warp_matrices_all_to_all[ii] for ii in helpers.get_path_between_nodes(idx_start=idx + 1, idx_end=0, predecessors=predecessors)],  ## idx+1 and idx_end=0 because the template is the first row
+                            warpMat_or_remapIdx='warpMat',
+                        ) for idx in range(len(ims_moving))]  ## compose from all images to the template
+                        return warp_matrices_all_to_template_new, warp_matrices_all_to_all, alignment_all_to_all
+                    else:
+                        ## No path. Set the warp_matrices_all_to_all to None
+                        return None, warp_matrices_all_to_all, alignment_all_to_all
+                    
+                warp_matrices_all_to_all = np.array([[None if ii != jj else np.eye(3, dtype=np.float32) for jj in range(len(ims_moving))] for ii in range(len(ims_moving))], dtype=object)
+                alignment_all_to_all = np.eye(len(ims_moving), dtype=np.bool_)
+                print(f'Finding alignment between failed match idx: {idx_not_aligned} and all other images...')
+                ## Register the images in idx to the template
+                warp_matrices_all_to_template_new, warp_matrices_all_to_all, alignment_all_to_all = update_warps_to_template(
+                    idx=idx_not_aligned, 
+                    warp_matrices_all_to_all=warp_matrices_all_to_all, 
+                    alignment_all_to_all=alignment_all_to_all,
                 )
-                self.warp_matrices.append(warp_composed)
-            ## compose template to itself
-            self.warp_matrices.append(warp_matrices_raw[template])
-            ## compose warps after template backward (t4->t3->t2->t1)
-            for ii in np.arange(template+1, len(ims_moving)):
-                warp_composed = self._compose_warps(
-                    warp_0=warp_matrices_raw[ii], 
-                    warps_to_add=warp_matrices_raw[template:ii][::-1],
-                    warpMat_or_remapIdx='warpMat',
-                )
-                self.warp_matrices.append(warp_composed)
-        ## no composition when template_method == 'image'
-        elif template_method == 'image':
-            self.warp_matrices = warp_matrices_raw
+                if warp_matrices_all_to_template_new is not None:
+                    print('All images aligned successfully after one round of path finding.') if self._verbose else None
+                    warp_matrices_all_to_template = warp_matrices_all_to_template_new
+                else:
+                    warnings.warn('Warning: Could not find a path to alignment for some images after one round of path finding. Now doing a dense search for alignment between all images.')
+                    idx_remaining = sorted(list(set(np.arange(len(ims_moving))) - set(idx_not_aligned)))
+                    print(f"Finding alignment between remaining images and all other images: {idx_remaining}...") if self._verbose else None
+                    ## Register the images in idx to the template
+                    warp_matrices_all_to_template_new, warp_matrices_all_to_all, alignment_all_to_all = update_warps_to_template(
+                        idx=idx_remaining, 
+                        warp_matrices_all_to_all=warp_matrices_all_to_all, 
+                        alignment_all_to_all=alignment_all_to_all,
+                    )
+                    if warp_matrices_all_to_template_new is not None:
+                        print('All images aligned successfully after dense search.') if self._verbose else None
+                        warp_matrices_all_to_template = warp_matrices_all_to_template_new
+                    else:
+                        warnings.warn('Warning: Could not find a path to alignment for some images after dense search. Returning the original warp matrices directly between each image and the template. \nSee')
 
-        self.warp_matrices = np.stack(self.warp_matrices, axis=0)
+            else:
+                warnings.warn(f"Alignment failed for some images (probability_not_aligned > probability_threshold) for images idx: {idx_not_aligned}. Use 'use_match_search=True' to attempt to find best matches for misaligned images.")                
+        else:
+            print('All images aligned successfully!') if self._verbose else None
+            alignment_all_to_all = None
+        
+        ## Prepare outputs
+        self.warp_matrices = warp_matrices_all_to_template
+        ### Convert warp matrices to remap indices
+        self.remappingIdx_geo = [helpers.warp_matrix_to_remappingIdx(warp_matrix=warp_matrix, x=W, y=H) for warp_matrix in self.warp_matrices]
 
-        # convert warp matrices to remap indices
-        self.remappingIdx_geo = np.stack([helpers.warp_matrix_to_remappingIdx(warp_matrix=warp_matrix, x=W, y=H) for warp_matrix in self.warp_matrices], axis=0)
+        ### Other outputs
+        self.alignment_all_to_all = alignment_all_to_all
+        self.alignment_template_to_all = alignment_template_to_all
 
-        return self.remappingIdx_geo   
+        return self.remappingIdx_geo
 
     def fit_nonrigid(
         self,
@@ -783,13 +760,29 @@ class Aligner(util.ROICaT_Module):
                 The images to be transformed. List of arrays with shape: *(H,
                 W)* or *(H, W, C)*
             remappingIdx (List[np.ndarray]): 
-                The remapping index to apply to the images.
+                The remapping index to apply to the images. List of arrays with
+                shape: *(H, W, 2)*. List length must match the number of images.
 
         Returns:
             (List[np.ndarray]): 
                 ims_registered (List[np.ndarray]): 
                     The transformed images. *(N, H, W)*
         """
+        if not isinstance(ims_moving, (list, tuple)):
+            if isinstance(ims_moving, np.ndarray):
+                ims_moving = [ims_moving,]
+            else:
+                raise ValueError('ims_moving must be a list of images.')
+            squeeze_output = True
+        else:
+            squeeze_output = False
+        if not isinstance(remappingIdx, (list, tuple)):
+            if isinstance(remappingIdx, np.ndarray):
+                remappingIdx = [remappingIdx,]
+            else:
+                raise ValueError('remappingIdx must be a list of remapping indices.')
+        
+        assert len(ims_moving) == len(remappingIdx), 'Number of images must match number of remapping indices.'
 
         ims_registered = []
         for ii, (im_moving, remapIdx) in enumerate(zip(ims_moving, remappingIdx)):
@@ -803,7 +796,7 @@ class Aligner(util.ROICaT_Module):
             )
             im_registered = np.stack([remapper(im_moving[:,:,ii]) for ii in range(im_moving.shape[2])], axis=-1) if im_moving.ndim==3 else remapper(im_moving)
             ims_registered.append(im_registered)
-        return ims_registered    
+        return ims_registered if not squeeze_output else ims_registered[0]  
 
     def _compose_warps(
         self, 
@@ -1167,8 +1160,10 @@ def phase_correlation(
     return_filtered_images: bool = False,
 ) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray]]:
     """
-    Perform phase correlation on two images.
-    RH 2022
+    Perform phase correlation on two images. Calculation performed along the
+    last two axes of the input arrays (-2, -1) corresponding to the (height,
+    width) of the images.
+    RH 2024
 
     Args:
         im_template (np.ndarray): 
@@ -1176,8 +1171,8 @@ def phase_correlation(
         im_moving (np.ndarray): 
             The moving image.
         mask_fft (Optional[np.ndarray]): 
-            Mask for the FFT. If ``None``, no mask is used. (Default is
-            ``None``)
+            2D array mask for the FFT. If ``None``, no mask is used. Assumes mask_fft is
+            fftshifted. (Default is ``None``)
         return_filtered_images (bool): 
             If set to ``True``, the function will return filtered images in
             addition to the phase correlation coefficient. (Default is
@@ -1194,20 +1189,47 @@ def phase_correlation(
                 The filtered moving image. Only returned if
                 return_filtered_images is ``True``.
     """
-    if mask_fft is None:
-        mask_fft = np.ones(im_template.shape)
-    else:
-        mask_fft = np.fft.fftshift(mask_fft/mask_fft.sum())
+    fft2, fftshift, ifft2 = torch.fft.fft2, torch.fft.fftshift, torch.fft.ifft2
+    abs, conj = torch.abs, torch.conj
+    axes = (-2, -1)
 
-    fft_template = np.fft.fft2(im_template) * mask_fft
-    fft_moving   = np.fft.fft2(im_moving) * mask_fft
-    R = np.conj(fft_template) * fft_moving
-    R[mask_fft != 0] /= np.abs(R)[mask_fft != 0]
-    cc = np.fft.fftshift(np.fft.ifft2(R)).real
+    return_numpy = isinstance(im_template, np.ndarray)
+    im_template = torch.as_tensor(im_template)
+    im_moving = torch.as_tensor(im_moving)
+
+    fft_template = fft2(im_template, dim=axes)
+    fft_moving   = fft2(im_moving, dim=axes)
+
+    if mask_fft is not None:
+        mask_fft = torch.as_tensor(mask_fft)
+        # Normalize and shift the mask
+        mask_fft = fftshift(mask_fft / mask_fft.sum(), dim=axes)
+        mask = mask_fft[tuple([None] * (im_template.ndim - 2) + [slice(None)] * 2)]
+        fft_template *= mask
+        fft_moving *= mask
+
+    # Compute the cross-power spectrum
+    R = fft_template * conj(fft_moving)
+
+    # Normalize to obtain the phase correlation function
+    R /= abs(R) + 1e-8  # Add epsilon to prevent division by zero
+
+    # Compute the magnitude of the inverse FFT to ensure symmetry
+    # cc = abs(fftshift(ifft2(R, dim=axes), dim=axes))
+    # Compute the real component of the inverse FFT (not symmetric)
+    cc = fftshift(ifft2(R, dim=axes), dim=axes).real
+
     if return_filtered_images == False:
-        return cc
+        return cc.cpu().numpy() if return_numpy else cc
     else:
-        return cc, np.abs(np.fft.ifft2(fft_template)), np.abs(np.fft.ifft2(fft_moving))
+        if return_numpy:
+            return (
+                cc.cpu().numpy(), 
+                abs(ifft2(fft_template, dim=axes)).cpu().numpy(), 
+                abs(ifft2(fft_moving, dim=axes)).cpu().numpy()
+            )
+        else:
+            return cc, abs(ifft2(fft_template, dim=axes)), abs(ifft2(fft_moving, dim=axes))
 
 
 def convert_phaseCorrelationImage_to_shifts(cc_im: np.ndarray) -> Tuple[int, int]:
@@ -1435,3 +1457,507 @@ def adaptive_brute_force_matcher(
     mask_mutual = mask_m2t & bool_m2t_mutual & mask_t2m[idx_m2t]
     idx_m2t_mutual = (torch.arange(len(idx_m2t))[mask_mutual], idx_m2t[mask_mutual])
     return idx_m2t_mutual
+
+
+class ImageAlignmentChecker:
+    """
+    Class to check the alignment of images using phase correlation.
+    RH 2024
+
+    Args:
+        hw (Tuple[int, int]): 
+            Height and width of the images.
+        radius_in (Union[float, Tuple[float, float]]): 
+            Radius of the pixel shift / offset that can be considered as
+            'aligned'. Used to create the 'in' filter which is an image of a
+            small centered circle that is used as a filter and multiplied by
+            the phase correlation images. If a single value is provided, the
+            filter will be a circle with radius 0 to that value; it will be
+            converted to a tuple representing a bandpass filter (0, radius_in).
+        radius_out (Union[float, Tuple[float, float]]):
+            Similar to radius_in, but for the 'out' filter, which defines the
+            'null distribution' for defining what is 'aligned'. Should be a
+            value larger than the expected maximum pixel shift / offset. If a
+            single value is provided, the filter will be a donut / taurus
+            starting at that value and ending at the edge of the smallest
+            dimension of the image; it will be converted to a tuple representing
+            a bandpass filter (radius_out, min(hw)).
+        order (int):
+            Order of the butterworth bandpass filters used to define the 'in'
+            and 'out' filters. Larger values will result in a sharper edges, but
+            values higher than 5 can lead to collapse of the filter.
+        device (str):
+            Torch device to use for computations. (Default is 'cpu')
+
+    Attributes:
+        hw (Tuple[int, int]): 
+            Height and width of the images.
+        order (int):
+            Order of the butterworth bandpass filters used to define the 'in'
+            and 'out' filters.
+        device (str):
+            Torch device to use for computations.
+        filt_in (torch.Tensor):
+            The 'in' filter used for scoring the alignment.
+        filt_out (torch.Tensor):
+            The 'out' filter used for scoring the alignment.
+    """
+    def __init__(
+        self,
+        hw: Tuple[int, int],
+        radius_in: Union[float, Tuple[float, float]],
+        radius_out: Union[float, Tuple[float, float]],
+        order: int,
+        device: str,
+    ):
+        ## Set attributes
+        ### Convert to torch.Tensor
+        self.hw = tuple(hw)
+
+        ### Set other attributes
+        self.order = int(order)
+        self.device = str(device)
+        ### Set filter attributes
+        if isinstance(radius_in, (int, float, complex)):
+            radius_in = (float(0.0), float(radius_in))
+        elif isinstance(radius_in, (tuple, list, np.ndarray, torch.Tensor)):
+            radius_in = tuple(float(r) for r in radius_in)
+        else:
+            raise ValueError(f'radius_in must be a float or tuple of floats. Found type: {type(radius_in)}')
+        if isinstance(radius_out, (int, float, complex)):
+            radius_out = (float(radius_out), float(min(self.hw)) / 2)
+        elif isinstance(radius_out, (tuple, list, np.ndarray, torch.Tensor)):
+            radius_out = tuple(float(r) for r in radius_out)
+        else:
+            raise ValueError(f'radius_out must be a float or tuple of floats. Found type: {type(radius_out)}')
+
+        ## Make filters
+        self.filt_in, self.filt_out = (torch.as_tensor(self._make_filter(
+            hw=self.hw,
+            low=bp[0],
+            high=bp[1],
+            order=order,
+        ), dtype=torch.float32, device=device) for bp in [radius_in, radius_out])
+    
+    def _make_filter(
+        self,
+        hw: tuple,
+        low: float = 5,
+        high: float = 6,
+        order: int = 3,
+    ):
+        ## Make a distance grid starting from the fftshifted center
+        grid = helpers.make_distance_grid(shape=hw, p=2, use_fftshift_center=True)
+
+        ## Make the number of datapoints for the kernel large
+        n_x = max(hw) * 10
+
+        fs = max(hw) * 1
+        b, a = helpers.design_butter_bandpass(lowcut=low, highcut=high, fs=fs, order=order, plot_pref=False)
+        w, h = scipy.signal.freqz(b, a, worN=n_x)
+        x_kernel = (fs * 0.5 / np.pi) * w
+        kernel = np.abs(h)
+
+        ## Interpolate the kernel to the distance grid
+        filt = np.interp(
+            x=grid,
+            xp=x_kernel,
+            fp=kernel,
+        )
+
+        return filt
+    
+    def score_alignment(
+        self,
+        images: Union[np.ndarray, torch.Tensor],
+        images_ref: Optional[Union[np.ndarray, torch.Tensor]] = None,
+    ):
+        """
+        Score the alignment of a set of images using phase correlation. Computes
+        the stats of the center ('in') of the phase correlation image over the
+        stats of the outer region ('out') of the phase correlation image.
+        RH 2024
+
+        Args:
+            images (Union[np.ndarray, torch.Tensor]): 
+                A 3D array of images. Shape: *(n_images, height, width)*
+            images_ref (Optional[Union[np.ndarray, torch.Tensor]]):
+                Reference images to compare against. If provided, the images
+                will be compared against these images. If not provided, the
+                images will be compared against themselves. (Default is
+                ``None``)
+
+        Returns:
+            (Dict): 
+                Dictionary containing the following keys:
+                * 'mean_out': 
+                    Mean of the phase correlation image weighted by the
+                    'out' filter
+                * 'mean_in': 
+                    Mean of the phase correlation image weighted by the
+                    'in' filter
+                * 'ptile95_out': 
+                    95th percentile of the phase correlation image multiplied by
+                    the 'out' filter
+                * 'max_in': 
+                    Maximum value of the phase correlation image multiplied by
+                    the 'in' filter
+                * 'std_out': 
+                    Standard deviation of the phase correlation image weighted by
+                    the 'out' filter
+                * 'std_in': 
+                    Standard deviation of the phase correlation image weighted by
+                    the 'in' filter
+                * 'max_diff': 
+                    Difference between the 'max_in' and 'ptile95_out' values
+                * 'z_in': 
+                    max_diff divided by the 'std_out' value
+                * 'r_in': 
+                    max_diff divided by the 'ptile95_out' value
+        """
+        def _fix_images(ims):
+            assert isinstance(ims, (np.ndarray, torch.Tensor, list, tuple)), f'images must be np.ndarray, torch.Tensor, or a list/tuple of np.ndarray or torch.Tensor. Found type: {type(ims)}'
+            if isinstance(ims, (list, tuple)):
+                assert all(isinstance(im, (np.ndarray, torch.Tensor)) for im in ims), f'images must be np.ndarray or torch.Tensor. Found types: {set(type(im) for im in ims)}'
+                assert all(im.ndim == 2 for im in ims), f'images must be 2D arrays (height, width). Found shapes: {set(im.shape for im in ims)}'
+                if isinstance(ims[0], np.ndarray):
+                    ims = np.stack([np.array(im) for im in ims], axis=0)
+                else:
+                    ims = torch.stack([torch.as_tensor(im) for im in ims], dim=0)
+            else:
+                if ims.ndim == 2:
+                    ims = ims[None, :, :]
+                assert ims.ndim == 3, f'images must be a 3D array (n_images, height, width). Found shape: {ims.shape}'
+                assert ims.shape[1:] == self.hw, f'images must have shape (n_images, {self.hw[0]}, {self.hw[1]}). Found shape: {ims.shape}'
+
+            ims = torch.as_tensor(ims, dtype=torch.float32, device=self.device)
+            return ims
+
+        images = _fix_images(images)
+        images_ref = _fix_images(images_ref) if images_ref is not None else images
+        
+        pc = phase_correlation(images_ref[None, :, :, :], images[:, None, :, :])  ## All to all phase correlation. Shape: (n_images, n_images, height, width)
+
+        ## metrics
+        filt_in, filt_out = self.filt_in[None, None, :, :], self.filt_out[None, None, :, :]
+        mean_out = (pc * filt_out).sum(dim=(-2, -1)) / filt_out.sum(dim=(-2, -1))
+        mean_in =  (pc * filt_in).sum(dim=(-2, -1))  / filt_in.sum(dim=(-2, -1))
+        ptile95_out = torch.quantile((pc * filt_out).reshape(pc.shape[0], pc.shape[1], -1)[:, :, filt_out.reshape(-1) > 1e-3], 0.95, dim=-1)
+        max_in = (pc * filt_in).amax(dim=(-2, -1))
+        std_out = torch.sqrt(torch.mean((pc - mean_out[:, :, None, None])**2 * filt_out, dim=(-2, -1)))
+        std_in = torch.sqrt(torch.mean((pc - mean_in[:, :, None, None])**2 * filt_in, dim=(-2, -1)))
+
+        max_diff = max_in - ptile95_out
+        z_in = max_diff / std_out
+        r_in = max_diff / ptile95_out
+
+        outs = {
+            'pc': pc.cpu().numpy(),
+            'mean_out': mean_out,
+            'mean_in': mean_in,
+            'ptile95_out': ptile95_out,
+            'max_in': max_in,
+            'std_out': std_out,
+            'std_in': std_in,
+            'max_diff': max_diff,
+            'z_in': z_in,  ## z-score of in value over out distribution
+            'r_in': r_in,
+        }
+
+        outs = {k: val.cpu().numpy() if isinstance(val, torch.Tensor) else val for k, val in outs.items()}
+        
+        return outs
+    
+    def __call__(
+        self,
+        images: Union[np.ndarray, torch.Tensor],
+    ):
+        """
+        Calls the `score_alignment` method. See `self.score_alignment` docstring
+        for more info.
+        """
+        return self.score_alignment(images)
+    
+
+def _safe_find_geometric_transformation(
+    im_template: np.ndarray,
+    im_moving: np.ndarray,
+    mask: np.ndarray,
+    gaussFiltSize,
+    image_id: Optional[Any] = None,
+    verbose: bool = False,
+    **kwargs_algo_findTransformECC,
+):
+    """
+    Safe version of find_geometric_transformation used in Aligner class (wrapper
+    for cv2.findTransformECC). If alignment fails during optimization, this
+    function will increase the gaussFiltSize parameter and try again.
+
+    Args:
+        im_template (np.ndarray):
+            Template image.
+        im_moving (np.ndarray):
+            Moving image.
+        mask (np.ndarray):
+            Mask for the images.
+        gaussFiltSize (int):
+            Size of the Gaussian filter used to blur the images before
+            registration.
+        image_id (Optional[Any]):
+            Identifier for the image. Used for descriptive error messages.
+        verbose (bool):
+            Whether to print verbose output.
+        **kwargs_algo_findTransformECC:
+            * mode_transform (str): Mode of the transformation. One of
+              ['translation', 'euclidean', 'affine', 'homography'].
+            * n_iter (int): Number of iterations for the optimization.
+            * termination_eps (float): Termination epsilon for the optimization.
+            * auto_fix_gaussFilt_step (int): Step size to increase gaussFiltSize
+              by if alignment fails.
+
+    Returns:
+        (np.ndarray): 
+            Warp matrix for the geometric transformation. If the alignment
+            fails, the function will return an identity matrix. Shape: *(2, 3)*
+            for mode_transform in ['translation', 'euclidean', 'affine'], *(3,
+            3)* for mode_transform='homography'.
+    """
+    mode_transform, n_iter, termination_eps, auto_fix_gaussFilt_step = [kwargs_algo_findTransformECC[key] for key in [
+        'mode_transform', 'n_iter', 'termination_eps', 'auto_fix_gaussFilt_step'
+    ]]
+
+    # Check if mode_transform is valid
+    valid_mode_transforms = {'translation', 'euclidean', 'affine', 'homography'}
+    assert mode_transform in valid_mode_transforms, f"mode_transform must be one of {valid_mode_transforms}"
+    # Check if gaussFiltSize is a number (float or int)
+    assert isinstance(gaussFiltSize, (float, int)), "gaussFiltSize must be a number."
+    # Convert gaussFiltSize to an odd integer
+    gaussFiltSize = int(np.round(gaussFiltSize))
+
+    try:
+        warp_matrix = helpers.find_geometric_transformation(
+            im_template=im_template,
+            im_moving=im_moving,
+            warp_mode=mode_transform,
+            n_iter=n_iter,
+            mask=mask,
+            termination_eps=termination_eps,
+            gaussFiltSize=gaussFiltSize,
+        )
+    except Exception as e:
+        if auto_fix_gaussFilt_step:
+            print(f'Error finding geometric registration warp for image {image_id}: {e}') if verbose else None
+            print(f'Increasing gaussFiltSize by {auto_fix_gaussFilt_step} to {gaussFiltSize + auto_fix_gaussFilt_step}') if verbose else None
+            return _safe_find_geometric_transformation(
+                im_template=im_template,
+                im_moving=im_moving,
+                mask=mask,
+                gaussFiltSize=gaussFiltSize + auto_fix_gaussFilt_step,
+                image_id=image_id,
+                verbose=verbose,
+                **kwargs_algo_findTransformECC,
+            )
+
+        print(f'Error finding geometric registration warp for image {image_id}: {e}')
+        print(f'Defaulting to identity matrix warp.')
+        print(f'Consider doing one of the following:')
+        print(f'  - Make better images to input. You can add the spatialFootprints images to the FOV images to make them better.')
+        print(f'  - Increase the gaussFiltSize parameter. This will make the images blurrier, but may help with registration.')
+        print(f'  - Decrease the termination_eps parameter. This will make the registration less accurate, but may help with registration.')
+        print(f'  - Increase the mask_borders parameter. This will make the images smaller, but may help with registration.')
+        warp_matrix = np.eye(3)[:2,:] if mode_transform != 'homography' else np.eye(3)
+    return warp_matrix
+
+
+def _LoFTR_fit(
+    im_template: Union[np.ndarray, torch.Tensor],
+    im_moving: Union[np.ndarray, torch.Tensor],
+    mask_borders: Tuple[int, int, int, int],
+    image_id: Optional[Any] = None,
+    device: str = 'cpu',
+    verbose: bool = False,
+    **kwargs_algo_LoFTR,
+):
+    """
+    Fit a geometric transformation using LoFTR and RANSAC.
+
+    Args:
+        im_template (Union[np.ndarray, torch.Tensor]):
+            Template image.
+        im_moving (Union[np.ndarray, torch.Tensor]):
+            Moving image.
+        mask_borders (Tuple[int, int, int, int]):
+            Borders to mask from the images. Format: (top, bottom, left, right)
+        image_id (Optional[Any]):
+            Identifier for the image. Used for descriptive error messages.
+        verbose (bool):
+            Whether to print verbose output.
+        **kwargs_algo_LoFTR:
+            * mode_transform (str): Mode of the transformation. One of
+              ['euclidean', 'similarity', 'affine', 'projective'].
+            * gaussFiltSize (int): Size of the Gaussian filter used to blur the
+              images before registration.
+            * confidence_LoFTR (float): Confidence threshold for LoFTR matches.
+            * confidence_RANSAC (float): Confidence threshold for RANSAC.
+            * ransacReprojThreshold (float): RANSAC reprojection threshold.
+            * maxIters (int): Maximum number of iterations for RANSAC.
+    """
+    import kornia
+    import skimage
+    import cv2
+
+    mode_transform, gaussFiltSize, confidence_LoFTR, confidence_RANSAC, ransacReprojThreshold, maxIters = [kwargs_algo_LoFTR[key] for key in [
+        'mode_transform', 'gaussFiltSize', 'confidence_LoFTR', 'confidence_RANSAC', 'ransacReprojThreshold', 'maxIters'
+    ]]
+
+    ## Confirm that the images are floats between 0 and 1
+    assert all([np.issubdtype(im.dtype, np.floating) for im in [im_template, im_moving]]), 'Images must be floating dtype.'
+    assert all([np.min(im) >= 0 and np.max(im) <= 1 for im in [im_template, im_moving]]), 'Images must be between 0 and 1.'
+    ## Prepare input dictionary
+    input_dict = {
+        'image0': torch.as_tensor(im_template, dtype=torch.float32, device=device)[None, None, :, :],
+        'image1': torch.as_tensor(im_moving, dtype=torch.float32, device=device)[None, None, :, :],
+    }
+    ## Mask the images by cropping out the borders
+    b_top, b_bottom, b_left, b_right = mask_borders[0], input_dict['image0'].shape[2] - mask_borders[1], mask_borders[2], input_dict['image0'].shape[3] - mask_borders[3]
+    input_dict['image0'] = input_dict['image0'][:, :, b_top:b_bottom][:, :, :, b_left:b_right]
+    input_dict['image1'] = input_dict['image1'][:, :, b_top:b_bottom][:, :, :, b_left:b_right]
+
+    # ## Normalize the images for LoFTR
+    # ### LoFTR expects images to be in the range [0, 1]
+    # input_dict['image0'] = input_dict['image0'] / input_dict['image0'].max()
+    # input_dict['image1'] = input_dict['image1'] / input_dict['image1'].max()
+
+    ## Blur the images
+    if gaussFiltSize > 0:
+        input_dict['image0'] = kornia.filters.gaussian_blur2d(input=input_dict['image0'], kernel_size=gaussFiltSize, sigma=((s:=gaussFiltSize/6), s))
+        input_dict['image1'] = kornia.filters.gaussian_blur2d(input=input_dict['image1'], kernel_size=gaussFiltSize, sigma=((s:=gaussFiltSize/6), s))
+
+    ## Load LoFTR model
+    model = kornia.feature.LoFTR(pretrained="indoor_new")
+    model = model.to(device)
+    ## Get the keypoints and descriptors
+    with torch.inference_mode():
+        matches = model(input_dict)
+    ## Clean up matches with low confidence
+    mkpts0 = matches["keypoints0"].cpu().numpy()
+    mkpts1 = matches["keypoints1"].cpu().numpy()
+    print(f"Found {mkpts0.shape[0]} matches.") if verbose else None
+    mkpts0 = mkpts0[(matches["confidence"] > confidence_LoFTR).cpu().numpy().astype(np.bool_)]
+    mkpts1 = mkpts1[(matches["confidence"] > confidence_LoFTR).cpu().numpy().astype(np.bool_)]
+    ## Throw an error if no matches are found
+    print(f"Found {mkpts0.shape[0]} matches.") if verbose else None
+    if mkpts0.shape[0] < 2:
+        print(f'Registration Failed for image_moving: {image_id}. Not enough matches found. Setting warp matrix to identity. Found: {mkpts0.shape[0]} matches. Try adjusting one of the following: decrease confidence_LoFTR, decrease gaussFiltSize, increase mask_borders.')
+        return np.eye(3)
+    ## Get inliers
+    try:
+        fund_mat, inliers = cv2.findFundamentalMat(
+            points1=mkpts0,
+            points2=mkpts1,
+            method=cv2.USAC_MAGSAC,
+            ransacReprojThreshold=ransacReprojThreshold,
+            confidence=confidence_RANSAC,
+            maxIters=maxIters,
+        )
+    except Exception as e:
+        print(f'Registration Failed for image_moving: {image_id}. Error finding fundamental matrix. Setting warp matrix to identity. Likely not enough matches found. Found: {mkpts0.shape[0]} matches. Try adjusting one of the following: decrease confidence_LoFTR, decrease gaussFiltSize, increase mask_borders. \nError: {e}')
+        return np.eye(3)
+    inliers = np.array(inliers > 0, dtype=np.bool_).ravel()
+    # ## Remove outliers
+    # mkpts0 = mkpts0[inliers].astype(np.float32)
+    # mkpts1 = mkpts1[inliers].astype(np.float32)
+
+    ## Use skimage's estimate_transform
+    tforms = ['euclidean', 'similarity', 'affine', 'projective']
+    assert mode_transform in tforms, f'Found mode_transform={mode_transform}. Must be one of {tforms.keys()}'
+    warp_matrix = skimage.transform.estimate_transform(
+        ttype=mode_transform,
+        src=mkpts0,
+        dst=mkpts1,
+    ).params
+
+    # plt.figure()
+    # plt.scatter(mkpts0[:,0,0], mkpts1[:,0,0], c='r')
+    # plt.scatter(mkpts0[:,0,1], mkpts1[:,0,1], c='b')
+    # plt.show()
+
+    ## Get the transformation matrix (can be homography or affine, etc.)
+    # if mode_transform == 'homography':
+    #     warp_matrix, inliers = cv2.findHomography(
+    #         mkpts0,
+    #         mkpts1,
+    #         method=cv2.RANSAC,
+    #         ransacReprojThreshold=ransacReprojThreshold,
+    #         confidence=confidence_RANSAC,
+    #         maxIters=maxIters,
+    #     )
+    #     # print(warp_matrix.shape)
+    #     # warp_matrix = np.linalg.inv(warp_matrix)
+    #     # warp_matrix = warp_matrix[:2, :].astype(np.float32)
+    # elif mode_transform == 'affine':
+    #     ## Don't use estimateAffinePartial2D because it doesn't work well
+    #     warp_matrix, mask = cv2.estimate(
+    #         mkpts0,
+    #         mkpts1,
+    #         method=cv2.RANSAC,
+    #         ransacReprojThreshold=ransacReprojThreshold,
+    #         maxIters=maxIters,
+    #         confidence=confidence_RANSAC,
+    #     )
+    ## Use skimage's estimate_transform
+
+    # # print(warp_matrix)
+    # warp_matrix = np.linalg.inv(warp_matrix)
+    # # else:
+    # #     raise ValueError(f'LoFTR does not support mode_transform={mode_transform}')
+
+    
+    # print(warp_matrix)
+    # warp_matrix = warp_matrix[:2, :].astype(np.float32)
+    ## Warp image
+    # im_moving_warped = cv2.warpAffine(
+    #     im_moving,
+    #     warp_matrix,
+    #     (W, H),
+    #     flags=cv2.INTER_LINEAR,
+    #     borderMode=cv2.BORDER_CONSTANT,
+    #     borderValue=float(im_moving.mean()),
+    # )
+    # im_moving_warped = cv2.warpPerspective(
+    #     im_moving,
+    #     warp_matrix,
+    #     (W, H),
+    #     flags=cv2.INTER_LINEAR,
+    #     borderMode=cv2.BORDER_CONSTANT,
+    #     borderValue=float(im_moving.mean()),
+    # )
+    # im_moving_warped = kornia.geometry.warp_perspective(
+    #     torch.as_tensor(im_moving).view(1, 1, H, W),
+    #     torch.as_tensor(warp_matrix).view(1, 3, 3),
+    #     dsize=(H, W),
+    #     align_corners=False,
+    # ).squeeze().numpy()[]
+    ## Show the images
+    # from .. import visualization
+    # visualization.display_toggle_image_stack([im_template, im_moving_warped],)
+    # from kornia_moons.viz import draw_LAF_matches
+    # draw_LAF_matches(
+    #     kornia.feature.laf_from_center_scale_ori(
+    #         torch.from_numpy(mkpts0).view(1, -1, 2),
+    #         torch.ones(mkpts0.shape[0]).view(1, -1, 1, 1),
+    #         torch.ones(mkpts0.shape[0]).view(1, -1, 1),
+    #     ),
+    #     kornia.feature.laf_from_center_scale_ori(
+    #         torch.from_numpy(mkpts1).view(1, -1, 2),
+    #         torch.ones(mkpts1.shape[0]).view(1, -1, 1, 1),
+    #         torch.ones(mkpts1.shape[0]).view(1, -1, 1),
+    #     ),
+    #     torch.arange(mkpts0.shape[0]).view(-1, 1).repeat(1, 2),
+    #     kornia.tensor_to_image(torch.as_tensor(input_dict['image0'])),
+    #     kornia.tensor_to_image(torch.as_tensor(input_dict['image1'])),
+    #     inliers,
+    #     draw_dict={"inlier_color": (0.2, 1, 0.2), "tentative_color": None, "feature_color": (0.2, 0.5, 1), "vertical": False},
+    # )
+
+    return warp_matrix

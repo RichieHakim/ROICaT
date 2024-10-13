@@ -4283,6 +4283,79 @@ class Convolver_1d():
         
 
 ######################################################################################################################################
+########################################################## SPECTRAL ##################################################################  
+######################################################################################################################################
+
+def design_butter_bandpass(lowcut, highcut, fs, order=5, plot_pref=False):
+    '''
+    designs a butterworth bandpass filter.
+    Makes a lowpass filter if lowcut is 0.
+    Makes a highpass filter if highcut is fs/2.
+    RH 2021
+
+        Args:
+            lowcut (scalar): 
+                frequency (in Hz) of low pass band
+            highcut (scalar):  
+                frequency (in Hz) of high pass band
+            fs (scalar): 
+                sample rate (frequency in Hz)
+            order (int): 
+                order of the butterworth filter
+        
+        Returns:
+            b (ndarray): 
+                Numerator polynomial coeffs of the IIR filter
+            a (ndarray): 
+                Denominator polynomials coeffs of the IIR filter
+    '''
+    nyq = 0.5 * fs
+    low = lowcut / nyq
+    high = highcut / nyq
+
+    if low <= 0:
+        ## Make a lowpass filter
+        b, a = scipy.signal.butter(N=order, Wn=high, btype='low')
+    elif high >= 1:
+        ## Make a highpass filter
+        b, a = scipy.signal.butter(N=order, Wn=low, btype='high')
+    else:
+        b, a = scipy.signal.butter(N=order, Wn=[low, high], btype='band')
+    
+    if plot_pref:
+        plot_digital_filter_response(b=b, a=a, fs=fs, worN=100000)
+    return b, a
+
+
+def plot_digital_filter_response(b, a=None, fs=30, worN=100000, plot_pref=True):
+    '''
+    plots the frequency response of a digital filter
+    RH 2021
+
+        Args:
+            b (ndarray): 
+                Numerator polynomial coeffs of the IIR filter
+            a (ndarray): 
+                Denominator polynomials coeffs of the IIR filter
+            fs (scalar): 
+                sample rate (frequency in Hz)
+            worN (int): 
+                number of frequencies at which to evaluate the filter
+    '''
+    w, h = scipy.signal.freqz(b, a, worN=worN) if a is not None else scipy.signal.freqz(b, worN=worN)
+    xAxis = (fs * 0.5 / np.pi) * w
+
+    if plot_pref:
+        plt.figure()
+        plt.plot(xAxis, abs(h))
+        plt.xlabel('frequency (Hz)')
+        plt.ylabel('frequency response (a.u)')
+        plt.xscale('log')
+
+    return xAxis, abs(h)
+
+
+######################################################################################################################################
 ####################################################### FEATURIZATION ################################################################
 ######################################################################################################################################
 
@@ -4475,6 +4548,74 @@ class Toeplitz_convolution2d():
         out.row += shift
         return out
     
+
+def make_distance_grid(shape=(512,512), p=2, idx_center=None, return_axes=False, use_fftshift_center=False):
+    """
+    Creates a matrix of distances from the center.
+    Can calculate the Minkowski distance for any p.
+    RH 2023
+    
+    Args:
+        shape (Tuple[int, int, ...]):
+            Shape of the n-dimensional grid (i,j,k,...)
+            If a shape value is odd, the center will be the center
+             of that dimension. If a shape value is even, the center
+             will be between the two center points.
+        p (int):
+            Order of the Minkowski distance.
+            p=1 is the Manhattan distance
+            p=2 is the Euclidean distance
+            p=inf is the Chebyshev distance
+        idx_center Optional[Tuple[int, int, ...]]:
+            The index of the center of the grid. If None, the center is
+            assumed to be the center of the grid. If provided, the center
+            will be set to this index. This is useful for odd shaped grids
+            where the center is not obvious.
+        return_axes (bool):
+            If True, return the axes of the grid as well. Return will be a
+            tuple.
+        use_fft_center (bool):
+            If True, the center of the grid will be the center of the FFT
+            grid. This is useful for FFT operations where the center is
+            assumed to be the top left corner.
+
+    Returns:
+        Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+            distance_image (np.ndarray): 
+                array of distances to the center index
+            axes (Optional[np.ndarray]):
+                axes of the grid as well. Only returned if return_axes=True
+
+    """
+    if use_fftshift_center:
+        ## Find idx wheter freq=0. Use np.fft.fftfreq
+        freqs_h, freqs_w = np.fft.fftshift(np.fft.fftfreq(shape[0])), np.fft.fftshift(np.fft.fftfreq(shape[1]))
+        idx_center = (np.argmin(np.abs(freqs_h)), np.argmin(np.abs(freqs_w)))
+
+    shape = np.array(shape)
+    if idx_center is not None:
+        axes = [np.linspace(-idx_center[i], shape[i] - idx_center[i] - 1, shape[i]) for i in range(len(shape))]
+    else:
+        axes = [np.arange(-(d - 1) / 2, (d - 1) / 2 + 0.5) for d in shape]
+    grid = np.stack(
+        np.meshgrid(*axes, indexing="ij"),
+        axis=0,
+    )
+    if idx_center is not None:
+        grid_dist = np.linalg.norm(
+            grid ,
+            ord=p,
+            axis=0,
+        )
+    else:
+        grid_dist = np.linalg.norm(
+            grid,
+            ord=p,
+            axis=0,
+        )
+
+    return grid_dist if not return_axes else (grid_dist, axes)
+
 
 ######################################################################################################################################
 ##################################################### PARALLEL HELPERS ###############################################################
@@ -4721,6 +4862,113 @@ def compute_cluster_similarity_matrices(
     cs_max = (s_big_conj - s_big_diag).max(axis=(2,3))
 
     return l_u, cs_mean, cs_max.todense(), cs_min
+
+
+######################################################################################################################################
+########################################################### STATS ####################################################################
+######################################################################################################################################
+
+def zscore_to_pvalue(z, two_tailed=True):
+    """
+    Convert a z-score to a p-value.
+
+    Args:
+    z (float): 
+        The z-score.
+    two_tailed (bool): 
+        If True, return a two-tailed p-value. If False, return a one-tailed
+        p-value.
+
+    Returns:
+        float:
+            The p-value.
+    """
+    if two_tailed:
+        return 2 * scipy.stats.norm.sf(np.abs(z))
+    else:
+        return scipy.stats.norm.sf(np.abs(z))
+    
+
+def pvalue_to_zscore(p, two_tailed=True):
+    """
+    Convert a p-value to a z-score.
+
+    Args:
+    p (float): 
+        The p-value.
+    two_tailed (bool): 
+        If True, the p-value is two-tailed. If False, the p-value is one-tailed.
+
+    Returns:
+        float:
+            The z-score.
+    """
+    if two_tailed:
+        return scipy.stats.norm.ppf(1 - p/2)
+    else:
+        return scipy.stats.norm.ppf(1 - p)
+    
+
+######################################################################################################################################
+######################################################## SIMILARITY ##################################################################
+######################################################################################################################################
+
+
+def get_path_between_nodes(
+    idx_start: int,
+    idx_end: int,
+    predecessors: np.ndarray,
+    max_length: int = 9999,
+):
+    """
+    Finds the indices corresponding to the shortest path between two nodes in a
+    graph. Uses a predecessor matrix from a shortest path algorithm (e.g.
+    scipy.sparse.csgraph.shortest_path)
+    RH 2024
+
+    Args:
+        idx_start (int):
+            Index of the starting node.
+        idx_end (int):
+            Index of the ending node.
+        predecessors (np.ndarray):
+            Predecessor matrix from a shortest path algorithm.
+        max_length (int):
+            Maximum length of the path. (Default is 9999)
+
+    Returns:
+        path (List[int]):
+            List of node indices corresponding to the shortest path from
+            idx_start to idx_end. [idx_start, ..., idx_end]
+    """
+    ## Check inputs
+    ### Check that idx_start and idx_end are within the range of the predecessors matrix
+    assert idx_start < predecessors.shape[0], "idx_start is out of range"
+    assert idx_end < predecessors.shape[0], "idx_end is out of range"
+    ### Check that the predecessors matrix is 2D
+    assert predecessors.ndim == 2, "predecessors matrix must be 2D"
+    ### Check that the predecessors matrix is square
+    assert predecessors.shape[0] == predecessors.shape[1], "predecessors matrix must be square"
+    ### Check that idx_start, idx_end, and max_length are integers
+    assert isinstance(idx_start, int), "idx_start must be an integer"
+    assert isinstance(idx_end, int), "idx_end must be an integer"
+    assert isinstance(max_length, int), "max_length must be an integer"
+    ### Check that the path from idx_start to idx_end exists
+    assert predecessors[idx_end, idx_start] != -9999, f"Possibly no path exists. Found that path from {idx_start} to {idx_end} has value -9999 (predecessors[idx_end, idx_start] == {predecessors[idx_end, idx_start]}). This value is assumed to be a placeholder for no path."
+    
+    ## Initialize path
+    path = []
+    idx_current = idx_start
+    path.append(idx_current)
+
+    ## Traverse the predecessors matrix to find the shortest path
+    while idx_current != idx_end:
+        if len(path) > max_length:
+            raise ValueError("Path length exceeds max_length")
+        idx_current = predecessors[idx_end, idx_current]
+        path.append(idx_current)
+
+    return path
 
 
 ######################################################################################################################################
