@@ -15,6 +15,7 @@ import richfile as rf
 
 from . import helpers
 
+
 def get_roicat_version() -> str:
     """
     Retrieves the version of the roicat package.
@@ -25,6 +26,7 @@ def get_roicat_version() -> str:
                 The version of the roicat package.
     """
     return importlib.metadata.version('roicat')
+
 
 def get_default_parameters(
     pipeline='tracking', 
@@ -58,7 +60,7 @@ def get_default_parameters(
         defaults = helpers.yaml_load(path_defaults)
     else:
         defaults = {
-            'general' : {
+            'general': {
                 'use_GPU': True,
                 'verbose': True,
                 'random_seed': None,
@@ -93,20 +95,73 @@ def get_default_parameters(
                     'template_method': 'sequential',  ## Can be 'sequential' or 'image'. If 'sequential', then the template is the FOV_image of the previous session. If 'image', then the template is the FOV_image of the session specified by 'template'.
                     'mode_transform': 'euclidean',  ## Must be one of {'translation', 'affine', 'euclidean', 'homography'}. See documentation for more details.
                     'mask_borders': [50, 50, 50, 50],  ## Number of pixels to mask from the borders of the FOV_image. Useful for removing artifacts from the edges of the FOV_image.
-                    'n_iter': 50,  ## Number of iterations to run the registration algorithm. More iterations means more accurate registration, but longer run time.
-                    'termination_eps': 1e-09,  ## Termination criteria for the registration algorithm. See documentation for more details.
-                    'gaussFiltSize': 31,  ## Size of the gaussian filter used to smooth the FOV_image before registration. Larger values mean more smoothing.
-                    'auto_fix_gaussFilt_step': 10,  ## If the registration fails, then the gaussian filter size is reduced by this amount and the registration is tried again.
+                    'method': 'RoMa',  ## Accuracy order (best to worst): RoMa (by far, but slow without a GPU), LoFTR, DISK_LightGlue, ECC_cv2, (the following are not recommended) SIFT, ORB
                 },
                 'fit_nonrigid': {
                     'template': 0.5,  ## Which session to use as a registration template. If input is float (ie 0.0, 0.5, 1.0, etc.), then it is the fractional position of the session to use; if input is int (ie 1, 2, 3), then it is the index of the session to use (0-indexed)
                     'template_method': 'image',  ## Can be 'sequential' or 'image'. If 'sequential', then the template is the FOV_image of the previous session. If 'image', then the template is the FOV_image of the session specified by 'template'.
                     'mode_transform': 'createOptFlow_DeepFlow',  ## Can be 'createOptFlow_DeepFlow' or 'calcOpticalFlowFarneback'. See documentation for more details.
                     'kwargs_mode_transform': None,  ## Keyword arguments for the mode_transform function. See documentation for more details.
+                    'method': 'RoMa',  ## Accuracy order (best to worst): RoMa (slow without a GPU), DeepFlow, (the following are not recommended) OpticalFlowFarneback
                 },
                 'transform_ROIs': {
                     'normalize': True,  ## If True, normalize the spatial footprints to have a sum of 1.
                 },
+                'kwargs_methods': {
+                    'rigid': {
+                        'RoMa': {
+                            'model_type': 'outdoor',
+                            'n_points': 10000,  ## Higher values mean more points are used for the registration. Useful for larger FOV_images. Larger means slower.
+                            'batch_size': 1000,
+                        },
+                        'LoFTR': {
+                            'model_type': 'indoor_new',
+                            'threshold_confidence': 0.2,  ## Higher values means fewer but better matches.
+                        },
+                        'ECC_cv2': {
+                            'mode_transform': 'euclidean',  ## Must be one of {'translation', 'affine', 'euclidean', 'homography'}. See cv2 documentation on findTransformECC for more details.
+                            'n_iter': 200,
+                            'termination_eps': 1e-09,  ## Termination criteria for the registration algorithm. See documentation for more details.
+                            'gaussFiltSize': 1,  ## Size of the gaussian filter used to smooth the FOV_image before registration. Larger values mean more smoothing.
+                            'auto_fix_gaussFilt_step': 10,  ## If the registration fails, then the gaussian filter size is reduced by this amount and the registration is tried again.
+                        },
+                        'DISK_LightGlue': {
+                            'num_features': 2048,  ## Number of features to extract and match. I've seen best results around 2048 despite higher values typically being better.
+                            'threshold_confidence': 0.2,  ## Higher values means fewer but better matches.
+                        },
+                        'SIFT': {
+                            'nfeatures': 10000,
+                            'contrastThreshold': 0.04,
+                            'edgeThreshold': 10,
+                            'sigma': 1.6,
+                        },
+                        'ORB': {
+                            'nfeatures': 1000,
+                            'scaleFactor': 1.2,
+                            'nlevels': 8,
+                            'edgeThreshold': 31,
+                            'firstLevel': 0,
+                            'WTA_K': 2,
+                            'scoreType': 0,
+                            'patchSize': 31,
+                            'fastThreshold': 20,
+                        },
+                    },
+                    'nonrigid': {
+                        'RoMa': {
+                            'model_type': 'outdoor',
+                        },
+                        'DeepFlow': {},
+                        'OpticalFlowFarneback': {
+                            'pyr_scale': 0.7,
+                            'levels': 5,
+                            'winsize': 128,
+                            'iterations': 15,
+                            'poly_n': 5,
+                            'poly_sigma': 1.5,            
+                        },
+                    },
+                }
             },
             'blurring': {
                 'kernel_halfWidth': 2.0,  ## Half-width of the cosine kernel used for blurring. Set value based on how much you think the ROIs move from session to session.
@@ -176,9 +231,9 @@ def get_default_parameters(
                     'p_norm': -1.0,    ## norm([s_sf, s_NN, s_SWT], p=p_norm) (Higher values means clustering requires all similarity metrics to be high)
                 #     'sig_SF_kwargs': {'mu':0.5, 'b':1.0},  ## Sigmoid parameters for s_sf (mu is the center, b is the slope)
                     'sig_SF_kwargs': None,
-                    'sig_NN_kwargs': {'mu':0.5, 'b':1.0},    ## Sigmoid parameters for s_NN (mu is the center, b is the slope)
+                    'sig_NN_kwargs': {'mu': 0.5, 'b': 1.0},  ## Sigmoid parameters for s_NN (mu is the center, b is the slope)
                 #     'sig_NN_kwargs': None,
-                    'sig_SWT_kwargs': {'mu':0.5, 'b':1.0}, ## Sigmoid parameters for s_SWT (mu is the center, b is the slope)
+                    'sig_SWT_kwargs': {'mu': 0.5, 'b': 1.0},  ## Sigmoid parameters for s_SWT (mu is the center, b is the slope)
                 #     'sig_SWT_kwargs': None,
                 },
                 'pruning': {
@@ -605,6 +660,7 @@ class ROICaT_Module:
 
     #     print(f"Loaded Data_roicat object from {path_load}.") if self._verbose else None
 
+
     def _locals_to_params(
         self,
         locals_dict: Dict[str, Any],
@@ -831,7 +887,6 @@ class RichFile_ROICaT(rf.RichFile):
             """
             ## Load as a CSV file
             return pd.read_csv(path, index_col=0, **kwargs)
-        
 
         roicat_module_tds = [rf.functions.Container(
             type_name=type_name,

@@ -2,14 +2,15 @@ from typing import List, Tuple, Union, Optional, Dict, Any, Sequence, Callable
 
 import warnings
 import functools
-import copy
+import PIL
 
 import numpy as np
 import scipy.optimize
 import scipy.sparse
 import torch
 from tqdm.auto import tqdm
-import matplotlib.pyplot as plt
+import cv2
+import kornia
 
 from .. import helpers, util
 
@@ -22,7 +23,7 @@ class Aligner(util.ROICaT_Module):
     Args:
         use_match_search (bool):
             Whether to densely search all possible paths to match images to the
-            template upon failure.
+            template upon failure. (Default is ``True``)
         radius_in (float):
             Value in micrometers used to define the maximum shift/offset between
             two images that are considered to be aligned. Use larger values for
@@ -30,20 +31,21 @@ class Aligner(util.ROICaT_Module):
         radius_out (float):
             Value in micrometers used to define the minimum shift/offset between
             two images that are considered to be misaligned. Use smaller values
-            for more stringent alignment requirements. (Default is *10*)
+            for more stringent alignment requirements. (Default is *20*)
         order (int):
-            The order of the butterworth filter used to define the 'in' and 'out'
+            The order of the Butterworth filter used to define the 'in' and 'out'
             regions of the ImageAlignmentChecker class. (Default is *5*)
         probability_threshold (float):
             Probability required to define two images as aligned. Smaller values
-            results in more stringent alignment requirements and possibly slower
+            result in more stringent alignment requirements and possibly slower
             registration. Value is the probability threshold used on the 'z_in'
             output of the ImageAlignmentChecker class to determine if two images
             are properly aligned. (Default is *0.01*)
         um_per_pixel (float):
-            The number of micrometers per pixel in the FOV_images.
+            The number of micrometers per pixel in the FOV images. (Default is *1.0*)
         device (str):
             The torch device used for various steps in the alignment process.
+            (Default is ``'cpu'``)
         verbose (bool):
             Whether to print progress updates. (Default is ``True``)
     """
@@ -58,6 +60,9 @@ class Aligner(util.ROICaT_Module):
         device: str = 'cpu',
         verbose: bool = True,
     ):
+        """
+        Initialize the Aligner class.
+        """
         super().__init__()
 
         ## Store parameter (but not data) args as attributes
@@ -112,34 +117,33 @@ class Aligner(util.ROICaT_Module):
         Args:
             FOV_images (List[np.ndarray]): 
                 A list of FOV images.
-            spatialFootprints (List[scipy.sparse.csr_matrix], optional):
+            spatialFootprints (Optional[List[scipy.sparse.csr_matrix]]):
                 A list of spatial footprints for each ROI. If ``None``, then no
                 mixing will be performed. (Default is ``None``)
             normalize_FOV_intensities (bool):
                 Whether to normalize the FOV images. Setting this to ``True``
-                will divide each FOV image by the norm of all the FOV images.
-                (Default is ``True``)
+                will scale each FOV image to the same intensity range. (Default
+                is ``True``)
             roi_FOV_mixing_factor (float):
                 The factor by which to mix the ROI images into the FOV images.
                 If 0, then no mixing will be performed. (Default is *0.5*)
             use_CLAHE (bool):
                 Whether to apply CLAHE to the images. (Default is ``True``)
             CLAHE_grid_block_size (int):
-                The size of the blocks in the gride for CLAHE. Used to divide
-                the image into small blocks and create the grid_size parameter
-                for the cv2.createCLAHE function. Smaller block sizes will
-                result in more local CLAHE. (Default is *50*)
+                The size of the blocks in the grid for CLAHE. Used to divide the
+                image into small blocks and create the grid_size parameter for
+                the cv2.createCLAHE function. Smaller block sizes will result in
+                more local CLAHE. (Default is *50*)
             CLAHE_clipLimit (int):
-                The clip limit for CLAHE. See alignment.clahe for more details.
+                The clip limit for CLAHE. See cv2.createCLAHE for more details.
                 (Default is *1*)
             CLAHE_normalize (bool):
                 Whether to normalize the CLAHE output. See alignment.clahe for
                 more details. (Default is ``True``)
 
         Returns:
-            (List[np.ndarray]):
-                FOV_images_augmented (List[np.ndarray]):
-                    The augmented FOV images.
+            List[np.ndarray]:
+                The augmented FOV images.
         """
         ## Warn if roi_FOV_mixing_factor = 0 but spatialFootprints is not None
         if (roi_FOV_mixing_factor == 0) and (spatialFootprints is not None):
@@ -192,94 +196,121 @@ class Aligner(util.ROICaT_Module):
         ims_moving: List[np.ndarray],
         template_method: str = 'sequential',
         mask_borders: Tuple[int, int, int, int] = (0, 0, 0, 0),
-        algorithm: str = 'LoFTR',
-        kwargs_algo_findTransformECC: Optional[Dict[str, Any]] = {
-            'mode_transform': 'affine',
-            'gaussFiltSize': 11,
-            'n_iter': 1000,
-            'termination_eps': 1e-9,
-            'auto_fix_gaussFilt_step': 10,
-        },
-        kwargs_algo_LoFTR: Optional[Dict[str, Any]] = {
-            'mode_transform': 'affine',
-            'gaussFiltSize': 11,
-            'confidence_LoFTR': 0.2,
-            'confidence_RANSAC': 0.99,
-            'ransacReprojThreshold': 3.0,
-            'maxIters': 2000,
-        },
+        method: str = 'RoMa',
         device: Optional[str] = None,
+        kwargs_method: dict = {
+            'RoMa': {
+                'model_type': 'outdoor',
+                'n_points': 10000,  ## Higher values mean more points are used for the registration. Useful for larger FOV_images. Larger means slower.
+                'batch_size': 1000,
+            },
+            'LoFTR': {
+                'model_type': 'indoor_new',
+                'threshold_confidence': 0.2,  ## Higher values means fewer but better matches.
+            },
+            'ECC_cv2': {
+                'mode_transform': 'euclidean',  ## Must be one of {'translation', 'affine', 'euclidean', 'homography'}. See cv2 documentation on findTransformECC for more details.
+                'n_iter': 200,
+                'termination_eps': 1e-09,  ## Termination criteria for the registration algorithm. See documentation for more details.
+                'gaussFiltSize': 31,  ## Size of the gaussian filter used to smooth the FOV_image before registration. Larger values mean more smoothing.
+                'auto_fix_gaussFilt_step': 10,  ## If the registration fails, then the gaussian filter size is reduced by this amount and the registration is tried again.
+            },
+            'DISK_LightGlue': {
+                'num_features': 2048,  ## Number of features to extract and match. I've seen best results around 2048 despite higher values typically being better.
+                'threshold_confidence': 0.2,  ## Higher values means fewer but better matches.
+            },
+            'SIFT': {
+                'nfeatures': 10000,
+                'contrastThreshold': 0.04,
+                'edgeThreshold': 10,
+                'sigma': 1.6,
+            },
+            'ORB': {
+                'nfeatures': 1000,
+                'scaleFactor': 1.2,
+                'nlevels': 8,
+                'edgeThreshold': 31,
+                'firstLevel': 0,
+                'WTA_K': 2,
+                'scoreType': 0,
+                'patchSize': 31,
+                'fastThreshold': 20,
+            },
+        },
+        kwargs_RANSAC: dict = {
+            'inl_thresh': 2.0,
+            'max_iter': 10,
+            'confidence': 0.99,
+        },
+        verbose: Optional[bool] = None,
     ) -> np.ndarray:
         """
-        Performs geometric registration of ``ims_moving`` to a template, using 
-        ``cv2.findTransformECC``. 
+        Performs geometric registration of ``ims_moving`` to a template using
+        the specified method. 
         RH 2023
 
         Args:
             template (Union[int, np.ndarray]): 
-                Depends on the value of 'template_method'. 
-                If 'template_method' == 'image', this should be a 2D np.ndarray image, an integer index 
-                of the image to use as the template, or a float between 0 and 1 representing the fractional 
-                index of the image to use as the template. 
-                If 'template_method' == 'sequential', then template is the integer index or fractional index 
-                of the image to use as the template.
+                The template image or index. If ``template_method`` is 'image',
+                this should be an image (np.ndarray) or an index of the image to
+                use as the template. If ``template_method`` is 'sequential',
+                then template is the integer index or fractional index of the
+                image to use as the template.
             ims_moving (List[np.ndarray]): 
                 List of images to be aligned.
             template_method (str): 
-                Method to use for template selection. \n
-                * 'image': use the image specified by 'template'. 
-                * 'sequential': register each image to the previous or next image \n
-                (Default is 'sequential')
+                Method to use for template selection. * 'image': use the image
+                specified by 'template'. * 'sequential': register each image to
+                the previous or next image. (Default is 'sequential')
             mask_borders (Tuple[int, int, int, int]): 
-                Border mask for the image. Format is (top, bottom, left, right). 
+                Border mask for the image. Format is (top, bottom, left, right).
                 (Default is (0, 0, 0, 0))
-            algorithm (str):
-                The algorithm to use for registration. Either 'LoFTR' or 'findTransformECC'. \n
-                    * 'LoFTR': Feature-based registration. Uses LoFTR for
-                      feature detection and matching. Use kornia's pretrained
-                      LoFTR model with pretrained='indoor_new'. \n
-                    * 'findTransformECC': Direct / intensity-based registration.
-                      Use cv2's findTransformECC method. \n
-            kwargs_algo_findTransformECC (Optional[Dict[str, Any]]):
-                Keyword arguments for the findTransformECC method. \n
-                * mode_transform (str): 
-                    * Mode of geometric transformation. Can be 'translation',
-                      'euclidean', 'affine', or 'homography'. See
-                      ``cv2.findTransformECC`` for more details. (Default is
-                      'affine')
-                * gaussFiltSize (int): 
-                    * Size of the Gaussian filter. (Default is *11*)
-                * n_iter (int): 
-                    * Number of iterations for ``cv2.findTransformECC``.
-                * termination_eps (float): 
-                    * Termination criteria for ``cv2.findTransformECC``.
-                * auto_fix_gaussFilt_step (Union[bool, int]): 
-                    * Automatically fixes convergence issues by increasing the
-                      gaussFiltSize. If ``False``, no automatic fixing is
-                      performed. If ``True``, the gaussFiltSize is increased by
-                      2 until convergence. If int, the gaussFiltSize is
-                      increased by this amount until convergence.
-            kwargs_algo_LoFTR (Optional[Dict[str, Any]]):
-                Keyword arguments for the LoFTR method. \n
-                * mode_transform (str): 
-                    * Mode of geometric transformation. Can be 'euclidean',
-                      'similarity', 'affine', or 'projective',
-                * gaussFiltSize (int): 
-                    * Size of the Gaussian filter. (Default is *11*)
-                * confidence_LoFTR (float):
-                    * Confidence threshold for LoFTR matches. Matches with
-                      confidence values below this threshold will be discarded.
-                * confidence_RANSAC (float):
-                    * Confidence threshold for RANSAC inliers.
-                * ransacReprojThreshold (float):
-                    * Reprojection threshold for RANSAC.
-                * maxIters (int):
-                    * Maximum number of iterations for RANSAC.
+            method (str):
+                The method to use for registration. One of {'RoMa', 'LoFTR',
+                'ECC_cv2', 'DISK_LightGlue', 'SIFT', 'ORB'}.\n
+                * 'RoMa': Feature-based registration using the RoMa algorithm.
+                * 'LoFTR': Feature-based registration using LoFTR.
+                * 'ECC_cv2': Direct intensity-based registration using OpenCV's
+                  findTransformECC.
+                * 'DISK_LightGlue': Feature-based registration using DISK
+                  features and LightGlue matcher.
+                * 'SIFT': Feature-based registration using SIFT keypoints.
+                * 'ORB': Feature-based registration using ORB keypoints.
+                (Default is 'RoMa')
+            device (Optional[str]):
+                Device to use for computations. If ``None``, the device set
+                during initialization will be used.
+            kwargs_method (dict):
+                Keyword arguments for the selected method. The keys are method
+                names, and the values are dictionaries of keyword arguments.
+                For example:
+                    'RoMa': {
+                        'model_type': 'outdoor',
+                        'n_points': 10000,
+                        'batch_size': 1000,
+                    },
+                    'LoFTR': {
+                        'model_type': 'indoor_new',
+                        'threshold_confidence': 0.2,
+                    },
+                    ...            
+            kwargs_RANSAC (dict):
+                Keyword arguments for RANSAC algorithm used in homography
+                estimation.
+                * 'inl_thresh' (float): RANSAC inlier threshold. (Default is
+                  2.0)
+                * 'max_iter' (int): Maximum number of iterations for RANSAC.
+                  (Default is 10)
+                * 'confidence' (float): Confidence level for RANSAC. (Default is
+                  0.99)
+            verbose (Optional[bool]):
+                Whether to print progress updates. If ``None``, the verbose
+                level set during initialization will be used.
 
         Returns:
-            (np.ndarray): 
-                remapIdx_geo (np.ndarray): 
-                    An array of shape *(N, H, W, 2)* representing the remap field for N images.
+            np.ndarray:
+                An array of shape (N, H, W, 2) representing the remap field for
+                N images.
         """
         ## Store parameter (but not data) args as attributes
         self.params['fit_geometric'] = self._locals_to_params(
@@ -288,34 +319,32 @@ class Aligner(util.ROICaT_Module):
                 'template',
                 'template_method',
                 'mask_borders',
-                'algorithm',
-                'kwargs_algo_findTransformECC',
-                'kwargs_algo_LoFTR',
+                'method',
                 'device',
+                'kwargs_method',
+                'kwargs_RANSAC',
+                'verbose',
             ],
         )
 
+        verbose = verbose if verbose is not None else self._verbose
+
         device = self.device if device is None else device
 
-        ## Fill missing kwargs with defaults
-        default_kwargs_algo_findTransformECC = {
-            'mode_transform': 'affine',
-            'gaussFiltSize': 11,
-            'n_iter': 1000,
-            'termination_eps': 1e-9,
-            'auto_fix_gaussFilt_step': 10,
+        methods_lut = {
+            'RoMa': RoMa,
+            'LoFTR': LoFTR,
+            'ECC_cv2': ECC_cv2,
+            'DISK_LightGlue': DISK_LightGlue,
+            'SIFT': SIFT,
+            'ORB': ORB,
         }
-        default_kwargs_algo_LoFTR = {
-            'mode_transform': 'affine',
-            'gaussFiltSize': 11,
-            'confidence_LoFTR': 0.2,
-            'confidence_RANSAC': 0.99,
-            'ransacReprojThreshold': 3.0,
-            'maxIters': 2000,
-            'device': 'cpu',
-        }
-        kwargs_algo_findTransformECC = default_kwargs_algo_findTransformECC if kwargs_algo_findTransformECC is None else {**default_kwargs_algo_findTransformECC, **kwargs_algo_findTransformECC}
-        kwargs_algo_LoFTR = default_kwargs_algo_LoFTR if kwargs_algo_LoFTR is None else {**default_kwargs_algo_LoFTR, **kwargs_algo_LoFTR}
+        assert method in methods_lut, f"method must be one of {methods_lut.keys()}"
+        model = methods_lut[method](
+            device=device, 
+            verbose=verbose,
+            **kwargs_method[method],
+        )
         
         # Check if ims_moving is a non-empty list
         assert len(ims_moving) > 0, "ims_moving must be a non-empty list of images."
@@ -327,22 +356,19 @@ class Aligner(util.ROICaT_Module):
         valid_template_methods = {'sequential', 'image'}
         assert template_method in valid_template_methods, f"template_method must be one of {valid_template_methods}"
 
+        ims_moving, template = self._fix_input_images(ims_moving=ims_moving, template=template, template_method=template_method)
+
         H, W = ims_moving[0].shape
         self._HW = (H,W) if self._HW is None else self._HW
 
-        ims_moving, template = self._fix_input_images(ims_moving=ims_moving, template=template, template_method=template_method)
-
-        self.mask_geo = helpers.mask_image_border(
-            im=np.ones((H, W), dtype=np.uint8),
-            border_outer=mask_borders,
-            mask_value=0,
-        )
-
         def _register(
-            template: np.ndarray,
+            ims_moving: List[np.ndarray],
+            template: Union[int, np.ndarray],
             template_method: str,
         ):
-            print(f'Finding geometric registration warps with template_method: {template_method}, mask_borders: {mask_borders is not None}, algorithm: {algorithm}') if self._verbose else None
+            ims_moving = [self._crop_image(im, mask_borders) for im in ims_moving]
+            template = self._crop_image(template, mask_borders) if isinstance(template, np.ndarray) else template
+
             warp_matrices_raw = []
             for ii, im_moving in tqdm(enumerate(ims_moving), desc='Finding geometric registration warps', total=len(ims_moving), disable=not self._verbose):
                 if template_method == 'sequential':
@@ -357,30 +383,15 @@ class Aligner(util.ROICaT_Module):
                         im_template = ims_moving[ii-1]
                 elif template_method == 'image':
                     im_template = template
-                                                
-                if algorithm == 'LoFTR':
-                    warp_matrix = _LoFTR_fit(
-                        im_template=im_template,
-                        im_moving=im_moving,
-                        mask_borders=mask_borders,
-                        image_id=ii,
-                        verbose=self._verbose,
-                        **kwargs_algo_LoFTR,
-                    )
-                elif algorithm == 'findTransformECC':
-                    warp_matrix = _safe_find_geometric_transformation(
-                        im_template=im_template,
-                        im_moving=im_moving,
-                        mask=self.mask_geo,
-                        gaussFiltSize=kwargs_algo_findTransformECC['gaussFiltSize'],
-                        image_id=ii,
-                        verbose=self._verbose,
-                        **kwargs_algo_findTransformECC,
-                    )
+
+                warp_matrix = model.fit_rigid(
+                    im_template=im_template,
+                    im_moving=im_moving,
+                    **kwargs_RANSAC,
+                )
                 warp_matrices_raw.append(warp_matrix)
 
             # compose warp transforms
-            print('Composing geometric warp matrices...') if self._verbose else None
             warp_matrices = []
             if template_method == 'sequential':
                 ## compose warps before template forward (t1->t2->t3->t4)
@@ -415,11 +426,12 @@ class Aligner(util.ROICaT_Module):
                     raise ValueError(f'Unexpected warp_matrix shape: {warp_matrix.shape}')
                 return warp_matrix
             warp_matrices = [_extend_warp_matrix(warp_matrix) for warp_matrix in warp_matrices]
+            warp_matrices = np.stack(warp_matrices, axis=0)  ## shape: (N, 3, 3)
 
             return warp_matrices
         
         ## Run initial registration
-        warp_matrices_all_to_template = _register(template=template, template_method=template_method)
+        warp_matrices_all_to_template = _register(ims_moving=ims_moving, template=template, template_method=template_method)  ## shape: [(3, 3) * n_images]
 
         # check alignment
         im_template_global = ims_moving[template] if template_method == 'sequential' else template
@@ -436,81 +448,116 @@ class Aligner(util.ROICaT_Module):
             order=self.order,
             device=device,
         )
-        alignment_template_to_all = iac.score_alignment(
+        score_template_to_all = iac.score_alignment(
             images=images_warped_all_to_template,
             images_ref=im_template_global,
-        )['z_in'][:, 0] > z_threshold
+        )['z_in'][:, 0]
+        alignment_template_to_all = score_template_to_all > z_threshold
         idx_not_aligned = np.where(alignment_template_to_all == False)[0]
 
-        if len(idx_not_aligned) > 0:
+        if len(idx_not_aligned) > 0:  ## if any images are not aligned
             print(f'Warning: Alignment failed for some images (probability_not_aligned > probability_threshold) for images idx: {idx_not_aligned}')
             if self.use_match_search:
                 print('Attempting to find best matches for misaligned images...')
                 ## Make a function that wraps up all the above steps
-                def update_warps_to_template(
-                    idx: Union[np.ndarray, List[int]],
-                    warp_matrices_all_to_all: np.ndarray,
+                def _update_warps(
+                    idx: Union[np.ndarray, List[int]],  ## indices of images to use as templates
+                    warp_matrices_all_to_all: np.ndarray,  ## shape: (N, N, 3, 3). Rows are to, columns are from
                     alignment_all_to_all: np.ndarray,
+                    score_all_to_all: np.ndarray,
                 ):
-                    ## Register the images in idx to the template
-                    for ii in idx:
+                    ## Register all ims_moving to the template (which is one of the ims_moving defined by idx_template)
+                    for idx_current in idx:
                         ## Run the registration algo
-                        warp_matrices_all_to_all[ii] = _register(template=ims_moving[ii], template_method='image')
+                        im_current = ims_moving[idx_current]
+                        warp_matrices_all_to_all[idx_current] = (_register(ims_moving=ims_moving, template=im_current, template_method='image'))  ## returns shape: (N, 3, 3)
+                        ## Make the transpose the inverse of the warp matrices
+                        # warp_matrices_all_to_all[:, idx_current] = np.linalg.inv(warp_matrices_all_to_all[idx_current])  ## inv along last two axes
                         ## warp the images
-                        remappingIdx_geo_all_to_current = [helpers.warp_matrix_to_remappingIdx(warp_matrix=warp_matrix, x=W, y=H) for warp_matrix in warp_matrices_all_to_all[ii]]
+                        remappingIdx_geo_all_to_current = [helpers.warp_matrix_to_remappingIdx(warp_matrix=warp_matrix, x=W, y=H) for warp_matrix in warp_matrices_all_to_all[idx_current]]
                         images_warped_all_to_current = self.transform_images(ims_moving=ims_moving, remappingIdx=remappingIdx_geo_all_to_current)
                         ## Check alignment
-                        alignment_all_to_all[ii] = iac.score_alignment(images=images_warped_all_to_current, images_ref=im_template_global)['z_in'][:, 0] > z_threshold
-                    ## Append the template alignment_matrix (1D) on top of the all_to_all alignment_matrix (N x N)
-                    alignment_matrix_all_to_all_and_template = np.concatenate([np.concatenate([np.array(0)[None,], alignment_template_to_all])[None, :], np.concatenate([alignment_template_to_all[:, None], alignment_all_to_all], axis=1)], axis=0)
-                    ## Use dijkstra's algorithm to find the shortest path from every image to the template
+                        score_all_to_all[idx_current] = iac.score_alignment(images=images_warped_all_to_current, images_ref=im_current)['z_in'][:, 0]  ## shape: (N,)
+                        # score_all_to_all[:, idx_current] = score_all_to_all[idx_current]  ## add the transpose of the score matrix
+                        alignment_all_to_all[idx_current] = score_all_to_all[idx_current] > z_threshold  ## returns a boolean array of shape (n_images,)
+                        # alignment_all_to_all[:, idx_current] = alignment_all_to_all[idx_current]  ## add the transpose of the alignment matrix
+                        
+                    ## Recompute warp matrices based on shortest path between each image and the template (through the all_to_all alignment matrix)
+                    ### Make a connection graph by appending the template alignment_matrix (1D) on top of the all_to_all alignment_matrix (N x N)
+                    alignment_matrix_all_to_all_and_template = np.concatenate([np.concatenate([np.array(0)[None,], alignment_template_to_all])[None, :], np.concatenate([alignment_template_to_all[:, None], np.nan_to_num(alignment_all_to_all, nan=0.0)], axis=1)], axis=0)
+                    ### Make a cost graph
+                    cost_all_to_all_and_template = np.concatenate([np.concatenate([np.array(0)[None,], score_template_to_all])[None, :], np.concatenate([score_template_to_all[:, None], np.nan_to_num(score_all_to_all, nan=0.0)], axis=1)], axis=0)
+                    cost_all_to_all_and_template[cost_all_to_all_and_template == 0] = np.inf  ## set 0s to inf
+                    cost_all_to_all_and_template = (1 / cost_all_to_all_and_template) * alignment_matrix_all_to_all_and_template.astype(np.float32)  ## 0s are disconnected, 1s are connected
+                    cost_all_to_all_and_template[np.arange(len(cost_all_to_all_and_template)), np.arange(len(cost_all_to_all_and_template))] = 0.0  ## set the diagonal to 0
+                    ### Use dijkstra's algorithm to find the shortest path from every image to the template
                     distances, predecessors = scipy.sparse.csgraph.shortest_path(
-                        csgraph=scipy.sparse.csr_matrix(alignment_matrix_all_to_all_and_template.astype(np.float32)),  ## 0s are disconnected, 1s are connected
+                        csgraph=scipy.sparse.csr_matrix(cost_all_to_all_and_template.astype(np.float32)),  ## 0s are disconnected, 1s are connected
                         method='D',  ## Dijkstra's algorithm
                         directed=True,
                         return_predecessors=True,
-                        unweighted=True,  ## Just count the number of connected edges
+                        unweighted=False,  ## Just count the number of connected edges
                     )
+
+                    ## Make new warp matrices from each image to the template
+                    warp_matrices_all_to_template_new = []
+                    for idx_im in range(len(ims_moving)):
+                        if not np.isinf(distances[0, idx_im+1]):  ## distance to idx 0 from idx_im+1 is not infinite
+                            path = helpers.get_path_between_nodes(
+                                idx_start=idx_im+1,  ## +1 because the first row and column are the template
+                                idx_end=0,  ## 0 is the template
+                                predecessors=predecessors,
+                            )
+                            warps_to_add = [warp_matrices_all_to_all[idx_to - 1, idx_from - 1] for idx_from, idx_to in zip(path[:-2], path[1:-1])]  ## add the warps along the path
+                            warps_to_add += [warp_matrices_all_to_template[path[-2] - 1]]  ## add the warp to the template
+                            warp_matrix_current_to_template = self._compose_warps(
+                                warp_0=np.eye(3, 3, dtype=np.float32),  ## start with identity matrix
+                                warps_to_add=warps_to_add,
+                                warpMat_or_remapIdx='warpMat',
+                            )
+                            warp_matrices_all_to_template_new.append(warp_matrix_current_to_template)
+                        else:
+                            warp_matrices_all_to_template_new.append(np.eye(3, 3, dtype=np.float32))
+
                     ## Check if there are any failed paths to the template
-                    if not np.any(np.isinf(distances[0])):  ## if there are no failed paths to the template
-                        ## There's a path. Now compose the warp matrices by combining the all_to_template warp and the path of warps from each image to the template
-                        warp_matrices_all_to_template_new = [self._compose_warps(
-                            warp_0=warp_matrices_all_to_template[idx],
-                            warps_to_add=[warp_matrices_all_to_all[ii] for ii in helpers.get_path_between_nodes(idx_start=idx + 1, idx_end=0, predecessors=predecessors)],  ## idx+1 and idx_end=0 because the template is the first row
-                            warpMat_or_remapIdx='warpMat',
-                        ) for idx in range(len(ims_moving))]  ## compose from all images to the template
-                        return warp_matrices_all_to_template_new, warp_matrices_all_to_all, alignment_all_to_all
-                    else:
-                        ## No path. Set the warp_matrices_all_to_all to None
-                        return None, warp_matrices_all_to_all, alignment_all_to_all
+                    idx_no_path = [int(idx) for idx in np.where(np.isinf(distances[0][1:]))[0]]
+                    if len(idx_no_path) > 0:
+                        print(f'Warning: Could not find a path to alignment after path finding for images idx: {idx_no_path}')
+
+                    return warp_matrices_all_to_template_new, warp_matrices_all_to_all, alignment_all_to_all, idx_no_path
                     
-                warp_matrices_all_to_all = np.array([[None if ii != jj else np.eye(3, dtype=np.float32) for jj in range(len(ims_moving))] for ii in range(len(ims_moving))], dtype=object)
-                alignment_all_to_all = np.eye(len(ims_moving), dtype=np.bool_)
+                warp_matrices_all_to_all = np.tile(np.eye(3, 3)[None, None, :, :], reps=(len(ims_moving), len(ims_moving), 1, 1))
+                # alignment_all_to_all = np.eye(len(ims_moving), dtype=np.bool_)
+                alignment_all_to_all = np.ones((len(ims_moving), len(ims_moving)), dtype=np.float32) * np.nan
+                score_all_to_all = np.ones((len(ims_moving), len(ims_moving)), dtype=np.float32) * np.nan
                 print(f'Finding alignment between failed match idx: {idx_not_aligned} and all other images...')
                 ## Register the images in idx to the template
-                warp_matrices_all_to_template_new, warp_matrices_all_to_all, alignment_all_to_all = update_warps_to_template(
+                warp_matrices_all_to_template_new, warp_matrices_all_to_all, alignment_all_to_all, idx_no_path = _update_warps(
                     idx=idx_not_aligned, 
                     warp_matrices_all_to_all=warp_matrices_all_to_all, 
                     alignment_all_to_all=alignment_all_to_all,
+                    score_all_to_all=score_all_to_all,
                 )
-                if warp_matrices_all_to_template_new is not None:
+                warp_matrices_all_to_template = warp_matrices_all_to_template_new
+                if len(idx_no_path) == 0:
                     print('All images aligned successfully after one round of path finding.') if self._verbose else None
                     warp_matrices_all_to_template = warp_matrices_all_to_template_new
                 else:
-                    warnings.warn('Warning: Could not find a path to alignment for some images after one round of path finding. Now doing a dense search for alignment between all images.')
-                    idx_remaining = sorted(list(set(np.arange(len(ims_moving))) - set(idx_not_aligned)))
+                    idx_remaining = sorted(list(set(list(range(len(ims_moving)))) - set(idx_not_aligned)))
+                    warnings.warn(f'Warning: Could not find a path to alignment for image idx: {idx_no_path}. Now doing a dense search for alignment between all images...')
                     print(f"Finding alignment between remaining images and all other images: {idx_remaining}...") if self._verbose else None
                     ## Register the images in idx to the template
-                    warp_matrices_all_to_template_new, warp_matrices_all_to_all, alignment_all_to_all = update_warps_to_template(
+                    warp_matrices_all_to_template_new, warp_matrices_all_to_all, alignment_all_to_all, idx_no_path = _update_warps(
                         idx=idx_remaining, 
                         warp_matrices_all_to_all=warp_matrices_all_to_all, 
                         alignment_all_to_all=alignment_all_to_all,
+                        score_all_to_all=score_all_to_all,
                     )
-                    if warp_matrices_all_to_template_new is not None:
+                    if len(idx_no_path) == 0:
                         print('All images aligned successfully after dense search.') if self._verbose else None
                         warp_matrices_all_to_template = warp_matrices_all_to_template_new
                     else:
-                        warnings.warn('Warning: Could not find a path to alignment for some images after dense search. Returning the original warp matrices directly between each image and the template. \nSee')
+                        warnings.warn(f"Warning: Could not find a path to alignment for image idx: {idx_no_path}. Some images may not be aligned.")
 
             else:
                 warnings.warn(f"Alignment failed for some images (probability_not_aligned > probability_threshold) for images idx: {idx_not_aligned}. Use 'use_match_search=True' to attempt to find best matches for misaligned images.")                
@@ -529,56 +576,74 @@ class Aligner(util.ROICaT_Module):
 
         return self.remappingIdx_geo
 
+
     def fit_nonrigid(
         self,
         template: Union[int, np.ndarray],
         ims_moving: List[np.ndarray],
         remappingIdx_init: Optional[np.ndarray] = None,
         template_method: str = 'sequential',
-        mode_transform: str = 'createOptFlow_DeepFlow',
-        kwargs_mode_transform: Optional[dict] = None,
+        method: str = 'RoMa',
+        device: Optional[str] = None,
+        kwargs_method: dict = {
+            'RoMa': {
+                'model_type': 'outdoor',
+            },
+            'DeepFlow': {},
+            'OpticalFlowFarneback': {
+                'pyr_scale': 0.7,
+                'levels': 5,
+                'winsize': 128,
+                'iterations': 15,
+                'poly_n': 5,
+                'poly_sigma': 1.5,            
+            },
+        },
     ) -> np.ndarray:
         """
-        Perform geometric registration of ``ims_moving`` to a **template**.
-        Currently relies on ``cv2.findTransformECC``.
+        Performs non-rigid registration of ``ims_moving`` to a template using
+        the specified method.
         RH 2023
 
         Args:
             template (Union[int, np.ndarray]): 
-                * If ``template_method`` == ``'image'``: Then **template** is
-                  either an image or an integer index or a float fractional
-                  index of the image to use as the **template**.
-                * If ``template_method`` == ``'sequential'``: then **template**
-                  is the integer index of the image to use as the **template**.
+                The template image or index. If ``template_method`` is 'image',
+                this should be an image (np.ndarray) or an index of the image to
+                use as the template. If ``template_method`` is 'sequential',
+                then template is the integer index or fractional index of the
+                image to use as the template.
             ims_moving (List[np.ndarray]): 
                 A list of images to be aligned.
             remappingIdx_init (Optional[np.ndarray]): 
-                An array of shape *(N, H, W, 2)* representing any initial remap
+                An array of shape (N, H, W, 2) representing any initial remap
                 field to apply to the images in ``ims_moving``. The output of
-                this method will be added/composed with ``remappingIdx_init``.
+                this method will be composed with ``remappingIdx_init``.
                 (Default is ``None``)
             template_method (str): 
-                The method to use for **template** selection. Either \n
-                * ``'image'``: use the image specified by 'template'.
-                * ``'sequential'``: register each image to the previous or next
-                  image (will be next for images before the template and
-                  previous for images after the template) \n
+                Method to use for template selection.
+                * 'image': use the image specified by 'template'.
+                * 'sequential': register each image to the previous or next
+                  image.
                 (Default is 'sequential')
-            mode_transform (str): 
-                The type of transformation to use for registration. Either
-                'createOptFlow_DeepFlow' or 'calcOpticalFlowFarneback'. (Default
-                is 'createOptFlow_DeepFlow')
-            kwargs_mode_transform (Optional[dict]): 
-                Keyword arguments for the transform chosen. See cv2 docs for
-                chosen transform. (Default is ``None``)
+            method (str):
+                The method to use for registration. One of {'RoMa', 'DeepFlow',
+                'OpticalFlowFarneback'}.
+                * 'DeepFlow': Optical flow using OpenCV's DeepFlow algorithm.
+                * 'RoMa': Non-rigid registration using the RoMa algorithm.
+                * 'OpticalFlowFarneback': Optical flow using OpenCV's
+                  calcOpticalFlowFarneback.
+                (Default is 'RoMa')
+            device (Optional[str]):
+                Device to use for computations. If ``None``, the device set
+                during initialization will be used.
+            kwargs_method (dict):
+                Keyword arguments for the selected method. The keys are method
+                names, and the values are dictionaries of keyword arguments.
 
         Returns:
-            (np.ndarray): 
-                remapIdx_nonrigid (np.ndarray): 
-                    An array of shape *(N, H, W, 2)* representing the remap
-                    field for N images.
+            np.ndarray:
+                An array of shape (N, H, W, 2) representing the remap field for N images.
         """
-        import cv2
         # Check if ims_moving is a non-empty list
         assert len(ims_moving) > 0, "ims_moving must be a non-empty list of images."
         # Check if all images in ims_moving have the same shape
@@ -588,9 +653,6 @@ class Aligner(util.ROICaT_Module):
         # Check if template_method is valid
         valid_template_methods = {'sequential', 'image'}
         assert template_method in valid_template_methods, f"template_method must be one of {valid_template_methods}"
-        # Check if mode_transform is valid
-        valid_mode_transforms = {'createOptFlow_DeepFlow', 'calcOpticalFlowFarneback'}
-        assert mode_transform in valid_mode_transforms, f"mode_transform must be one of {valid_mode_transforms}"
 
         ## Store parameter (but not data) args as attributes
         self.params['fit_nonrigid'] = self._locals_to_params(
@@ -598,9 +660,24 @@ class Aligner(util.ROICaT_Module):
             keys=[
                 'template',
                 'template_method',
-                'mode_transform',
-                'kwargs_mode_transform',
+                'method',
+                'device',
+                'kwargs_method',
             ],
+        )
+
+        device = self.device if device is None else device
+
+        methods_lut = {
+            'RoMa': RoMa,
+            'DeepFlow': DeepFlow,
+            'OpticalFlowFarneback': OpticalFlowFarneback,
+        }
+        assert method in methods_lut, f"method must be one of {methods_lut.keys()}"
+        model = methods_lut[method](
+            device=device, 
+            verbose=self._verbose,
+            **kwargs_method[method],
         )
 
         # Warn if any images have values below 0 or NaN
@@ -610,14 +687,13 @@ class Aligner(util.ROICaT_Module):
 
         H, W = ims_moving[0].shape
         self._HW = (H,W) if self._HW is None else self._HW
-        x_grid, y_grid = np.meshgrid(np.arange(0., W).astype(np.float32), np.arange(0., H).astype(np.float32))
 
         ims_moving, template = self._fix_input_images(ims_moving=ims_moving, template=template, template_method=template_method)
         norm_factor = np.nanmax([np.nanmax(im) for im in ims_moving])
         template_norm   = np.array(template * (template > 0) * (1/norm_factor) * 255, dtype=np.uint8) if template_method == 'image' else None
         ims_moving_norm = [np.array(im * (im > 0) * (1/np.nanmax(im)) * 255, dtype=np.uint8) for im in ims_moving]
 
-        print(f'Finding nonrigid registration warps with mode: {mode_transform}, template_method: {template_method}') if self._verbose else None
+        print(f'Finding nonrigid registration warps with mode: {method}, template_method: {template_method}') if self._verbose else None
         remappingIdx_raw = []
         for ii, im_moving in tqdm(enumerate(ims_moving_norm), desc='Finding nonrigid registration warps', total=len(ims_moving_norm), unit='image', disable=not self._verbose):
             if template_method == 'sequential':
@@ -633,31 +709,10 @@ class Aligner(util.ROICaT_Module):
             elif template_method == 'image':
                 im_template = template_norm
 
-            if mode_transform == 'calcOpticalFlowFarneback':
-                self._kwargs_method = {
-                    'pyr_scale': 0.3, 
-                    'levels': 3,
-                    'winsize': 128, 
-                    'iterations': 7,
-                    'poly_n': 7, 
-                    'poly_sigma': 1.5,
-                    'flags': cv2.OPTFLOW_FARNEBACK_GAUSSIAN, ## = 256
-                } if kwargs_mode_transform is None else kwargs_mode_transform
-                flow_tmp = cv2.calcOpticalFlowFarneback(
-                    prev=im_template,
-                    next=im_moving, 
-                    flow=None, 
-                    **self._kwargs_method,
-                )
-        
-            elif mode_transform == 'createOptFlow_DeepFlow':
-                flow_tmp = cv2.optflow.createOptFlow_DeepFlow().calc(
-                    im_template,
-                    im_moving,
-                    None
-                )
-
-            remappingIdx_raw.append(flow_tmp + np.stack([x_grid, y_grid], axis=-1))
+            remappingIdx_raw.append(model.fit_nonrigid(
+                im_template=im_template,
+                im_moving=im_moving,
+            ))
 
         # compose warp transforms
         print('Composing nonrigid warp matrices...') if self._verbose else None
@@ -689,9 +744,8 @@ class Aligner(util.ROICaT_Module):
         if remappingIdx_init is not None:
             self.remappingIdx_nonrigid = [self._compose_warps(warp_0=remappingIdx_init[ii], warps_to_add=[warp], warpMat_or_remapIdx='remapIdx') for ii, warp in enumerate(self.remappingIdx_nonrigid)]
 
-        self.remappingIdx_nonrigid = np.stack(self.remappingIdx_nonrigid, axis=0)
-
         return self.remappingIdx_nonrigid
+    
         
     def transform_images_geometric(
         self, 
@@ -798,6 +852,23 @@ class Aligner(util.ROICaT_Module):
             ims_registered.append(im_registered)
         return ims_registered if not squeeze_output else ims_registered[0]  
 
+    def _crop_image(self, image: np.ndarray, borders: Tuple[int, int, int, int],) -> np.ndarray:
+        """
+        Crops an image based on the specified borders.
+
+        Args:
+            image (np.ndarray): 
+                The image to crop. *(H, W)*
+            borders (Tuple[int, int, int, int]): 
+                The borders to crop. Format is (top, bottom, left, right).
+
+        Returns:
+            (np.ndarray): 
+                image_cropped (np.ndarray): 
+                    The cropped image.
+        """
+        return image[borders[0]:image.shape[0]-borders[1], borders[2]:image.shape[1]-borders[3]]
+        
     def _compose_warps(
         self, 
         warp_0: np.ndarray, 
@@ -1376,7 +1447,6 @@ def clahe(
             im_out (np.ndarray): 
                 Output image after applying CLAHE.
     """
-    import cv2
     assert isinstance(grid_size, (int, tuple)), 'grid_size must be int or tuple'
     if isinstance(grid_size, int):
         grid_size = (grid_size, grid_size)
@@ -1507,8 +1577,8 @@ class ImageAlignmentChecker:
         hw: Tuple[int, int],
         radius_in: Union[float, Tuple[float, float]],
         radius_out: Union[float, Tuple[float, float]],
-        order: int,
-        device: str,
+        order: int = 5,
+        device: str = 'cpu',
     ):
         ## Set attributes
         ### Convert to torch.Tensor
@@ -1677,287 +1747,797 @@ class ImageAlignmentChecker:
         for more info.
         """
         return self.score_alignment(images)
-    
 
-def _safe_find_geometric_transformation(
-    im_template: np.ndarray,
-    im_moving: np.ndarray,
-    mask: np.ndarray,
-    gaussFiltSize,
-    image_id: Optional[Any] = None,
-    verbose: bool = False,
-    **kwargs_algo_findTransformECC,
-):
+
+##########################################################################################################
+########################################## REGISTRATION METHODS ##########################################
+##########################################################################################################
+
+class ImageRegistrationMethod:
     """
-    Safe version of find_geometric_transformation used in Aligner class (wrapper
-    for cv2.findTransformECC). If alignment fails during optimization, this
-    function will increase the gaussFiltSize parameter and try again.
+    Base class for image registration methods.
+    RH 2024
+
+    This class defines the interface for image registration methods, both rigid
+    and non-rigid. Subclasses should implement the methods `_forward_rigid` and
+    `_forward_nonrigid`.
 
     Args:
-        im_template (np.ndarray):
-            Template image.
-        im_moving (np.ndarray):
-            Moving image.
-        mask (np.ndarray):
-            Mask for the images.
-        gaussFiltSize (int):
-            Size of the Gaussian filter used to blur the images before
-            registration.
-        image_id (Optional[Any]):
-            Identifier for the image. Used for descriptive error messages.
+        device (str):
+            Device to use for computations.
         verbose (bool):
-            Whether to print verbose output.
-        **kwargs_algo_findTransformECC:
-            * mode_transform (str): Mode of the transformation. One of
-              ['translation', 'euclidean', 'affine', 'homography'].
-            * n_iter (int): Number of iterations for the optimization.
-            * termination_eps (float): Termination epsilon for the optimization.
-            * auto_fix_gaussFilt_step (int): Step size to increase gaussFiltSize
-              by if alignment fails.
+            Whether to print progress updates.
+    """    
+    def __init__(
+        self,
+        device: str = 'cpu',
+        verbose: bool = False,
+    ):
+        self.device = device
+        self.verbose = verbose
 
-    Returns:
-        (np.ndarray): 
-            Warp matrix for the geometric transformation. If the alignment
-            fails, the function will return an identity matrix. Shape: *(2, 3)*
-            for mode_transform in ['translation', 'euclidean', 'affine'], *(3,
-            3)* for mode_transform='homography'.
+    def fit_nonrigid(
+        self,
+        im_template: Union[np.ndarray, torch.Tensor],
+        im_moving: Union[np.ndarray, torch.Tensor],
+        **kwargs,
+    ):
+        remappingIdx = self._forward_nonrigid(im_template, im_moving, **kwargs)
+        return remappingIdx
+        
+    def fit_rigid(
+        self,
+        im_template: Union[np.ndarray, torch.Tensor],
+        im_moving: Union[np.ndarray, torch.Tensor],
+        inl_thresh: float = 2.0,
+        max_iter: int = 10,
+        confidence: float = 0.99,
+        **kwargs,
+    ):
+        ## Compute keypoints
+        kptsA, kptsB = self._forward_rigid(im_template, im_moving, **kwargs)
+        kptsA, kptsB = (torch.as_tensor(pts, device=self.device) for pts in (kptsA, kptsB))
+
+        ## Confirm lengths are sufficient for homography
+        if len(kptsA) < 4:
+            print(f'Not enough keypoints to estimate homography. Found {len(kptsA)} keypoints.')
+            warp_matrix = np.eye(3)
+            return warp_matrix
+        
+        # Convert keypoints to numpy arrays
+        src_pts = kptsA.cpu().numpy().astype(np.float32)
+        dst_pts = kptsB.cpu().numpy().astype(np.float32)
+
+        # Estimate homography using OpenCV's MAGSAC
+        warp_matrix, inliers = cv2.findHomography(
+            srcPoints=src_pts,
+            dstPoints=dst_pts,
+            method=cv2.USAC_MAGSAC,
+            ransacReprojThreshold=inl_thresh,
+            maxIters=max_iter,
+            confidence=confidence,
+        )
+        print(f"Found {inliers.sum()} inliers out of {len(src_pts)} keypoints.") if self.verbose > 1 else None
+        
+        warp_matrix = np.eye(3) if warp_matrix is None else warp_matrix
+
+        return warp_matrix
+        
+    def _forward_nonrigid(
+        self,
+        im_template: Union[np.ndarray, torch.Tensor],
+        im_moving: Union[np.ndarray, torch.Tensor],
+        **kwargs,
+    ):
+        raise NotImplementedError(f"Method _forward_nonrigid not implemented for {self.__class__.__name__}.")
+
+    def _forward_rigid(
+        self,
+        im_template: Union[np.ndarray, torch.Tensor],
+        im_moving: Union[np.ndarray, torch.Tensor],
+        **kwargs,
+    ):
+        raise NotImplementedError(f"Method _forward_rigid not implemented for {self.__class__.__name__}.")
+
+
+class RoMa(ImageRegistrationMethod):
     """
-    mode_transform, n_iter, termination_eps, auto_fix_gaussFilt_step = [kwargs_algo_findTransformECC[key] for key in [
-        'mode_transform', 'n_iter', 'termination_eps', 'auto_fix_gaussFilt_step'
-    ]]
+    RoMa-based image registration method.
+    RH 2024
 
-    # Check if mode_transform is valid
-    valid_mode_transforms = {'translation', 'euclidean', 'affine', 'homography'}
-    assert mode_transform in valid_mode_transforms, f"mode_transform must be one of {valid_mode_transforms}"
-    # Check if gaussFiltSize is a number (float or int)
-    assert isinstance(gaussFiltSize, (float, int)), "gaussFiltSize must be a number."
-    # Convert gaussFiltSize to an odd integer
-    gaussFiltSize = int(np.round(gaussFiltSize))
+    Args:
+        model_type (str):
+            Type of RoMa model to use. Either 'outdoor' or 'indoor'.
+        n_points (int):
+            Number of points to sample for matching. (Default is *10000*)
+        batch_size (int):
+            Batch size for processing matches. (Default is *1000*)
+        device (str):
+            Device to use for computations.
+        verbose (bool):
+            Whether to print progress updates.
+    """
+    def __init__(
+        self,
+        model_type: str = 'outdoor',
+        n_points: int = 10000,
+        batch_size: int = 1000,
+        device: str = 'cpu',
+        verbose=False,
+    ):
+        try:
+            from romatch import roma_outdoor, roma_indoor, tiny_roma_v1_outdoor
+        except ImportError:
+            raise ImportError("RoMa not installed. Please install romatch. See ROICaT's installation instructions for more details.")
 
-    try:
-        warp_matrix = helpers.find_geometric_transformation(
+        super().__init__(device=device, verbose=verbose)
+
+        self.roma_model_type = model_type
+        self.n_points = n_points
+        self.batch_size = batch_size
+        self.verbose = verbose
+
+        if model_type == 'outdoor':
+            self.model = roma_outdoor(device=device)
+        elif model_type == 'indoor':
+            self.model = roma_indoor(device=device)
+    
+    def _match(
+        self,
+        im1: Union[np.ndarray, torch.Tensor],
+        im2: Union[np.ndarray, torch.Tensor],
+        device: Optional[str] = None,
+        **kwargs,
+    ):
+        ff, certainty = self.model.match(
+            self._prepare_image(im1),
+            self._prepare_image(im2),
+            device=self.device if device is None else device,
+        )
+        return ff, certainty
+    
+    def _forward_nonrigid(
+        self,
+        im_template: Union[np.ndarray, torch.Tensor],
+        im_moving: Union[np.ndarray, torch.Tensor],
+        **kwargs,
+    ):
+        h, w = im_moving.shape[0], im_moving.shape[1]
+        
+        ## Pass images through RoMa model to get flow field
+        ff, certainty = self._match(im_template, im_moving, device=self.device)
+
+        ## Convert flow field to remappingIdx
+        remappingIdx = helpers.resize_remappingIdx(
+            ri=helpers.pytorchFlowField_to_cv2RemappingIdx(ff.cpu()[:, :ff.shape[1]//2, 2:]),
+            new_shape=(h, w),
+            interpolation='BILINEAR',
+        )
+        return remappingIdx.cpu().numpy()
+    
+    def _forward_rigid(
+        self,
+        im_template: Union[np.ndarray, torch.Tensor],
+        im_moving: Union[np.ndarray, torch.Tensor],
+        **kwargs,
+    ):
+        h, w = im_moving.shape[0], im_moving.shape[1]
+        
+        ## Pass images through RoMa model to get flow field
+        ff, certainty = self._match(im_template, im_moving, device=self.device)
+
+        ## Sample matches for estimation
+        def get_points(ff, certainty, num):
+            matches, certainty = self.model.sample(ff, certainty, num=num)
+            kptsA, kptsB = self.model.to_pixel_coordinates(matches, h, w, h, w)
+            return kptsA, kptsB, certainty
+
+        ## Batch the points
+        batch_ns = [int(batch.sum()) for batch in helpers.make_batches(np.ones(self.n_points), batch_size=self.batch_size, min_batch_size=10)]
+        outs = [get_points(ff, certainty, num=n) for n in batch_ns]
+
+        kptsA, kptsB, certainty = [torch.cat([out[ii] for out in outs], dim=0) for ii in range(3)]
+
+        return kptsA, kptsB
+
+
+    def _prepare_image(
+        self,
+        image: np.ndarray,
+    ):
+        """
+        Prepare FOV image for RoMa model.
+
+        Args:
+
+                Image to be prepared. dtype should be floating and data must be
+                in range [0, 1].
+
+        Returns:
+            PIL.Image: 
+                Image object.
+        """
+        if isinstance(image, torch.Tensor):
+            image = image.cpu().numpy()
+        return PIL.Image.fromarray(image * 255).convert("RGB")
+
+
+class LoFTR(ImageRegistrationMethod):
+    """
+    LoFTR-based image registration method.
+    RH 2024
+
+    Args:
+        model_type (str):
+            Type of LoFTR model to use. Default is 'indoor_new'.
+        threshold_confidence (float):
+            Confidence threshold for filtering matches. (Default is *0.2*)
+        device (str):
+            Device to use for computations.
+        verbose (bool):
+            Whether to print progress updates.
+    """    
+    def __init__(
+        self,
+        model_type: str = 'indoor_new',
+        threshold_confidence: float = 0.2,
+        device: str = 'cpu',
+        verbose: bool = False,
+    ):
+        super().__init__(device=device, verbose=verbose)
+        self.verbose = verbose
+
+        self.model_type = model_type
+        self.threshold_confidence = threshold_confidence
+
+        self.model = kornia.feature.LoFTR(pretrained=model_type)
+        self.model.to(device)
+    
+    def _forward_rigid(
+        self,
+        im_template: Union[np.ndarray, torch.Tensor],
+        im_moving: Union[np.ndarray, torch.Tensor],
+        threshold_confidence: Optional[float] = None,
+        **kwargs,
+    ):
+        input_dict = {
+            'image0': torch.as_tensor(im_template, dtype=torch.float32, device=self.device)[None, None, :, :],
+            'image1': torch.as_tensor(im_moving, dtype=torch.float32, device=self.device)[None, None, :, :],
+        }
+        ## Get the keypoints and descriptors
+        with torch.inference_mode():
+            matches = self.model(input_dict)
+        ## Clean up matches with low confidence
+        bool_keep = matches["confidence"] > (self.threshold_confidence if threshold_confidence is None else threshold_confidence)
+        kptsA = matches["keypoints0"][bool_keep]
+        kptsB = matches["keypoints1"][bool_keep]
+        return kptsA, kptsB
+    
+
+class ECC_cv2(ImageRegistrationMethod):
+    """
+    Image registration method using OpenCV's ECC algorithm.
+    RH 2024
+
+    Args:
+        mode_transform (str):
+            Type of geometric transformation. One of {'translation',
+            'euclidean', 'affine', 'homography'}.
+            (Default is 'euclidean')
+        n_iter (int):
+            Number of iterations for optimization. (Default is *200*)
+        termination_eps (float):
+            Convergence tolerance. (Default is *1e-09*)
+        gaussFiltSize (Union[float, int]):
+            Size of Gaussian blurring filter applied to images. (Default is *1*)
+        auto_fix_gaussFilt_step (Optional[int]):
+            Increment in gaussFiltSize after a failed optimization. If ``None``,
+            no automatic fixing is performed.
+            (Default is *10*)
+        device (str):
+            Device to use for computations.
+        verbose (bool):
+            Whether to print progress updates.
+    """    
+    def __init__(
+        self,
+        mode_transform='euclidean',  ## type of geometric transformation. See openCV's cv2.findTransformECC for details
+        n_iter: int = 200,  ## number of iterations for optimization
+        termination_eps: float = 1e-09,  ## convergence tolerance
+        gaussFiltSize: Union[float, int] = 1,  ## size of gaussian blurring filter applied to all images
+        auto_fix_gaussFilt_step: Optional[int] = 10,  ## increment in gaussFiltSize after a failed optimization
+        device: str = 'cpu',
+        verbose: bool = False,
+    ):
+
+        super().__init__(device=device, verbose=verbose)
+
+        ## Check inputs
+        ### Check if mode_transform is valid
+        valid_mode_transforms = {'translation', 'euclidean', 'affine', 'homography'}
+        assert mode_transform in valid_mode_transforms, f"mode_transform must be one of {valid_mode_transforms}"
+        ### Check if gaussFiltSize is a number (float or int)
+        assert isinstance(gaussFiltSize, (float, int)), "gaussFiltSize must be a number."
+        ### Convert gaussFiltSize to an odd integer
+        gaussFiltSize = int(np.round(gaussFiltSize))
+
+        self.mode_transform, self.n_iter, self.termination_eps, self.gaussFiltSize, self.auto_fix_gaussFilt_step = \
+            mode_transform, n_iter, termination_eps, gaussFiltSize, auto_fix_gaussFilt_step
+    
+    def fit_rigid(
+        self,
+        im_template: Union[np.ndarray, torch.Tensor],
+        im_moving: Union[np.ndarray, torch.Tensor],
+        **kwargs,
+    ):
+        def _recursive_closure(
+            im_template: Union[np.ndarray, torch.Tensor],
+            im_moving: Union[np.ndarray, torch.Tensor],
+            gaussFiltSize: Union[float, int],
+            depth: int = 0,
+            max_depth: int = 100,
+        ):
+            depth += 1
+            try:
+                warp_matrix = helpers.find_geometric_transformation(
+                    im_template=im_template,
+                    im_moving=im_moving,
+                    warp_mode=self.mode_transform,
+                    n_iter=self.n_iter,
+                    termination_eps=self.termination_eps,
+                    gaussFiltSize=gaussFiltSize,
+                )
+            except Exception as e:
+                if self.auto_fix_gaussFilt_step is not None:
+                    print(f'Error finding geometric registration warp for image. Error: {e}') if self.verbose else None
+
+                    if depth > max_depth:
+                        print(f"Reached maximum depth of {max_depth}. Returning identity matrix warp.")
+                        return np.eye(3)[:2,:] if self.mode_transform != 'homography' else np.eye(3)
+                    return _recursive_closure(
+                        im_template=im_template,
+                        im_moving=im_moving,
+                        gaussFiltSize=gaussFiltSize + self.auto_fix_gaussFilt_step,
+                        depth=depth,
+                        max_depth=max_depth,
+                    )
+
+                print(f'Failed finding geometric registration warp for image Error: {e}')
+                print(f'Defaulting to identity matrix warp.')
+                print(f'Consider doing one of the following:')
+                print(f'  - Make better images to input. You can add the spatialFootprints images to the FOV images to make them better.')
+                print(f'  - Increase the gaussFiltSize parameter. This will make the images blurrier, but may help with registration.')
+                print(f'  - Decrease the termination_eps parameter. This will make the registration less accurate, but may help with registration.')
+                print(f'  - Increase the mask_borders parameter. This will make the images smaller, but may help with registration.')
+                warp_matrix = np.eye(3)[:2,:] if self.mode_transform != 'homography' else np.eye(3)
+            return warp_matrix
+        
+        warp_matrix = _recursive_closure(
             im_template=im_template,
             im_moving=im_moving,
-            warp_mode=mode_transform,
-            n_iter=n_iter,
-            mask=mask,
-            termination_eps=termination_eps,
-            gaussFiltSize=gaussFiltSize,
+            gaussFiltSize=self.gaussFiltSize,
         )
-    except Exception as e:
-        if auto_fix_gaussFilt_step:
-            print(f'Error finding geometric registration warp for image {image_id}: {e}') if verbose else None
-            print(f'Increasing gaussFiltSize by {auto_fix_gaussFilt_step} to {gaussFiltSize + auto_fix_gaussFilt_step}') if verbose else None
-            return _safe_find_geometric_transformation(
-                im_template=im_template,
-                im_moving=im_moving,
-                mask=mask,
-                gaussFiltSize=gaussFiltSize + auto_fix_gaussFilt_step,
-                image_id=image_id,
-                verbose=verbose,
-                **kwargs_algo_findTransformECC,
-            )
 
-        print(f'Error finding geometric registration warp for image {image_id}: {e}')
-        print(f'Defaulting to identity matrix warp.')
-        print(f'Consider doing one of the following:')
-        print(f'  - Make better images to input. You can add the spatialFootprints images to the FOV images to make them better.')
-        print(f'  - Increase the gaussFiltSize parameter. This will make the images blurrier, but may help with registration.')
-        print(f'  - Decrease the termination_eps parameter. This will make the registration less accurate, but may help with registration.')
-        print(f'  - Increase the mask_borders parameter. This will make the images smaller, but may help with registration.')
-        warp_matrix = np.eye(3)[:2,:] if mode_transform != 'homography' else np.eye(3)
-    return warp_matrix
+        warp_matrix = np.concatenate([warp_matrix, np.array([[0, 0, 1]])], axis=0) if warp_matrix.shape[0] == 2 else warp_matrix
+        return warp_matrix
 
 
-def _LoFTR_fit(
-    im_template: Union[np.ndarray, torch.Tensor],
-    im_moving: Union[np.ndarray, torch.Tensor],
-    mask_borders: Tuple[int, int, int, int],
-    image_id: Optional[Any] = None,
-    device: str = 'cpu',
-    verbose: bool = False,
-    **kwargs_algo_LoFTR,
-):
+class DeepFlow(ImageRegistrationMethod):
     """
-    Fit a geometric transformation using LoFTR and RANSAC.
+    Image registration method using OpenCV's DeepFlow algorithm.
+    RH 2024
 
     Args:
-        im_template (Union[np.ndarray, torch.Tensor]):
-            Template image.
-        im_moving (Union[np.ndarray, torch.Tensor]):
-            Moving image.
-        mask_borders (Tuple[int, int, int, int]):
-            Borders to mask from the images. Format: (top, bottom, left, right)
-        image_id (Optional[Any]):
-            Identifier for the image. Used for descriptive error messages.
+        device (str):
+            Device to use for computations.
         verbose (bool):
-            Whether to print verbose output.
-        **kwargs_algo_LoFTR:
-            * mode_transform (str): Mode of the transformation. One of
-              ['euclidean', 'similarity', 'affine', 'projective'].
-            * gaussFiltSize (int): Size of the Gaussian filter used to blur the
-              images before registration.
-            * confidence_LoFTR (float): Confidence threshold for LoFTR matches.
-            * confidence_RANSAC (float): Confidence threshold for RANSAC.
-            * ransacReprojThreshold (float): RANSAC reprojection threshold.
-            * maxIters (int): Maximum number of iterations for RANSAC.
+            Whether to print progress updates.
     """
-    import kornia
-    import skimage
-    import cv2
+    def __init__(
+        self,
+        device: str = 'cpu',
+        verbose=False,
+    ):
+        super().__init__(device=device, verbose=verbose)
 
-    mode_transform, gaussFiltSize, confidence_LoFTR, confidence_RANSAC, ransacReprojThreshold, maxIters = [kwargs_algo_LoFTR[key] for key in [
-        'mode_transform', 'gaussFiltSize', 'confidence_LoFTR', 'confidence_RANSAC', 'ransacReprojThreshold', 'maxIters'
-    ]]
-
-    ## Confirm that the images are floats between 0 and 1
-    assert all([np.issubdtype(im.dtype, np.floating) for im in [im_template, im_moving]]), 'Images must be floating dtype.'
-    assert all([np.min(im) >= 0 and np.max(im) <= 1 for im in [im_template, im_moving]]), 'Images must be between 0 and 1.'
-    ## Prepare input dictionary
-    input_dict = {
-        'image0': torch.as_tensor(im_template, dtype=torch.float32, device=device)[None, None, :, :],
-        'image1': torch.as_tensor(im_moving, dtype=torch.float32, device=device)[None, None, :, :],
-    }
-    ## Mask the images by cropping out the borders
-    b_top, b_bottom, b_left, b_right = mask_borders[0], input_dict['image0'].shape[2] - mask_borders[1], mask_borders[2], input_dict['image0'].shape[3] - mask_borders[3]
-    input_dict['image0'] = input_dict['image0'][:, :, b_top:b_bottom][:, :, :, b_left:b_right]
-    input_dict['image1'] = input_dict['image1'][:, :, b_top:b_bottom][:, :, :, b_left:b_right]
-
-    # ## Normalize the images for LoFTR
-    # ### LoFTR expects images to be in the range [0, 1]
-    # input_dict['image0'] = input_dict['image0'] / input_dict['image0'].max()
-    # input_dict['image1'] = input_dict['image1'] / input_dict['image1'].max()
-
-    ## Blur the images
-    if gaussFiltSize > 0:
-        input_dict['image0'] = kornia.filters.gaussian_blur2d(input=input_dict['image0'], kernel_size=gaussFiltSize, sigma=((s:=gaussFiltSize/6), s))
-        input_dict['image1'] = kornia.filters.gaussian_blur2d(input=input_dict['image1'], kernel_size=gaussFiltSize, sigma=((s:=gaussFiltSize/6), s))
-
-    ## Load LoFTR model
-    model = kornia.feature.LoFTR(pretrained="indoor_new")
-    model = model.to(device)
-    ## Get the keypoints and descriptors
-    with torch.inference_mode():
-        matches = model(input_dict)
-    ## Clean up matches with low confidence
-    mkpts0 = matches["keypoints0"].cpu().numpy()
-    mkpts1 = matches["keypoints1"].cpu().numpy()
-    print(f"Found {mkpts0.shape[0]} matches.") if verbose else None
-    mkpts0 = mkpts0[(matches["confidence"] > confidence_LoFTR).cpu().numpy().astype(np.bool_)]
-    mkpts1 = mkpts1[(matches["confidence"] > confidence_LoFTR).cpu().numpy().astype(np.bool_)]
-    ## Throw an error if no matches are found
-    print(f"Found {mkpts0.shape[0]} matches.") if verbose else None
-    if mkpts0.shape[0] < 2:
-        print(f'Registration Failed for image_moving: {image_id}. Not enough matches found. Setting warp matrix to identity. Found: {mkpts0.shape[0]} matches. Try adjusting one of the following: decrease confidence_LoFTR, decrease gaussFiltSize, increase mask_borders.')
-        return np.eye(3)
-    ## Get inliers
-    try:
-        fund_mat, inliers = cv2.findFundamentalMat(
-            points1=mkpts0,
-            points2=mkpts1,
-            method=cv2.USAC_MAGSAC,
-            ransacReprojThreshold=ransacReprojThreshold,
-            confidence=confidence_RANSAC,
-            maxIters=maxIters,
-        )
-    except Exception as e:
-        print(f'Registration Failed for image_moving: {image_id}. Error finding fundamental matrix. Setting warp matrix to identity. Likely not enough matches found. Found: {mkpts0.shape[0]} matches. Try adjusting one of the following: decrease confidence_LoFTR, decrease gaussFiltSize, increase mask_borders. \nError: {e}')
-        return np.eye(3)
-    inliers = np.array(inliers > 0, dtype=np.bool_).ravel()
-    # ## Remove outliers
-    # mkpts0 = mkpts0[inliers].astype(np.float32)
-    # mkpts1 = mkpts1[inliers].astype(np.float32)
-
-    ## Use skimage's estimate_transform
-    tforms = ['euclidean', 'similarity', 'affine', 'projective']
-    assert mode_transform in tforms, f'Found mode_transform={mode_transform}. Must be one of {tforms.keys()}'
-    warp_matrix = skimage.transform.estimate_transform(
-        ttype=mode_transform,
-        src=mkpts0,
-        dst=mkpts1,
-    ).params
-
-    # plt.figure()
-    # plt.scatter(mkpts0[:,0,0], mkpts1[:,0,0], c='r')
-    # plt.scatter(mkpts0[:,0,1], mkpts1[:,0,1], c='b')
-    # plt.show()
-
-    ## Get the transformation matrix (can be homography or affine, etc.)
-    # if mode_transform == 'homography':
-    #     warp_matrix, inliers = cv2.findHomography(
-    #         mkpts0,
-    #         mkpts1,
-    #         method=cv2.RANSAC,
-    #         ransacReprojThreshold=ransacReprojThreshold,
-    #         confidence=confidence_RANSAC,
-    #         maxIters=maxIters,
-    #     )
-    #     # print(warp_matrix.shape)
-    #     # warp_matrix = np.linalg.inv(warp_matrix)
-    #     # warp_matrix = warp_matrix[:2, :].astype(np.float32)
-    # elif mode_transform == 'affine':
-    #     ## Don't use estimateAffinePartial2D because it doesn't work well
-    #     warp_matrix, mask = cv2.estimate(
-    #         mkpts0,
-    #         mkpts1,
-    #         method=cv2.RANSAC,
-    #         ransacReprojThreshold=ransacReprojThreshold,
-    #         maxIters=maxIters,
-    #         confidence=confidence_RANSAC,
-    #     )
-    ## Use skimage's estimate_transform
-
-    # # print(warp_matrix)
-    # warp_matrix = np.linalg.inv(warp_matrix)
-    # # else:
-    # #     raise ValueError(f'LoFTR does not support mode_transform={mode_transform}')
-
+        self.model = cv2.optflow.createOptFlow_DeepFlow()
     
-    # print(warp_matrix)
-    # warp_matrix = warp_matrix[:2, :].astype(np.float32)
-    ## Warp image
-    # im_moving_warped = cv2.warpAffine(
-    #     im_moving,
-    #     warp_matrix,
-    #     (W, H),
-    #     flags=cv2.INTER_LINEAR,
-    #     borderMode=cv2.BORDER_CONSTANT,
-    #     borderValue=float(im_moving.mean()),
-    # )
-    # im_moving_warped = cv2.warpPerspective(
-    #     im_moving,
-    #     warp_matrix,
-    #     (W, H),
-    #     flags=cv2.INTER_LINEAR,
-    #     borderMode=cv2.BORDER_CONSTANT,
-    #     borderValue=float(im_moving.mean()),
-    # )
-    # im_moving_warped = kornia.geometry.warp_perspective(
-    #     torch.as_tensor(im_moving).view(1, 1, H, W),
-    #     torch.as_tensor(warp_matrix).view(1, 3, 3),
-    #     dsize=(H, W),
-    #     align_corners=False,
-    # ).squeeze().numpy()[]
-    ## Show the images
-    # from .. import visualization
-    # visualization.display_toggle_image_stack([im_template, im_moving_warped],)
-    # from kornia_moons.viz import draw_LAF_matches
-    # draw_LAF_matches(
-    #     kornia.feature.laf_from_center_scale_ori(
-    #         torch.from_numpy(mkpts0).view(1, -1, 2),
-    #         torch.ones(mkpts0.shape[0]).view(1, -1, 1, 1),
-    #         torch.ones(mkpts0.shape[0]).view(1, -1, 1),
-    #     ),
-    #     kornia.feature.laf_from_center_scale_ori(
-    #         torch.from_numpy(mkpts1).view(1, -1, 2),
-    #         torch.ones(mkpts1.shape[0]).view(1, -1, 1, 1),
-    #         torch.ones(mkpts1.shape[0]).view(1, -1, 1),
-    #     ),
-    #     torch.arange(mkpts0.shape[0]).view(-1, 1).repeat(1, 2),
-    #     kornia.tensor_to_image(torch.as_tensor(input_dict['image0'])),
-    #     kornia.tensor_to_image(torch.as_tensor(input_dict['image1'])),
-    #     inliers,
-    #     draw_dict={"inlier_color": (0.2, 1, 0.2), "tentative_color": None, "feature_color": (0.2, 0.5, 1), "vertical": False},
-    # )
+    def _forward_nonrigid(
+        self,
+        im_template: Union[np.ndarray, torch.Tensor],
+        im_moving: Union[np.ndarray, torch.Tensor],
+        **kwargs,
+    ):
+        h, w = im_moving.shape
+        x_grid, y_grid = np.meshgrid(np.arange(0., w).astype(np.float32), np.arange(0., h).astype(np.float32), indexing='xy')
 
-    return warp_matrix
+        im_template, im_moving = (self._prepare_image(im) for im in (im_template, im_moving))
+
+        remappingIdx = self.model.calc(
+            im_template,
+            im_moving,
+            None
+        ) + np.stack([x_grid, y_grid], axis=-1)
+
+        return remappingIdx
+    
+    def _prepare_image(
+        self,
+        image: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Prepare FOV image for RoMa model.
+
+        Args:
+            image (np.ndarray): 
+                Image to be prepared. dtype should be floating and data must be
+                in range [0, 1].
+
+        Returns:
+            np.ndarray:
+                image array
+        """
+        if isinstance(image, torch.Tensor):
+            image = image.cpu().numpy()
+        
+        return (image * 255).astype(np.uint8)
+
+
+class OpticalFlowFarneback(ImageRegistrationMethod):
+    """
+    Image registration method using OpenCV's calcOpticalFlowFarneback.
+    RH 2024
+
+    Args:
+        pyr_scale (float):
+            Parameter specifying the image scale (<1) to build pyramids for each
+            image. (Default is *0.3*)
+        levels (int):
+            Number of pyramid layers including the initial image. (Default is
+            *3*)
+        winsize (int):
+            Averaging window size. Larger values increase the algorithm
+            robustness to noise and provide smoother motion field. (Default is
+            *128*)
+        iterations (int):
+            Number of iterations the algorithm does at each pyramid level.
+            (Default is *7*)
+        poly_n (int):
+            Size of the pixel neighborhood used to find polynomial expansion in
+            each pixel. (Default is *5*)
+        poly_sigma (float):
+            Standard deviation of the Gaussian used to smooth derivatives used
+            as a basis for the polynomial expansion. (Default is *1.5*)
+        flags (int):
+            Operation flags. (Default is cv2.OPTFLOW_FARNEBACK_GAUSSIAN)
+        device (str):
+            Device to use for computations.
+        verbose (bool):
+            Whether to print progress updates.
+    """    
+    def __init__(
+        self,
+        pyr_scale: float = 0.3,
+        levels: int = 3,
+        winsize: int = 128,
+        iterations: int = 7,
+        poly_n: int = 5,
+        poly_sigma: float = 1.5,
+        flags: int = cv2.OPTFLOW_FARNEBACK_GAUSSIAN,  ## == 256
+        device: str = 'cpu',
+        verbose=False,
+    ):
+        super().__init__(device=device, verbose=verbose)
+
+        self.pyr_scale, self.levels, self.winsize, self.iterations, self.poly_n, self.poly_sigma, self.flags = \
+            pyr_scale, levels, winsize, iterations, poly_n, poly_sigma, flags
+    
+    def _forward_nonrigid(
+        self,
+        im_template: Union[np.ndarray, torch.Tensor],
+        im_moving: Union[np.ndarray, torch.Tensor],
+        **kwargs,
+    ):
+        h, w = im_moving.shape
+        x_grid, y_grid = np.meshgrid(np.arange(0., w).astype(np.float32), np.arange(0., h).astype(np.float32), indexing='xy')
+
+        im_template, im_moving = (self._prepare_image(im) for im in (im_template, im_moving))
+
+        remappingIdx = cv2.calcOpticalFlowFarneback(
+            prev=im_template,
+            next=im_moving,
+            flow=None,
+            pyr_scale=self.pyr_scale,
+            levels=self.levels,
+            winsize=self.winsize,
+            iterations=self.iterations,
+            poly_n=self.poly_n,
+            poly_sigma=self.poly_sigma,
+            flags=self.flags,
+        ) + np.stack([x_grid, y_grid], axis=-1)
+
+        return remappingIdx
+    
+    def _prepare_image(
+        self,
+        image: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Prepare FOV image for RoMa model.
+
+        Args:
+            image (np.ndarray): 
+                Image to be prepared. dtype should be floating and data must be
+                in range [0, 1].
+
+        Returns:
+            np.ndarray:
+                image array
+        """
+        if isinstance(image, torch.Tensor):
+            image = image.cpu().numpy()
+        
+        return (image * 255).astype(np.uint8)
+    
+
+class SIFT(ImageRegistrationMethod):
+    """
+    Image registration method using SIFT keypoints.
+    RH 2024
+
+    Args:
+        nfeatures (int):
+            Number of best features to retain. (Default is *500*)
+        contrastThreshold (float):
+            Contrast threshold used to filter out weak features. (Default is
+            *0.04*)
+        edgeThreshold (float):
+            Threshold used to filter out edge-like features. (Default is *10*)
+        sigma (float):
+            Sigma of the Gaussian applied to the input image at the octave #0.
+            (Default is *1.6*)
+        device (str):
+            Device to use for computations.
+        verbose (bool):
+            Whether to print progress updates.
+    """    
+    def __init__(
+        self,
+        nfeatures: int = 500,
+        contrastThreshold: float = 0.04,
+        edgeThreshold: float = 10,
+        sigma: float = 1.6,
+        device: str = 'cpu',
+        verbose: bool = False,
+    ):
+        super().__init__(device=device, verbose=verbose)
+
+        self.sift = cv2.SIFT_create(
+            nfeatures=nfeatures,
+            contrastThreshold=contrastThreshold,
+            edgeThreshold=edgeThreshold,
+            sigma=sigma,
+        )
+        self.matcher = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
+
+    def _forward_rigid(
+        self,
+        im_template: Union[np.ndarray, torch.Tensor],
+        im_moving: Union[np.ndarray, torch.Tensor],
+        **kwargs,
+    ):
+        # Prepare images
+        img1 = self._prepare_image(im_template)
+        img2 = self._prepare_image(im_moving)
+        # Detect and compute features
+        keypoints1, descriptors1 = self.sift.detectAndCompute(img1, None)
+        keypoints2, descriptors2 = self.sift.detectAndCompute(img2, None)
+        # Match descriptors
+        matches = self.matcher.match(descriptors1, descriptors2)
+        # Sort matches by distance (quality)
+        matches = sorted(matches, key=lambda x: x.distance)
+        # Extract matched keypoints
+        kptsA = np.float32([keypoints1[m.queryIdx].pt for m in matches])
+        kptsB = np.float32([keypoints2[m.trainIdx].pt for m in matches])
+        # Convert to torch tensors
+        kptsA = torch.from_numpy(kptsA).to(self.device)
+        kptsB = torch.from_numpy(kptsB).to(self.device)
+        return kptsA, kptsB
+
+    def _prepare_image(
+        self,
+        image: Union[np.ndarray, torch.Tensor],
+    ):
+        if isinstance(image, torch.Tensor):
+            image = image.cpu().numpy()
+        if image.ndim == 3:
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        image = (image * 255).astype(np.uint8)
+        return image
+
+
+class ORB(ImageRegistrationMethod):
+    """
+    Image registration method using ORB keypoints.
+    RH 2024
+
+    Args:
+        nfeatures (int):
+            Maximum number of features to retain. (Default is *500*)
+        scaleFactor (float):
+            Pyramid decimation ratio. (Default is *1.2*)
+        nlevels (int):
+            Number of pyramid levels. (Default is *8*)
+        edgeThreshold (int):
+            Size of the border where the features are not detected. (Default is
+            *31*)
+        firstLevel (int):
+            The level of pyramid to put source image to. (Default is *0*)
+        WTA_K (int):
+            Number of points that produce each element of the oriented BRIEF
+            descriptor. (Default is *2*)
+        scoreType (int):
+            Type of score to rank features. (Default is cv2.ORB_HARRIS_SCORE)
+        patchSize (int):
+            Size of the patch used by the oriented BRIEF descriptor. (Default is
+            *31*)
+        fastThreshold (int):
+            FAST threshold. (Default is *20*)
+        device (str):
+            Device to use for computations.
+        verbose (bool):
+            Whether to print progress updates.
+    """
+    def __init__(
+        self,
+        nfeatures: int = 500,
+        scaleFactor: float = 1.2,
+        nlevels: int = 8,
+        edgeThreshold: int = 31,
+        firstLevel: int = 0,
+        WTA_K: int = 2,
+        scoreType: int = cv2.ORB_HARRIS_SCORE,
+        patchSize: int = 31,
+        fastThreshold: int = 20,
+        device: str = 'cpu',
+        verbose: bool = False,
+    ):
+        super().__init__(device=device, verbose=verbose)
+        self.orb = cv2.ORB_create(
+            nfeatures=nfeatures,
+            scaleFactor=scaleFactor,
+            nlevels=nlevels,
+            edgeThreshold=edgeThreshold,
+            firstLevel=firstLevel,
+            WTA_K=WTA_K,
+            scoreType=scoreType,
+            patchSize=patchSize,
+            fastThreshold=fastThreshold,
+        )
+        self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+
+    def _forward_rigid(
+        self,
+        im_template: Union[np.ndarray, torch.Tensor],
+        im_moving: Union[np.ndarray, torch.Tensor],
+        **kwargs,
+    ):
+        # Prepare images
+        img1 = self._prepare_image(im_template)
+        img2 = self._prepare_image(im_moving)
+        # Detect and compute features
+        keypoints1, descriptors1 = self.orb.detectAndCompute(img1, None)
+        keypoints2, descriptors2 = self.orb.detectAndCompute(img2, None)
+        # Match descriptors
+        matches = self.matcher.match(descriptors1, descriptors2)
+        # Sort matches by distance (quality)
+        matches = sorted(matches, key=lambda x: x.distance)
+        # Extract matched keypoints
+        kptsA = np.float32([keypoints1[m.queryIdx].pt for m in matches])
+        kptsB = np.float32([keypoints2[m.trainIdx].pt for m in matches])
+        # Convert to torch tensors
+        kptsA = torch.from_numpy(kptsA).to(self.device)
+        kptsB = torch.from_numpy(kptsB).to(self.device)
+        return kptsA, kptsB
+
+    def _prepare_image(
+        self,
+        image: Union[np.ndarray, torch.Tensor],
+    ):
+        if isinstance(image, torch.Tensor):
+            image = image.cpu().numpy()
+        if image.ndim == 3:
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        image = (image * 255).astype(np.uint8)
+        return image
+
+
+class DISK_LightGlue(ImageRegistrationMethod):
+    """
+    Image registration method using DISK features and LightGlue matcher.
+    RH 2024
+
+    Args:
+        num_features (int):
+            Number of features to extract. (Default is *2048*)
+        threshold_confidence (float):
+            Confidence threshold for filtering matches. (Default is *0.2*)
+        device (str):
+            Device to use for computations.
+        verbose (bool):
+            Whether to print progress updates.
+    """    
+    def __init__(
+        self,
+        num_features: int = 2048,
+        threshold_confidence: float = 0.2,
+        device: str = 'cpu',
+        verbose: bool = False,
+    ):
+        super().__init__(device=device, verbose=verbose)
+        self.verbose = verbose
+        self.threshold_confidence = threshold_confidence
+        self.num_features = num_features
+
+        # Initialize feature extractor
+        self.feature_extractor = kornia.feature.DISK.from_pretrained("depth").eval().to(device)
+
+        # Initialize LightGlue matcher
+        self.matcher = kornia.feature.LightGlue('disk').eval().to(device)
+
+    def _forward_rigid(
+        self,
+        im_template: Union[np.ndarray, torch.Tensor],
+        im_moving: Union[np.ndarray, torch.Tensor],
+        **kwargs,
+    ):
+        # Prepare images
+        img1 = self._prepare_image(im_template)
+        img2 = self._prepare_image(im_moving)
+
+        # Extract features
+        with torch.inference_mode():
+            inp = torch.cat([img1, img2], dim=0)
+            features = self.feature_extractor(inp, self.num_features)
+            features1 = features[0]
+            features2 = features[1]
+            kps1, descs1 = features1.keypoints, features1.descriptors
+            kps2, descs2 = features2.keypoints, features2.descriptors
+
+            # Prepare data for LightGlue
+            image0 = {
+                "keypoints": kps1[None],
+                "descriptors": descs1[None],
+                "image_size": torch.tensor(img1.shape[-2:][::-1]).view(1, 2).to(self.device),
+            }
+            image1 = {
+                "keypoints": kps2[None],
+                "descriptors": descs2[None],
+                "image_size": torch.tensor(img2.shape[-2:][::-1]).view(1, 2).to(self.device),
+            }
+
+            # Match with LightGlue
+            out = self.matcher({"image0": image0, "image1": image1})
+            idxs = out["matches0"][0].cpu()  # matches0 from LightGlue output
+            valid = (idxs > -1)
+            confidences = out["matching_scores0"][0].cpu()
+            valid = (valid * (confidences > self.threshold_confidence)).cpu()
+            idxs = torch.stack([torch.arange(len(kps1))[valid], idxs[valid]], dim=-1)
+
+        # Get matching keypoints
+        kptsA = kps1[idxs[:, 0]]
+        kptsB = kps2[idxs[:, 1]]
+        return kptsA, kptsB
+
+    def _prepare_image(self, image: Union[np.ndarray, torch.Tensor]):
+        if isinstance(image, np.ndarray):
+            image = torch.from_numpy(image).float()
+        if image.dim() == 2:
+            image = image.unsqueeze(0)  # Add channel dimension
+        if image.dim() == 3:
+            image = image.unsqueeze(0)  # Add batch dimension
+        if image.max() > 1.0:
+            image = image / 255.0
+        image = image.to(self.device).tile(1, 3, 1, 1)  # Add color channels
+        return image
+    
