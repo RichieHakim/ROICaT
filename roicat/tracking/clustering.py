@@ -1096,6 +1096,8 @@ class Clusterer(util.ROICaT_Module):
 
         d_intra = d_conj.multiply(self.s_sesh_inv)
         d_intra.eliminate_zeros()
+        if len(d_intra.data) == 0:
+            return None, None, None, None, None, None
         counts, _ = torch.histogram(torch.as_tensor(d_intra.data, dtype=torch.float32), edges)
         # dens_diff = fn_smooth(counts / counts.sum())  ## distances of known differents
         # dens_diff = counts / counts.sum()  ## distances of known differents
