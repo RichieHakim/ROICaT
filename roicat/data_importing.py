@@ -1054,10 +1054,15 @@ class Data_suite2p(Data_roicat):
         self.params['__init__'] = self._locals_to_params(
             locals_dict=locals(),
             keys=[
+                'paths_statFiles',
+                'paths_opsFiles',
+                'um_per_pixel',
                 'new_or_old_suite2p', 
                 'out_height_width', 
                 'type_meanImg', 
                 'centroid_method', 
+                'paths_iscell',
+                'FOV_height_width',
                 'verbose',
             ],
         )
@@ -1428,6 +1433,9 @@ class Data_caiman(Data_roicat):
         self.params['__init__'] = self._locals_to_params(
             locals_dict=locals(),
             keys=[
+                'paths_resultsFiles',
+                'include_discarded',
+                'um_per_pixel',
                 'out_height_width', 
                 'centroid_method', 
                 'verbose',

@@ -15,6 +15,7 @@ import richfile as rf
 
 from . import helpers
 
+
 def get_roicat_version() -> str:
     """
     Retrieves the version of the roicat package.
@@ -25,6 +26,7 @@ def get_roicat_version() -> str:
                 The version of the roicat package.
     """
     return importlib.metadata.version('roicat')
+
 
 def get_default_parameters(
     pipeline='tracking', 
@@ -58,7 +60,7 @@ def get_default_parameters(
         defaults = helpers.yaml_load(path_defaults)
     else:
         defaults = {
-            'general' : {
+            'general': {
                 'use_GPU': True,
                 'verbose': True,
                 'random_seed': None,
@@ -80,29 +82,93 @@ def get_default_parameters(
                 },
             },
             'alignment': {
+                'initialization': {
+                    'use_match_search': True,  ## Whether or not to use our match search algorithm to initialize the alignment.
+                    'all_to_all': False,  ## Force the use of our match search algorithm for all-pairs matching. Much slower (False: O(N) vs. True: O(N^2)), but more accurate.
+                    'radius_in': 4.0,  ## Value in micrometers used to define the maximum shift/offset between two images that are considered to be aligned. Larger means more lenient alignment.
+                    'radius_out': 20.0,  ## Value in micrometers used to define the minimum shift/offset between two images that are considered to be misaligned.
+                    'z_threshold': 4.0,  ## Z-score required to define two images as aligned. Larger values results in more stringent alignment requirements.
+                },
                 'augment': {
                     'normalize_FOV_intensities': True,  ## Whether or not to normalize the FOV_images to the max value across all FOV images.
                     'roi_FOV_mixing_factor': 0.5,  ## default: 0.5. Fraction of the max intensity projection of ROIs that is added to the FOV image. 0.0 means only the FOV_images, larger values mean more of the ROIs are added.
                     'use_CLAHE': True,  ## Whether or not to use 'Contrast Limited Adaptive Histogram Equalization'. Useful if params['importing']['type_meanImg'] is not a contrast enhanced image (like 'meanImgE' in Suite2p)
-                    'CLAHE_grid_size': 100,  ## Size of the grid for CLAHE. 1 means no grid, 2 means 2x2 grid, etc.
-                    'CLAHE_clipLimit': 1,  ## Clipping limit for CLAHE. Higher values mean more contrast.
+                    'CLAHE_grid_block_size': 10,  ## Size of the block size for the grid for CLAHE. Smaller values means more local contrast enhancement.
+                    'CLAHE_clipLimit': 1.0,  ## Clipping limit for CLAHE. Higher values mean more contrast.
                     'CLAHE_normalize': True,  ## Whether or not to normalize the CLAHE image.
                 },
                 'fit_geometric': {
                     'template': 0.5,  ## Which session to use as a registration template. If input is float (ie 0.0, 0.5, 1.0, etc.), then it is the fractional position of the session to use; if input is int (ie 1, 2, 3), then it is the index of the session to use (0-indexed)
-                    'template_method': 'sequential',  ## Can be 'sequential' or 'image'. If 'sequential', then the template is the FOV_image of the previous session. If 'image', then the template is the FOV_image of the session specified by 'template'.
-                    'mode_transform': 'euclidean',  ## Must be one of {'translation', 'affine', 'euclidean', 'homography'}. See documentation for more details.
-                    'mask_borders': [50, 50, 50, 50],  ## Number of pixels to mask from the borders of the FOV_image. Useful for removing artifacts from the edges of the FOV_image.
-                    'n_iter': 50,  ## Number of iterations to run the registration algorithm. More iterations means more accurate registration, but longer run time.
-                    'termination_eps': 1e-09,  ## Termination criteria for the registration algorithm. See documentation for more details.
-                    'gaussFiltSize': 31,  ## Size of the gaussian filter used to smooth the FOV_image before registration. Larger values mean more smoothing.
-                    'auto_fix_gaussFilt_step': 10,  ## If the registration fails, then the gaussian filter size is reduced by this amount and the registration is tried again.
+                    'template_method': 'image',  ## Can be 'sequential' or 'image'. If 'sequential', then the template is the FOV_image of the previous session. If 'image', then the template is the FOV_image of the session specified by 'template'.
+                    'mask_borders': [0, 0, 0, 0],  ## Number of pixels to mask from the borders of the FOV_image. Useful for removing artifacts from the edges of the FOV_image.
+                    'method': 'RoMa',  ## Accuracy order (best to worst): RoMa (by far, but slow without a GPU), LoFTR, DISK_LightGlue, ECC_cv2, (the following are not recommended) SIFT, ORB
+                    'kwargs_method': {
+                        'RoMa': {
+                            'model_type': 'outdoor',
+                            'n_points': 10000,  ## Higher values mean more points are used for the registration. Useful for larger FOV_images. Larger means slower.
+                            'batch_size': 1000,
+                        },
+                        'DISK_LightGlue': {
+                            'num_features': 3000,  ## Number of features to extract and match. I've seen best results around 2048 despite higher values typically being better.
+                            'threshold_confidence': 0.2,  ## Higher values means fewer but better matches.
+                        },
+                        'LoFTR': {
+                            'model_type': 'indoor_new',
+                            'threshold_confidence': 0.2,  ## Higher values means fewer but better matches.
+                        },
+                        'ECC_cv2': {
+                            'mode_transform': 'euclidean',  ## Must be one of {'translation', 'affine', 'euclidean', 'homography'}. See cv2 documentation on findTransformECC for more details.
+                            'n_iter': 200,
+                            'termination_eps': 1e-09,  ## Termination criteria for the registration algorithm. See documentation for more details.
+                            'gaussFiltSize': 1,  ## Size of the gaussian filter used to smooth the FOV_image before registration. Larger values mean more smoothing.
+                            'auto_fix_gaussFilt_step': 10,  ## If the registration fails, then the gaussian filter size is reduced by this amount and the registration is tried again.
+                        },
+                        'PhaseCorrelation': {
+                            'bandpass_freqs': (1, 30),
+                            'order': 5,
+                        },
+                        'SIFT': {
+                            'nfeatures': 10000,
+                            'contrastThreshold': 0.04,
+                            'edgeThreshold': 10,
+                            'sigma': 1.6,
+                        },
+                        'ORB': {
+                            'nfeatures': 1000,
+                            'scaleFactor': 1.2,
+                            'nlevels': 8,
+                            'edgeThreshold': 31,
+                            'firstLevel': 0,
+                            'WTA_K': 2,
+                            'scoreType': 0,
+                            'patchSize': 31,
+                            'fastThreshold': 20,
+                        },
+                    },
+                    'kwargs_RANSAC': {  ## Parameters related to the RANSAC algorithm used for point/descriptor based registration methods.
+                        'inl_thresh': 3.0,  ## Threshold for the inliers. Larger values mean more points are considered inliers.
+                        'max_iter': 100,  ## Maximum number of iterations for the RANSAC algorithm.
+                        'confidence': 0.99,  ## Confidence level for the RANSAC algorithm. Larger values mean more points are considered inliers.
+                    },
                 },
                 'fit_nonrigid': {
                     'template': 0.5,  ## Which session to use as a registration template. If input is float (ie 0.0, 0.5, 1.0, etc.), then it is the fractional position of the session to use; if input is int (ie 1, 2, 3), then it is the index of the session to use (0-indexed)
                     'template_method': 'image',  ## Can be 'sequential' or 'image'. If 'sequential', then the template is the FOV_image of the previous session. If 'image', then the template is the FOV_image of the session specified by 'template'.
-                    'mode_transform': 'createOptFlow_DeepFlow',  ## Can be 'createOptFlow_DeepFlow' or 'calcOpticalFlowFarneback'. See documentation for more details.
-                    'kwargs_mode_transform': None,  ## Keyword arguments for the mode_transform function. See documentation for more details.
+                    'method': 'DeepFlow',
+                    'kwargs_method': {
+                        'RoMa': {
+                            'model_type': 'outdoor',
+                        },
+                        'DeepFlow': {},
+                        'OpticalFlowFarneback': {
+                            'pyr_scale': 0.7,
+                            'levels': 5,
+                            'winsize': 128,
+                            'iterations': 15,
+                            'poly_n': 5,
+                            'poly_sigma': 1.5,            
+                        },
+                    },
                 },
                 'transform_ROIs': {
                     'normalize': True,  ## If True, normalize the spatial footprints to have a sum of 1.
@@ -176,9 +242,9 @@ def get_default_parameters(
                     'p_norm': -1.0,    ## norm([s_sf, s_NN, s_SWT], p=p_norm) (Higher values means clustering requires all similarity metrics to be high)
                 #     'sig_SF_kwargs': {'mu':0.5, 'b':1.0},  ## Sigmoid parameters for s_sf (mu is the center, b is the slope)
                     'sig_SF_kwargs': None,
-                    'sig_NN_kwargs': {'mu':0.5, 'b':1.0},    ## Sigmoid parameters for s_NN (mu is the center, b is the slope)
+                    'sig_NN_kwargs': {'mu': 0.5, 'b': 1.0},  ## Sigmoid parameters for s_NN (mu is the center, b is the slope)
                 #     'sig_NN_kwargs': None,
-                    'sig_SWT_kwargs': {'mu':0.5, 'b':1.0}, ## Sigmoid parameters for s_SWT (mu is the center, b is the slope)
+                    'sig_SWT_kwargs': {'mu': 0.5, 'b': 1.0},  ## Sigmoid parameters for s_SWT (mu is the center, b is the slope)
                 #     'sig_SWT_kwargs': None,
                 },
                 'pruning': {
@@ -416,6 +482,44 @@ def system_info(verbose: bool = False,) -> Dict:
     return versions
 
 
+def set_random_seed(seed=None, deterministic=False):
+    """
+    Set random seed for reproducibility.
+    RH 2023
+
+    Args:
+        seed (int, optional):
+            Random seed.
+            If None, a random seed (spanning int32 integer range) is generated.
+        deterministic (bool, optional):
+            Whether to make packages deterministic.
+
+    Returns:
+        (int):
+            seed (int):
+                Random seed.
+    """
+    ### random seed (note that optuna requires a random seed to be set within the pipeline)
+    import numpy as np
+    seed = int(np.random.randint(0, 2**31 - 1, dtype=np.uint32)) if seed is None else seed
+
+    np.random.seed(seed)
+    import torch
+    torch.manual_seed(seed)
+    import random
+    random.seed(seed)
+    import cv2
+    cv2.setRNGSeed(seed)
+
+    ## Make torch deterministic
+    torch.use_deterministic_algorithms(deterministic)
+    ## Make cudnn deterministic
+    torch.backends.cudnn.deterministic = deterministic
+    torch.backends.cudnn.benchmark = not deterministic
+    
+    return seed
+
+
 class ROICaT_Module:
     """
     Super class for ROICaT modules.
@@ -604,6 +708,7 @@ class ROICaT_Module:
     #             setattr(self, key, val)
 
     #     print(f"Loaded Data_roicat object from {path_load}.") if self._verbose else None
+
 
     def _locals_to_params(
         self,
@@ -831,7 +936,6 @@ class RichFile_ROICaT(rf.RichFile):
             """
             ## Load as a CSV file
             return pd.read_csv(path, index_col=0, **kwargs)
-        
 
         roicat_module_tds = [rf.functions.Container(
             type_name=type_name,
@@ -853,6 +957,7 @@ class RichFile_ROICaT(rf.RichFile):
 
             ("toeplitz_conv", helpers.Toeplitz_convolution2d),
             ("convergence_checker_optuna", helpers.Convergence_checker_optuna),
+            ("image_alignment_checker", helpers.ImageAlignmentChecker),
         ]]
         # roicat_module_tds = []
         
@@ -1037,6 +1142,26 @@ def make_session_bool(n_roi: np.ndarray,) -> np.ndarray:
     session_bool = np.vstack([(b_lower <= r) * (r < b_upper) for b_lower, b_upper in zip(n_roi_cumsum[:-1], n_roi_cumsum[1:])]).T
     return session_bool
 
+
+def split_iby_session(
+    x: Any,
+    n_roi_per_session: Union[np.ndarray, List[int]],
+):
+    """
+    Splits an array or iterable into a list of arrays or iterables based on the
+    number of ROIs per session.
+
+    Args:
+        arr (Any): 
+            Array to split.
+        n_roi_per_session (Union[np.ndarray, List[int]]): 
+            Number of ROIs per session.
+
+    Returns:
+        (List[Any]): 
+            List of arrays split by session.
+    """
+    return [x[sum(n_roi_per_session[:ii]):sum(n_roi_per_session[:ii+1])] for ii in range(len(n_roi_per_session))]
 
 ##########################################################################################################################
 ############################################### UCID handling ############################################################
@@ -1522,6 +1647,6 @@ def labels_to_labelsBySession(labels, n_roi_bySession):
 
     assert np.sum(n_roi_bySession) == len(labels), f'np.sum(n_roi_bySession)={np.sum(n_roi_bySession)} != len(labels)={len(labels)}'
 
-    labels_bySession = [labels[sum(n_roi_bySession[:ii]):sum(n_roi_bySession[:ii+1])] for ii in range(len(n_roi_bySession))]
+    labels_bySession = split_iby_session(x=labels, n_roi_per_session=n_roi_bySession)
 
     return labels_bySession

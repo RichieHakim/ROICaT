@@ -32,7 +32,10 @@ def dir_data_test():
     # dir_data_test = str(Path('data_test/').resolve().absolute())
     dir_data_test = str((Path(tempfile.gettempdir()) / 'data_test').resolve().absolute())
     print(dir_data_test)
-    path_data_test_zip = download_data_test_zip(dir_data_test)
+    # path_data_test_zip = download_data_test_zip(dir_data_test)
+    ## Get data_test from repo folder
+    path_data_test_zip = str(Path(__file__).parent / 'tests' / 'data_test.zip')
+    print(f"Extracting test data from {path_data_test_zip}")
     roicat.helpers.extract_zip(
         path_zip=path_data_test_zip, 
         path_extract=dir_data_test,
@@ -40,26 +43,26 @@ def dir_data_test():
     )
     return dir_data_test
 
-def download_data_test_zip(directory):
-    """
-    Downloads the test data if it does not exist.
-    If the data exists, check its hash.
-    """
-    path_save = str(Path(directory) / 'data_test.zip')
-    roicat.helpers.download_file(
-        url=r'https://github.com/RichieHakim/ROICaT/raw/dev/tests/data_test.zip', 
-        path_save=path_save, 
-        check_local_first=True, 
-        check_hash=True, 
-        hash_type='MD5', 
-        hash_hex=r'2fcd64902d3c71eb0a85bbdb15a7d68e',
-        mkdir=True,
-        allow_overwrite=True,
-        write_mode='wb',
-        verbose=True,
-        chunk_size=1024,
-    )
-    return path_save
+# def download_data_test_zip(directory):
+#     """
+#     Downloads the test data if it does not exist.
+#     If the data exists, check its hash.
+#     """
+#     path_save = str(Path(directory) / 'data_test.zip')
+#     roicat.helpers.download_file(
+#         url=r'https://github.com/RichieHakim/ROICaT/raw/dev/tests/data_test.zip', 
+#         path_save=path_save, 
+#         check_local_first=True, 
+#         check_hash=True, 
+#         hash_type='MD5', 
+#         hash_hex=r'2fcd64902d3c71eb0a85bbdb15a7d68e',
+#         mkdir=True,
+#         allow_overwrite=True,
+#         write_mode='wb',
+#         verbose=True,
+#         chunk_size=1024,
+#     )
+#     return path_save
 
 @pytest.fixture(scope='session')
 def array_hasher():

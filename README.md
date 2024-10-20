@@ -269,6 +269,7 @@ intercompatible, so if you have CUDA 11.8 drivers, you can install
 - [ ] Finish ROIextractors integration
 - [ ] Make a Docker container
 - [ ] Make colab demo notebook not require user data
+- [ ] Make a better CLI
 #### other:
 - [ ] Write the paper
 - [ ] Make tweet about it

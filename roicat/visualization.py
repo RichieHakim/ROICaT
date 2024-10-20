@@ -161,7 +161,7 @@ def compute_colored_FOV(
     spatialFootprints: List[scipy.sparse.csr_matrix],
     FOV_height: int,
     FOV_width: int,
-    labels: Union[List[np.ndarray], np.ndarray],
+    labels: Optional[Union[List[np.ndarray], np.ndarray]] = None,
     cmap: Union[str, object] = 'random',
     alphas_labels: Optional[np.ndarray] = None,
     alphas_sf: Optional[Union[List[np.ndarray], np.ndarray]] = None,
@@ -178,11 +178,13 @@ def compute_colored_FOV(
             Height of the field of view.
         FOV_width (int): 
             Width of the field of view.
-        labels (Union[List[np.ndarray], np.ndarray]): 
+        labels (Optional[Union[List[np.ndarray], np.ndarray]]): 
             Label (will be a unique color) for each spatial footprint. Each
-            element is all the labels for a given session. Can either be a list
+            element is all the labels for a given session. If -1, then the
+            spatial footprint will be black / transparent. Can either be a list
             of integer labels for each session, or a single array with all the
-            labels concatenated.
+            labels concatenated. Optional, if None, then all labels are set to
+            random colors. 
         cmap (Union[str, object]): 
             Colormap to use for the labels. If 'random', then a random colormap
             is generated. Else, this is passed to
@@ -217,6 +219,9 @@ def compute_colored_FOV(
         assert (isinstance(v, (list, util.JSON_List)) and isinstance(v[0], (np.ndarray, list, util.JSON_List))), "input must be a list of arrays or a single array of integers"
         return v
     
+    if labels is None:
+        labels = [np.random.randint(0, 255, size=n) for n in n_roi]
+
     labels = _fix_list_of_arrays(labels)
     alphas_sf = _fix_list_of_arrays(alphas_sf) if alphas_sf is not None else None
 
@@ -239,7 +244,10 @@ def compute_colored_FOV(
     h, w = FOV_height, FOV_width
 
     rois = scipy.sparse.vstack(spatialFootprints)
-    rois = rois.multiply(1.0/rois.max(1).toarray()).power(1)
+    rois_max = rois.max(1).toarray()
+    rois_max[rois_max == 0] = np.nan
+    rois = rois.multiply(1.0/rois_max).power(1)
+    rois.data[np.isnan(rois.data)] = 0
 
     if n_c > 1:
         colors = helpers.rand_cmap(nlabels=n_c, verbose=False)(np.linspace(0.,1.,n_c, endpoint=True)) if cmap=='random' else cmap(np.linspace(0.,1.,n_c, endpoint=True))
