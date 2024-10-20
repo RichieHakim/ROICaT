@@ -3,6 +3,8 @@ from typing import List, Tuple, Union, Optional, Dict, Any, Sequence, Callable
 import warnings
 import functools
 import PIL
+from pathlib import Path
+import math
 
 import numpy as np
 import scipy.optimize
@@ -11,6 +13,7 @@ import torch
 from tqdm.auto import tqdm
 import cv2
 import kornia
+import matplotlib.pyplot as plt
 
 from .. import helpers, util
 
@@ -24,6 +27,10 @@ class Aligner(util.ROICaT_Module):
         use_match_search (bool):
             Whether to densely search all possible paths to match images to the
             template upon failure. (Default is ``True``)
+        all_to_all (bool):
+            Whether to start with an all-to-all matching approach using out
+            match_search algorithm. Much slower (N vs. N^2) but useful if you
+            know you are working with challenging data.
         radius_in (float):
             Value in micrometers used to define the maximum shift/offset between
             two images that are considered to be aligned. Use larger values for
@@ -35,12 +42,12 @@ class Aligner(util.ROICaT_Module):
         order (int):
             The order of the Butterworth filter used to define the 'in' and 'out'
             regions of the ImageAlignmentChecker class. (Default is *5*)
-        probability_threshold (float):
-            Probability required to define two images as aligned. Smaller values
-            result in more stringent alignment requirements and possibly slower
-            registration. Value is the probability threshold used on the 'z_in'
-            output of the ImageAlignmentChecker class to determine if two images
-            are properly aligned. (Default is *0.01*)
+        z_threshold (float):
+            Z-score required to define two images as aligned. Larger values
+            results in more stringent alignment requirements and possibly slower
+            registration. Value is the threshold used on the 'z_in' output of
+            the ImageAlignmentChecker class to determine if two images are
+            properly aligned. (Default is *4.0*)
         um_per_pixel (float):
             The number of micrometers per pixel in the FOV images. (Default is *1.0*)
         device (str):
@@ -52,10 +59,11 @@ class Aligner(util.ROICaT_Module):
     def __init__(
         self,
         use_match_search: bool = True,
+        all_to_all: bool = False,
         radius_in: float = 4,
         radius_out: float = 20,
         order: int = 5,
-        probability_threshold: float = 0.01,
+        z_threshold: float = 4.0,
         um_per_pixel: float = 1.0,
         device: str = 'cpu',
         verbose: bool = True,
@@ -70,10 +78,11 @@ class Aligner(util.ROICaT_Module):
             locals_dict=locals(),
             keys=[
                 'use_match_search',
+                'all_to_all',
                 'radius_in',
                 'radius_out',
                 'order',
-                'probability_threshold',
+                'z_threshold',
                 'um_per_pixel',
                 'device',
                 'verbose',
@@ -81,10 +90,11 @@ class Aligner(util.ROICaT_Module):
         )
 
         self.use_match_search = use_match_search
+        self.all_to_all = all_to_all
         self.radius_in = radius_in
         self.radius_out = radius_out
         self.order = order
-        self.probability_threshold = probability_threshold
+        self.z_threshold = z_threshold
         self.device = device
 
         assert isinstance(um_per_pixel, (int, float, np.number)), 'um_per_pixel must be a single value. If the FOV images have different pixel sizes, then our approach to checking image alignment (using the ImageAlignmentChecker class) will not work smoothly. Please preprocess the images to have the same pixel size or contact the developers for a custom solution.'
@@ -197,7 +207,6 @@ class Aligner(util.ROICaT_Module):
         template_method: str = 'sequential',
         mask_borders: Tuple[int, int, int, int] = (0, 0, 0, 0),
         method: str = 'RoMa',
-        device: Optional[str] = None,
         kwargs_method: dict = {
             'RoMa': {
                 'model_type': 'outdoor',
@@ -235,6 +244,10 @@ class Aligner(util.ROICaT_Module):
                 'scoreType': 0,
                 'patchSize': 31,
                 'fastThreshold': 20,
+            },
+            'PhaseCorrelation': {
+                'bandpass_freqs': (1, 30),
+                'order': 5,
             },
         },
         kwargs_RANSAC: dict = {
@@ -277,9 +290,6 @@ class Aligner(util.ROICaT_Module):
                 * 'SIFT': Feature-based registration using SIFT keypoints.
                 * 'ORB': Feature-based registration using ORB keypoints.
                 (Default is 'RoMa')
-            device (Optional[str]):
-                Device to use for computations. If ``None``, the device set
-                during initialization will be used.
             kwargs_method (dict):
                 Keyword arguments for the selected method. The keys are method
                 names, and the values are dictionaries of keyword arguments.
@@ -320,7 +330,6 @@ class Aligner(util.ROICaT_Module):
                 'template_method',
                 'mask_borders',
                 'method',
-                'device',
                 'kwargs_method',
                 'kwargs_RANSAC',
                 'verbose',
@@ -329,19 +338,18 @@ class Aligner(util.ROICaT_Module):
 
         verbose = verbose if verbose is not None else self._verbose
 
-        device = self.device if device is None else device
-
         methods_lut = {
             'RoMa': RoMa,
             'LoFTR': LoFTR,
             'ECC_cv2': ECC_cv2,
             'DISK_LightGlue': DISK_LightGlue,
+            'PhaseCorrelation': PhaseCorrelationRegistration,
             'SIFT': SIFT,
             'ORB': ORB,
         }
         assert method in methods_lut, f"method must be one of {methods_lut.keys()}"
         model = methods_lut[method](
-            device=device, 
+            device=self.device, 
             verbose=verbose,
             **kwargs_method[method],
         )
@@ -435,30 +443,38 @@ class Aligner(util.ROICaT_Module):
 
         # check alignment
         im_template_global = ims_moving[template] if template_method == 'sequential' else template
-        z_threshold = helpers.pvalue_to_zscore(p=self.probability_threshold, two_tailed=False)
         ## warp the images
         remappingIdx_geo_all_to_template = [helpers.warp_matrix_to_remappingIdx(warp_matrix=warp_matrix, x=W, y=H) for warp_matrix in warp_matrices_all_to_template]
         images_warped_all_to_template = self.transform_images(ims_moving=ims_moving, remappingIdx=remappingIdx_geo_all_to_template)
 
         ## Prepare the ImageAlignmentChecker object
-        iac = ImageAlignmentChecker(
+        iac_geo = helpers.ImageAlignmentChecker(
             hw=tuple(self._HW),
             radius_in=self.radius_in * self.um_per_pixel,
             radius_out=self.radius_out * self.um_per_pixel,
             order=self.order,
-            device=device,
+            device=self.device,
         )
-        score_template_to_all = iac.score_alignment(
+        score_template_to_all = iac_geo.score_alignment(
             images=images_warped_all_to_template,
             images_ref=im_template_global,
         )['z_in'][:, 0]
-        alignment_template_to_all = score_template_to_all > z_threshold
+        alignment_template_to_all = score_template_to_all > self.z_threshold
         idx_not_aligned = np.where(alignment_template_to_all == False)[0]
+        print(f"Alignment z_in scores: {[float(f'{score:.1f}') for score in score_template_to_all]}. z_threshold: {self.z_threshold}.") if verbose else None
 
-        if len(idx_not_aligned) > 0:  ## if any images are not aligned
-            print(f'Warning: Alignment failed for some images (probability_not_aligned > probability_threshold) for images idx: {idx_not_aligned}')
-            if self.use_match_search:
-                print('Attempting to find best matches for misaligned images...')
+        alignment_all_to_all = None
+        score_all_to_all = None
+        if (len(idx_not_aligned) > 0) or self.all_to_all:  ## if any images are not aligned
+            idx_toSearch = idx_not_aligned if not self.all_to_all else np.arange(len(ims_moving))
+            if (len(idx_not_aligned) > 0):
+                print(f'Warning: Alignment failed for some images (probability_not_aligned > probability(z_threshold)) for images idx: {idx_toSearch}.')
+            if self.all_to_all:
+                print(f"Performing all-to-all matching using the match_search algorithm.")
+            
+            
+            if self.use_match_search or self.all_to_all:
+                print('Attempting to find best matches using match search algorithm...')
                 ## Make a function that wraps up all the above steps
                 def _update_warps(
                     idx: Union[np.ndarray, List[int]],  ## indices of images to use as templates
@@ -477,9 +493,9 @@ class Aligner(util.ROICaT_Module):
                         remappingIdx_geo_all_to_current = [helpers.warp_matrix_to_remappingIdx(warp_matrix=warp_matrix, x=W, y=H) for warp_matrix in warp_matrices_all_to_all[idx_current]]
                         images_warped_all_to_current = self.transform_images(ims_moving=ims_moving, remappingIdx=remappingIdx_geo_all_to_current)
                         ## Check alignment
-                        score_all_to_all[idx_current] = iac.score_alignment(images=images_warped_all_to_current, images_ref=im_current)['z_in'][:, 0]  ## shape: (N,)
+                        score_all_to_all[idx_current] = iac_geo.score_alignment(images=images_warped_all_to_current, images_ref=im_current)['z_in'][:, 0]  ## shape: (N,)
                         # score_all_to_all[:, idx_current] = score_all_to_all[idx_current]  ## add the transpose of the score matrix
-                        alignment_all_to_all[idx_current] = score_all_to_all[idx_current] > z_threshold  ## returns a boolean array of shape (n_images,)
+                        alignment_all_to_all[idx_current] = score_all_to_all[idx_current] > self.z_threshold  ## returns a boolean array of shape (n_images,)
                         # alignment_all_to_all[:, idx_current] = alignment_all_to_all[idx_current]  ## add the transpose of the alignment matrix
                         
                     ## Recompute warp matrices based on shortest path between each image and the template (through the all_to_all alignment matrix)
@@ -519,8 +535,14 @@ class Aligner(util.ROICaT_Module):
                         else:
                             warp_matrices_all_to_template_new.append(np.eye(3, 3, dtype=np.float32))
 
+                    ## compute warped images and check alignment
+                    remappingIdx_geo_all_to_template_new = [helpers.warp_matrix_to_remappingIdx(warp_matrix=warp_matrix, x=W, y=H) for warp_matrix in warp_matrices_all_to_template_new]
+                    images_warped_all_to_template_new = self.transform_images(ims_moving=ims_moving, remappingIdx=remappingIdx_geo_all_to_template_new)
+                    score_template_to_all_new = iac_geo.score_alignment(images=images_warped_all_to_template_new, images_ref=im_template_global)['z_in'][:, 0]
+                    alignment_template_to_all_new = score_template_to_all_new > self.z_threshold
+                    idx_no_path = np.where(np.logical_not(alignment_template_to_all_new))[0]
+
                     ## Check if there are any failed paths to the template
-                    idx_no_path = [int(idx) for idx in np.where(np.isinf(distances[0][1:]))[0]]
                     if len(idx_no_path) > 0:
                         print(f'Warning: Could not find a path to alignment after path finding for images idx: {idx_no_path}')
 
@@ -530,10 +552,10 @@ class Aligner(util.ROICaT_Module):
                 # alignment_all_to_all = np.eye(len(ims_moving), dtype=np.bool_)
                 alignment_all_to_all = np.ones((len(ims_moving), len(ims_moving)), dtype=np.float32) * np.nan
                 score_all_to_all = np.ones((len(ims_moving), len(ims_moving)), dtype=np.float32) * np.nan
-                print(f'Finding alignment between failed match idx: {idx_not_aligned} and all other images...')
+                print(f'Finding alignment between images idx: {idx_toSearch} and all other images...')
                 ## Register the images in idx to the template
                 warp_matrices_all_to_template_new, warp_matrices_all_to_all, alignment_all_to_all, idx_no_path = _update_warps(
-                    idx=idx_not_aligned, 
+                    idx=idx_toSearch, 
                     warp_matrices_all_to_all=warp_matrices_all_to_all, 
                     alignment_all_to_all=alignment_all_to_all,
                     score_all_to_all=score_all_to_all,
@@ -543,7 +565,7 @@ class Aligner(util.ROICaT_Module):
                     print('All images aligned successfully after one round of path finding.') if self._verbose else None
                     warp_matrices_all_to_template = warp_matrices_all_to_template_new
                 else:
-                    idx_remaining = sorted(list(set(list(range(len(ims_moving)))) - set(idx_not_aligned)))
+                    idx_remaining = sorted(list(set(list(range(len(ims_moving)))) - set(idx_toSearch)))
                     warnings.warn(f'Warning: Could not find a path to alignment for image idx: {idx_no_path}. Now doing a dense search for alignment between all images...')
                     print(f"Finding alignment between remaining images and all other images: {idx_remaining}...") if self._verbose else None
                     ## Register the images in idx to the template
@@ -560,19 +582,42 @@ class Aligner(util.ROICaT_Module):
                         warnings.warn(f"Warning: Could not find a path to alignment for image idx: {idx_no_path}. Some images may not be aligned.")
 
             else:
-                warnings.warn(f"Alignment failed for some images (probability_not_aligned > probability_threshold) for images idx: {idx_not_aligned}. Use 'use_match_search=True' to attempt to find best matches for misaligned images.")                
+                warnings.warn(f"Alignment failed for some images (probability_not_aligned > probability(z_threshold)) for images idx: {idx_not_aligned}. Use 'use_match_search=True' to attempt to find best matches for misaligned images.")                
         else:
             print('All images aligned successfully!') if self._verbose else None
             alignment_all_to_all = None
         
-        ## Prepare outputs
-        self.warp_matrices = warp_matrices_all_to_template
         ### Convert warp matrices to remap indices
-        self.remappingIdx_geo = [helpers.warp_matrix_to_remappingIdx(warp_matrix=warp_matrix, x=W, y=H) for warp_matrix in self.warp_matrices]
+        self.remappingIdx_geo = [helpers.warp_matrix_to_remappingIdx(warp_matrix=warp_matrix, x=W, y=H) for warp_matrix in warp_matrices_all_to_template]
 
-        ### Other outputs
-        self.alignment_all_to_all = alignment_all_to_all
-        self.alignment_template_to_all = alignment_template_to_all
+        ### Make the registered images
+        self.ims_registered_geo = self.transform_images(ims_moving=ims_moving, remappingIdx=self.remappingIdx_geo)
+        ### Compute the new alignment scores
+        score_all_to_all_final = iac_geo.score_alignment(images=self.ims_registered_geo)['z_in']
+        alignment_all_to_all_final = score_all_to_all_final > self.z_threshold
+        score_template_to_all_final = iac_geo.score_alignment(images=self.ims_registered_geo, images_ref=im_template_global)['z_in'][:, 0]
+        alignment_template_to_all_final = score_template_to_all_final > self.z_threshold
+
+
+        ## Prepare outputs
+        self.results_geometric = {
+            'warp_matrices': warp_matrices_all_to_template,
+            'image_alignment_checker': iac_geo,
+            'direct': {
+                'alignment_template_to_all': alignment_template_to_all,
+                'score_template_to_all': score_template_to_all,
+
+                'alignment_all_to_all': alignment_all_to_all,
+                'score_all_to_all': score_all_to_all,
+            },
+            'final': {
+                'alignment_all_to_all': alignment_all_to_all_final,
+                'score_all_to_all': score_all_to_all_final,
+                
+                'alignment_template_to_all': alignment_template_to_all_final,
+                'score_template_to_all': score_template_to_all_final,
+            },
+        }
 
         return self.remappingIdx_geo
 
@@ -584,7 +629,6 @@ class Aligner(util.ROICaT_Module):
         remappingIdx_init: Optional[np.ndarray] = None,
         template_method: str = 'sequential',
         method: str = 'RoMa',
-        device: Optional[str] = None,
         kwargs_method: dict = {
             'RoMa': {
                 'model_type': 'outdoor',
@@ -633,9 +677,6 @@ class Aligner(util.ROICaT_Module):
                 * 'OpticalFlowFarneback': Optical flow using OpenCV's
                   calcOpticalFlowFarneback.
                 (Default is 'RoMa')
-            device (Optional[str]):
-                Device to use for computations. If ``None``, the device set
-                during initialization will be used.
             kwargs_method (dict):
                 Keyword arguments for the selected method. The keys are method
                 names, and the values are dictionaries of keyword arguments.
@@ -661,12 +702,9 @@ class Aligner(util.ROICaT_Module):
                 'template',
                 'template_method',
                 'method',
-                'device',
                 'kwargs_method',
             ],
         )
-
-        device = self.device if device is None else device
 
         methods_lut = {
             'RoMa': RoMa,
@@ -675,7 +713,7 @@ class Aligner(util.ROICaT_Module):
         }
         assert method in methods_lut, f"method must be one of {methods_lut.keys()}"
         model = methods_lut[method](
-            device=device, 
+            device=self.device, 
             verbose=self._verbose,
             **kwargs_method[method],
         )
@@ -799,6 +837,30 @@ class Aligner(util.ROICaT_Module):
         remappingIdx = self.remappingIdx_nonrigid if remappingIdx is None else remappingIdx
         print('Applying nonrigid registration warps to images...') if self._verbose else None
         self.ims_registered_nonrigid = self.transform_images(ims_moving=ims_moving, remappingIdx=remappingIdx)
+
+        ### Make the registered images
+        #### Undo any remappingIdx_init
+        self.ims_registered_nonrigid = self.transform_images(ims_moving=ims_moving, remappingIdx=self.remappingIdx_nonrigid)
+        ### Compute the new alignment scores
+        iac_nonrigid = helpers.ImageAlignmentChecker(
+            hw=tuple(self._HW),
+            radius_in=self.radius_in * self.um_per_pixel,
+            radius_out=self.radius_out * self.um_per_pixel,
+            order=self.order,
+            device=self.device,
+        )
+        score_all_to_all_final = iac_nonrigid.score_alignment(images=self.ims_registered_geo)['z_in']
+        alignment_all_to_all_final = score_all_to_all_final > self.z_threshold
+
+        ## Prepare outputs
+        self.results_nonrigid = {
+            'image_alignment_checker': iac_nonrigid,
+            'final': {
+                'alignment_all_to_all': alignment_all_to_all_final,
+                'score_all_to_all': score_all_to_all_final,
+            },
+        }
+
         return self.ims_registered_nonrigid
     
     def transform_images(
@@ -963,7 +1025,10 @@ class Aligner(util.ROICaT_Module):
 
             if normalize:
                 rois_aligned.data[rois_aligned.data < 0] = 0
-                rois_aligned = rois_aligned.multiply(1/rois_aligned.sum(1))
+                rois_aligned_sum = np.array(rois_aligned.sum(1))
+                ## convert 0s to NaNs to avoid division by 0
+                rois_aligned_sum[rois_aligned_sum == 0] = np.nan
+                rois_aligned = rois_aligned.multiply(1/rois_aligned_sum)
                 rois_aligned.data[np.isnan(rois_aligned.data)] = 0
                 rois_aligned.eliminate_zeros()
             
@@ -1107,315 +1172,75 @@ class Aligner(util.ROICaT_Module):
 
         return ims_moving, template
 
-
-class PhaseCorrelationRegistration:
-    """
-    Performs rigid transformation using phase correlation. 
-    RH 2022
-
-    Attributes:
-        mask (np.ndarray):
-            Spectral mask created using `set_spectral_mask()`.
-        ims_registered (np.ndarray):
-            Registered images, set in `register()`.
-        shifts (np.ndarray):
-            Pixel shift values (y, x), set in `register()`.
-        ccs (np.ndarray):
-            Phase correlation coefficient images, set in `register()`.
-        ims_template_filt (np.ndarray):
-            Template images filtered by the spectral mask, set in `register()`.
-        ims_moving_filt (np.ndarray):
-            Moving images filtered by the spectral mask, set in `register()`.
-    """
-    def __init__(self) -> None:
-        """
-        Initializes the PhaseCorrelationRegistration.
-        """
-        self.mask = None
-
-    def set_spectral_mask(
+    def plot_alignment_results_geometric(
         self, 
-        freq_highPass: float = 0.01, 
-        freq_lowPass: float = 0.3,
-        im_shape: Tuple[int, int] = (512, 512),
-    ) -> None:
+        plot_direct: bool = True,
+    ) -> Tuple[plt.Figure, plt.Figure]:
         """
-        Sets the spectral mask for the phase correlation.
+        Plots the alignment results for geometric registration.
 
         Args:
-            freq_highPass (float): 
-                High pass frequency. (Default is *0.01*)
-            freq_lowPass (float): 
-                Low pass frequency. (Default is *0.3*)
-            im_shape (Tuple[int, int]): 
-                Shape of the image. (Default is *(512, 512)*)
-        """
-        self.mask = make_spectral_mask(
-            freq_highPass=freq_highPass,
-            freq_lowPass=freq_lowPass,
-            im_shape=im_shape,
-        )
-
-    def register(
-        self, 
-        template: Union[np.ndarray, int], 
-        ims_moving: np.ndarray,
-        template_method: str = 'sequential',
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Registers a set of images using phase correlation. 
-        RH 2022
-
-        Args:
-            template (Union[np.ndarray, int]): 
-                Template image. \n
-                * If ``template_method`` is 'image', ``template`` should be a
-                  single image.
-                * If ``template_method`` is 'sequential', ``template`` should be
-                  an integer corresponding to the index of the image to set as
-                  'zero' offset.
-            ims_moving (np.ndarray): 
-                Images to align to the template. (shape: *(n, H, W)*)
-            template_method (str): 
-                Method used to register the images. \n
-                * 'image': ``template`` should be a single image.
-                * 'sequential': ``template`` should be an integer corresponding 
-                  to the index of the image to set as 'zero' offset. \n
-                (Default is 'sequential')
+            plot_direct (bool): 
+                If ``True``, plots the direct alignment results.
 
         Returns:
-            (Tuple[np.ndarray, np.ndarray]): tuple containing:
-                ims_registered (np.ndarray):
-                    Registered images. (shape: *(n, H, W)*)
-                shifts (np.ndarray):
-                    Pixel shift values (y, x). (shape: *(n, 2)*)
+            (Tuple[plt.Figure, plt.Figure]): tuple containing:
+                fig_final (plt.Figure):
+                    Figure showing the final alignment results.
+                fig_direct (plt.Figure):
+                    Figure showing the direct alignment results.
         """
-        self.ccs, self.ims_template_filt, self.ims_moving_filt, self.shifts, self.ims_registered = [], [], [], [], []
-        shift_old = np.array([0,0])
-        for ii, im_moving in enumerate(ims_moving):
-            if template_method == 'sequential':
-                im_template = ims_moving[ii-1] if ii > 0 else ims_moving[ii]
-            elif template_method == 'image':
-                im_template = template
+        ## Make sure that geometric alignment was done
+        assert hasattr(self, 'results_geometric'), 'Missing results_geometric attribute. Geometric registration must be performed first.'
+        assert hasattr(self, 'ims_registered_geo'), 'Missing ims_registered_geo attribute. Geometric registration must be performed first.'
 
-            cc, im_template_filt, im_moving_filt = phase_correlation(
-                im_template,
-                im_moving,
-                mask_fft=self.mask,
-                return_filtered_images=True,
-            )
-            shift = convert_phaseCorrelationImage_to_shifts(cc) + shift_old
+        results_geometric = self.results_geometric
 
-            self.ccs.append(cc)
-            self.ims_template_filt.append(im_template_filt)
-            self.ims_moving_filt.append(im_moving_filt)
-            self.shifts.append(shift)
-
-            shift_old = shift.copy() if template_method == 'sequential' else shift_old
-        
-        self.shifts = np.stack(self.shifts, axis=0)
-        self.shifts = self.shifts - self.shifts[template,:] if template_method == 'sequential' else self.shifts
-
-        if template_method == 'sequential':
-            self.ims_registered = [shift_along_axis(shift_along_axis(im_moving, shift[0] - self.shifts[template,0], fill_val=0, axis=0), shift[1] - self.shifts[template,1], fill_val=0, axis=1) for ii, (im_moving, shift) in enumerate(zip(ims_moving, self.shifts))]
-        elif template_method == 'image':
-            self.ims_registered = [shift_along_axis(shift_along_axis(im_moving, shift[0], fill_val=0, axis=0), shift[1], fill_val=0, axis=1) for ii, (im_moving, shift) in enumerate(zip(ims_moving, self.shifts))]
-
-        return self.ims_registered, self.shifts
-
-
-def phase_correlation(
-    im_template: np.ndarray, 
-    im_moving: np.ndarray, 
-    mask_fft: Optional[np.ndarray] = None, 
-    return_filtered_images: bool = False,
-) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray]]:
-    """
-    Perform phase correlation on two images. Calculation performed along the
-    last two axes of the input arrays (-2, -1) corresponding to the (height,
-    width) of the images.
-    RH 2024
-
-    Args:
-        im_template (np.ndarray): 
-            The template image.
-        im_moving (np.ndarray): 
-            The moving image.
-        mask_fft (Optional[np.ndarray]): 
-            2D array mask for the FFT. If ``None``, no mask is used. Assumes mask_fft is
-            fftshifted. (Default is ``None``)
-        return_filtered_images (bool): 
-            If set to ``True``, the function will return filtered images in
-            addition to the phase correlation coefficient. (Default is
-            ``False``)
-    
-    Returns:
-        (Tuple[np.ndarray, np.ndarray, np.ndarray]): tuple containing:
-            cc (np.ndarray): 
-                The phase correlation coefficient.
-            fft_template (np.ndarray): 
-                The filtered template image. Only returned if
-                return_filtered_images is ``True``.
-            fft_moving (np.ndarray): 
-                The filtered moving image. Only returned if
-                return_filtered_images is ``True``.
-    """
-    fft2, fftshift, ifft2 = torch.fft.fft2, torch.fft.fftshift, torch.fft.ifft2
-    abs, conj = torch.abs, torch.conj
-    axes = (-2, -1)
-
-    return_numpy = isinstance(im_template, np.ndarray)
-    im_template = torch.as_tensor(im_template)
-    im_moving = torch.as_tensor(im_moving)
-
-    fft_template = fft2(im_template, dim=axes)
-    fft_moving   = fft2(im_moving, dim=axes)
-
-    if mask_fft is not None:
-        mask_fft = torch.as_tensor(mask_fft)
-        # Normalize and shift the mask
-        mask_fft = fftshift(mask_fft / mask_fft.sum(), dim=axes)
-        mask = mask_fft[tuple([None] * (im_template.ndim - 2) + [slice(None)] * 2)]
-        fft_template *= mask
-        fft_moving *= mask
-
-    # Compute the cross-power spectrum
-    R = fft_template * conj(fft_moving)
-
-    # Normalize to obtain the phase correlation function
-    R /= abs(R) + 1e-8  # Add epsilon to prevent division by zero
-
-    # Compute the magnitude of the inverse FFT to ensure symmetry
-    # cc = abs(fftshift(ifft2(R, dim=axes), dim=axes))
-    # Compute the real component of the inverse FFT (not symmetric)
-    cc = fftshift(ifft2(R, dim=axes), dim=axes).real
-
-    if return_filtered_images == False:
-        return cc.cpu().numpy() if return_numpy else cc
-    else:
-        if return_numpy:
-            return (
-                cc.cpu().numpy(), 
-                abs(ifft2(fft_template, dim=axes)).cpu().numpy(), 
-                abs(ifft2(fft_moving, dim=axes)).cpu().numpy()
-            )
+        ## Plot the results for the geometric registration
+        fig_final = self._plot_results(results_geometric['final'], 'final')
+        if (results_geometric['direct']['alignment_all_to_all'] is not None) and (results_geometric['direct']['score_all_to_all'] is not None) and plot_direct:
+            fig_direct = self._plot_results(results_geometric['direct'], 'direct')
         else:
-            return cc, abs(ifft2(fft_template, dim=axes)), abs(ifft2(fft_moving, dim=axes))
+            fig_direct = None
 
-
-def convert_phaseCorrelationImage_to_shifts(cc_im: np.ndarray) -> Tuple[int, int]:
-    """
-    Convert phase correlation image to pixel shift values.
-    RH 2022
-
-    Args:
-        cc_im (np.ndarray):
-            Phase correlation image. The middle of the image corresponds to a
-            zero-shift.
-
-    Returns:
-        (Tuple[int, int]): tuple containing:
-            shift_y (int):
-                The pixel shift in the y-axis.
-            shift_x (int):
-                The pixel shift in the x-axis.
-    """
-    height, width = cc_im.shape
-    shift_y_raw, shift_x_raw = np.unravel_index(cc_im.argmax(), cc_im.shape)
-    return int(np.floor(height/2) - shift_y_raw) , int(np.ceil(width/2) - shift_x_raw)
-
-
-def _helper_shift(X, shift, fill_val=0):
-    X_shift = np.empty_like(X, dtype=X.dtype)
-    if shift>0:
-        X_shift[:shift] = fill_val
-        X_shift[shift:] = X[:-shift]
-    elif shift<0:
-        X_shift[shift:] = fill_val
-        X_shift[:shift] = X[-shift:]
-    else:
-        X_shift[:] = X
-    return X_shift
-def shift_along_axis(
-    X: np.ndarray, 
-    shift: int, 
-    fill_val: int = 0, 
-    axis: int = 0
-) -> np.ndarray:
-    """
-    Shifts the elements of an array along a specified axis.
-    RH 2023
-
-    Args:
-        X (np.ndarray): 
-            Input array to be shifted.
-        shift (int): 
-            The number of places to shift. If the value is positive, the shift
-            is to the right. If the value is negative, the shift is to the left.
-        fill_val (int): 
-            The value to fill in the emptied places after the shift. (Default is
-            ``0``)
-        axis (int): 
-            The axis along which to apply the shift. (Default is ``0``)
-
-    Returns:
-        (np.ndarray): 
-            shifted_array (np.ndarray):
-                The array after shifting elements along the specified axis.
-    """
-    return np.apply_along_axis(_helper_shift, axis, np.array(X, dtype=X.dtype), shift, fill_val)
-
-
-def make_spectral_mask(
-    freq_highPass: float = 0.01, 
-    freq_lowPass: float = 0.3, 
-    im_shape: Tuple[int, int] = (512, 512),
-) -> np.ndarray:
-    """
-    Generates a spectral mask for an image with given high pass and low pass frequencies.
-
-    Args:
-        freq_highPass (float): 
-            High pass frequency to use. 
-            (Default is ``0.01``)
-        freq_lowPass (float): 
-            Low pass frequency to use. 
-            (Default is ``0.3``)
-        im_shape (Tuple[int, int]): 
-            Shape of the input image as a tuple *(height, width)*. 
-            (Default is *(512, 512)*)
-
-    Returns:
-        (np.ndarray): 
-            mask_out (np.ndarray): 
-                The generated spectral mask.
-    """
-    height, width = im_shape[0], im_shape[1]
+        return fig_final, fig_direct
     
-    idx_highPass = (int(np.ceil(height * freq_highPass / 2)), int(np.ceil(width * freq_highPass / 2)))
-    idx_lowPass = (int(np.floor(height * freq_lowPass / 2)), int(np.floor(width * freq_lowPass / 2)))
+    def plot_alignment_results_nonrigid(
+        self,
+    ) -> Tuple[plt.Figure, plt.Figure]:
+        """
+        Plots the alignment results for non-rigid registration.
 
-    if freq_lowPass < 1:
-        mask = np.ones((height, width))
-        mask[idx_lowPass[0]:-idx_lowPass[0]+1,:] = 0
-        mask[:,idx_lowPass[1]:-idx_lowPass[1]+1] = 0
-    else:
-        mask = np.ones((height, width))
+        Returns:
+            (Tuple[plt.Figure, plt.Figure]): tuple containing:
+                fig_final (plt.Figure):
+                    Figure showing the final alignment results.
+                fig_direct (plt.Figure):
+                    Figure showing the direct alignment results.
+        """
+        ## Make sure that nonrigid alignment was done
+        assert hasattr(self, 'results_nonrigid'), 'Missing results_nonrigid attribute. Nonrigid registration must be performed first.'
+        assert hasattr(self, 'ims_registered_nonrigid'), 'Missing ims_registered_nonrigid attribute. Nonrigid registration must be performed first.'
 
-    mask_high = np.fft.fftshift(mask)
+        results_nonrigid = self.results_nonrigid
 
-    if (idx_highPass[0] > 0) and (idx_highPass[1] > 0):
-        mask = np.zeros((height, width))
-        mask[idx_highPass[0]:-idx_highPass[0],:] = 1
-        mask[:,idx_highPass[1]:-idx_highPass[1]] = 1
-    else:
-        mask = np.ones((height, width))
+        ## Plot the results for the nonrigid registration
+        fig_final = self._plot_results(results_nonrigid['final'], 'final')
 
-    mask_low = np.fft.fftshift(mask)
+        return fig_final, None
 
-    mask_out = mask_high * mask_low
-    
-    return mask_out
+    def _plot_results(self, results, name):
+        inv_eye = 1 - np.eye(results['alignment_all_to_all'].shape[0])
+        cmap = 'viridis'
+        fig, axs = plt.subplots(1, 2, figsize=(6, 3))
+        axs = axs.flatten()
+        plt.colorbar(axs[0].imshow(results['score_all_to_all'] * inv_eye, cmap=cmap))
+        axs[0].set_title(f'score_all_to_all ({name})')
+        axs[1].imshow(results['alignment_all_to_all'] * inv_eye, cmap=cmap)
+        axs[1].set_title(f'alignment_all_to_all ({name})')
+        
+        plt.tight_layout()
+        return fig
 
 
 def clahe(
@@ -1529,229 +1354,10 @@ def adaptive_brute_force_matcher(
     return idx_m2t_mutual
 
 
-class ImageAlignmentChecker:
-    """
-    Class to check the alignment of images using phase correlation.
-    RH 2024
-
-    Args:
-        hw (Tuple[int, int]): 
-            Height and width of the images.
-        radius_in (Union[float, Tuple[float, float]]): 
-            Radius of the pixel shift / offset that can be considered as
-            'aligned'. Used to create the 'in' filter which is an image of a
-            small centered circle that is used as a filter and multiplied by
-            the phase correlation images. If a single value is provided, the
-            filter will be a circle with radius 0 to that value; it will be
-            converted to a tuple representing a bandpass filter (0, radius_in).
-        radius_out (Union[float, Tuple[float, float]]):
-            Similar to radius_in, but for the 'out' filter, which defines the
-            'null distribution' for defining what is 'aligned'. Should be a
-            value larger than the expected maximum pixel shift / offset. If a
-            single value is provided, the filter will be a donut / taurus
-            starting at that value and ending at the edge of the smallest
-            dimension of the image; it will be converted to a tuple representing
-            a bandpass filter (radius_out, min(hw)).
-        order (int):
-            Order of the butterworth bandpass filters used to define the 'in'
-            and 'out' filters. Larger values will result in a sharper edges, but
-            values higher than 5 can lead to collapse of the filter.
-        device (str):
-            Torch device to use for computations. (Default is 'cpu')
-
-    Attributes:
-        hw (Tuple[int, int]): 
-            Height and width of the images.
-        order (int):
-            Order of the butterworth bandpass filters used to define the 'in'
-            and 'out' filters.
-        device (str):
-            Torch device to use for computations.
-        filt_in (torch.Tensor):
-            The 'in' filter used for scoring the alignment.
-        filt_out (torch.Tensor):
-            The 'out' filter used for scoring the alignment.
-    """
-    def __init__(
-        self,
-        hw: Tuple[int, int],
-        radius_in: Union[float, Tuple[float, float]],
-        radius_out: Union[float, Tuple[float, float]],
-        order: int = 5,
-        device: str = 'cpu',
-    ):
-        ## Set attributes
-        ### Convert to torch.Tensor
-        self.hw = tuple(hw)
-
-        ### Set other attributes
-        self.order = int(order)
-        self.device = str(device)
-        ### Set filter attributes
-        if isinstance(radius_in, (int, float, complex)):
-            radius_in = (float(0.0), float(radius_in))
-        elif isinstance(radius_in, (tuple, list, np.ndarray, torch.Tensor)):
-            radius_in = tuple(float(r) for r in radius_in)
-        else:
-            raise ValueError(f'radius_in must be a float or tuple of floats. Found type: {type(radius_in)}')
-        if isinstance(radius_out, (int, float, complex)):
-            radius_out = (float(radius_out), float(min(self.hw)) / 2)
-        elif isinstance(radius_out, (tuple, list, np.ndarray, torch.Tensor)):
-            radius_out = tuple(float(r) for r in radius_out)
-        else:
-            raise ValueError(f'radius_out must be a float or tuple of floats. Found type: {type(radius_out)}')
-
-        ## Make filters
-        self.filt_in, self.filt_out = (torch.as_tensor(self._make_filter(
-            hw=self.hw,
-            low=bp[0],
-            high=bp[1],
-            order=order,
-        ), dtype=torch.float32, device=device) for bp in [radius_in, radius_out])
-    
-    def _make_filter(
-        self,
-        hw: tuple,
-        low: float = 5,
-        high: float = 6,
-        order: int = 3,
-    ):
-        ## Make a distance grid starting from the fftshifted center
-        grid = helpers.make_distance_grid(shape=hw, p=2, use_fftshift_center=True)
-
-        ## Make the number of datapoints for the kernel large
-        n_x = max(hw) * 10
-
-        fs = max(hw) * 1
-        b, a = helpers.design_butter_bandpass(lowcut=low, highcut=high, fs=fs, order=order, plot_pref=False)
-        w, h = scipy.signal.freqz(b, a, worN=n_x)
-        x_kernel = (fs * 0.5 / np.pi) * w
-        kernel = np.abs(h)
-
-        ## Interpolate the kernel to the distance grid
-        filt = np.interp(
-            x=grid,
-            xp=x_kernel,
-            fp=kernel,
-        )
-
-        return filt
-    
-    def score_alignment(
-        self,
-        images: Union[np.ndarray, torch.Tensor],
-        images_ref: Optional[Union[np.ndarray, torch.Tensor]] = None,
-    ):
-        """
-        Score the alignment of a set of images using phase correlation. Computes
-        the stats of the center ('in') of the phase correlation image over the
-        stats of the outer region ('out') of the phase correlation image.
-        RH 2024
-
-        Args:
-            images (Union[np.ndarray, torch.Tensor]): 
-                A 3D array of images. Shape: *(n_images, height, width)*
-            images_ref (Optional[Union[np.ndarray, torch.Tensor]]):
-                Reference images to compare against. If provided, the images
-                will be compared against these images. If not provided, the
-                images will be compared against themselves. (Default is
-                ``None``)
-
-        Returns:
-            (Dict): 
-                Dictionary containing the following keys:
-                * 'mean_out': 
-                    Mean of the phase correlation image weighted by the
-                    'out' filter
-                * 'mean_in': 
-                    Mean of the phase correlation image weighted by the
-                    'in' filter
-                * 'ptile95_out': 
-                    95th percentile of the phase correlation image multiplied by
-                    the 'out' filter
-                * 'max_in': 
-                    Maximum value of the phase correlation image multiplied by
-                    the 'in' filter
-                * 'std_out': 
-                    Standard deviation of the phase correlation image weighted by
-                    the 'out' filter
-                * 'std_in': 
-                    Standard deviation of the phase correlation image weighted by
-                    the 'in' filter
-                * 'max_diff': 
-                    Difference between the 'max_in' and 'ptile95_out' values
-                * 'z_in': 
-                    max_diff divided by the 'std_out' value
-                * 'r_in': 
-                    max_diff divided by the 'ptile95_out' value
-        """
-        def _fix_images(ims):
-            assert isinstance(ims, (np.ndarray, torch.Tensor, list, tuple)), f'images must be np.ndarray, torch.Tensor, or a list/tuple of np.ndarray or torch.Tensor. Found type: {type(ims)}'
-            if isinstance(ims, (list, tuple)):
-                assert all(isinstance(im, (np.ndarray, torch.Tensor)) for im in ims), f'images must be np.ndarray or torch.Tensor. Found types: {set(type(im) for im in ims)}'
-                assert all(im.ndim == 2 for im in ims), f'images must be 2D arrays (height, width). Found shapes: {set(im.shape for im in ims)}'
-                if isinstance(ims[0], np.ndarray):
-                    ims = np.stack([np.array(im) for im in ims], axis=0)
-                else:
-                    ims = torch.stack([torch.as_tensor(im) for im in ims], dim=0)
-            else:
-                if ims.ndim == 2:
-                    ims = ims[None, :, :]
-                assert ims.ndim == 3, f'images must be a 3D array (n_images, height, width). Found shape: {ims.shape}'
-                assert ims.shape[1:] == self.hw, f'images must have shape (n_images, {self.hw[0]}, {self.hw[1]}). Found shape: {ims.shape}'
-
-            ims = torch.as_tensor(ims, dtype=torch.float32, device=self.device)
-            return ims
-
-        images = _fix_images(images)
-        images_ref = _fix_images(images_ref) if images_ref is not None else images
-        
-        pc = phase_correlation(images_ref[None, :, :, :], images[:, None, :, :])  ## All to all phase correlation. Shape: (n_images, n_images, height, width)
-
-        ## metrics
-        filt_in, filt_out = self.filt_in[None, None, :, :], self.filt_out[None, None, :, :]
-        mean_out = (pc * filt_out).sum(dim=(-2, -1)) / filt_out.sum(dim=(-2, -1))
-        mean_in =  (pc * filt_in).sum(dim=(-2, -1))  / filt_in.sum(dim=(-2, -1))
-        ptile95_out = torch.quantile((pc * filt_out).reshape(pc.shape[0], pc.shape[1], -1)[:, :, filt_out.reshape(-1) > 1e-3], 0.95, dim=-1)
-        max_in = (pc * filt_in).amax(dim=(-2, -1))
-        std_out = torch.sqrt(torch.mean((pc - mean_out[:, :, None, None])**2 * filt_out, dim=(-2, -1)))
-        std_in = torch.sqrt(torch.mean((pc - mean_in[:, :, None, None])**2 * filt_in, dim=(-2, -1)))
-
-        max_diff = max_in - ptile95_out
-        z_in = max_diff / std_out
-        r_in = max_diff / ptile95_out
-
-        outs = {
-            'pc': pc.cpu().numpy(),
-            'mean_out': mean_out,
-            'mean_in': mean_in,
-            'ptile95_out': ptile95_out,
-            'max_in': max_in,
-            'std_out': std_out,
-            'std_in': std_in,
-            'max_diff': max_diff,
-            'z_in': z_in,  ## z-score of in value over out distribution
-            'r_in': r_in,
-        }
-
-        outs = {k: val.cpu().numpy() if isinstance(val, torch.Tensor) else val for k, val in outs.items()}
-        
-        return outs
-    
-    def __call__(
-        self,
-        images: Union[np.ndarray, torch.Tensor],
-    ):
-        """
-        Calls the `score_alignment` method. See `self.score_alignment` docstring
-        for more info.
-        """
-        return self.score_alignment(images)
-
-
 ##########################################################################################################
 ########################################## REGISTRATION METHODS ##########################################
 ##########################################################################################################
+
 
 class ImageRegistrationMethod:
     """
@@ -1817,9 +1423,31 @@ class ImageRegistrationMethod:
             maxIters=max_iter,
             confidence=confidence,
         )
+        inliers = inliers.squeeze().astype(np.bool_)
         print(f"Found {inliers.sum()} inliers out of {len(src_pts)} keypoints.") if self.verbose > 1 else None
         
         warp_matrix = np.eye(3) if warp_matrix is None else warp_matrix
+
+        ## If verbose > 2, make a plot of corresponding points
+        if self.verbose > 2:
+            alpha = float(np.clip(1 - (len(src_pts) / 2000), 0.2, 1))
+            outliers = np.logical_not(inliers)
+            fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+            ax.imshow(np.hstack([im_template, im_moving]), cmap='gray')
+            ## plot inliers as green dots
+            ax.scatter(src_pts[inliers, 0], src_pts[inliers, 1], c='g', s=10, label='inliers', alpha=alpha)
+            ax.scatter(dst_pts[inliers, 0] + im_template.shape[1], dst_pts[inliers, 1], c='g', s=10, alpha=alpha)
+            ## plot outliers as red dots
+            ax.scatter(src_pts[outliers, 0], src_pts[outliers, 1], c='r', s=10, label='outliers', alpha=alpha)
+            ax.scatter(dst_pts[outliers, 0] + im_template.shape[1], dst_pts[outliers, 1], c='r', s=10, alpha=alpha)
+            ## plot lines connecting points
+            for pt in np.where(inliers)[0]:
+                ## plot lines in cyan
+                ax.plot([src_pts[pt, 0], dst_pts[pt, 0] + im_template.shape[1]], [src_pts[pt, 1], dst_pts[pt, 1]], 'c-', lw=1, alpha=alpha)
+            for pt in np.where(outliers)[0]:
+                ## plot lines in magenta
+                ax.plot([src_pts[pt, 0], dst_pts[pt, 0] + im_template.shape[1]], [src_pts[pt, 1], dst_pts[pt, 1]], 'm-', lw=1, alpha=alpha)
+            plt.show()
 
         return warp_matrix
         
@@ -1863,6 +1491,58 @@ class RoMa(ImageRegistrationMethod):
         n_points: int = 10000,
         batch_size: int = 1000,
         device: str = 'cpu',
+        weight_urls: Dict[str, Dict[str, Dict[str, str]]] = {
+            "romatch": {
+                "outdoor": {
+                    "url": "https://github.com/Parskatt/storage/releases/download/roma/roma_outdoor.pth",
+                    "hash": "9a451dfb65745e777bf916db6ea84933",
+                    "filename": "roma_outdoor.pth",
+                },
+                "indoor": {
+                    "url": "https://github.com/Parskatt/storage/releases/download/roma/roma_indoor.pth",
+                    "hash": "349a17aaa21883bb164b1a5884febb21",
+                    "filename": "roma_indoor.pth",
+                },
+            },
+            "tiny_roma_v1": {
+                "outdoor": {
+                    "url": "https://github.com/Parskatt/storage/releases/download/roma/tiny_roma_v1_outdoor.pth",
+                    "hash": "b8120606c6b027a07b856d64f20bd13e",
+                    "filename": "tiny_roma_v1_outdoor.pth",
+                },
+            },
+            "dinov2": {
+                "url": "https://dl.fbaipublicfiles.com/dinov2/dinov2_vitl14/dinov2_vitl14_pretrain.pth", #hopefully this doesnt change :D
+                "hash": "19a02c10947ed50096ce382b46b15662",
+                "filename": "dinov2_vitl14_pretrain.pth",
+            },
+        },
+        fallback_weight_urls = {
+            "romatch": {
+                "outdoor": {
+                    "url": "https://osf.io/cmzpa/download",
+                    "hash": "9a451dfb65745e777bf916db6ea84933",
+                    "filename": "roma_outdoor.pth",
+                },
+                "indoor": {
+                    "url": "https://osf.io/uzx64/download",
+                    "hash": "349a17aaa21883bb164b1a5884febb21",
+                    "filename": "roma_indoor.pth",
+                },
+            },
+            "tiny_roma_v1": {
+                "outdoor": {
+                    "url": "https://osf.io/6anre/download",
+                    "hash": "b8120606c6b027a07b856d64f20bd13e",
+                    "filename": "tiny_roma_v1_outdoor.pth",
+                },
+            },
+            "dinov2": {
+                "url": "https://osf.io/tmj5c/download", #hopefully this doesnt change :D
+                "hash": "19a02c10947ed50096ce382b46b15662",
+                "filename": "dinov2_vitl14_pretrain.pth",
+            },
+        },
         verbose=False,
     ):
         try:
@@ -1875,12 +1555,57 @@ class RoMa(ImageRegistrationMethod):
         self.roma_model_type = model_type
         self.n_points = n_points
         self.batch_size = batch_size
+        self.weight_urls = weight_urls
+        self.fallback_weight_urls = fallback_weight_urls
         self.verbose = verbose
 
+        ## Download weights and dinov2
+        def download_and_check_weights(url, filename, hash):
+            dir_save = str(Path(torch.hub.get_dir()) / "checkpoints")
+
+            weights = torch.hub.load_state_dict_from_url(
+                url,
+                map_location=device,
+                file_name=filename,
+            )
+            ## Check if weights are correct
+            path_weights = str(Path(dir_save) / filename)
+
+            if not hash == helpers.hash_file(path=path_weights, type_hash='MD5'):
+                raise ValueError(f"RoMa weights hash mismatch. Expected: {hash}. Found: {helpers.hash_file(path=path_weights, type_hash='MD5')}. Path: {path_weights}, URL: {url}")
+            else:
+                return weights
+
+        def safe_download_and_check_weights(weight_urls, fallback_weight_urls):
+            try:
+                weights = download_and_check_weights(
+                    url=     weight_urls["url"],
+                    filename=weight_urls["filename"],
+                    hash=    weight_urls["hash"],
+                )
+            except Exception as e:
+                warnings.warn(f"Download or hash check failed. Error: {e}")
+                print("Using fallback weights for file: ", weight_urls["filename"])
+                weights = download_and_check_weights(
+                    url=     fallback_weight_urls["url"],
+                    filename=fallback_weight_urls["filename"],
+                    hash=    fallback_weight_urls["hash"],
+                )
+            return weights
+
+        weights = safe_download_and_check_weights(
+            weight_urls=weight_urls["romatch"][model_type],
+            fallback_weight_urls=fallback_weight_urls["romatch"][model_type],
+        )
+        weights_dinov2 = safe_download_and_check_weights(
+            weight_urls=weight_urls["dinov2"],
+            fallback_weight_urls=fallback_weight_urls["dinov2"],
+        )
+
         if model_type == 'outdoor':
-            self.model = roma_outdoor(device=device)
+            self.model = roma_outdoor(device=device, weights=weights, dinov2_weights=weights_dinov2)
         elif model_type == 'indoor':
-            self.model = roma_indoor(device=device)
+            self.model = roma_indoor(device=device, weights=weights, dinov2_weights=weights_dinov2)
     
     def _match(
         self,
@@ -2462,6 +2187,9 @@ class DISK_LightGlue(ImageRegistrationMethod):
             Number of features to extract. (Default is *2048*)
         threshold_confidence (float):
             Confidence threshold for filtering matches. (Default is *0.2*)
+        window_nms (int):
+            Window size for non-maximum suppression. Must be odd integer. Larger
+            values will result in fewer keypoints. (Default is *5*)
         device (str):
             Device to use for computations.
         verbose (bool):
@@ -2471,6 +2199,7 @@ class DISK_LightGlue(ImageRegistrationMethod):
         self,
         num_features: int = 2048,
         threshold_confidence: float = 0.2,
+        window_nms: int = 5,
         device: str = 'cpu',
         verbose: bool = False,
     ):
@@ -2478,12 +2207,13 @@ class DISK_LightGlue(ImageRegistrationMethod):
         self.verbose = verbose
         self.threshold_confidence = threshold_confidence
         self.num_features = num_features
+        self.window_nms = window_nms
 
         # Initialize feature extractor
-        self.feature_extractor = kornia.feature.DISK.from_pretrained("depth").eval().to(device)
+        self.feature_extractor = kornia.feature.DISK.from_pretrained(checkpoint="epipolar", device=device).eval()
 
         # Initialize LightGlue matcher
-        self.matcher = kornia.feature.LightGlue('disk').eval().to(device)
+        self.matcher = kornia.feature.LightGlue(features='disk').eval().to(device)
 
     def _forward_rigid(
         self,
@@ -2494,11 +2224,22 @@ class DISK_LightGlue(ImageRegistrationMethod):
         # Prepare images
         img1 = self._prepare_image(im_template)
         img2 = self._prepare_image(im_moving)
+        ## Warn if image shapes are not divisible by 16
+        shapes_ims = (img1.shape[-2:], img2.shape[-2:])
+        if any([dim % 16 != 0 for dim in np.concatenate(shapes_ims)]):
+            print(f"Image shapes are not divisible by 16. Will be padded using kornia.feature.DISK padding. Shapes: {shapes_ims}")
+
 
         # Extract features
         with torch.inference_mode():
             inp = torch.cat([img1, img2], dim=0)
-            features = self.feature_extractor(inp, self.num_features)
+            features = self.feature_extractor(
+                images=inp, 
+                n=self.num_features,
+                window_size=self.window_nms,
+                # score_threshold=self.threshold_confidence,
+                pad_if_not_divisible=True,
+            )
             features1 = features[0]
             features2 = features[1]
             kps1, descs1 = features1.keypoints, features1.descriptors
@@ -2527,6 +2268,7 @@ class DISK_LightGlue(ImageRegistrationMethod):
         # Get matching keypoints
         kptsA = kps1[idxs[:, 0]]
         kptsB = kps2[idxs[:, 1]]
+
         return kptsA, kptsB
 
     def _prepare_image(self, image: Union[np.ndarray, torch.Tensor]):
@@ -2539,5 +2281,63 @@ class DISK_LightGlue(ImageRegistrationMethod):
         if image.max() > 1.0:
             image = image / 255.0
         image = image.to(self.device).tile(1, 3, 1, 1)  # Add color channels
+
         return image
     
+
+class PhaseCorrelationRegistration(ImageRegistrationMethod):
+    """
+    Image registration method using helpers.phase_correlation.
+    RH 2024
+
+    Args:
+        device (str):
+            Device to use for computations.
+        verbose (bool):
+            Whether to print progress updates.
+    """    
+    def __init__(
+        self,
+        device: str = 'cpu',
+        bandpass_freqs: Optional[Tuple[float, float]] = None,
+        order: int = 5,
+        verbose: bool = False,
+    ):
+        super().__init__(device=device, verbose=verbose)
+
+        self.bandpass_freqs = bandpass_freqs
+        self.order = order
+
+    def fit_rigid(
+        self,
+        im_template: Union[np.ndarray, torch.Tensor],
+        im_moving: Union[np.ndarray, torch.Tensor],
+        **kwargs,
+    ):
+        
+        filt = helpers.make_2D_frequency_filter(
+            hw=im_template.shape[-2:],
+            low=self.bandpass_freqs[0],
+            high=self.bandpass_freqs[1],
+            order=self.order,
+        ) if self.bandpass_freqs is not None else None
+
+        cc = helpers.phase_correlation(
+            im_template=im_template,
+            im_moving=im_moving,
+            mask_fft=filt,
+            return_filtered_images = False,
+            eps = 1e-8,
+        )
+
+        ## get shifts
+        shift_y_raw, shift_x_raw = np.unravel_index(cc.argmax(), cc.shape)
+        # shifts = (float(np.floor(cc.shape[-2]/2) - shift_y_raw) , float(np.ceil(cc.shape[-1]/2) - shift_x_raw))
+        shifts = (float(np.ceil(cc.shape[-1]/2) - shift_x_raw), float(np.floor(cc.shape[-2]/2) - shift_y_raw))
+
+        ## convert shifts to warp matrix
+        warp_matrix = np.eye(3, dtype=np.float32)
+        warp_matrix[:2, 2] = shifts
+
+        return warp_matrix
+

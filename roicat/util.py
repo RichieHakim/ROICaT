@@ -82,37 +82,35 @@ def get_default_parameters(
                 },
             },
             'alignment': {
+                'initialization': {
+                    'use_match_search': True,  ## Whether or not to use our match search algorithm to initialize the alignment.
+                    'all_to_all': False,  ## Force the use of our match search algorithm for all-pairs matching. Much slower (False: O(N) vs. True: O(N^2)), but more accurate.
+                    'radius_in': 4.0,  ## Value in micrometers used to define the maximum shift/offset between two images that are considered to be aligned. Larger means more lenient alignment.
+                    'radius_out': 20.0,  ## Value in micrometers used to define the minimum shift/offset between two images that are considered to be misaligned.
+                    'z_threshold': 4.0,  ## Z-score required to define two images as aligned. Larger values results in more stringent alignment requirements.
+                },
                 'augment': {
                     'normalize_FOV_intensities': True,  ## Whether or not to normalize the FOV_images to the max value across all FOV images.
                     'roi_FOV_mixing_factor': 0.5,  ## default: 0.5. Fraction of the max intensity projection of ROIs that is added to the FOV image. 0.0 means only the FOV_images, larger values mean more of the ROIs are added.
                     'use_CLAHE': True,  ## Whether or not to use 'Contrast Limited Adaptive Histogram Equalization'. Useful if params['importing']['type_meanImg'] is not a contrast enhanced image (like 'meanImgE' in Suite2p)
-                    'CLAHE_grid_size': 100,  ## Size of the grid for CLAHE. 1 means no grid, 2 means 2x2 grid, etc.
-                    'CLAHE_clipLimit': 1,  ## Clipping limit for CLAHE. Higher values mean more contrast.
+                    'CLAHE_grid_block_size': 10,  ## Size of the block size for the grid for CLAHE. Smaller values means more local contrast enhancement.
+                    'CLAHE_clipLimit': 1.0,  ## Clipping limit for CLAHE. Higher values mean more contrast.
                     'CLAHE_normalize': True,  ## Whether or not to normalize the CLAHE image.
                 },
                 'fit_geometric': {
                     'template': 0.5,  ## Which session to use as a registration template. If input is float (ie 0.0, 0.5, 1.0, etc.), then it is the fractional position of the session to use; if input is int (ie 1, 2, 3), then it is the index of the session to use (0-indexed)
-                    'template_method': 'sequential',  ## Can be 'sequential' or 'image'. If 'sequential', then the template is the FOV_image of the previous session. If 'image', then the template is the FOV_image of the session specified by 'template'.
-                    'mode_transform': 'euclidean',  ## Must be one of {'translation', 'affine', 'euclidean', 'homography'}. See documentation for more details.
-                    'mask_borders': [50, 50, 50, 50],  ## Number of pixels to mask from the borders of the FOV_image. Useful for removing artifacts from the edges of the FOV_image.
-                    'method': 'RoMa',  ## Accuracy order (best to worst): RoMa (by far, but slow without a GPU), LoFTR, DISK_LightGlue, ECC_cv2, (the following are not recommended) SIFT, ORB
-                },
-                'fit_nonrigid': {
-                    'template': 0.5,  ## Which session to use as a registration template. If input is float (ie 0.0, 0.5, 1.0, etc.), then it is the fractional position of the session to use; if input is int (ie 1, 2, 3), then it is the index of the session to use (0-indexed)
                     'template_method': 'image',  ## Can be 'sequential' or 'image'. If 'sequential', then the template is the FOV_image of the previous session. If 'image', then the template is the FOV_image of the session specified by 'template'.
-                    'mode_transform': 'createOptFlow_DeepFlow',  ## Can be 'createOptFlow_DeepFlow' or 'calcOpticalFlowFarneback'. See documentation for more details.
-                    'kwargs_mode_transform': None,  ## Keyword arguments for the mode_transform function. See documentation for more details.
-                    'method': 'RoMa',  ## Accuracy order (best to worst): RoMa (slow without a GPU), DeepFlow, (the following are not recommended) OpticalFlowFarneback
-                },
-                'transform_ROIs': {
-                    'normalize': True,  ## If True, normalize the spatial footprints to have a sum of 1.
-                },
-                'kwargs_methods': {
-                    'rigid': {
+                    'mask_borders': [0, 0, 0, 0],  ## Number of pixels to mask from the borders of the FOV_image. Useful for removing artifacts from the edges of the FOV_image.
+                    'method': 'RoMa',  ## Accuracy order (best to worst): RoMa (by far, but slow without a GPU), LoFTR, DISK_LightGlue, ECC_cv2, (the following are not recommended) SIFT, ORB
+                    'kwargs_method': {
                         'RoMa': {
                             'model_type': 'outdoor',
                             'n_points': 10000,  ## Higher values mean more points are used for the registration. Useful for larger FOV_images. Larger means slower.
                             'batch_size': 1000,
+                        },
+                        'DISK_LightGlue': {
+                            'num_features': 3000,  ## Number of features to extract and match. I've seen best results around 2048 despite higher values typically being better.
+                            'threshold_confidence': 0.2,  ## Higher values means fewer but better matches.
                         },
                         'LoFTR': {
                             'model_type': 'indoor_new',
@@ -125,9 +123,9 @@ def get_default_parameters(
                             'gaussFiltSize': 1,  ## Size of the gaussian filter used to smooth the FOV_image before registration. Larger values mean more smoothing.
                             'auto_fix_gaussFilt_step': 10,  ## If the registration fails, then the gaussian filter size is reduced by this amount and the registration is tried again.
                         },
-                        'DISK_LightGlue': {
-                            'num_features': 2048,  ## Number of features to extract and match. I've seen best results around 2048 despite higher values typically being better.
-                            'threshold_confidence': 0.2,  ## Higher values means fewer but better matches.
+                        'PhaseCorrelation': {
+                            'bandpass_freqs': (1, 30),
+                            'order': 5,
                         },
                         'SIFT': {
                             'nfeatures': 10000,
@@ -147,7 +145,17 @@ def get_default_parameters(
                             'fastThreshold': 20,
                         },
                     },
-                    'nonrigid': {
+                    'kwargs_RANSAC': {  ## Parameters related to the RANSAC algorithm used for point/descriptor based registration methods.
+                        'inl_thresh': 3.0,  ## Threshold for the inliers. Larger values mean more points are considered inliers.
+                        'max_iter': 100,  ## Maximum number of iterations for the RANSAC algorithm.
+                        'confidence': 0.99,  ## Confidence level for the RANSAC algorithm. Larger values mean more points are considered inliers.
+                    },
+                },
+                'fit_nonrigid': {
+                    'template': 0.5,  ## Which session to use as a registration template. If input is float (ie 0.0, 0.5, 1.0, etc.), then it is the fractional position of the session to use; if input is int (ie 1, 2, 3), then it is the index of the session to use (0-indexed)
+                    'template_method': 'image',  ## Can be 'sequential' or 'image'. If 'sequential', then the template is the FOV_image of the previous session. If 'image', then the template is the FOV_image of the session specified by 'template'.
+                    'method': 'DeepFlow',
+                    'kwargs_method': {
                         'RoMa': {
                             'model_type': 'outdoor',
                         },
@@ -161,7 +169,10 @@ def get_default_parameters(
                             'poly_sigma': 1.5,            
                         },
                     },
-                }
+                },
+                'transform_ROIs': {
+                    'normalize': True,  ## If True, normalize the spatial footprints to have a sum of 1.
+                },
             },
             'blurring': {
                 'kernel_halfWidth': 2.0,  ## Half-width of the cosine kernel used for blurring. Set value based on how much you think the ROIs move from session to session.
@@ -469,6 +480,44 @@ def system_info(verbose: bool = False,) -> Dict:
     versions = conv_str(versions)
 
     return versions
+
+
+def set_random_seed(seed=None, deterministic=False):
+    """
+    Set random seed for reproducibility.
+    RH 2023
+
+    Args:
+        seed (int, optional):
+            Random seed.
+            If None, a random seed (spanning int32 integer range) is generated.
+        deterministic (bool, optional):
+            Whether to make packages deterministic.
+
+    Returns:
+        (int):
+            seed (int):
+                Random seed.
+    """
+    ### random seed (note that optuna requires a random seed to be set within the pipeline)
+    import numpy as np
+    seed = int(np.random.randint(0, 2**31 - 1, dtype=np.uint32)) if seed is None else seed
+
+    np.random.seed(seed)
+    import torch
+    torch.manual_seed(seed)
+    import random
+    random.seed(seed)
+    import cv2
+    cv2.setRNGSeed(seed)
+
+    ## Make torch deterministic
+    torch.use_deterministic_algorithms(deterministic)
+    ## Make cudnn deterministic
+    torch.backends.cudnn.deterministic = deterministic
+    torch.backends.cudnn.benchmark = not deterministic
+    
+    return seed
 
 
 class ROICaT_Module:
@@ -908,6 +957,7 @@ class RichFile_ROICaT(rf.RichFile):
 
             ("toeplitz_conv", helpers.Toeplitz_convolution2d),
             ("convergence_checker_optuna", helpers.Convergence_checker_optuna),
+            ("image_alignment_checker", helpers.ImageAlignmentChecker),
         ]]
         # roicat_module_tds = []
         

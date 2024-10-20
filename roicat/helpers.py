@@ -4249,6 +4249,336 @@ def resize_images(
     return images_resized
 
 
+class ImageAlignmentChecker:
+    """
+    Class to check the alignment of images using phase correlation.
+    RH 2024
+
+    Args:
+        hw (Tuple[int, int]): 
+            Height and width of the images.
+        radius_in (Union[float, Tuple[float, float]]): 
+            Radius of the pixel shift / offset that can be considered as
+            'aligned'. Used to create the 'in' filter which is an image of a
+            small centered circle that is used as a filter and multiplied by
+            the phase correlation images. If a single value is provided, the
+            filter will be a circle with radius 0 to that value; it will be
+            converted to a tuple representing a bandpass filter (0, radius_in).
+        radius_out (Union[float, Tuple[float, float]]):
+            Similar to radius_in, but for the 'out' filter, which defines the
+            'null distribution' for defining what is 'aligned'. Should be a
+            value larger than the expected maximum pixel shift / offset. If a
+            single value is provided, the filter will be a donut / taurus
+            starting at that value and ending at the edge of the smallest
+            dimension of the image; it will be converted to a tuple representing
+            a bandpass filter (radius_out, min(hw)).
+        order (int):
+            Order of the butterworth bandpass filters used to define the 'in'
+            and 'out' filters. Larger values will result in a sharper edges, but
+            values higher than 5 can lead to collapse of the filter.
+        device (str):
+            Torch device to use for computations. (Default is 'cpu')
+
+    Attributes:
+        hw (Tuple[int, int]): 
+            Height and width of the images.
+        order (int):
+            Order of the butterworth bandpass filters used to define the 'in'
+            and 'out' filters.
+        device (str):
+            Torch device to use for computations.
+        filt_in (torch.Tensor):
+            The 'in' filter used for scoring the alignment.
+        filt_out (torch.Tensor):
+            The 'out' filter used for scoring the alignment.
+    """
+    def __init__(
+        self,
+        hw: Tuple[int, int],
+        radius_in: Union[float, Tuple[float, float]],
+        radius_out: Union[float, Tuple[float, float]],
+        order: int = 5,
+        device: str = 'cpu',
+    ):
+        ## Set attributes
+        ### Convert to torch.Tensor
+        self.hw = tuple(hw)
+
+        ### Set other attributes
+        self.order = int(order)
+        self.device = str(device)
+        ### Set filter attributes
+        if isinstance(radius_in, (int, float, complex)):
+            radius_in = (float(0.0), float(radius_in))
+        elif isinstance(radius_in, (tuple, list, np.ndarray, torch.Tensor)):
+            radius_in = tuple(float(r) for r in radius_in)
+        else:
+            raise ValueError(f'radius_in must be a float or tuple of floats. Found type: {type(radius_in)}')
+        if isinstance(radius_out, (int, float, complex)):
+            radius_out = (float(radius_out), float(min(self.hw)) / 2)
+        elif isinstance(radius_out, (tuple, list, np.ndarray, torch.Tensor)):
+            radius_out = tuple(float(r) for r in radius_out)
+        else:
+            raise ValueError(f'radius_out must be a float or tuple of floats. Found type: {type(radius_out)}')
+
+        ## Make filters
+        self.filt_in, self.filt_out = (torch.as_tensor(make_2D_frequency_filter(
+            hw=self.hw,
+            low=bp[0],
+            high=bp[1],
+            order=order,
+        ), dtype=torch.float32, device=device) for bp in [radius_in, radius_out])
+    
+    def score_alignment(
+        self,
+        images: Union[np.ndarray, torch.Tensor],
+        images_ref: Optional[Union[np.ndarray, torch.Tensor]] = None,
+    ):
+        """
+        Score the alignment of a set of images using phase correlation. Computes
+        the stats of the center ('in') of the phase correlation image over the
+        stats of the outer region ('out') of the phase correlation image.
+        RH 2024
+
+        Args:
+            images (Union[np.ndarray, torch.Tensor]): 
+                A 3D array of images. Shape: *(n_images, height, width)*
+            images_ref (Optional[Union[np.ndarray, torch.Tensor]]):
+                Reference images to compare against. If provided, the images
+                will be compared against these images. If not provided, the
+                images will be compared against themselves. (Default is
+                ``None``)
+
+        Returns:
+            (Dict): 
+                Dictionary containing the following keys:
+                * 'mean_out': 
+                    Mean of the phase correlation image weighted by the
+                    'out' filter
+                * 'mean_in': 
+                    Mean of the phase correlation image weighted by the
+                    'in' filter
+                * 'ptile95_out': 
+                    95th percentile of the phase correlation image multiplied by
+                    the 'out' filter
+                * 'max_in': 
+                    Maximum value of the phase correlation image multiplied by
+                    the 'in' filter
+                * 'std_out': 
+                    Standard deviation of the phase correlation image weighted by
+                    the 'out' filter
+                * 'std_in': 
+                    Standard deviation of the phase correlation image weighted by
+                    the 'in' filter
+                * 'max_diff': 
+                    Difference between the 'max_in' and 'ptile95_out' values
+                * 'z_in': 
+                    max_diff divided by the 'std_out' value
+                * 'r_in': 
+                    max_diff divided by the 'ptile95_out' value
+        """
+        def _fix_images(ims):
+            assert isinstance(ims, (np.ndarray, torch.Tensor, list, tuple)), f'images must be np.ndarray, torch.Tensor, or a list/tuple of np.ndarray or torch.Tensor. Found type: {type(ims)}'
+            if isinstance(ims, (list, tuple)):
+                assert all(isinstance(im, (np.ndarray, torch.Tensor)) for im in ims), f'images must be np.ndarray or torch.Tensor. Found types: {set(type(im) for im in ims)}'
+                assert all(im.ndim == 2 for im in ims), f'images must be 2D arrays (height, width). Found shapes: {set(im.shape for im in ims)}'
+                if isinstance(ims[0], np.ndarray):
+                    ims = np.stack([np.array(im) for im in ims], axis=0)
+                else:
+                    ims = torch.stack([torch.as_tensor(im) for im in ims], dim=0)
+            else:
+                if ims.ndim == 2:
+                    ims = ims[None, :, :]
+                assert ims.ndim == 3, f'images must be a 3D array (n_images, height, width). Found shape: {ims.shape}'
+                assert ims.shape[1:] == self.hw, f'images must have shape (n_images, {self.hw[0]}, {self.hw[1]}). Found shape: {ims.shape}'
+
+            ims = torch.as_tensor(ims, dtype=torch.float32, device=self.device)
+            return ims
+
+        images = _fix_images(images)
+        images_ref = _fix_images(images_ref) if images_ref is not None else images
+        
+        pc = phase_correlation(images_ref[None, :, :, :], images[:, None, :, :])  ## All to all phase correlation. Shape: (n_images, n_images, height, width)
+
+        ## metrics
+        filt_in, filt_out = self.filt_in[None, None, :, :], self.filt_out[None, None, :, :]
+        mean_out = (pc * filt_out).sum(dim=(-2, -1)) / filt_out.sum(dim=(-2, -1))
+        mean_in =  (pc * filt_in).sum(dim=(-2, -1))  / filt_in.sum(dim=(-2, -1))
+        ptile95_out = torch.quantile((pc * filt_out).reshape(pc.shape[0], pc.shape[1], -1)[:, :, filt_out.reshape(-1) > 1e-3], 0.95, dim=-1)
+        max_in = (pc * filt_in).amax(dim=(-2, -1))
+        std_out = torch.sqrt(torch.mean((pc - mean_out[:, :, None, None])**2 * filt_out, dim=(-2, -1)))
+        std_in = torch.sqrt(torch.mean((pc - mean_in[:, :, None, None])**2 * filt_in, dim=(-2, -1)))
+
+        max_diff = max_in - ptile95_out
+        z_in = max_diff / std_out
+        r_in = max_diff / ptile95_out
+
+        outs = {
+            'pc': pc.cpu().numpy(),
+            'mean_out': mean_out,
+            'mean_in': mean_in,
+            'ptile95_out': ptile95_out,
+            'max_in': max_in,
+            'std_out': std_out,
+            'std_in': std_in,
+            'max_diff': max_diff,
+            'z_in': z_in,  ## z-score of in value over out distribution
+            'r_in': r_in,
+        }
+
+        outs = {k: val.cpu().numpy() if isinstance(val, torch.Tensor) else val for k, val in outs.items()}
+        
+        return outs
+    
+    def __call__(
+        self,
+        images: Union[np.ndarray, torch.Tensor],
+    ):
+        """
+        Calls the `score_alignment` method. See `self.score_alignment` docstring
+        for more info.
+        """
+        return self.score_alignment(images)
+
+
+def make_2D_frequency_filter(
+    hw: tuple,
+    low: float = 5,
+    high: float = 6,
+    order: int = 3,
+    distance_p: int = 100,
+):
+    """
+    Make a filter for scoring the alignment of images using phase correlation.
+    RH 2024
+
+    Args:
+        hw (tuple): 
+            Height and width of the images.
+        low (float): 
+            Low cutoff frequency for the bandpass filter. Units are in
+            pixels.
+        high (float): 
+            High cutoff frequency for the bandpass filter. Units are in
+            pixels.
+        order (int): 
+            Order of the butterworth bandpass filter. (Default is *3*)
+        distance_p (int):
+            Distance parameter for the distance grid. Defines the Minkowski
+            distance used to compute the distance grid.
+
+    Returns:
+        (np.ndarray): 
+            Filter for scoring the alignment. Shape: *(height, width)*
+    """
+    ## Make a distance grid starting from the fftshifted center
+    grid = make_distance_grid(shape=hw, p=distance_p, use_fftshift_center=True)
+
+    ## Make the number of datapoints for the kernel large
+    n_x = max(hw) * 10
+
+    fs = max(hw) * 1
+    low = max(0, low)
+    high = min((max(hw) / 2) - 1, high)
+    b, a = design_butter_bandpass(lowcut=low, highcut=high, fs=fs, order=order, plot_pref=False)
+    w, h = scipy.signal.freqz(b, a, worN=n_x)
+    x_kernel = (fs * 0.5 / np.pi) * w
+    kernel = np.abs(h)
+
+    ## Interpolate the kernel to the distance grid
+    filt = np.interp(
+        x=grid,
+        xp=x_kernel,
+        fp=kernel,
+    )
+
+    return filt
+
+
+def phase_correlation(
+    im_template: Union[np.ndarray, torch.Tensor],
+    im_moving: Union[np.ndarray, torch.Tensor],
+    mask_fft: Optional[Union[np.ndarray, torch.Tensor]] = None,
+    return_filtered_images: bool = False,
+    eps: float = 1e-8,
+) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """
+    Perform phase correlation on two images. Calculation performed along the
+    last two axes of the input arrays (-2, -1) corresponding to the (height,
+    width) of the images.
+    RH 2024
+
+    Args:
+        im_template (np.ndarray): 
+            The template image(s). Shape: (..., height, width). Can be any
+            number of dimensions; last two dimensions must be height and width.
+        im_moving (np.ndarray): 
+            The moving image. Shape: (..., height, width). Leading dimensions
+            must broadcast with the template image.
+        mask_fft (Optional[np.ndarray]): 
+            2D array mask for the FFT. If ``None``, no mask is used. Assumes mask_fft is
+            fftshifted. (Default is ``None``)
+        return_filtered_images (bool): 
+            If set to ``True``, the function will return filtered images in
+            addition to the phase correlation coefficient. (Default is
+            ``False``)
+        eps (float):
+            Epsilon value to prevent division by zero. (Default is ``1e-8``)
+    
+    Returns:
+        (Tuple[np.ndarray, np.ndarray, np.ndarray]): tuple containing:
+            cc (np.ndarray): 
+                The phase correlation coefficient.
+            fft_template (np.ndarray): 
+                The filtered template image. Only returned if
+                return_filtered_images is ``True``.
+            fft_moving (np.ndarray): 
+                The filtered moving image. Only returned if
+                return_filtered_images is ``True``.
+    """
+    fft2, fftshift, ifft2 = torch.fft.fft2, torch.fft.fftshift, torch.fft.ifft2
+    abs, conj = torch.abs, torch.conj
+    axes = (-2, -1)
+
+    return_numpy = isinstance(im_template, np.ndarray)
+    im_template = torch.as_tensor(im_template)
+    im_moving = torch.as_tensor(im_moving)
+
+    fft_template = fft2(im_template, dim=axes)
+    fft_moving   = fft2(im_moving, dim=axes)
+
+    if mask_fft is not None:
+        mask_fft = torch.as_tensor(mask_fft)
+        # Normalize and shift the mask
+        mask_fft = fftshift(mask_fft, dim=axes)
+        mask = mask_fft[tuple([None] * (im_template.ndim - 2) + [slice(None)] * 2)]
+        fft_template *= mask
+        fft_moving *= mask
+
+    # Compute the cross-power spectrum
+    R = fft_template * conj(fft_moving)
+
+    # Normalize to obtain the phase correlation function
+    R /= abs(R) + eps  # Add epsilon to prevent division by zero
+
+    # Compute the magnitude of the inverse FFT to ensure symmetry
+    # cc = abs(fftshift(ifft2(R, dim=axes), dim=axes))
+    # Compute the real component of the inverse FFT (not symmetric)
+    cc = fftshift(ifft2(R, dim=axes), dim=axes).real
+
+    if return_filtered_images == False:
+        return cc.cpu().numpy() if return_numpy else cc
+    else:
+        if return_numpy:
+            return (
+                cc.cpu().numpy(), 
+                abs(ifft2(fft_template, dim=axes)).cpu().numpy(), 
+                abs(ifft2(fft_moving, dim=axes)).cpu().numpy()
+            )
+        else:
+            return cc, abs(ifft2(fft_template, dim=axes)), abs(ifft2(fft_moving, dim=axes))
+        
+
 ######################################################################################################################################
 ######################################################## TIME SERIES #################################################################
 ######################################################################################################################################
