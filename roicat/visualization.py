@@ -244,7 +244,10 @@ def compute_colored_FOV(
     h, w = FOV_height, FOV_width
 
     rois = scipy.sparse.vstack(spatialFootprints)
-    rois = rois.multiply(1.0/rois.max(1).toarray()).power(1)
+    rois_max = rois.max(1).toarray()
+    rois_max[rois_max == 0] = np.nan
+    rois = rois.multiply(1.0/rois_max).power(1)
+    rois.data[np.isnan(rois.data)] = 0
 
     if n_c > 1:
         colors = helpers.rand_cmap(nlabels=n_c, verbose=False)(np.linspace(0.,1.,n_c, endpoint=True)) if cmap=='random' else cmap(np.linspace(0.,1.,n_c, endpoint=True))
