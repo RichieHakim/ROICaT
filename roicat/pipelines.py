@@ -49,8 +49,8 @@ def pipeline_tracking(params: dict):
         deterministic=params['general']['random_seed'] is not None,
     )
 
-    if params['data_loading']['data_kind'] == 'data_suite2p':
-        assert params['data_loading']['dir_outer'] is not None, f"params['data_loading']['dir_outer'] must be specified if params['data_loading']['data_kind'] is 'data_suite2p'."
+    if params['data_loading']['data_kind'] == 'suite2p':
+        assert params['data_loading']['dir_outer'] is not None, f"params['data_loading']['dir_outer'] must be specified if params['data_loading']['data_kind'] is 'suite2p'."
         paths_allStat = helpers.find_paths(
             dir_outer=params['data_loading']['dir_outer'],
             reMatch='stat.npy',
