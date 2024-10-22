@@ -61,12 +61,12 @@ def pipeline_tracking(params: dict):
         )[:]
         paths_allOps  = [str(Path(path).resolve().parent / 'ops.npy') for path in paths_allStat][:]
 
+        if len(paths_allStat) == 0:
+            raise FileNotFoundError(f"No stat.npy files found in '{params['data_loading']['dir_outer']}'")
         print(f"Found the following stat.npy files:")
         [print(f"    {path}") for path in paths_allStat]
         print(f"Found the following corresponding ops.npy files:")
         [print(f"    {path}") for path in paths_allOps]
-        if len(paths_allStat) == 0:
-            raise FileNotFoundError(f"No stat.npy files found in '{params['data_loading']['dir_outer']}'")
 
 
         ## Import data

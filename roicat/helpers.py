@@ -1,3 +1,5 @@
+from typing import List, Dict, Tuple, Union, Optional, Any, Callable, Iterable, Sequence, Type, Any, MutableMapping
+
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import multiprocessing as mp
 import os
@@ -14,16 +16,18 @@ import PIL
 from PIL import ImageTk
 import csv
 import warnings
-from typing import List, Dict, Tuple, Union, Optional, Any, Callable, Iterable, Sequence, Type, Any, MutableMapping
+import time
+import datetime
 
 import numpy as np
 import torch
 import torchvision
 import scipy.sparse
 import sparse
-from tqdm import tqdm
+from tqdm.auto import tqdm
 import matplotlib.pyplot as plt
 import yaml
+import optuna
 
 """
 All of these are from basic_neural_processing_modules
@@ -670,6 +674,130 @@ class Convergence_checker_optuna:
         if self.verbose:
             print(f'Trial num: {self.num_trial}. Duration: {duration:.3f}s. Best value: {self.best:3e}. Current value:{trial.value:3e}') if self.verbose else None
         self.num_trial += 1
+
+
+class OptunaProgressBar:
+    """
+    A customizable progress bar for Optuna's study.optimize().
+
+    Args:
+        n_trials (int, optional): 
+            The number of trials. Exactly one of n_trials or timeout must be
+            set.
+        timeout (float, optional): 
+            The maximum time to run in seconds. Exactly one of n_trials or
+            timeout must be set.
+        tqdm_kwargs (dict, optional): 
+            Additional keyword arguments to pass to tqdm.
+            These will override the default values EXCEPT for the following
+            kwargs, which will defer to the environment variables: \n
+                * ``disable``
+                * ``dynamic_ncols``
+    """
+
+    def __init__(
+        self, 
+        n_trials: Optional[int] = None, 
+        timeout: Optional[float] = None, 
+        **tqdm_kwargs: Any,
+    ):
+        if (n_trials is None) and (timeout is None):
+            raise ValueError("Either n_trials or timeout must be set.")
+        ## Exclusivity between n_trials and timeout
+        elif (n_trials is not None) and (timeout is not None):
+            raise ValueError("Only one of n_trials or timeout should be set.")
+
+        ## Store user-provided values
+        self._n_trials = n_trials
+        self._timeout = timeout
+        self._tqdm_kwargs = self._get_default_kwargs()
+
+        ## Overwrite default values with user-provided values
+        self._tqdm_kwargs.update(tqdm_kwargs)
+
+        ## Initialize params for bar
+        self.bar = None
+        self._last_elapsed_seconds = 0.0
+
+        ## Initialize global variables for time diff
+        global _time_diff_last_call
+        _time_diff_last_call = time.time()
+        global _times_calls
+        _times_calls = []
+        global _time_start
+        _time_start = time.time()
+
+        ## Initialize progress bar
+        if self._n_trials is not None:
+            self.bar = tqdm(
+                total=self._n_trials,
+                **self._tqdm_kwargs,
+            )
+        elif self._timeout is not None:
+            total = tqdm.format_interval(self._timeout)
+            fmt = "{desc} {percentage:3.0f}%|{bar}| {elapsed}/" + total
+            self.bar = tqdm(total=self._timeout, bar_format=fmt)
+
+    def __call__(self, study: optuna.study.Study, trial: optuna.trial.FrozenTrial):
+        # Initialize progress bar on first call
+        if self.bar is None:
+            # Disable progress bar based on environment variables and context
+            if self._get_env_variables().get('disable', False):
+                self._tqdm_kwargs['disable'] = True
+
+        # Update description based on mininterval
+        current_time = time.time()
+        # Drop current time into _times_calls list
+        global _times_calls
+        min_interval = self._tqdm_kwargs.get('mininterval', 0.1)
+        global _time_diff_last_call
+        if (current_time - _time_diff_last_call >= min_interval) and all([current_time - t >= min_interval for t in _times_calls]):
+            _times_calls.append(current_time)
+            # print(_time_diff_last_call, _times_calls, current_time)
+            self._update(study)
+            _time_diff_last_call = current_time
+            ## Remove the first element of the list
+            _times_calls.pop(0)
+
+    def _update(self, study: optuna.study.Study):
+        # Update progress bar
+        if self._n_trials is not None:
+            ## Get the current trial number
+            i_trial = len(study.trials)
+            self.bar.update(i_trial - self.bar.n)
+        elif self._timeout is not None:
+            # Get the total elapsed time for the study (last trial - first trial)
+            t_start = study.trials[0].datetime_start
+            t_last = study.trials[-1].datetime_complete
+            t_last = datetime.datetime.now()
+            elapsed_seconds = t_last - t_start
+            self.bar.update(elapsed_seconds.total_seconds() - self.bar.n)
+
+        try:
+            best_value = study.best_value
+            best_trial = study.best_trial
+            self.bar.set_description(f"Best trial: {best_trial.number}, value: {best_value:.6g}")
+        except ValueError:
+            pass  # No trials completed yet
+
+    def _get_env_variables(self):
+        # Load TQDM environment variables
+        env_vars = {
+            'disable':     bool( os.environ.get('TQDM_DISABLE', '').lower() == 'true'),
+            'mininterval': float(os.environ.get('TQDM_MININTERVAL', 0.1)),
+            'maxinterval': float(os.environ.get('TQDM_MAXINTERVAL', 10.0)),
+            'miniters':    int(  os.environ.get('TQDM_MINITERS', 1)),
+            'smoothing':   float(os.environ.get('TQDM_SMOOTHING', 0.3)),
+        }
+        return env_vars
+
+    def _get_default_kwargs(self):
+        kwargs_default = self._get_env_variables()
+        
+        # Set default values for better handling in environments
+        kwargs_default.setdefault('dynamic_ncols', True)
+        kwargs_default.setdefault('leave', False)
+        return kwargs_default
 
 
 ######################################################################################################################################

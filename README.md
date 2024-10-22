@@ -67,7 +67,10 @@ computer.
   notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/1_tracking_interactive_notebook.ipynb)
 - [Google
   CoLab](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/tracking/1_tracking_interactive_notebook.ipynb)
-- [Command line interface script](https://github.com/RichieHakim/ROICaT/blob/main/scripts/demo_run_tracking_pipeline.py)
+- [Command line interface script](https://github.com/RichieHakim/ROICaT/blob/main/scripts/run_tracking.sh): 
+```shell
+roicat --pipeline tracking --path_params /path/to/params.yaml --dir_data /folder/with/data/ --dir_save /folder/save/ --prefix_name_save expName --verbose
+```
   
 ### CLASSIFICATION:
 - [Interactive notebook -
@@ -111,21 +114,10 @@ installation process, please make a [github
 issue](https://github.com/RichieHakim/ROICaT/issues) with the error.
 
 ### 0. Requirements
-- Your segmented data. For example Suite2p output data (stat.npy and ops.npy
-  files), CaImAn output data (results.h5 files), or any other type of data using
-  this [custom data importing
-  notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/other/demo_data_importing.ipynb).
 - [Anaconda](https://www.anaconda.com/distribution/) or
   [Miniconda](https://docs.conda.io/en/latest/miniconda.html).
 - If using Windows: [Microsoft C++ Build
   Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
-- If using linux/unix(MacOS): GCC >= 5.4.0, ideally == 9.2.0. Check with: `gcc
-  --version`, or just google how to do this on your operating system. 
-- **Optional:** [CUDA compatible NVIDIA
-  GPU](https://developer.nvidia.com/cuda-gpus) and
-  [drivers](https://developer.nvidia.com/cuda-toolkit-archive). Using a GPU can
-  increase ROICaT speeds ~5-50x, though without it, ROICaT will still run
-  reasonably quick. GPU support is not available for Macs.
 - The below commands should be run in the terminal (Mac/Linux) or Anaconda
   Prompt (Windows).
 
@@ -149,7 +141,7 @@ install --user 'roicat[all]'` For installing GPU support on Windows, see
 **Note on opencv:** The headless version of opencv is installed by default. If
 the regular version is already installed, you will need to uninstall it first.
 
-### 3. Clone the repo to get the scripts and notebooks
+### 3. Clone the repo to get the notebooks
 ```
 git clone https://github.com/RichieHakim/ROICaT
 ```
