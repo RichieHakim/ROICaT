@@ -251,18 +251,18 @@ intercompatible, so if you have CUDA 11.8 drivers, you can install
 - [ ] Add in notebook for demonstrating using temporal similarity metrics (SWT on dFoF)
 - [ ] Make a standard classifier
 - [ ] Try other clustering methods
-- [ ] Make image aligner based on image similarity + RANSAC of centroids or s_SF
+- [x] Make image aligner based on image similarity + RANSAC of centroids or s_SF
 - [ ] Better post-hoc curation metrics and visualizations
 #### code improvements:
 - [ ] Update automatic regression module (make new repo for it)
 - [ ] Switch to ONNX for ROINet
 - [ ] Some more integration tests
 - [ ] Add more documentation / tutorials
-- [ ] Make a GUI
+- [x] Make a GUI
 - [ ] Finish ROIextractors integration
 - [ ] Make a Docker container
 - [ ] Make colab demo notebook not require user data
-- [ ] Make a better CLI
+- [x] Make a better CLI
 #### other:
 - [ ] Write the paper
 - [ ] Make tweet about it
