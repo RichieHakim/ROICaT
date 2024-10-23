@@ -124,7 +124,7 @@ def get_default_parameters(
                             'auto_fix_gaussFilt_step': 10,  ## If the registration fails, then the gaussian filter size is reduced by this amount and the registration is tried again.
                         },
                         'PhaseCorrelation': {
-                            'bandpass_freqs': (1, 30),
+                            'bandpass_freqs': [1, 30],
                             'order': 5,
                         },
                         'SIFT': {
@@ -225,13 +225,13 @@ def get_default_parameters(
                         'max_duration': 60*10,  ## Max amount of time (in seconds) to allow optimization to proceed for
                     },
                     'bounds_findParameters': {
-                        'power_NN': (0.0, 2.),  ## Bounds for the exponent applied to s_NN
-                        'power_SWT': (0.0, 2.),  ## Bounds for the exponent applied to s_SWT
-                        'p_norm': (-5, -0.1),  ## Bounds for the p-norm p value (Minkowski) applied to mix the matrices
-                        'sig_NN_kwargs_mu': (0., 1.0),  ## Bounds for the sigmoid center for s_NN
-                        'sig_NN_kwargs_b': (0.1, 1.5),  ## Bounds for the sigmoid slope for s_NN
-                        'sig_SWT_kwargs_mu': (0., 1.0),  ## Bounds for the sigmoid center for s_SWT
-                        'sig_SWT_kwargs_b': (0.1, 1.5),  ## Bounds for the sigmoid slope for s_SWT
+                        'power_NN': [0.0, 2.],  ## Bounds for the exponent applied to s_NN
+                        'power_SWT': [0.0, 2.],  ## Bounds for the exponent applied to s_SWT
+                        'p_norm': [-5, -0.1],  ## Bounds for the p-norm p value (Minkowski) applied to mix the matrices
+                        'sig_NN_kwargs_mu': [0., 1.0],  ## Bounds for the sigmoid center for s_NN
+                        'sig_NN_kwargs_b': [0.1, 1.5],  ## Bounds for the sigmoid slope for s_NN
+                        'sig_SWT_kwargs_mu': [0., 1.0],  ## Bounds for the sigmoid center for s_SWT
+                        'sig_SWT_kwargs_b': [0.1, 1.5],  ## Bounds for the sigmoid slope for s_SWT
                     },
                     'n_jobs_findParameters': -1,  ## Number of CPU cores to use (-1 is all cores)
                 },

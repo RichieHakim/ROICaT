@@ -13,4 +13,6 @@ __all__ = [
 for pkg in __all__:
     exec('from . import ' + pkg)
 
-__version__ = '1.4.0'
+from .__main__ import run_pipeline
+
+__version__ = '1.4.1'

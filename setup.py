@@ -137,4 +137,9 @@ setup(
         'tracking': deps_tracking,
     },
     python_requires='>=3.10, <3.13',
+    entry_points={
+        'console_scripts': [
+            'roicat = roicat.__main__:main',
+        ],
+    },
 )

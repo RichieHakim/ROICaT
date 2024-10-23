@@ -115,7 +115,7 @@ class Aligner(util.ROICaT_Module):
         normalize_FOV_intensities: bool = True,
         roi_FOV_mixing_factor: float = 0.5,
         use_CLAHE: bool = True,
-        CLAHE_grid_block_size: int = 50,
+        CLAHE_grid_block_size: int = 10,
         CLAHE_clipLimit: int = 1,
         CLAHE_normalize: bool = True,
     ) -> None:
@@ -246,7 +246,7 @@ class Aligner(util.ROICaT_Module):
                 'fastThreshold': 20,
             },
             'PhaseCorrelation': {
-                'bandpass_freqs': (1, 30),
+                'bandpass_freqs': [1, 30],
                 'order': 5,
             },
         },
@@ -2299,7 +2299,7 @@ class PhaseCorrelationRegistration(ImageRegistrationMethod):
     def __init__(
         self,
         device: str = 'cpu',
-        bandpass_freqs: Optional[Tuple[float, float]] = None,
+        bandpass_freqs: Optional[List[float]] = None,
         order: int = 5,
         verbose: bool = False,
     ):

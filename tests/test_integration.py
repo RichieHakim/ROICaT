@@ -101,6 +101,9 @@ def test_pipeline_tracking_simple(dir_data_test):
         },
     }
     params = helpers.prepare_params(params_partial, defaults)
+    ## Save params as yaml
+    path_params = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'params.yaml')
+    helpers.yaml_save(params, path_params)
     results, run_data, params = pipelines.pipeline_tracking(params)
 
     #check that results fields are not empty
