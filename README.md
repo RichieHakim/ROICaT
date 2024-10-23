@@ -63,10 +63,11 @@ We recommend using our Jupyter notebooks which can be run locally on any
 computer.
 
 ### TRACKING: 
+- [Online App](https://huggingface.co/spaces/richiehakim/ROICaT_tracking): Good for first time users. Try it out without installing anything.
 - [Interactive
   notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/1_tracking_interactive_notebook.ipynb)
 - [Google
-  CoLab](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/tracking/1_tracking_interactive_notebook.ipynb)
+  CoLab](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/tracking/1_tracking_interactive_notebook.ipynb) (not up to date)
 - [Command line interface script](https://github.com/RichieHakim/ROICaT/blob/main/scripts/run_tracking.sh): 
 ```shell
 roicat --pipeline tracking --path_params /path/to/params.yaml --dir_data /folder/with/data/ --dir_save /folder/save/ --prefix_name_save expName --verbose
@@ -76,7 +77,7 @@ roicat --pipeline tracking --path_params /path/to/params.yaml --dir_data /folder
 - [Interactive notebook -
   Drawing](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/A1_classify_by_drawingSelection.ipynb)
 - [Google CoLab -
-  Drawing](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/classification/A1_classify_by_drawingSelection_colab.ipynb)
+  Drawing](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/classification/A1_classify_by_drawingSelection_colab.ipynb) (not up to date)
 - [Interactive notebook -
   Labeling](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/B1_labeling_interactive.ipynb)
 - [Interactive notebook - Train
@@ -250,18 +251,18 @@ intercompatible, so if you have CUDA 11.8 drivers, you can install
 - [ ] Add in notebook for demonstrating using temporal similarity metrics (SWT on dFoF)
 - [ ] Make a standard classifier
 - [ ] Try other clustering methods
-- [ ] Make image aligner based on image similarity + RANSAC of centroids or s_SF
+- [x] Make image aligner based on image similarity + RANSAC of centroids or s_SF
 - [ ] Better post-hoc curation metrics and visualizations
 #### code improvements:
 - [ ] Update automatic regression module (make new repo for it)
 - [ ] Switch to ONNX for ROINet
 - [ ] Some more integration tests
 - [ ] Add more documentation / tutorials
-- [ ] Make a GUI
+- [x] Make a GUI
 - [ ] Finish ROIextractors integration
 - [ ] Make a Docker container
 - [ ] Make colab demo notebook not require user data
-- [ ] Make a better CLI
+- [x] Make a better CLI
 #### other:
 - [ ] Write the paper
 - [ ] Make tweet about it
