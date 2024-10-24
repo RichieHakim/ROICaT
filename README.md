@@ -20,13 +20,14 @@ A simple-to-use Python package for automatically classifying images of cells and
 
 **Why use ROICaT?**
 - **It's easy to use. You don't need to know how to code. You can use the
-  interactive notebooks to run the pipelines with just a few clicks.**
-- ROICaT was made to be better than existing tools. It is capable of classifying
-  and tracking neuron ROIs at accuracies approaching human performance. Several
-  labs currently use ROICaT to do automatic tracking and classification of ROIs
-  with no post-hoc curation required. 
-- Great effort was taken to optimize performance. Computational requirements are
-  minimal and run times are fast.
+  interactive notebooks or online app to run the pipelines with just a few
+  clicks.**
+- It's accurate. ROICaT was desgined to be better than existing tools. It is
+  capable of classifying and tracking neuron ROIs at accuracies approaching
+  human performance out of the box.
+- It's fast and computational requirements are low. You can run it on a laptop.
+  It was designed to be used with >1M ROIs, and can utilize GPUs to speed things
+  up.
 
 With ROICaT, you can:
 - **Classify ROIs** into different categories (e.g. neurons, dendrites, glia,
@@ -39,12 +40,6 @@ With ROICaT, you can:
   NWB, raw/custom ROI data and more. See below for details on how to use any
   data type with ROICaT.
 
-**What are the minimum computing needs?** 
-- We recommend the following as a starting point: 
-    - 4 GB of RAM (more for large data sets e.g., ~32 GB for 100K neurons)
-    - GPU not required but will increase run speeds ~5-50x
-
-
 <br>
 <br>
 
@@ -53,14 +48,13 @@ With ROICaT, you can:
     <img src="docs/media/umap_with_labels.png" alt="ROICaT" width="300"  align="right"  style="margin-left: 20px"/>
 </div>
 
-Listed below, we have a suite of easy to run notebooks for running the ROICaT
-pipelines. 
+Listed below, we have a suite of tools for running the ROICaT pipelines. 
 #### First time users:
-Try it out using our Google CoLab notebooks below which can be run fully
-remotely without installing anything on your computer.
+Try it out using the online app or our Google CoLab notebooks below which can be
+run fully remotely without installing anything on your computer.
 #### Normal usage:
-We recommend using our Jupyter notebooks which can be run locally on any
-computer.
+We recommend using our Jupyter notebooks or command line interface which can be
+run locally on any computer.
 
 ### TRACKING: 
 - [Online App](https://huggingface.co/spaces/richiehakim/ROICaT_tracking): Good for first time users. Try it out without installing anything.
@@ -163,86 +157,6 @@ git pull
 ```
 
 
-# Troubleshooting Installation
-### Troubleshooting package installation issues
-If you have issues importing packages like `roicat` or any of its dependencies, try reinstalling `roicat` with the following commands within the environment:
-```
-pip uninstall roicat
-pip install --upgrade --force --no-cache-dir roicat[all]
-```
-
-### Troubleshooting HDBSCAN installation issues
-If you are using **Windows** receive the error: `ERROR: Could not build wheels for hdbscan, which is
-required to install pyproject.toml-based projects` on Windows, make sure that
-you have installed Microsoft C++ Build Tools. If not, download from
-[here](https://visualstudio.microsoft.com/visual-cpp-build-tools/) and run the
-commands:
-```
-cd path/to/vs_buildtools.exe
-vs_buildtools.exe --norestart --passive --downloadThenInstall --includeRecommended --add Microsoft.VisualStudio.Workload.NativeDesktop --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Workload.MSBuildTools
-```
-Then, try proceeding with the installation by rerunning the pip install commands
-above.
-([reference](https://stackoverflow.com/questions/64261546/how-to-solve-error-microsoft-visual-c-14-0-or-greater-is-required-when-inst))
-
-### Troubleshooting (GPU support)
-GPU support is not required. Windows users will often need to manually install a
-CUDA version of pytorch (see below). Note that you can check your nvidia driver
-version using the shell command: `nvidia-smi` if you have drivers installed. 
-
-Use the following command to check your PyTorch version and if it is GPU
-enabled:
-```
-python -c "import torch, torchvision; print(f'Using versions: torch=={torch.__version__}, torchvision=={torchvision.__version__}');  print(f'torch.cuda.is_available() = {torch.cuda.is_available()}')"
-```
-**Outcome 1:** Output expected if GPU is enabled:
-```
-Using versions: torch==X.X.X+cuXXX, torchvision==X.X.X+cuXXX
-torch.cuda.is_available() = True
-```
-This is the ideal outcome. You are using a <u>CUDA</u> version of PyTorch and
-your GPU is enabled.
-
-**Outcome 2:** Output expected if <u>non-CUDA</u> version of PyTorch is
-installed:
-```
-Using versions: torch==X.X.X, torchvision==X.X.X
-OR
-Using versions: torch==X.X.X+cpu, torchvision==X.X.X+cpu
-torch.cuda.is_available() = False
-```
-If a <u>non-CUDA</u> version of PyTorch is installed, please follow the
-instructions here: https://pytorch.org/get-started/locally/ to install a CUDA
-version. If you are using a GPU, make sure you have a [CUDA compatible NVIDIA
-GPU](https://developer.nvidia.com/cuda-gpus) and
-[drivers](https://developer.nvidia.com/cuda-toolkit-archive) that match the same
-version as the PyTorch CUDA version you choose. All CUDA 11.x versions are
-intercompatible, so if you have CUDA 11.8 drivers, you can install
-`torch==2.0.1+cu117`.
-
-**Solution:**<br>
-If you are sure you have a compatible GPU and correct drivers, you can force
-install the GPU version of pytorch, see the pytorch installation instructions.
-Links for the [latest version](https://pytorch.org/get-started/locally/) or
-[older versions](https://pytorch.org/get-started/previous-versions/). Example:
-```
-pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-```
-
-**Outcome 3:** Output expected if CUDA version of PyTorch is installed but GPU
-is not available:
-```
-Using versions: torch==X.X.X+cuXXX, torchvision==X.X.X+cuXXX
-torch.cuda.is_available() = False
-```
-If a CUDA version of PyTorch is installed but GPU is not available, make sure
-you have a [CUDA compatible NVIDIA GPU](https://developer.nvidia.com/cuda-gpus)
-and [drivers](https://developer.nvidia.com/cuda-toolkit-archive) that match the
-same version as the PyTorch CUDA version you choose. All CUDA 11.x versions are
-intercompatible, so if you have CUDA 11.8 drivers, you can install
-`torch==2.0.1+cu117`.
-
-
 # TODO:
 #### algorithmic improvements:
 - [ ] Add in method to use more similarity metrics for tracking
@@ -255,7 +169,7 @@ intercompatible, so if you have CUDA 11.8 drivers, you can install
 - [ ] Better post-hoc curation metrics and visualizations
 #### code improvements:
 - [ ] Update automatic regression module (make new repo for it)
-- [ ] Switch to ONNX for ROINet
+- [ ] Switch to ONNX for ROInet
 - [ ] Some more integration tests
 - [ ] Add more documentation / tutorials
 - [x] Make a GUI
