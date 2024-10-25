@@ -48,20 +48,12 @@ With ROICaT, you can:
     <img src="docs/media/umap_with_labels.png" alt="ROICaT" width="300"  align="right"  style="margin-left: 20px"/>
 </div>
 
-Listed below, we have a suite of tools for running the ROICaT pipelines. 
-#### First time users:
-Try it out using the online app or our Google CoLab notebooks below which can be
-run fully remotely without installing anything on your computer.
-#### Normal usage:
-We recommend using our Jupyter notebooks or command line interface which can be
-run locally on any computer.
-
 ### TRACKING: 
 - [Online App](https://huggingface.co/spaces/richiehakim/ROICaT_tracking): Good for first time users. Try it out without installing anything.
 - [Interactive
-  notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/tracking/1_tracking_interactive_notebook.ipynb)
-- [Google
-  CoLab](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/tracking/1_tracking_interactive_notebook.ipynb) (not up to date)
+  notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/tracking/1_tracking_interactive_notebook.ipynb). Or run on google colab: <a target="_blank" href="https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/tracking/1_tracking_interactive_notebook.ipynb">
+  <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/>
+</a>
 - [Command line interface script](https://github.com/RichieHakim/ROICaT/blob/main/scripts/run_tracking.sh): 
 ```shell
 roicat --pipeline tracking --path_params /path/to/params.yaml --dir_data /folder/with/data/ --dir_save /folder/save/ --prefix_name_save expName --verbose
@@ -69,38 +61,25 @@ roicat --pipeline tracking --path_params /path/to/params.yaml --dir_data /folder
   
 ### CLASSIFICATION:
 - [Interactive notebook -
-  Drawing](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/A1_classify_by_drawingSelection.ipynb)
-- [Google CoLab -
-  Drawing](https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/colab/classification/A1_classify_by_drawingSelection_colab.ipynb) (not up to date)
+  Drawing](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/classification/A1_classify_by_drawingSelection.ipynb). Or run on google colab: <a target="_blank" href="https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/classification/A1_classify_by_drawingSelection.ipynb">
+  <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/>
+</a>
 - [Interactive notebook -
-  Labeling](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/B1_labeling_interactive.ipynb)
+  Labeling](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/classification/B1_labeling_interactive.ipynb)
 - [Interactive notebook - Train
-  classifier](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/B2_classifier_train_interactive.ipynb)
+  classifier](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/classification/B2_classifier_train_interactive.ipynb)
 - [Interactive notebook - Inference with
-  classifier](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/classification/B3_classifier_inference_interactive.ipynb)
+  classifier](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/classification/B3_classifier_inference_interactive.ipynb)
 
 **OTHER:** 
 - [Custom data importing
-  notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/other/demo_data_importing.ipynb)
+  notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/other/demo_data_importing.ipynb)
 - Use the API to integrate ROICaT functions into your own code:
   [Documentation](https://roicat.readthedocs.io/en/latest/roicat.html).
-- Run the full tracking pipeline using `roicat.pipelines.pipeline_tracking` with
-  default parameters generated from `roicat.util.get_default_paramaters()`.
+- Run the full tracking pipeline using the CLI or
+  `roicat.pipelines.pipeline_tracking` with default parameters generated from
+  `roicat.util.get_default_paramaters()` saved as a yaml file.
 <!-- - Train a new ROInet model using the provided Jupyter Notebook [TODO: link]. -->
-
-# General workflow:
-- **Pass ROIs through ROInet:** Images of the ROIs are passed through a neural
-  network which outputs a feature vector for each image describing what the ROI
-  looks like.
--  **Classification:** The feature vectors can then be used to classify ROIs:
-   - A simple regression-like classifier can be trained using user-supplied
-     labeled data (e.g. an array of images of ROIs and a corresponding array of
-     labels for each ROI).
-   - Alternatively, classification can be done by projecting the feature vectors
-     into a lower-dimensional space using UMAP and then simply circling the
-     region of space to classify the ROIs.
--  **Tracking**: The feature vectors can be combined with information about the
-   position of the ROIs to track the ROIs across imaging sessions/planes.
 
 
 # Installation
@@ -157,6 +136,21 @@ git pull
 ```
 
 
+# General workflow:
+- **Pass ROIs through ROInet:** Images of the ROIs are passed through a neural
+  network which outputs a feature vector for each image describing what the ROI
+  looks like.
+-  **Classification:** The feature vectors can then be used to classify ROIs:
+   - A simple regression-like classifier can be trained using user-supplied
+     labeled data (e.g. an array of images of ROIs and a corresponding array of
+     labels for each ROI).
+   - Alternatively, classification can be done by projecting the feature vectors
+     into a lower-dimensional space using UMAP and then simply circling the
+     region of space to classify the ROIs.
+-  **Tracking**: The feature vectors can be combined with information about the
+   position of the ROIs to track the ROIs across imaging sessions/planes.
+
+
 # TODO:
 #### algorithmic improvements:
 - [ ] Add in method to use more similarity metrics for tracking
@@ -175,7 +169,7 @@ git pull
 - [x] Make a GUI
 - [ ] Finish ROIextractors integration
 - [ ] Make a Docker container
-- [ ] Make colab demo notebook not require user data
+- ~~Make colab demo notebook not require user data~~
 - [x] Make a better CLI
 #### other:
 - [ ] Write the paper
