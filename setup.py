@@ -96,6 +96,8 @@ deps_tracking = [deps_all_dict[dep] for dep in [
     'opencv_contrib_python_headless',
     'hdbscan',
     'kymatio',
+    'kornia',
+    'romatch-roicat',
 ]] + deps_core
 
 
