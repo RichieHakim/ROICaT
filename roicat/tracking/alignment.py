@@ -12,7 +12,6 @@ import scipy.sparse
 import torch
 from tqdm.auto import tqdm
 import cv2
-import kornia
 import matplotlib.pyplot as plt
 
 from .. import helpers, util
@@ -1709,6 +1708,8 @@ class LoFTR(ImageRegistrationMethod):
         device: str = 'cpu',
         verbose: bool = False,
     ):
+        import kornia
+
         super().__init__(device=device, verbose=verbose)
         self.verbose = verbose
 
@@ -2203,6 +2204,8 @@ class DISK_LightGlue(ImageRegistrationMethod):
         device: str = 'cpu',
         verbose: bool = False,
     ):
+        import kornia
+
         super().__init__(device=device, verbose=verbose)
         self.verbose = verbose
         self.threshold_confidence = threshold_confidence
