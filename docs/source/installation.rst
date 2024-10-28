@@ -27,7 +27,7 @@ HDBSCAN installation issues
 If you are using **Windows** receive the error: `ERROR: Could not build wheels for hdbscan, which is
 required to install pyproject.toml-based projects` on Windows, make sure that
 you have installed Microsoft C++ Build Tools. If not, download from
-[here](https://visualstudio.microsoft.com/visual-cpp-build-tools/) and run the
+`here <https://visualstudio.microsoft.com/visual-cpp-build-tools/>`_ and run the
 commands:
 
 .. code-block:: bash
@@ -37,7 +37,7 @@ commands:
 
 Then, try proceeding with the installation by rerunning the pip install commands
 above.
-([reference](https://stackoverflow.com/questions/64261546/how-to-solve-error-microsoft-visual-c-14-0-or-greater-is-required-when-inst))
+(`reference <https://stackoverflow.com/questions/64261546/how-to-solve-error-microsoft-visual-c-14-0-or-greater-is-required-when-inst>`_)
 
 GPU support issues
 ~~~~~~~~~~~~~~~~~~
@@ -75,9 +75,9 @@ installed:
     
 If a non-CUDA version of PyTorch is installed, please follow the
 instructions here: https://pytorch.org/get-started/locally/ to install a CUDA
-version. If you are using a GPU, make sure you have a [CUDA compatible NVIDIA
-GPU](https://developer.nvidia.com/cuda-gpus) and
-[drivers](https://developer.nvidia.com/cuda-toolkit-archive) that match the same
+version. If you are using a GPU, make sure you have a `CUDA compatible NVIDIA
+GPU <https://developer.nvidia.com/cuda-gpus>`_ and
+`drivers <https://developer.nvidia.com/cuda-toolkit-archive>`_ that match the same
 version as the PyTorch CUDA version you choose. All CUDA 11.x versions are
 intercompatible, so if you have CUDA 11.8 drivers, you can install
 `torch==2.0.1+cu117`.
@@ -85,8 +85,8 @@ intercompatible, so if you have CUDA 11.8 drivers, you can install
 **Solution:**
 If you are sure you have a compatible GPU and correct drivers, you can force
 install the GPU version of pytorch, see the pytorch installation instructions.
-Links for the [latest version](https://pytorch.org/get-started/locally/) or
-[older versions](https://pytorch.org/get-started/previous-versions/). Example:
+Links for the `latest version <https://pytorch.org/get-started/locally/>`_ or
+`older versions <https://pytorch.org/get-started/previous-versions/>`_. Example:
 
 .. code-block:: bash
 
@@ -101,8 +101,8 @@ is not available:
    torch.cuda.is_available() = False
    
 If a CUDA version of PyTorch is installed but GPU is not available, make sure
-you have a [CUDA compatible NVIDIA GPU](https://developer.nvidia.com/cuda-gpus)
-and [drivers](https://developer.nvidia.com/cuda-toolkit-archive) that match the
+you have a `CUDA compatible NVIDIA GPU <https://developer.nvidia.com/cuda-gpus>`_
+and `drivers <https://developer.nvidia.com/cuda-toolkit-archive>`_ that match the
 same version as the PyTorch CUDA version you choose. All CUDA 11.x versions are
 intercompatible, so if you have CUDA 11.8 drivers, you can install
 `torch==2.0.1+cu117`.

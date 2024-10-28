@@ -105,8 +105,10 @@ pip install roicat[all]
 pip install git+https://github.com/RichieHakim/roiextractors
 ```
 **Note on zsh:** if you are using a zsh terminal, change command to: `pip3
-install --user 'roicat[all]'` For installing GPU support on Windows, see
-[Troubleshooting](#troubleshooting-gpu-support) below. 
+install --user 'roicat[all]'` <br>
+**Note on installing GPU support on Windows:** see
+[GPU Troubleshooting](https://roicat.readthedocs.io/en/latest/installation.html#gpu-support-issues)
+documentation.
 <br>
 **Note on opencv:** The headless version of opencv is installed by default. If
 the regular version is already installed, you will need to uninstall it first.
