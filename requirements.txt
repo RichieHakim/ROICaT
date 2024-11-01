@@ -28,7 +28,7 @@ torchaudio==2.5.1
 selenium==4.26.0
 skl2onnx==1.17.0
 onnx==1.17.0
-onnxruntime==1.19.2
+onnxruntime==1.20.0
 jupyter_bokeh==4.0.5
 onnx2torch==1.5.15
 scikit-image==0.24.0
