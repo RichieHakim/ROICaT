@@ -25,10 +25,10 @@ mat73==0.65
 torch==2.5.1
 torchvision==0.20.1
 torchaudio==2.5.1
-selenium==4.26.0
+selenium==4.26.1
 skl2onnx==1.17.0
 onnx==1.17.0
-onnxruntime==1.19.2
+onnxruntime==1.20.0
 jupyter_bokeh==4.0.5
 onnx2torch==1.5.15
 scikit-image==0.24.0
