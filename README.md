@@ -7,6 +7,8 @@
 [![build](https://github.com/RichieHakim/ROICaT/actions/workflows/.github/workflows/build.yml/badge.svg)](https://github.com/RichieHakim/ROICaT/actions/workflows/build.yml) 
 [![PyPI version](https://badge.fury.io/py/roicat.svg)](https://badge.fury.io/py/roicat)
 [![Downloads](https://pepy.tech/badge/roicat)](https://pepy.tech/project/roicat)
+[![build](https://github.com/RichieHakim/ROICaT/actions/workflows/.github/workflows/check_huggingface_space.yml/badge.svg)](https://github.com/RichieHakim/ROICaT/actions/workflows/check_huggingface_space.yml) 
+
 
 **🎉 CONTRIBUTIONS WELCOME! 🎉**
 
