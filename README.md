@@ -8,6 +8,8 @@
 [![PyPI version](https://badge.fury.io/py/roicat.svg)](https://badge.fury.io/py/roicat)
 [![Downloads](https://pepy.tech/badge/roicat)](https://pepy.tech/project/roicat)
 
+**🎉 CONTRIBUTIONS WELCOME! 🎉**
+
 - **Documentation: [https://roicat.readthedocs.io/en/latest/](https://roicat.readthedocs.io/en/latest/)**
 - Discussion forum: [https://groups.google.com/g/roicat_support](https://groups.google.com/g/roicat_support)
 - Technical support: [Github Issues](https://github.com/RichieHakim/ROICaT/issues)
@@ -105,8 +107,10 @@ pip install roicat[all]
 pip install git+https://github.com/RichieHakim/roiextractors
 ```
 **Note on zsh:** if you are using a zsh terminal, change command to: `pip3
-install --user 'roicat[all]'` For installing GPU support on Windows, see
-[Troubleshooting](#troubleshooting-gpu-support) below. 
+install --user 'roicat[all]'` <br>
+**Note on installing GPU support on Windows:** see
+[GPU Troubleshooting](https://roicat.readthedocs.io/en/latest/installation.html#gpu-support-issues)
+documentation.
 <br>
 **Note on opencv:** The headless version of opencv is installed by default. If
 the regular version is already installed, you will need to uninstall it first.
@@ -145,6 +149,13 @@ git pull
      region of space to classify the ROIs.
 -  **Tracking**: The feature vectors can be combined with information about the
    position of the ROIs to track the ROIs across imaging sessions/planes.
+
+
+# Run the app locally
+Although, we recommend transitioning to using the notebooks or CLI instead of the app, you can download and run the app locally with the following command:
+```
+sudo docker run -it -p 7860:7860 --platform=linux/amd64 --shm-size=10g registry.hf.space/richiehakim-roicat-tracking:latest streamlit run app.py
+```
 
 
 # TODO:
