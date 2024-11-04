@@ -11,7 +11,7 @@ on:
       - cron: '0 13 * * *'  # every day at 8:00 AM EST (13:00 UTC)
     
 jobs:
-    increment-version:
+    check_huggingface_space:
         runs-on: ubuntu-latest
         steps:
             - name: Check out repository
