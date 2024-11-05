@@ -34,4 +34,4 @@ onnx2torch==1.5.15
 scikit-image==0.24.0
 richfile>=0.4.5
 romatch-roicat>=0.1.0
-kornia==0.7.3
+kornia==0.7.4
