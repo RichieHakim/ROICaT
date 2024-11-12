@@ -9,7 +9,7 @@ import scipy.signal
 import sklearn
 import matplotlib.pyplot as plt
 import torch
-from tqdm import tqdm
+from tqdm.auto import tqdm
 # import optuna
 
 from .. import helpers, util
@@ -146,15 +146,14 @@ class Clusterer(util.ROICaT_Module):
             'max_duration': 60*10,
             'value_stop': 0.0,
         },
-        bounds_findParameters: Dict[str, Tuple[float, float]] = {
-            'power_SF': (0.3, 2),
-            'power_NN': (0.2, 2),
-            'power_SWT': (0.1, 1),
-            'p_norm': (-5, 5),
-            'sig_NN_kwargs_mu': (0, 0.5),
-            'sig_NN_kwargs_b': (0.05, 2),
-            'sig_SWT_kwargs_mu': (0, 0.5),
-            'sig_SWT_kwargs_b': (0.05, 2),
+        bounds_findParameters: Dict[str, List[float]] = {
+            'power_NN': [0.0, 2.],  ## Bounds for the exponent applied to s_NN
+            'power_SWT': [0.0, 2.],  ## Bounds for the exponent applied to s_SWT
+            'p_norm': [-5, -0.1],  ## Bounds for the p-norm p value (Minkowski) applied to mix the matrices
+            'sig_NN_kwargs_mu': [0., 1.0],  ## Bounds for the sigmoid center for s_NN
+            'sig_NN_kwargs_b': [0.1, 1.5],  ## Bounds for the sigmoid slope for s_NN
+            'sig_SWT_kwargs_mu': [0., 1.0],  ## Bounds for the sigmoid center for s_SWT
+            'sig_SWT_kwargs_b': [0.1, 1.5],  ## Bounds for the sigmoid slope for s_SWT
         },
         n_jobs_findParameters: int = -1,
         n_bins: Optional[int] = None,
@@ -233,6 +232,12 @@ class Clusterer(util.ROICaT_Module):
         print('Finding mixing parameters using automated hyperparameter tuning...') if self._verbose else None
         optuna.logging.set_verbosity(optuna.logging.WARNING)
         self.checker = helpers.Convergence_checker_optuna(verbose=self._verbose>=2, **kwargs_findParameters)
+        prog_bar = helpers.OptunaProgressBar(
+            n_trials=kwargs_findParameters['max_trials'], 
+            # timeout=kwargs_findParameters['max_duration'],
+            # timeout=10,
+            mininterval=5.0,
+        )
         self.study = optuna.create_study(direction='minimize', sampler=optuna.samplers.TPESampler(
             n_startup_trials=kwargs_findParameters['n_patience']//2,
             seed=self._seed,
@@ -240,9 +245,10 @@ class Clusterer(util.ROICaT_Module):
         self.study.optimize(
             func=self._objectiveFn_distSameMagnitude, 
             n_jobs=n_jobs_findParameters, 
-            callbacks=[self.checker.check],
+            callbacks=[self.checker.check, prog_bar],
             n_trials=kwargs_findParameters['max_trials'],
-            show_progress_bar=self._verbose >= 1,
+            # show_progress_bar=self._verbose >= 1,
+            show_progress_bar=False,
         )
 
         self.best_params = self.study.best_params.copy()
@@ -1096,6 +1102,8 @@ class Clusterer(util.ROICaT_Module):
 
         d_intra = d_conj.multiply(self.s_sesh_inv)
         d_intra.eliminate_zeros()
+        if len(d_intra.data) == 0:
+            return None, None, None, None, None, None
         counts, _ = torch.histogram(torch.as_tensor(d_intra.data, dtype=torch.float32), edges)
         # dens_diff = fn_smooth(counts / counts.sum())  ## distances of known differents
         # dens_diff = counts / counts.sum()  ## distances of known differents

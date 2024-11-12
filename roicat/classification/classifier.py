@@ -681,7 +681,7 @@ class Auto_LogisticRegression(Autotuner_regression):
             'best model',
         ])
 
-class Load_ONNX_model_sklearnLogisticRegression():
+class ONNX_model_sklearnLogisticRegression():
     """
     Loads an ONNX model of an sklearn LogisticRegression model into a runtime
     session.
@@ -760,3 +760,5 @@ class Load_ONNX_model_sklearnLogisticRegression():
         ## convert proba_dict to an array
         proba = np.stack([np.array([r[key] for r in proba_dict], dtype=np.float32) for key in proba_dict[0].keys()], axis=1)
         return preds, proba
+    
+Load_ONNX_model_sklearnLogisticRegression = ONNX_model_sklearnLogisticRegression  ## For legacy support

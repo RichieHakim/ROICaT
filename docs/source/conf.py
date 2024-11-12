@@ -38,7 +38,7 @@ with open(str(_dir_parent / "roicat" / "__init__.py"), "r") as _f:
             break
 
 project = 'ROICaT'
-copyright = '2023, Rich Hakim, Joshua Zimmer, Janet Berrios, Gyu Heo'
+copyright = '2024, Rich Hakim, Joshua Zimmer, Janet Berrios, Gyu Heo'
 author = 'Rich Hakim, Joshua Zimmer, Janet Berrios, Gyu Heo'
 release = str(_version)
 

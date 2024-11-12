@@ -82,7 +82,7 @@ deps_core = [deps_all_dict[dep] for dep in [
     'skl2onnx',
     'onnx',
     'onnxruntime',
-    'opencv_contrib_python_headless',
+    'richfile',
 ]]
 
 deps_classification = [deps_all_dict[dep] for dep in [
@@ -93,8 +93,11 @@ deps_classification = [deps_all_dict[dep] for dep in [
 ]] + deps_core
 
 deps_tracking = [deps_all_dict[dep] for dep in [
+    'opencv_contrib_python_headless',
     'hdbscan',
     'kymatio',
+    'kornia',
+    'romatch-roicat',
 ]] + deps_core
 
 
@@ -134,5 +137,11 @@ setup(
         'core': deps_core,
         'classification': deps_classification,
         'tracking': deps_tracking,
+    },
+    python_requires='>=3.10, <3.13',
+    entry_points={
+        'console_scripts': [
+            'roicat = roicat.__main__:main',
+        ],
     },
 )

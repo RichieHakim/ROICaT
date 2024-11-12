@@ -44,23 +44,25 @@ def pipeline_tracking(params: dict):
     ## Prepare state variables
     VERBOSE = params['general']['verbose']
     DEVICE = helpers.set_device(use_GPU=params['general']['use_GPU'])
-    SEED = _set_random_seed(
+    SEED = util.set_random_seed(
         seed=params['general']['random_seed'],
         deterministic=params['general']['random_seed'] is not None,
     )
 
-    if params['data_loading']['data_kind'] == 'data_suite2p':
-        assert params['data_loading']['dir_outer'] is not None, f"params['data_loading']['dir_outer'] must be specified if params['data_loading']['data_kind'] is 'data_suite2p'."
+    if params['data_loading']['data_kind'] == 'suite2p':
+        assert params['data_loading']['dir_outer'] is not None, f"params['data_loading']['dir_outer'] must be specified if params['data_loading']['data_kind'] is 'suite2p'."
         paths_allStat = helpers.find_paths(
             dir_outer=params['data_loading']['dir_outer'],
             reMatch='stat.npy',
-            depth=4,
+            depth=6,
             find_files=True,
             find_folders=False,
             natsorted=True,
         )[:]
         paths_allOps  = [str(Path(path).resolve().parent / 'ops.npy') for path in paths_allStat][:]
 
+        if len(paths_allStat) == 0:
+            raise FileNotFoundError(f"No stat.npy files found in '{params['data_loading']['dir_outer']}'")
         print(f"Found the following stat.npy files:")
         [print(f"    {path}") for path in paths_allStat]
         print(f"Found the following corresponding ops.npy files:")
@@ -95,8 +97,14 @@ def pipeline_tracking(params: dict):
     else:
         raise NotImplementedError(f"params['data_loading']['data_kind'] == '{params['data_loading']['data_kind']}' is not yet implemented.")
 
+
     ## Alignment
-    aligner = tracking.alignment.Aligner(verbose=True)
+    aligner = tracking.alignment.Aligner(
+        um_per_pixel=data.um_per_pixel[0],  ## Single value for um_per_pixel. data.um_per_pixel is typically a list of floats, so index out just one value.
+        verbose=VERBOSE,  ## Whether to print updates
+        device=DEVICE,
+        **params['alignment']['initialization']
+    )
     FOV_images = aligner.augment_FOV_images(
         FOV_images=data.FOV_images,
         spatialFootprints=data.spatialFootprints,
@@ -104,6 +112,7 @@ def pipeline_tracking(params: dict):
     )
     aligner.fit_geometric(
         ims_moving=FOV_images,  ## input images
+        verbose=VERBOSE,  ## Whether to print updates
         **params['alignment']['fit_geometric'],
     )
     aligner.transform_images_geometric(FOV_images);
@@ -304,26 +313,12 @@ def pipeline_tracking(params: dict):
             'run_data':         str(Path(dir_save) / f'{name_save}.tracking.run_data.richfile'),
         }
 
+        Path(dir_save).mkdir(parents=True, exist_ok=True)
+
         helpers.json_save(obj=results_clusters, filepath=paths_save['results_clusters']);
         helpers.json_save(obj=params_used, filepath=paths_save['params_used']);
         util.RichFile_ROICaT(path=paths_save['results_all']).save(obj=results_all, overwrite=True);
         util.RichFile_ROICaT(path=paths_save['run_data']).save(obj=run_data, overwrite=True);
-
-        # helpers.pickle_save(
-        #     obj=results,
-        #     filepath=str(dir_save / (name_save + '.ROICaT.tracking.results' + '.pkl')),
-        #     mkdir=True,
-        # )
-        # helpers.pickle_save(
-        #     obj=run_data,
-        #     filepath=str(dir_save / (name_save + '.ROICaT.tracking.rundata' + '.pkl')),
-        #     mkdir=True,
-        # )
-        # helpers.yaml_save(
-        #     obj=params,
-        #     filepath=str(dir_save / (name_save + '.ROICaT.tracking.params' + '.yaml')),
-        #     mkdir=True,
-        # )
 
     
         ## Visualize results
@@ -342,6 +337,15 @@ def pipeline_tracking(params: dict):
         [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'ROIs_aligned' / f'ROIs_aligned_{ii}.png') ) for ii, array in enumerate(aligner.get_ROIsAligned_maxIntensityProjection(normalize=True))]
         [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'ROIs_aligned_blurred' / f'ROIs_aligned_blurred_{ii}.png') ) for ii, array in enumerate(blurrer.get_ROIsBlurred_maxIntensityProjection())]
         
+        #### Save the image alignment checker images
+        fig_all_to_all, fig_direct = aligner.plot_alignment_results_geometric()
+        (Path(dir_save).resolve() / 'visualization' / 'alignment').mkdir(parents=True, exist_ok=True)
+        fig_all_to_all.savefig(str(Path(dir_save).resolve() / 'visualization' / 'alignment' / 'all_to_all_geometric.png'))
+        fig_direct.savefig(str(Path(dir_save).resolve() / 'visualization' / 'alignment' / 'direct_geometric.png')) if fig_direct is not None else None
+
+        fig_all_to_all, _ = aligner.plot_alignment_results_nonrigid()
+        fig_all_to_all.savefig(str(Path(dir_save).resolve() / 'visualization' / 'alignment' / 'all_to_all_nonrigid.png'))
+
         #### Save some sample ROI images
         [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'ROIs_sample' / f'ROIs_sample_{ii}.png') ) for ii, array in enumerate(roinet.ROI_images_rs[:100])]
         
@@ -403,40 +407,3 @@ def pipeline_tracking(params: dict):
     print(f"Elapsed time: {tic_end - tic_start:.2f} seconds")
     
     return results_all, run_data, params
-
-def _set_random_seed(seed=None, deterministic=False):
-    """
-    Set random seed for reproducibility.
-    RH 2023
-
-    Args:
-        seed (int, optional):
-            Random seed.
-            If None, a random seed (spanning int32 integer range) is generated.
-        deterministic (bool, optional):
-            Whether to make packages deterministic.
-
-    Returns:
-        (int):
-            seed (int):
-                Random seed.
-    """
-    ### random seed (note that optuna requires a random seed to be set within the pipeline)
-    import numpy as np
-    seed = int(np.random.randint(0, 2**31 - 1, dtype=np.uint32)) if seed is None else seed
-
-    np.random.seed(seed)
-    import torch
-    torch.manual_seed(seed)
-    import random
-    random.seed(seed)
-    import cv2
-    cv2.setRNGSeed(seed)
-
-    ## Make torch deterministic
-    torch.use_deterministic_algorithms(deterministic)
-    ## Make cudnn deterministic
-    torch.backends.cudnn.deterministic = deterministic
-    torch.backends.cudnn.benchmark = not deterministic
-    
-    return seed

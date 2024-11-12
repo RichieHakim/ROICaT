@@ -15,6 +15,7 @@ import richfile as rf
 
 from . import helpers
 
+
 def get_roicat_version() -> str:
     """
     Retrieves the version of the roicat package.
@@ -25,6 +26,7 @@ def get_roicat_version() -> str:
                 The version of the roicat package.
     """
     return importlib.metadata.version('roicat')
+
 
 def get_default_parameters(
     pipeline='tracking', 
@@ -58,7 +60,7 @@ def get_default_parameters(
         defaults = helpers.yaml_load(path_defaults)
     else:
         defaults = {
-            'general' : {
+            'general': {
                 'use_GPU': True,
                 'verbose': True,
                 'random_seed': None,
@@ -80,29 +82,93 @@ def get_default_parameters(
                 },
             },
             'alignment': {
+                'initialization': {
+                    'use_match_search': True,  ## Whether or not to use our match search algorithm to initialize the alignment.
+                    'all_to_all': False,  ## Force the use of our match search algorithm for all-pairs matching. Much slower (False: O(N) vs. True: O(N^2)), but more accurate.
+                    'radius_in': 4.0,  ## Value in micrometers used to define the maximum shift/offset between two images that are considered to be aligned. Larger means more lenient alignment.
+                    'radius_out': 20.0,  ## Value in micrometers used to define the minimum shift/offset between two images that are considered to be misaligned.
+                    'z_threshold': 4.0,  ## Z-score required to define two images as aligned. Larger values results in more stringent alignment requirements.
+                },
                 'augment': {
                     'normalize_FOV_intensities': True,  ## Whether or not to normalize the FOV_images to the max value across all FOV images.
                     'roi_FOV_mixing_factor': 0.5,  ## default: 0.5. Fraction of the max intensity projection of ROIs that is added to the FOV image. 0.0 means only the FOV_images, larger values mean more of the ROIs are added.
                     'use_CLAHE': True,  ## Whether or not to use 'Contrast Limited Adaptive Histogram Equalization'. Useful if params['importing']['type_meanImg'] is not a contrast enhanced image (like 'meanImgE' in Suite2p)
-                    'CLAHE_grid_size': 100,  ## Size of the grid for CLAHE. 1 means no grid, 2 means 2x2 grid, etc.
-                    'CLAHE_clipLimit': 1,  ## Clipping limit for CLAHE. Higher values mean more contrast.
+                    'CLAHE_grid_block_size': 10,  ## Size of the block size for the grid for CLAHE. Smaller values means more local contrast enhancement.
+                    'CLAHE_clipLimit': 1.0,  ## Clipping limit for CLAHE. Higher values mean more contrast.
                     'CLAHE_normalize': True,  ## Whether or not to normalize the CLAHE image.
                 },
                 'fit_geometric': {
                     'template': 0.5,  ## Which session to use as a registration template. If input is float (ie 0.0, 0.5, 1.0, etc.), then it is the fractional position of the session to use; if input is int (ie 1, 2, 3), then it is the index of the session to use (0-indexed)
-                    'template_method': 'sequential',  ## Can be 'sequential' or 'image'. If 'sequential', then the template is the FOV_image of the previous session. If 'image', then the template is the FOV_image of the session specified by 'template'.
-                    'mode_transform': 'euclidean',  ## Must be one of {'translation', 'affine', 'euclidean', 'homography'}. See documentation for more details.
-                    'mask_borders': [50, 50, 50, 50],  ## Number of pixels to mask from the borders of the FOV_image. Useful for removing artifacts from the edges of the FOV_image.
-                    'n_iter': 50,  ## Number of iterations to run the registration algorithm. More iterations means more accurate registration, but longer run time.
-                    'termination_eps': 1e-09,  ## Termination criteria for the registration algorithm. See documentation for more details.
-                    'gaussFiltSize': 31,  ## Size of the gaussian filter used to smooth the FOV_image before registration. Larger values mean more smoothing.
-                    'auto_fix_gaussFilt_step': 10,  ## If the registration fails, then the gaussian filter size is reduced by this amount and the registration is tried again.
+                    'template_method': 'image',  ## Can be 'sequential' or 'image'. If 'sequential', then the template is the FOV_image of the previous session. If 'image', then the template is the FOV_image of the session specified by 'template'.
+                    'mask_borders': [0, 0, 0, 0],  ## Number of pixels to mask from the borders of the FOV_image. Useful for removing artifacts from the edges of the FOV_image.
+                    'method': 'RoMa',  ## Accuracy order (best to worst): RoMa (by far, but slow without a GPU), LoFTR, DISK_LightGlue, ECC_cv2, (the following are not recommended) SIFT, ORB
+                    'kwargs_method': {
+                        'RoMa': {
+                            'model_type': 'outdoor',
+                            'n_points': 10000,  ## Higher values mean more points are used for the registration. Useful for larger FOV_images. Larger means slower.
+                            'batch_size': 1000,
+                        },
+                        'DISK_LightGlue': {
+                            'num_features': 3000,  ## Number of features to extract and match. I've seen best results around 2048 despite higher values typically being better.
+                            'threshold_confidence': 0.2,  ## Higher values means fewer but better matches.
+                        },
+                        'LoFTR': {
+                            'model_type': 'indoor_new',
+                            'threshold_confidence': 0.2,  ## Higher values means fewer but better matches.
+                        },
+                        'ECC_cv2': {
+                            'mode_transform': 'euclidean',  ## Must be one of {'translation', 'affine', 'euclidean', 'homography'}. See cv2 documentation on findTransformECC for more details.
+                            'n_iter': 200,
+                            'termination_eps': 1e-09,  ## Termination criteria for the registration algorithm. See documentation for more details.
+                            'gaussFiltSize': 1,  ## Size of the gaussian filter used to smooth the FOV_image before registration. Larger values mean more smoothing.
+                            'auto_fix_gaussFilt_step': 10,  ## If the registration fails, then the gaussian filter size is reduced by this amount and the registration is tried again.
+                        },
+                        'PhaseCorrelation': {
+                            'bandpass_freqs': [1, 30],
+                            'order': 5,
+                        },
+                        'SIFT': {
+                            'nfeatures': 10000,
+                            'contrastThreshold': 0.04,
+                            'edgeThreshold': 10,
+                            'sigma': 1.6,
+                        },
+                        'ORB': {
+                            'nfeatures': 1000,
+                            'scaleFactor': 1.2,
+                            'nlevels': 8,
+                            'edgeThreshold': 31,
+                            'firstLevel': 0,
+                            'WTA_K': 2,
+                            'scoreType': 0,
+                            'patchSize': 31,
+                            'fastThreshold': 20,
+                        },
+                    },
+                    'kwargs_RANSAC': {  ## Parameters related to the RANSAC algorithm used for point/descriptor based registration methods.
+                        'inl_thresh': 3.0,  ## Threshold for the inliers. Larger values mean more points are considered inliers.
+                        'max_iter': 100,  ## Maximum number of iterations for the RANSAC algorithm.
+                        'confidence': 0.99,  ## Confidence level for the RANSAC algorithm. Larger values mean more points are considered inliers.
+                    },
                 },
                 'fit_nonrigid': {
                     'template': 0.5,  ## Which session to use as a registration template. If input is float (ie 0.0, 0.5, 1.0, etc.), then it is the fractional position of the session to use; if input is int (ie 1, 2, 3), then it is the index of the session to use (0-indexed)
                     'template_method': 'image',  ## Can be 'sequential' or 'image'. If 'sequential', then the template is the FOV_image of the previous session. If 'image', then the template is the FOV_image of the session specified by 'template'.
-                    'mode_transform': 'createOptFlow_DeepFlow',  ## Can be 'createOptFlow_DeepFlow' or 'calcOpticalFlowFarneback'. See documentation for more details.
-                    'kwargs_mode_transform': None,  ## Keyword arguments for the mode_transform function. See documentation for more details.
+                    'method': 'DeepFlow',
+                    'kwargs_method': {
+                        'RoMa': {
+                            'model_type': 'outdoor',
+                        },
+                        'DeepFlow': {},
+                        'OpticalFlowFarneback': {
+                            'pyr_scale': 0.7,
+                            'levels': 5,
+                            'winsize': 128,
+                            'iterations': 15,
+                            'poly_n': 5,
+                            'poly_sigma': 1.5,            
+                        },
+                    },
                 },
                 'transform_ROIs': {
                     'normalize': True,  ## If True, normalize the spatial footprints to have a sum of 1.
@@ -159,13 +225,13 @@ def get_default_parameters(
                         'max_duration': 60*10,  ## Max amount of time (in seconds) to allow optimization to proceed for
                     },
                     'bounds_findParameters': {
-                        'power_NN': (0.0, 2.),  ## Bounds for the exponent applied to s_NN
-                        'power_SWT': (0.0, 2.),  ## Bounds for the exponent applied to s_SWT
-                        'p_norm': (-5, -0.1),  ## Bounds for the p-norm p value (Minkowski) applied to mix the matrices
-                        'sig_NN_kwargs_mu': (0., 1.0),  ## Bounds for the sigmoid center for s_NN
-                        'sig_NN_kwargs_b': (0.1, 1.5),  ## Bounds for the sigmoid slope for s_NN
-                        'sig_SWT_kwargs_mu': (0., 1.0),  ## Bounds for the sigmoid center for s_SWT
-                        'sig_SWT_kwargs_b': (0.1, 1.5),  ## Bounds for the sigmoid slope for s_SWT
+                        'power_NN': [0.0, 2.],  ## Bounds for the exponent applied to s_NN
+                        'power_SWT': [0.0, 2.],  ## Bounds for the exponent applied to s_SWT
+                        'p_norm': [-5, -0.1],  ## Bounds for the p-norm p value (Minkowski) applied to mix the matrices
+                        'sig_NN_kwargs_mu': [0., 1.0],  ## Bounds for the sigmoid center for s_NN
+                        'sig_NN_kwargs_b': [0.1, 1.5],  ## Bounds for the sigmoid slope for s_NN
+                        'sig_SWT_kwargs_mu': [0., 1.0],  ## Bounds for the sigmoid center for s_SWT
+                        'sig_SWT_kwargs_b': [0.1, 1.5],  ## Bounds for the sigmoid slope for s_SWT
                     },
                     'n_jobs_findParameters': -1,  ## Number of CPU cores to use (-1 is all cores)
                 },
@@ -176,9 +242,9 @@ def get_default_parameters(
                     'p_norm': -1.0,    ## norm([s_sf, s_NN, s_SWT], p=p_norm) (Higher values means clustering requires all similarity metrics to be high)
                 #     'sig_SF_kwargs': {'mu':0.5, 'b':1.0},  ## Sigmoid parameters for s_sf (mu is the center, b is the slope)
                     'sig_SF_kwargs': None,
-                    'sig_NN_kwargs': {'mu':0.5, 'b':1.0},    ## Sigmoid parameters for s_NN (mu is the center, b is the slope)
+                    'sig_NN_kwargs': {'mu': 0.5, 'b': 1.0},  ## Sigmoid parameters for s_NN (mu is the center, b is the slope)
                 #     'sig_NN_kwargs': None,
-                    'sig_SWT_kwargs': {'mu':0.5, 'b':1.0}, ## Sigmoid parameters for s_SWT (mu is the center, b is the slope)
+                    'sig_SWT_kwargs': {'mu': 0.5, 'b': 1.0},  ## Sigmoid parameters for s_SWT (mu is the center, b is the slope)
                 #     'sig_SWT_kwargs': None,
                 },
                 'pruning': {
@@ -290,7 +356,7 @@ def system_info(verbose: bool = False,) -> Dict:
         try:
             return fn()
         except:
-            return None
+            return None        
     fns = {key: val for key, val in platform.__dict__.items() if (callable(val) and key[0] != '_')}
     operating_system = {key: try_fns(val) for key, val in fns.items() if (callable(val) and key[0] != '_')}
     print(f'== Operating System ==: {operating_system["uname"]}') if verbose else None
@@ -401,7 +467,57 @@ def system_info(verbose: bool = False,) -> Dict:
         'pkgs': pkgs_dict,
     }
 
+    def conv_str(obj):
+        if isinstance(obj, (dict, collections.OrderedDict)):
+            return {key: conv_str(val) for key, val in obj.items()}
+        elif isinstance(obj, (list, tuple, set, frozenset)):
+            return [conv_str(val) for val in obj]
+        elif isinstance(obj, (int, float, bool, type(None))):
+            return obj
+        else:
+            return str(obj)
+        
+    versions = conv_str(versions)
+
     return versions
+
+
+def set_random_seed(seed=None, deterministic=False):
+    """
+    Set random seed for reproducibility.
+    RH 2023
+
+    Args:
+        seed (int, optional):
+            Random seed.
+            If None, a random seed (spanning int32 integer range) is generated.
+        deterministic (bool, optional):
+            Whether to make packages deterministic.
+
+    Returns:
+        (int):
+            seed (int):
+                Random seed.
+    """
+    ### random seed (note that optuna requires a random seed to be set within the pipeline)
+    import numpy as np
+    seed = int(np.random.randint(0, 2**31 - 1, dtype=np.uint32)) if seed is None else seed
+
+    np.random.seed(seed)
+    import torch
+    torch.manual_seed(seed)
+    import random
+    random.seed(seed)
+    import cv2
+    cv2.setRNGSeed(seed)
+
+    ## Make torch deterministic
+    torch.use_deterministic_algorithms(deterministic)
+    ## Make cudnn deterministic
+    torch.backends.cudnn.deterministic = deterministic
+    torch.backends.cudnn.benchmark = not deterministic
+    
+    return seed
 
 
 class ROICaT_Module:
@@ -423,113 +539,95 @@ class ROICaT_Module:
         self.params = {}
         pass
 
-    # @property
-    # def serializable_dict(self) -> Dict[str, Any]:
-    #     """
-    #     Returns a serializable dictionary that can be saved to disk. This method
-    #     goes through all items in self.__dict__ and checks if they are
-    #     serializable. If they are, add them to a dictionary to be returned.
+    @property
+    def serializable_dict(self) -> Dict[str, Any]:
+        """
+        Returns a serializable dictionary that can be saved to disk. This method
+        goes through all items in self.__dict__ and checks if they are
+        serializable. If they are, add them to a dictionary to be returned.
 
-    #     Returns:
-    #         (Dict[str, Any]): 
-    #             serializable_dict (Dict[str, Any]): 
-    #                 Dictionary containing serializable items.
-    #     """
-    #     from functools import partial
-    #     ## Go through all items in self.__dict__ and check if they are serializable.
-    #     ### If they are, add them to a dictionary to be returned.
-    #     import pickle
+        Returns:
+            (Dict[str, Any]): 
+                serializable_dict (Dict[str, Any]): 
+                    Dictionary containing serializable items.
+        """
+        from functools import partial
+        ## Go through all items in self.__dict__ and check if they are serializable.
+        ### If they are, add them to a dictionary to be returned.
+        import pickle
 
-    #     ## Define a list of libraries and classes that are allowed to be serialized.
-    #     allowed_libraries = [
-    #         'roicat',
-    #         'builtins',
-    #         'collections',
-    #         'datetime',
-    #         'itertools',
-    #         'math',
-    #         'numbers',
-    #         'os',
-    #         'pathlib',
-    #         'string',
-    #         'time',
-    #         'numpy',
-    #         'scipy',
-    #         'sklearn',
-    #     ]
-    #     def is_library_allowed(obj):
-    #         try:
-    #             try:
-    #                 module_name = obj.__module__.split('.')[0]
-    #             except:
-    #                 success = False
-    #             try:
-    #                 module_name = obj.__class__.__module__.split('.')[0]
-    #             except:
-    #                 success = False
-    #         except:
-    #             success = False
-    #         else:
-    #             ## Check if the module_name is in the allowed_libraries list.
-    #             if module_name in allowed_libraries:
-    #                 success = True
-    #             else:
-    #                 success = False
-    #         return success
+        ## Define a list of libraries and classes that are allowed to be serialized.
+        allowed_libraries = [
+            'roicat',
+            'builtins',
+            'collections',
+            'datetime',
+            'itertools',
+            'math',
+            'numbers',
+            'os',
+            'pathlib',
+            'string',
+            'time',
+            'numpy',
+            'scipy',
+            'sklearn',
+        ]
+        def is_library_allowed(obj):
+            try:
+                try:
+                    module_name = obj.__module__.split('.')[0]
+                except:
+                    success = False
+                try:
+                    module_name = obj.__class__.__module__.split('.')[0]
+                except:
+                    success = False
+            except:
+                success = False
+            else:
+                ## Check if the module_name is in the allowed_libraries list.
+                if module_name in allowed_libraries:
+                    success = True
+                else:
+                    success = False
+            return success
         
-    #     def make_serializable_dict(obj, depth=0, max_depth=100, name=None):
-    #         """
-    #         Recursively go through all items in self.__dict__ and check if they are serializable.
-    #         """
-    #         # print(name)
-    #         msd_partial = partial(make_serializable_dict, depth=depth+1, max_depth=max_depth)
-    #         if depth > max_depth:
-    #             raise Exception(f'RH ERROR: max_depth of {max_depth} reached with object: {obj}')
+        def make_serializable_dict(obj, depth=0, max_depth=100, name=None):
+            """
+            Recursively go through all items in self.__dict__ and check if they are serializable.
+            """
+            # print(name)
+            msd_partial = partial(make_serializable_dict, depth=depth+1, max_depth=max_depth)
+            if depth > max_depth:
+                raise Exception(f'RH ERROR: max_depth of {max_depth} reached with object: {obj}')
                 
-    #         serializable_dict = {}
-    #         if hasattr(obj, '__dict__') and is_library_allowed(obj):
-    #             for key, val in obj.__dict__.items():
-    #                 try:
-    #                     serializable_dict[key] = msd_partial(val, name=key)
-    #                 except:
-    #                     pass
+            serializable_dict = {}
+            if hasattr(obj, '__dict__') and is_library_allowed(obj):
+                for key, val in obj.__dict__.items():
+                    try:
+                        serializable_dict[key] = msd_partial(val, name=key)
+                    except:
+                        pass
 
-    #         elif isinstance(obj, (list, tuple, set, frozenset)):
-    #             serializable_dict = [msd_partial(v, name=f'{name}_{ii}') for ii,v in enumerate(obj)]
-    #         elif isinstance(obj, dict):
-    #             serializable_dict = {k: msd_partial(v, name=f'{name}_{k}') for k,v in obj.items()}
-    #         else:
-    #             try:
-    #                 assert is_library_allowed(obj), f'RH ERROR: object {obj} is not serializable'
-    #                 pickle.dumps(obj)
-    #             except:
-    #                 return {'__repr__': repr(obj)} if hasattr(obj, '__repr__') else {'__str__': str(obj)} if hasattr(obj, '__str__') else None
+            elif isinstance(obj, (list, tuple, set, frozenset)):
+                serializable_dict = [msd_partial(v, name=f'{name}_{ii}') for ii,v in enumerate(obj)]
+            elif isinstance(obj, dict):
+                serializable_dict = {k: msd_partial(v, name=f'{name}_{k}') for k,v in obj.items()}
+            else:
+                try:
+                    assert is_library_allowed(obj), f'RH ERROR: object {obj} is not serializable'
+                    pickle.dumps(obj)
+                except:
+                    return {'__repr__': repr(obj)} if hasattr(obj, '__repr__') else {'__str__': str(obj)} if hasattr(obj, '__str__') else None
 
-    #             serializable_dict = obj
+                serializable_dict = obj
 
-    #         return serializable_dict
+            return serializable_dict
         
-    #     serializable_dict = make_serializable_dict(self, depth=0, max_depth=100, name='self')
-    #     return serializable_dict
+        serializable_dict = make_serializable_dict(self, depth=0, max_depth=100, name='self')
+        return serializable_dict
 
-    # @property
-    # def serializable_dict(self) -> Dict[str, Any]:
-    #     def walk_through_dicts(obj, depth=0, max_depth=10):
-    #         depth += 1
-    #         print(depth)
-    #         if depth > max_depth:
-    #             return obj
-            
-    #         elif isinstance(obj, dict):
-    #             return {k: walk_through_dicts(v, depth) for k,v in obj.items()}
-    #         elif isinstance(obj, (list, tuple, set, frozenset)):
-    #             return [walk_through_dicts(v, depth) for v in obj]
-    #         elif hasattr(obj, '__dict__'):
-    #             return {k: walk_through_dicts(v, depth) for k,v in obj.__dict__.items()}
-    #         else:
-    #             return obj
-            
-    #     return walk_through_dicts(self, depth=0, max_depth=10)
 
     # def save(
     #     self, 
@@ -611,6 +709,7 @@ class ROICaT_Module:
 
     #     print(f"Loaded Data_roicat object from {path_load}.") if self._verbose else None
 
+
     def _locals_to_params(
         self,
         locals_dict: Dict[str, Any],
@@ -644,6 +743,7 @@ class RichFile_ROICaT(rf.RichFile):
         super().__init__(path=path, check=check, safe_save=safe_save)
 
 
+        ## NUMPY ARRAY
         import numpy as np
 
         def save_npy_array(
@@ -666,6 +766,7 @@ class RichFile_ROICaT(rf.RichFile):
             return np.load(path, **kwargs)
         
 
+        ## SCIPY SPARSE MATRIX
         import scipy.sparse
 
         def save_sparse_array(
@@ -687,6 +788,8 @@ class RichFile_ROICaT(rf.RichFile):
             """        
             return scipy.sparse.load_npz(path, **kwargs)
         
+
+        ## JSON DICT
         import collections
         import json
 
@@ -710,7 +813,9 @@ class RichFile_ROICaT(rf.RichFile):
             """
             with open(path, 'r') as f:
                 return JSON_Dict(json.load(f, **kwargs))
-            
+
+
+        ## JSON LIST   
         def save_json_list(
             obj: collections.UserList,
             path: Union[str, Path],
@@ -732,6 +837,8 @@ class RichFile_ROICaT(rf.RichFile):
             with open(path, 'r') as f:
                 return JSON_List(json.load(f, **kwargs))
             
+
+        ## OPTUNA STUDY
         import optuna
         import pickle
 
@@ -758,6 +865,7 @@ class RichFile_ROICaT(rf.RichFile):
                 return pickle.load(f, **kwargs)
             
         
+        ## TORCH TENSOR
         import torch
 
         def save_torch_tensor(
@@ -780,6 +888,7 @@ class RichFile_ROICaT(rf.RichFile):
             return torch.from_numpy(np.load(path, **kwargs))
 
 
+        ## REPR
         def save_repr(
             obj: object,
             path: Union[str, Path],
@@ -799,12 +908,36 @@ class RichFile_ROICaT(rf.RichFile):
             Loads the repr of an object from the given path.
             """
             with open(path, 'r') as f:
-                return eval(f.read())
+                return f.read()
 
         import hdbscan
 
+        
+        ## PANDAS DATAFRAME
+        import pandas as pd
+        
+        def save_pandas_dataframe(
+            obj: pd.DataFrame,
+            path: Union[str, Path],
+            **kwargs,
+        ) -> None:
+            """
+            Saves a Pandas DataFrame to the given path.
+            """
+            ## Save as a CSV file
+            obj.to_csv(path, index=True, **kwargs)
 
-        roicat_module_tds = [rf.functions.Type_container(
+        def load_pandas_dataframe(
+            path: Union[str, Path],
+            **kwargs,
+        ) -> pd.DataFrame:
+            """
+            Loads a Pandas DataFrame from the given path.
+            """
+            ## Load as a CSV file
+            return pd.read_csv(path, index_col=0, **kwargs)
+
+        roicat_module_tds = [rf.functions.Container(
             type_name=type_name,
             object_class=object_class,
             suffix="roicat",
@@ -824,6 +957,7 @@ class RichFile_ROICaT(rf.RichFile):
 
             ("toeplitz_conv", helpers.Toeplitz_convolution2d),
             ("convergence_checker_optuna", helpers.Convergence_checker_optuna),
+            ("image_alignment_checker", helpers.ImageAlignmentChecker),
         ]]
         # roicat_module_tds = []
         
@@ -946,6 +1080,15 @@ class RichFile_ROICaT(rf.RichFile):
                 "library":            "torch",
                 "versions_supported": [],
             },
+            {
+                "type_name":          "pandas_dataframe",
+                "function_load":      load_pandas_dataframe,
+                "function_save":      save_pandas_dataframe,
+                "object_class":       pd.DataFrame,
+                "suffix":             "csv",
+                "library":            "pandas",
+                "versions_supported": [],
+            },
         ] + [t.get_property_dict() for t in roicat_module_tds]
 
         [self.register_type_from_dict(d) for d in type_dicts]
@@ -999,6 +1142,26 @@ def make_session_bool(n_roi: np.ndarray,) -> np.ndarray:
     session_bool = np.vstack([(b_lower <= r) * (r < b_upper) for b_lower, b_upper in zip(n_roi_cumsum[:-1], n_roi_cumsum[1:])]).T
     return session_bool
 
+
+def split_iby_session(
+    x: Any,
+    n_roi_per_session: Union[np.ndarray, List[int]],
+):
+    """
+    Splits an array or iterable into a list of arrays or iterables based on the
+    number of ROIs per session.
+
+    Args:
+        arr (Any): 
+            Array to split.
+        n_roi_per_session (Union[np.ndarray, List[int]]): 
+            Number of ROIs per session.
+
+    Returns:
+        (List[Any]): 
+            List of arrays split by session.
+    """
+    return [x[sum(n_roi_per_session[:ii]):sum(n_roi_per_session[:ii+1])] for ii in range(len(n_roi_per_session))]
 
 ##########################################################################################################################
 ############################################### UCID handling ############################################################
@@ -1253,7 +1416,8 @@ def discard_UCIDs_with_fewer_matches(
     
 
 def squeeze_UCID_labels(
-    ucids: List[Union[List[int], np.ndarray]]
+    ucids: List[Union[List[int], np.ndarray]],
+    return_array: bool = False,
 ) -> List[Union[List[int], np.ndarray]]:
     """
     Squeezes the UCID labels. Finds all the unique UCIDs across all sessions,
@@ -1264,6 +1428,9 @@ def squeeze_UCID_labels(
     Args:
         ucids (List[Union[List[int], np.ndarray]]): 
             List of lists of UCIDs for each session.
+        return_array (bool):
+            If ``True``, then the output will be a numpy array.
+            (Default is ``False``)
 
     Returns:
         (List[Union[List[int], np.ndarray]]): 
@@ -1290,12 +1457,16 @@ def squeeze_UCID_labels(
     for i_sesh in range(n_sesh):
         ucids_out[i_sesh] = [int(mapping[val]) for val in ucids_out[i_sesh]]
 
-    return ucids_out
+    if not return_array:
+        return ucids_out
+    else:
+        return [np.array(u) for u in ucids_out]
 
 
 def match_arrays_with_ucids(
     arrays: Union[np.ndarray, List[np.ndarray]], 
     ucids: Union[List[np.ndarray], List[List[int]]], 
+    return_indices: bool = False,
     squeeze: bool = False,
     force_sparse: bool = False,
     prog_bar: bool = False,
@@ -1311,6 +1482,10 @@ def match_arrays_with_ucids(
             first dimension.
         ucids (Union[List[np.ndarray], List[List[int]]]): 
             List of lists of UCIDs for each session.
+        return_indices (bool):
+            If ``True``, then the indices of the UCIDs will also be returned.
+            The indices will be of dtype np.float32 because it may contain NaNs.
+            (Default is ``False``)
         squeeze (bool): 
             If ``True``, then UCIDs are squeezed to be contiguous integers.
             (Default is ``False``)
@@ -1340,6 +1515,10 @@ def match_arrays_with_ucids(
         fix=True,
         verbose=False,
     )
+    ## Error if dtype is not NaN compatible
+    if not np.issubdtype(arrays[0].dtype, np.floating):
+        raise ValueError(f'ROICaT ERROR: This function requires inputs to be of a dtype that is compatible with NaNs, like np.floating types: np.float32, np.float64, etc.')
+    ## Squeeze UCIDs
     ucids_tu = squeeze_UCID_labels(ucids_tu) if squeeze else ucids_tu
     # max_ucid = (np.unique(np.concatenate(ucids_tu, axis=0)) >= 0).max()
     max_ucid = (np.unique(np.concatenate(ucids_tu, axis=0))).max().astype(int) + 1
@@ -1360,7 +1539,17 @@ def match_arrays_with_ucids(
             if u >= 0:
                 arrays_out[i_sesh][u] = arrays[i_sesh][idx]
 
-    return arrays_out
+    if not return_indices:
+        return arrays_out
+    else:
+        return arrays_out, match_arrays_with_ucids(
+            arrays=[np.arange(len(a), dtype=np.float32) for a in arrays],
+            ucids=ucids,
+            return_indices=False,
+            squeeze=squeeze,
+            force_sparse=False,
+            prog_bar=False,
+        )
 
 def match_arrays_with_ucids_inverse(
     arrays: Union[np.ndarray, List[np.ndarray]], 
@@ -1458,6 +1647,6 @@ def labels_to_labelsBySession(labels, n_roi_bySession):
 
     assert np.sum(n_roi_bySession) == len(labels), f'np.sum(n_roi_bySession)={np.sum(n_roi_bySession)} != len(labels)={len(labels)}'
 
-    labels_bySession = [labels[sum(n_roi_bySession[:ii]):sum(n_roi_bySession[:ii+1])] for ii in range(len(n_roi_bySession))]
+    labels_bySession = split_iby_session(x=labels, n_roi_per_session=n_roi_bySession)
 
     return labels_bySession
