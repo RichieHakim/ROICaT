@@ -10,7 +10,8 @@
 [![build](https://github.com/RichieHakim/ROICaT/actions/workflows/.github/workflows/check_huggingface_space.yml/badge.svg)](https://github.com/RichieHakim/ROICaT/actions/workflows/check_huggingface_space.yml) 
 
 
-**🎉 CONTRIBUTIONS WELCOME! 🎉**
+**🎉 CONTRIBUTIONS WELCOME! 🎉** \
+See the [TODO](#todo) section
 
 - **Documentation: [https://roicat.readthedocs.io/en/latest/](https://roicat.readthedocs.io/en/latest/)**
 - Discussion forum: [https://groups.google.com/g/roicat_support](https://groups.google.com/g/roicat_support)
@@ -170,16 +171,23 @@ sudo docker run -it -p 7860:7860 --platform=linux/amd64 --shm-size=10g registry.
 - [ ] Try other clustering methods
 - [x] Make image aligner based on image similarity + RANSAC of centroids or s_SF
 - [ ] Better post-hoc curation metrics and visualizations
+- [ ] Improve non-rigid image registration methods (border performance)
+- [ ] Make non-rigid image registration optional
 #### code improvements:
+- [ ] **Finish ROIextractors integration**
 - [ ] Update automatic regression module (make new repo for it)
 - [ ] Switch to ONNX for ROInet
 - [ ] Some more integration tests
+- [ ] Figure out RNG / OS differences issues for tests
 - [ ] Add more documentation / tutorials
 - [x] Make a GUI
-- [ ] Finish ROIextractors integration
-- [ ] Make a Docker container
+- [ ] Add settings to the GUI
+- ~~[ ] Make a Docker container~~
 - ~~Make colab demo notebook not require user data~~
 - [x] Make a better CLI
+- [ ] Switch to pyproject.toml
+- [ ] Improve params.json / default params system
+- [ ] Spruce up training code
 #### other:
 - [ ] Write the paper
 - [ ] Make tweet about it
@@ -188,3 +196,4 @@ sudo docker run -it -p 7860:7860 --platform=linux/amd64 --shm-size=10g registry.
 - [ ] Better Readme
 - [ ] More documentation
 - [ ] Make a regression model for in-plane-ness
+- [ ] Formalize bounty program
