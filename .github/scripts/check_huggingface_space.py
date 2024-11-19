@@ -68,10 +68,13 @@ def check(
             tic = time.time()
             while (get_runtime_status() not in expected_runtime_status) or (time.time() - tic < max_wait_time):
                 time.sleep(5)
+            runtime_status_final = get_runtime_status()
 
-        ## Throw an error to trigger a notification
-        if error_on_failure:
-            raise Exception(f"Found initial runtime status: {runtime_status_initial}. Expected: {expected_runtime_status}. Current status: {get_runtime_status()}.")
+            if (runtime_status_final.upper() not in expected_runtime_status) and error_on_failure:
+                raise Exception(f"Found initial runtime status: {runtime_status_initial}. Expected: {expected_runtime_status}. Failed to restart the runtime. Current status: {runtime_status_final}.")
+            else:
+                print(f"Found initial runtime status: {runtime_status_initial}. Expected: {expected_runtime_status}. Successfully restarted the runtime. Current status: {runtime_status_final}.")
+        
     else:
         print(f"Runtime status is {runtime_status_initial}. No action required.")
 
