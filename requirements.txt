@@ -9,7 +9,7 @@ opencv_contrib_python_headless<=4.10.0.84
 optuna==4.1.0
 Pillow==11.0.0
 pytest==8.3.4
-scikit_learn==1.5.2
+scikit_learn==1.6.0
 scipy==1.14.1
 seaborn==0.13.2
 sparse==0.15.4
