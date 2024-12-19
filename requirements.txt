@@ -26,7 +26,7 @@ torch==2.5.1
 torchvision==0.20.1
 torchaudio==2.5.1
 selenium==4.27.1
-skl2onnx==1.17.0
+skl2onnx==1.18.0
 onnx==1.17.0
 onnxruntime==1.20.1
 jupyter_bokeh==4.0.5
