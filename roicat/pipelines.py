@@ -413,7 +413,7 @@ def pipeline_tracking(params: dict) -> tuple:
                 position=(30, 90),
             ), 
             path=str(Path(dir_save).resolve() / 'visualization' / 'FOV_clusters.gif'),
-            frameRate=10.0,
+            frameRate=params['results_saving']['gif_frame_rate'],
             loop=0,
         )
 
@@ -427,7 +427,7 @@ def pipeline_tracking(params: dict) -> tuple:
                 position=(30, 90),
             ), 
             path=str(Path(dir_save).resolve() / 'visualization' / 'FOV_images' / 'FOV_images.gif'),
-            frameRate=10.0,
+            frameRate=params['results_saving']['gif_frame_rate'],
             loop=0,
         )
 
@@ -440,7 +440,7 @@ def pipeline_tracking(params: dict) -> tuple:
                 position=(30, 90),
             ), 
             path=str(Path(dir_save).resolve() / 'visualization' / 'FOV_images_aligned_geometric' / 'FOV_images_aligned_geometric.gif'),
-            frameRate=10.0,
+            frameRate=params['results_saving']['gif_frame_rate'],
             loop=0,
         )
 
@@ -454,7 +454,7 @@ def pipeline_tracking(params: dict) -> tuple:
                     position=(30, 90),
                 ), 
                 path=str(Path(dir_save).resolve() / 'visualization' / 'FOV_images_nonrigid' / 'FOV_images_nonrigid.gif'),
-                frameRate=10.0,
+                frameRate=params['results_saving']['gif_frame_rate'],
                 loop=0,
             )
 
