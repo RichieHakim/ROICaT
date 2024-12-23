@@ -122,17 +122,26 @@ def pipeline_tracking(params: dict) -> tuple:
         **params['alignment']['fit_geometric'],
     )
     aligner.transform_images_geometric(FOV_images);
-    aligner.fit_nonrigid(
-        ims_moving=aligner.ims_registered_geo,  ## Input images. Typically the geometrically registered images
-        remappingIdx_init=aligner.remappingIdx_geo,  ## The remappingIdx between the original images (and ROIs) and ims_moving
-        **params['alignment']['fit_nonrigid'],
-    )
-    aligner.transform_images_nonrigid(FOV_images);
-    aligner.transform_ROIs(
-        ROIs=data.spatialFootprints, 
-        remappingIdx=aligner.remappingIdx_nonrigid,
-        **params['alignment']['transform_ROIs'],
-    );
+
+    if params['alignment']['fit_nonrigid']['method']:
+        aligner.fit_nonrigid(
+            ims_moving=aligner.ims_registered_geo,  ## Input images. Typically the geometrically registered images
+            remappingIdx_init=aligner.remappingIdx_geo,  ## The remappingIdx between the original images (and ROIs) and ims_moving
+            **params['alignment']['fit_nonrigid'],
+        )
+        aligner.transform_images_nonrigid(FOV_images);
+        aligner.transform_ROIs(
+            ROIs=data.spatialFootprints, 
+            remappingIdx=aligner.remappingIdx_nonrigid,
+            **params['alignment']['transform_ROIs'],
+        );
+    else:
+        aligner.transform_ROIs(
+            ROIs=data.spatialFootprints, 
+            remappingIdx=aligner.remappingIdx_geo,
+            **params['alignment']['transform_ROIs'],
+        );
+
 
 
     ## Blur ROIs
