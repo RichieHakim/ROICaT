@@ -11,7 +11,7 @@ import numpy as np
 ## Import roicat submodules
 from . import data_importing, ROInet, helpers, util, visualization, tracking, classification
 
-def pipeline_tracking(params: dict):
+def pipeline_tracking(params: dict) -> tuple:
     """
     Pipeline for tracking ROIs across sessions.
     RH 2023
@@ -49,6 +49,7 @@ def pipeline_tracking(params: dict):
         deterministic=params['general']['random_seed'] is not None,
     )
 
+    
     if params['data_loading']['data_kind'] == 'suite2p':
         assert params['data_loading']['dir_outer'] is not None, f"params['data_loading']['dir_outer'] must be specified if params['data_loading']['data_kind'] is 'suite2p'."
         paths_allStat = helpers.find_paths(
@@ -93,7 +94,9 @@ def pipeline_tracking(params: dict):
 
         data.import_from_dict(
             dict_load=util.RichFile_ROICaT(path=paths_allDataObjs[0]).load(),
-        )
+            )
+    elif params['data_loading']['data_kind'] == 'custom':
+        data = params['data_loading']['data_custom']
     else:
         raise NotImplementedError(f"params['data_loading']['data_kind'] == '{params['data_loading']['data_kind']}' is not yet implemented.")
 
