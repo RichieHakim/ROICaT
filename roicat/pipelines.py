@@ -347,7 +347,8 @@ def pipeline_tracking(params: dict) -> tuple:
             Image.fromarray((np.array(array / array.max() if normalize else array) * 255).astype(np.uint8)).save(path)
         [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'FOV_images' / f'FOV_images_{ii}.png') ) for ii, array in enumerate(data.FOV_images)]
         [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'FOV_images_aligned_geometric' / f'FOV_images_aligned_geometric_{ii}.png') ) for ii, array in enumerate(aligner.ims_registered_geo)]
-        [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'FOV_images_aligned_nonrigid' / f'FOV_images_aligned_nonrigid_{ii}.png') ) for ii, array in enumerate(aligner.ims_registered_nonrigid)]
+        if params['alignment']['fit_nonrigid']['method']:
+            [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'FOV_images_aligned_nonrigid' / f'FOV_images_aligned_nonrigid_{ii}.png') ) for ii, array in enumerate(aligner.ims_registered_nonrigid)]
         [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'ROIs' / f'ROIs_{ii}.png') ) for ii, array in enumerate(data.get_maxIntensityProjection_spatialFootprints())]
         [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'ROIs_aligned' / f'ROIs_aligned_{ii}.png') ) for ii, array in enumerate(aligner.get_ROIsAligned_maxIntensityProjection(normalize=True))]
         [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'ROIs_aligned_blurred' / f'ROIs_aligned_blurred_{ii}.png') ) for ii, array in enumerate(blurrer.get_ROIsBlurred_maxIntensityProjection())]
@@ -358,8 +359,9 @@ def pipeline_tracking(params: dict) -> tuple:
         fig_all_to_all.savefig(str(Path(dir_save).resolve() / 'visualization' / 'alignment' / 'all_to_all_geometric.png'))
         fig_direct.savefig(str(Path(dir_save).resolve() / 'visualization' / 'alignment' / 'direct_geometric.png')) if fig_direct is not None else None
 
-        fig_all_to_all, _ = aligner.plot_alignment_results_nonrigid()
-        fig_all_to_all.savefig(str(Path(dir_save).resolve() / 'visualization' / 'alignment' / 'all_to_all_nonrigid.png'))
+        if params['alignment']['fit_nonrigid']['method']:
+            fig_all_to_all, _ = aligner.plot_alignment_results_nonrigid()
+            fig_all_to_all.savefig(str(Path(dir_save).resolve() / 'visualization' / 'alignment' / 'all_to_all_nonrigid.png'))
 
         #### Save some sample ROI images
         [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'ROIs_sample' / f'ROIs_sample_{ii}.png') ) for ii, array in enumerate(roinet.ROI_images_rs[:100])]
@@ -414,6 +416,47 @@ def pipeline_tracking(params: dict) -> tuple:
             frameRate=10.0,
             loop=0,
         )
+
+        ### Save gifs of the FOVs at different stages of alignment
+        helpers.save_gif(
+            array=helpers.add_text_to_images(
+                images=[((f / np.max(f)) * 255).astype(np.uint8) for f in FOV_images], 
+                text=[[f"{ii}",] for ii in range(len(FOV_clusters))], 
+                font_size=3,
+                line_width=10,
+                position=(30, 90),
+            ), 
+            path=str(Path(dir_save).resolve() / 'visualization' / 'FOV_images' / 'FOV_images.gif'),
+            frameRate=10.0,
+            loop=0,
+        )
+
+        helpers.save_gif(
+            array=helpers.add_text_to_images(
+                images=[((f / np.max(f)) * 255).astype(np.uint8) for f in aligner.ims_registered_geo], 
+                text=[[f"{ii}",] for ii in range(len(FOV_clusters))], 
+                font_size=3,
+                line_width=10,
+                position=(30, 90),
+            ), 
+            path=str(Path(dir_save).resolve() / 'visualization' / 'FOV_images_aligned_geometric' / 'FOV_images_aligned_geometric.gif'),
+            frameRate=10.0,
+            loop=0,
+        )
+
+        if params['alignment']['fit_nonrigid']['method']:
+            helpers.save_gif(
+                array=helpers.add_text_to_images(
+                    images=[((f / np.max(f)) * 255).astype(np.uint8) for f in aligner.ims_registered_nonrigid], 
+                    text=[[f"{ii}",] for ii in range(len(FOV_clusters))], 
+                    font_size=3,
+                    line_width=10,
+                    position=(30, 90),
+                ), 
+                path=str(Path(dir_save).resolve() / 'visualization' / 'FOV_images_nonrigid' / 'FOV_images_nonrigid.gif'),
+                frameRate=10.0,
+                loop=0,
+            )
 
 
 
