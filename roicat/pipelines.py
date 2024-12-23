@@ -100,6 +100,9 @@ def pipeline_tracking(params: dict) -> tuple:
     else:
         raise NotImplementedError(f"params['data_loading']['data_kind'] == '{params['data_loading']['data_kind']}' is not yet implemented.")
 
+    assert data.check_completeness(verbose=False)['tracking'], f"Data object is missing attributes necessary for tracking."
+    assert data.n_sessions > 1, f"Data object must have more than one session to track (n_sessions={data.n_sessions})."
+
 
     ## Alignment
     aligner = tracking.alignment.Aligner(
