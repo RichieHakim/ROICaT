@@ -3155,7 +3155,7 @@ class IntegratedLabeler:
         """
         label = event.char
         if label != '':
-            print(f'Image {self._get_current_idx()}: {label}') if self._verbose else None
+            print(f'Image {self._get_current_idx()}: {str(repr(label))}') if self._verbose else None
             self.labels_.update({self._get_current_idx(): str(label)})  ## Store the label
             self.save_classification() if self._save_csv else None ## Save the results
             self.next_img()  ## Move to the next image
