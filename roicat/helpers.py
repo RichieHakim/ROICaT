@@ -3153,9 +3153,6 @@ class IntegratedLabeler:
             event (tkinter.Event):
                 A tkinter event object.
         """
-        # Prevent classify from running with any special keys
-        if event.state != 8:
-            return 
         label = event.char
         if label != '':
             print(f'Image {self._get_current_idx()}: {label}') if self._verbose else None
