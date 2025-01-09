@@ -1249,7 +1249,7 @@ class Clusterer(util.ROICaT_Module):
         ## Warn that current version is memory intensive and might be improved when sklearn 1.3 is released
         # warnings.warn("Current version of silhouette samples calculation is memory intensive and will be improved when sklearn 1.3 is released.")
         import sparse
-        d_dense = sparse.COO(dist_mat.astype(np.float16).copy().tocsr())
+        d_dense = sparse.COO(dist_mat.copy().tocsr()).astype(np.float16)
         d_dense.fill_value = (dist_mat.data.max() - dist_mat.data.min()).astype(np.float16) * 10
         d_dense = d_dense.todense()
         np.fill_diagonal(d_dense, 0)
