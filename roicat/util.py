@@ -274,6 +274,7 @@ def get_default_parameters(
             'results_saving': {
                 'dir_save': None,  ## Directory to save results to. If None, will not save.
                 'prefix_name_save': str(datetime.datetime.now().strftime("%Y%m%d_%H%M%S")),  ## Prefix to append to the saved files
+                'gif_frame_rate': 10.0 ## Frame rate for any GIFs saved
             },
         }
 
