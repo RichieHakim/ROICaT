@@ -79,7 +79,7 @@ def get_default_parameters(
                 },
                 'data_roicat': {
                     'filename_search': r'data_roicat.richfile',  ## Name stem of the single file (as a regex search string) in 'dir_outer' to look for. The files should be saved Data_roicat object.
-                }
+                },
             },
             'alignment': {
                 'initialization': {
