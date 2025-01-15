@@ -21,9 +21,11 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
             Dictionary of parameters. See
             ``roicat.util.get_default_parameters(pipeline='tracking')`` for
             details.
-        custom_data (None):
-            If not None, this is a custom data object that will be used
-            instead of loading data known formats from disk. 
+        custom_data: Optional[data_importing.Data_roicat]
+            Optional. If not None, then this is a custom roicat data object 
+            that will be used instead of loading data known formats from disk. 
+            Be careful to ensure that the object is prepared for the tracking 
+            pipeline.
 
     Returns:
         (tuple): tuple containing:
@@ -53,7 +55,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
     )
 
     
-    if custom_data:
+    if custom_data is not None:
         print("Using custom data object.")
         data = custom_data
     elif params['data_loading']['data_kind'] == 'suite2p':
