@@ -11,7 +11,7 @@ import numpy as np
 ## Import roicat submodules
 from . import data_importing, ROInet, helpers, util, visualization, tracking, classification
 
-def pipeline_tracking(params: dict) -> tuple:
+def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = None) -> tuple:
     """
     Pipeline for tracking ROIs across sessions.
     RH 2023
@@ -21,6 +21,9 @@ def pipeline_tracking(params: dict) -> tuple:
             Dictionary of parameters. See
             ``roicat.util.get_default_parameters(pipeline='tracking')`` for
             details.
+        custom_data (None):
+            If not None, this is a custom data object that will be used
+            instead of loading data known formats from disk. 
 
     Returns:
         (tuple): tuple containing:
@@ -50,7 +53,10 @@ def pipeline_tracking(params: dict) -> tuple:
     )
 
     
-    if params['data_loading']['data_kind'] == 'suite2p':
+    if custom_data:
+        print("Using custom data object.")
+        data = custom_data
+    elif params['data_loading']['data_kind'] == 'suite2p':
         assert params['data_loading']['dir_outer'] is not None, f"params['data_loading']['dir_outer'] must be specified if params['data_loading']['data_kind'] is 'suite2p'."
         paths_allStat = helpers.find_paths(
             dir_outer=params['data_loading']['dir_outer'],
@@ -95,8 +101,6 @@ def pipeline_tracking(params: dict) -> tuple:
         data.import_from_dict(
             dict_load=util.RichFile_ROICaT(path=paths_allDataObjs[0]).load(),
             )
-    elif params['data_loading']['data_kind'] == 'custom':
-        data = params['data_loading']['data_custom']
     else:
         raise NotImplementedError(f"params['data_loading']['data_kind'] == '{params['data_loading']['data_kind']}' is not yet implemented.")
 
