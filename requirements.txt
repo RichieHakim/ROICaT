@@ -12,7 +12,7 @@ pytest==8.3.4
 scikit_learn==1.6.1
 scipy==1.15.1
 seaborn==0.13.2
-sparse==0.15.4
+sparse==0.15.5
 tqdm==4.67.1
 umap_learn==0.5.7
 xxhash==3.5.0
