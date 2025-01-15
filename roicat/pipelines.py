@@ -11,7 +11,7 @@ import numpy as np
 ## Import roicat submodules
 from . import data_importing, ROInet, helpers, util, visualization, tracking, classification
 
-def pipeline_tracking(params: dict):
+def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = None) -> tuple:
     """
     Pipeline for tracking ROIs across sessions.
     RH 2023
@@ -21,6 +21,9 @@ def pipeline_tracking(params: dict):
             Dictionary of parameters. See
             ``roicat.util.get_default_parameters(pipeline='tracking')`` for
             details.
+        custom_data (None):
+            If not None, this is a custom data object that will be used
+            instead of loading data known formats from disk. 
 
     Returns:
         (tuple): tuple containing:
@@ -49,7 +52,11 @@ def pipeline_tracking(params: dict):
         deterministic=params['general']['random_seed'] is not None,
     )
 
-    if params['data_loading']['data_kind'] == 'suite2p':
+    
+    if custom_data:
+        print("Using custom data object.")
+        data = custom_data
+    elif params['data_loading']['data_kind'] == 'suite2p':
         assert params['data_loading']['dir_outer'] is not None, f"params['data_loading']['dir_outer'] must be specified if params['data_loading']['data_kind'] is 'suite2p'."
         paths_allStat = helpers.find_paths(
             dir_outer=params['data_loading']['dir_outer'],
@@ -93,9 +100,12 @@ def pipeline_tracking(params: dict):
 
         data.import_from_dict(
             dict_load=util.RichFile_ROICaT(path=paths_allDataObjs[0]).load(),
-        )
+            )
     else:
         raise NotImplementedError(f"params['data_loading']['data_kind'] == '{params['data_loading']['data_kind']}' is not yet implemented.")
+
+    assert data.check_completeness(verbose=False)['tracking'], f"Data object is missing attributes necessary for tracking."
+    assert data.n_sessions > 1, f"Data object must have more than one session to track (n_sessions={data.n_sessions})."
 
 
     ## Alignment
@@ -116,17 +126,26 @@ def pipeline_tracking(params: dict):
         **params['alignment']['fit_geometric'],
     )
     aligner.transform_images_geometric(FOV_images);
-    aligner.fit_nonrigid(
-        ims_moving=aligner.ims_registered_geo,  ## Input images. Typically the geometrically registered images
-        remappingIdx_init=aligner.remappingIdx_geo,  ## The remappingIdx between the original images (and ROIs) and ims_moving
-        **params['alignment']['fit_nonrigid'],
-    )
-    aligner.transform_images_nonrigid(FOV_images);
-    aligner.transform_ROIs(
-        ROIs=data.spatialFootprints, 
-        remappingIdx=aligner.remappingIdx_nonrigid,
-        **params['alignment']['transform_ROIs'],
-    );
+
+    if params['alignment']['fit_nonrigid']['method']:
+        aligner.fit_nonrigid(
+            ims_moving=aligner.ims_registered_geo,  ## Input images. Typically the geometrically registered images
+            remappingIdx_init=aligner.remappingIdx_geo,  ## The remappingIdx between the original images (and ROIs) and ims_moving
+            **params['alignment']['fit_nonrigid'],
+        )
+        aligner.transform_images_nonrigid(FOV_images);
+        aligner.transform_ROIs(
+            ROIs=data.spatialFootprints, 
+            remappingIdx=aligner.remappingIdx_nonrigid,
+            **params['alignment']['transform_ROIs'],
+        );
+    else:
+        aligner.transform_ROIs(
+            ROIs=data.spatialFootprints, 
+            remappingIdx=aligner.remappingIdx_geo,
+            **params['alignment']['transform_ROIs'],
+        );
+
 
 
     ## Blur ROIs
@@ -332,7 +351,8 @@ def pipeline_tracking(params: dict):
             Image.fromarray((np.array(array / array.max() if normalize else array) * 255).astype(np.uint8)).save(path)
         [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'FOV_images' / f'FOV_images_{ii}.png') ) for ii, array in enumerate(data.FOV_images)]
         [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'FOV_images_aligned_geometric' / f'FOV_images_aligned_geometric_{ii}.png') ) for ii, array in enumerate(aligner.ims_registered_geo)]
-        [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'FOV_images_aligned_nonrigid' / f'FOV_images_aligned_nonrigid_{ii}.png') ) for ii, array in enumerate(aligner.ims_registered_nonrigid)]
+        if params['alignment']['fit_nonrigid']['method']:
+            [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'FOV_images_aligned_nonrigid' / f'FOV_images_aligned_nonrigid_{ii}.png') ) for ii, array in enumerate(aligner.ims_registered_nonrigid)]
         [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'ROIs' / f'ROIs_{ii}.png') ) for ii, array in enumerate(data.get_maxIntensityProjection_spatialFootprints())]
         [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'ROIs_aligned' / f'ROIs_aligned_{ii}.png') ) for ii, array in enumerate(aligner.get_ROIsAligned_maxIntensityProjection(normalize=True))]
         [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'ROIs_aligned_blurred' / f'ROIs_aligned_blurred_{ii}.png') ) for ii, array in enumerate(blurrer.get_ROIsBlurred_maxIntensityProjection())]
@@ -343,8 +363,9 @@ def pipeline_tracking(params: dict):
         fig_all_to_all.savefig(str(Path(dir_save).resolve() / 'visualization' / 'alignment' / 'all_to_all_geometric.png'))
         fig_direct.savefig(str(Path(dir_save).resolve() / 'visualization' / 'alignment' / 'direct_geometric.png')) if fig_direct is not None else None
 
-        fig_all_to_all, _ = aligner.plot_alignment_results_nonrigid()
-        fig_all_to_all.savefig(str(Path(dir_save).resolve() / 'visualization' / 'alignment' / 'all_to_all_nonrigid.png'))
+        if params['alignment']['fit_nonrigid']['method']:
+            fig_all_to_all, _ = aligner.plot_alignment_results_nonrigid()
+            fig_all_to_all.savefig(str(Path(dir_save).resolve() / 'visualization' / 'alignment' / 'all_to_all_nonrigid.png'))
 
         #### Save some sample ROI images
         [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'ROIs_sample' / f'ROIs_sample_{ii}.png') ) for ii, array in enumerate(roinet.ROI_images_rs[:100])]
@@ -396,9 +417,50 @@ def pipeline_tracking(params: dict):
                 position=(30, 90),
             ), 
             path=str(Path(dir_save).resolve() / 'visualization' / 'FOV_clusters.gif'),
-            frameRate=10.0,
+            frameRate=params['results_saving']['gif_frame_rate'],
             loop=0,
         )
+
+        ### Save gifs of the FOVs at different stages of alignment
+        helpers.save_gif(
+            array=helpers.add_text_to_images(
+                images=[((f / np.max(f)) * 255).astype(np.uint8) for f in FOV_images], 
+                text=[[f"{ii}",] for ii in range(len(FOV_clusters))], 
+                font_size=3,
+                line_width=10,
+                position=(30, 90),
+            ), 
+            path=str(Path(dir_save).resolve() / 'visualization' / 'FOV_images' / 'FOV_images.gif'),
+            frameRate=params['results_saving']['gif_frame_rate'],
+            loop=0,
+        )
+
+        helpers.save_gif(
+            array=helpers.add_text_to_images(
+                images=[((f / np.max(f)) * 255).astype(np.uint8) for f in aligner.ims_registered_geo], 
+                text=[[f"{ii}",] for ii in range(len(FOV_clusters))], 
+                font_size=3,
+                line_width=10,
+                position=(30, 90),
+            ), 
+            path=str(Path(dir_save).resolve() / 'visualization' / 'FOV_images_aligned_geometric' / 'FOV_images_aligned_geometric.gif'),
+            frameRate=params['results_saving']['gif_frame_rate'],
+            loop=0,
+        )
+
+        if params['alignment']['fit_nonrigid']['method']:
+            helpers.save_gif(
+                array=helpers.add_text_to_images(
+                    images=[((f / np.max(f)) * 255).astype(np.uint8) for f in aligner.ims_registered_nonrigid], 
+                    text=[[f"{ii}",] for ii in range(len(FOV_clusters))], 
+                    font_size=3,
+                    line_width=10,
+                    position=(30, 90),
+                ), 
+                path=str(Path(dir_save).resolve() / 'visualization' / 'FOV_images_nonrigid' / 'FOV_images_nonrigid.gif'),
+                frameRate=params['results_saving']['gif_frame_rate'],
+                loop=0,
+            )
 
 
 
