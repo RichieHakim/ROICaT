@@ -457,7 +457,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
                     line_width=10,
                     position=(30, 90),
                 ), 
-                path=str(Path(dir_save).resolve() / 'visualization' / 'FOV_images_nonrigid' / 'FOV_images_nonrigid.gif'),
+                path=str(Path(dir_save).resolve() / 'visualization' / 'FOV_images_aligned_nonrigid' / 'FOV_images_aligned_nonrigid.gif'),
                 frameRate=params['results_saving']['gif_frame_rate'],
                 loop=0,
             )
