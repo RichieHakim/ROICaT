@@ -24,7 +24,7 @@ PyYAML==6.0.2
 mat73==0.65
 torch==2.5.1
 torchvision==0.20.1
-torchaudio==2.5.1
+torchaudio==2.6.0
 selenium==4.28.1
 skl2onnx==1.18.0
 onnx==1.17.0
