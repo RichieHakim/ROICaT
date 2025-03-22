@@ -217,7 +217,8 @@ class ROI_graph(util.ROICaT_Module):
                 shift_val = min([s.min() for s in s_list]) + 1
             
             s_flat = scipy.sparse.vstack([
-                csr_to_coo_idxd(s, idx, shift_val, shape).reshape(1,-1).tocsr() for s, idx in zip(s_list, idx_list)
+                # csr_to_coo_idxd(s, idx, shift_val, shape).reshape(1,-1).tocsr() for s, idx in zip(s_list, idx_list)
+                helpers.reshape_coo_manual(csr_to_coo_idxd(s, idx, shift_val, shape), new_shape=(1,-1)).tocsr() for s, idx in zip(s_list, idx_list)
             ]).tocsr()  ## for each block, expand the shape of the sparse similarity matrix to be (n_roi, n_roi) and then stack them all together
             
             s_flat = sparse.COO(s_flat).max(0)[None,:].to_scipy_sparse().tocsr()  ## It is MUCH faster to do this with sparse.COO than with scipy.sparse

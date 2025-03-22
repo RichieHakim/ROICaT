@@ -6392,3 +6392,55 @@ def safe_set_attr(
         setattr(obj, attr, value)
     elif overwrite:
         setattr(obj, attr, value)
+
+
+def reshape_coo_manual(coo, new_shape):
+    """
+    Manually reshape a COO matrix using 64-bit arithmetic.
+    This function is only needed because windows does a bad
+    job of gracefully switching from int32 to int64 when the
+    values of idx need to be greater than the int32 max value
+    (2147483648).
+    Andrew helped figure this one out. It was an issue for 
+    when there are > around 30k ROIs.
+    RH 2025
+    
+    Parameters:
+      coo : scipy.sparse.coo_matrix
+          The input sparse matrix in COO format.
+      new_shape : tuple of ints
+          The desired shape, e.g. (1, -1) expanded to a complete tuple.
+    
+    Returns:
+      new_coo : scipy.sparse.coo_matrix
+          The reshaped COO matrix.
+    """
+    # Ensure new_shape is fully specified.
+    # If one of the dimensions is -1, compute it from the other.
+    if -1 in new_shape:
+        known_dim = [d for d in new_shape if d != -1][0]
+        total_elements = np.int64(coo.shape[0]) * np.int64(coo.shape[1])
+        new_dim = total_elements // np.int64(known_dim)
+        new_shape = tuple(new_dim if d == -1 else d for d in new_shape)
+    
+    # Check that the total number of elements is the same.
+    old_size = np.int64(coo.shape[0]) * np.int64(coo.shape[1])
+    new_size = np.int64(new_shape[0]) * np.int64(new_shape[1])
+    if old_size != new_size:
+        raise ValueError("Cannot reshape matrix of total size {} into shape {}".format(old_size, new_shape))
+    
+    # Convert row and col to int64
+    old_row = coo.row.astype(np.int64, copy=False)
+    old_col = coo.col.astype(np.int64, copy=False)
+    
+    # Calculate flattened indices using C-order: flat_index = row * n_cols + col
+    n_cols_old = np.int64(coo.shape[1])
+    flat_idx = old_row * n_cols_old + old_col
+    
+    # Now compute new row and col from the flat index:
+    n_cols_new = np.int64(new_shape[1])
+    new_row = flat_idx // n_cols_new
+    new_col = flat_idx % n_cols_new
+    
+    # Create a new COO matrix with the new indices.
+    return scipy.sparse.coo_matrix((coo.data, (new_row, new_col)), shape=new_shape)
