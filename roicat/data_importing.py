@@ -5,7 +5,7 @@ import warnings
 from typing import List, Optional, Union, Tuple, Dict, Any, Callable, Iterable
 
 import numpy as np
-from tqdm import tqdm
+from tqdm.auto import tqdm
 import scipy.sparse
 import sparse
 

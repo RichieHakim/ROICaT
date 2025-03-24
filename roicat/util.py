@@ -8,7 +8,7 @@ import importlib
 
 import numpy as np
 import scipy.sparse
-from tqdm import tqdm
+from tqdm.auto import tqdm
 import torch
 
 import richfile as rf
