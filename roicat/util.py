@@ -388,9 +388,7 @@ def system_info(verbose: bool = False,) -> Dict:
 
     ## GPU
     try:
-        import GPUtil
-        gpus = GPUtil.getGPUs()
-        gpu_info = {gpu.id: gpu.__dict__ for gpu in gpus}
+        gpu_info = helpers.list_available_devices()
     except Exception as e:
         warnings.warn(f'RH WARNING: unable to get gpu info. Got error: {e}')
         gpu_info = 'ROICaT Error: Failed to get'
