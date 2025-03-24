@@ -3684,6 +3684,7 @@ def save_gif(
     # elif backend == 'PIL':
     from PIL import Image
     frames = [Image.fromarray(array[i_frame]) for i_frame in range(array.shape[0])]
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
     frames[0].save(
         path, 
         format='GIF', 
