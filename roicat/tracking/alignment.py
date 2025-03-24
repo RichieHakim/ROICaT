@@ -452,7 +452,7 @@ class Aligner(util.ROICaT_Module):
             radius_in=self.radius_in * self.um_per_pixel,
             radius_out=self.radius_out * self.um_per_pixel,
             order=self.order,
-            device=self.device,
+            device='cpu',
         )
         score_template_to_all = iac_geo.score_alignment(
             images=images_warped_all_to_template,
@@ -846,7 +846,7 @@ class Aligner(util.ROICaT_Module):
             radius_in=self.radius_in * self.um_per_pixel,
             radius_out=self.radius_out * self.um_per_pixel,
             order=self.order,
-            device=self.device,
+            device='cpu',
         )
         score_all_to_all_final = iac_nonrigid.score_alignment(images=self.ims_registered_geo)['z_in']
         alignment_all_to_all_final = score_all_to_all_final > self.z_threshold
