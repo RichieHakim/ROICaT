@@ -3,7 +3,7 @@ from typing import Any, Dict, Tuple
 
 import torch
 import numpy as np
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 from .. import helpers, util
 

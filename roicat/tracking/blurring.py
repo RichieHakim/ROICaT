@@ -2,7 +2,7 @@ from typing import Union, List, Tuple, Optional
 
 import scipy.sparse
 import numpy as np
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 from .. import helpers, util
     

@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import sklearn
 import sklearn.neighbors
-from tqdm import tqdm
+from tqdm.auto import tqdm
 import matplotlib.pyplot as plt
 import sparse
 

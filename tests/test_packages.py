@@ -2,7 +2,6 @@ import warnings
 
 
 PACKAGES = [
-    'GPUtil',
     'PIL',
     'cpuinfo',
     'cv2',

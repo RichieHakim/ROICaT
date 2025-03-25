@@ -78,7 +78,6 @@ deps_core = [deps_all_dict[dep] for dep in [
     'torchaudio',
     'psutil',
     'py_cpuinfo',
-    'GPUtil',
     'skl2onnx',
     'onnx',
     'onnxruntime',

@@ -1459,6 +1459,7 @@ def cluster_quality_metrics(
                 Intra-cluster maximum similarity. (shape: *(n_clusters,)*)
             cs_sil (np.ndarray):
                 Cluster silhouette score. (shape: *(n_clusters,)*)
+                Describes intra_mean - inter_max_of_maxes
     """
     import sparse
     
