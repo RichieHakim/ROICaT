@@ -2229,7 +2229,7 @@ class DISK_LightGlue(ImageRegistrationMethod):
         img2 = self._prepare_image(im_moving)
         ## Warn if image shapes are not divisible by 16
         shapes_ims = (img1.shape[-2:], img2.shape[-2:])
-        if any([dim % 16 != 0 for dim in np.concatenate(shapes_ims)]):
+        if any([dim % 16 != 0 for dim in np.concatenate(shapes_ims)]) and (self.verbose > 1):
             print(f"Image shapes are not divisible by 16. Will be padded using kornia.feature.DISK padding. Shapes: {shapes_ims}")
 
 

@@ -277,7 +277,7 @@ class Clusterer(util.ROICaT_Module):
             'sig_SWT_kwargs': None,
         }
         self.kwargs_makeConjunctiveDistanceMatrix_best.update(self.best_params)
-        print(f'Best value found: {self.study.best_value} with parameters {self.best_params}') if self._verbose else None
+        print(f'Completed automatic parameter search. Best value found: {self.study.best_value} with parameters {self.best_params}') if self._verbose else None
         return self.kwargs_makeConjunctiveDistanceMatrix_best
 
     def make_pruned_similarity_graphs(
