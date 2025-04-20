@@ -29,19 +29,14 @@ jobs:
       fail-fast: false
       matrix:
         platform: [
-          # ubuntu-latest,
+          ubuntu-latest,
           ubuntu-24.04,
           ubuntu-22.04,
-          ubuntu-20.04,
-          # # windows-latest,
+          windows-latest,
           windows-2022,
           windows-2019,
-          # # macos-latest,
+          macos-latest,
           macos-14,
-          # macos-13,
-          # macos-12,
-          # macos-11.0,
-          # macos-10.15,
         ]
         python-version: [ 
           # "3.8",
@@ -49,6 +44,7 @@ jobs:
           "3.10",
           "3.11",
           "3.12",
+          "3.13",
         ]
         extra: [
           all,
