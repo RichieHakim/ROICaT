@@ -190,6 +190,7 @@ sudo docker run -it -p 7860:7860 --platform=linux/amd64 --shm-size=10g registry.
 - [ ] Switch to pyproject.toml
 - [ ] Improve params.json / default params system
 - [ ] Spruce up training code
+- [ ] Discount the non-rigid warp masks towards the edges to be more like the rigid warp map
 #### other:
 - [ ] Write the paper
 - [ ] Make tweet about it
