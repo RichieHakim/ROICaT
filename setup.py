@@ -137,7 +137,7 @@ setup(
         'classification': deps_classification,
         'tracking': deps_tracking,
     },
-    python_requires='>=3.10, <3.13',
+    python_requires='>=3.10, <3.14',
     entry_points={
         'console_scripts': [
             'roicat = roicat.__main__:main',
