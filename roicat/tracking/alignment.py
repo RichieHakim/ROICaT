@@ -1448,6 +1448,11 @@ class ImageRegistrationMethod:
         src_pts = kptsA.cpu().numpy().astype(np.float32)
         dst_pts = kptsB.cpu().numpy().astype(np.float32)
 
+        if len(kptsA) < 3:
+            # not enough for homography, fallback to identity
+            warnings.warn(f"number of points is less than needed for homography transform. len(kptsA)={len(kptsA)}")
+            warp_matrix = np.eye(3)
+
         # 3) dispatch on constraint
         if constraint == 'rigid':
             R, t = self._compute_rigid_transform(src_pts, dst_pts)
@@ -1484,6 +1489,7 @@ class ImageRegistrationMethod:
         elif constraint == 'homography':
             if len(kptsA) < 4:
                 # not enough for homography, fallback to identity
+                warnings.warn(f"number of points is less than needed for homography transform. len(kptsA)={len(kptsA)}")
                 warp_matrix = np.eye(3)
 
             # full projective homography
