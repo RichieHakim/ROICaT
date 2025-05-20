@@ -1454,7 +1454,7 @@ class ImageRegistrationMethod:
             warp_matrix = np.eye(3)
 
         # 3) dispatch on constraint
-        if constraint == 'rigid':
+        elif constraint == 'rigid':
             R, t = self._compute_rigid_transform(src_pts, dst_pts)
             warp_matrix = np.eye(3, dtype=np.float32)
             warp_matrix[:2, :2] = R
@@ -1491,15 +1491,15 @@ class ImageRegistrationMethod:
                 # not enough for homography, fallback to identity
                 warnings.warn(f"number of points is less than needed for homography transform. len(kptsA)={len(kptsA)}")
                 warp_matrix = np.eye(3)
-
-            # full projective homography
-            warp_matrix, inliers = cv2.findHomography(
-                src_pts, dst_pts,
-                method=cv2.USAC_MAGSAC,
-                ransacReprojThreshold=inl_thresh,
-                maxIters       =max_iter,
-                confidence     =confidence,
-            )
+            else:
+                # full projective homography
+                warp_matrix, inliers = cv2.findHomography(
+                    src_pts, dst_pts,
+                    method=cv2.USAC_MAGSAC,
+                    ransacReprojThreshold=inl_thresh,
+                    maxIters       =max_iter,
+                    confidence     =confidence,
+                )
             
         else:
             raise ValueError(f"Unknown constraint: {constraint}")
@@ -1508,8 +1508,6 @@ class ImageRegistrationMethod:
         if warp_matrix is None:
             raise RuntimeError("Homography fit failed")
             
-        warp_matrix = np.eye(3) if warp_matrix is None else warp_matrix
-
         ## If verbose > 2, make a plot of corresponding points
         if self.verbose > 2:
             alpha = float(np.clip(1 - (len(src_pts) / 2000), 0.2, 1))
