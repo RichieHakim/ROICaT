@@ -1462,17 +1462,34 @@ class ImageRegistrationMethod:
             return warp_matrix
 
         elif constraint == 'euclidean':
-            warp_matrix, status = cv2.estimateAffinePartial2D(
+            import skimage
+            # pure rigid (rotation + translation) via RANSAC
+            model_robust, inliers = skimage.measure.ransac(
+                (src_pts, dst_pts),
+                skimage.transform.EuclideanTransform,
+                min_samples=2,                 # 2 points suffice for rigid
+                residual_threshold=inl_thresh, # inlier threshold
+                max_trials=max_iter,           # max RANSAC iterations
+                stop_probability=confidence     # desired confidence
+            )
+            if model_robust is None:
+                raise RuntimeError("Euclidean (rigid) fit failed")
+            warp_matrix = model_robust.params    # 3×3 homogeneous matrix
+            return warp_matrix.astype(np.float32)
+
+        elif constraint == 'similarity':
+            # rotation + translation + uniform scale via OpenCV
+            M_sim, inliers = cv2.estimateAffinePartial2D(
                 src_pts, dst_pts,
                 method=cv2.RANSAC,
                 ransacReprojThreshold=inl_thresh,
-                maxIters       =max_iter,
-                confidence     =confidence,
+                maxIters=max_iter,
+                confidence=confidence,
             )
-            if warp_matrix is None:
-                raise RuntimeError("Euclidean fit failed")
-            # expand 2×3 → 3×3
-            warp_matrix = np.vstack([warp_matrix, [0.0, 0.0, 1.0]])
+            if M_sim is None:
+                raise RuntimeError("Similarity fit failed")
+            warp_matrix = np.vstack([M_sim, [0.0, 0.0, 1.0]])
+            return warp_matrix.astype(np.float32)
 
         elif constraint == 'affine':
             M_affine, status = cv2.estimateAffine2D(

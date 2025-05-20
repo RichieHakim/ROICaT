@@ -65,7 +65,7 @@ def test_pipeline_tracking_simple(dir_data_test):
                         'auto_fix_gaussFilt_step': 10,  ## If the registration fails, then the gaussian filter size is reduced by this amount and the registration is tried again.
                     },
                 },
-                'constraint': 'affine',  ## Must be one of {'rigid', 'euclidean', 'affine', 'homography'}. Choose constraint based on expected changes in images; use the simplest constraint that is applicable.
+                'constraint': 'affine',  ## Must be one of {'rigid', 'euclidean', 'similarity', 'affine', 'homography'}. Choose constraint based on expected changes in images; use the simplest constraint that is applicable.
                 'kwargs_RANSAC': {  ## Parameters related to the RANSAC algorithm used for point/descriptor based registration methods.
                     'inl_thresh': 3.0,  ## Threshold for the inliers. Larger values mean more points are considered inliers.
                     'max_iter': 100,  ## Maximum number of iterations for the RANSAC algorithm.

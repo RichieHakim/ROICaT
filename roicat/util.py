@@ -145,7 +145,7 @@ def get_default_parameters(
                             'fastThreshold': 20,
                         },
                     },
-                    'constraint': 'affine',  ## Must be one of {'rigid', 'euclidean', 'affine', 'homography'}. Choose constraint based on expected changes in images; use the simplest constraint that is applicable.
+                    'constraint': 'affine',  ## Must be one of {'rigid', 'euclidean', 'similarity', 'affine', 'homography'}. Choose constraint based on expected changes in images; use the simplest constraint that is applicable.
                     'kwargs_RANSAC': {  ## Parameters related to the RANSAC algorithm used for point/descriptor based registration methods.
                         'inl_thresh': 3.0,  ## Threshold for the inliers. Larger values mean more points are considered inliers.
                         'max_iter': 100,  ## Maximum number of iterations for the RANSAC algorithm.
