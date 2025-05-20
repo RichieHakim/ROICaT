@@ -249,6 +249,7 @@ class Aligner(util.ROICaT_Module):
                 'order': 5,
             },
         },
+        constraint: str = 'affine',
         kwargs_RANSAC: dict = {
             'inl_thresh': 2.0,
             'max_iter': 10,
@@ -303,6 +304,12 @@ class Aligner(util.ROICaT_Module):
                         'threshold_confidence': 0.2,
                     },
                     ...            
+            constraint (str):
+                The type of transformation to use for the registration. One of:
+                * 'rigid': Rigid transformation (translation only)
+                * 'euclidean': Euclidean transformation (translation + rotation)
+                * 'affine': Affine transformation (translation + rotation + scale + shear)
+                * 'homography': Homography transformation (translation + rotation + scale + shear + perspective)
             kwargs_RANSAC (dict):
                 Keyword arguments for RANSAC algorithm used in homography
                 estimation.
@@ -330,6 +337,7 @@ class Aligner(util.ROICaT_Module):
                 'mask_borders',
                 'method',
                 'kwargs_method',
+                'constraint',
                 'kwargs_RANSAC',
                 'verbose',
             ],
@@ -394,6 +402,7 @@ class Aligner(util.ROICaT_Module):
                 warp_matrix = model.fit_rigid(
                     im_template=im_template,
                     im_moving=im_moving,
+                    constraint=constraint,
                     **kwargs_RANSAC,
                 )
                 warp_matrices_raw.append(warp_matrix)
@@ -1389,44 +1398,133 @@ class ImageRegistrationMethod:
     ):
         remappingIdx = self._forward_nonrigid(im_template, im_moving, **kwargs)
         return remappingIdx
-        
+    
+    @staticmethod
+    def _compute_rigid_transform(
+        src_pts: np.ndarray,
+        dst_pts: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Computes pure-rotation + translation that best aligns src_pts → dst_pts
+        via orthogonal Procrustes (SVD) with no scaling.
+        """
+        # 1) center the points
+        src_center = src_pts.mean(axis=0)
+        dst_center = dst_pts.mean(axis=0)
+        src_shifted = src_pts - src_center
+        dst_shifted = dst_pts - dst_center
+
+        # 2) SVD of covariance
+        U, _, Vt = np.linalg.svd(src_shifted.T @ dst_shifted)
+        R = Vt.T @ U.T
+        # Reflection check
+        if np.linalg.det(R) < 0:
+            Vt[-1, :] *= -1
+            R = Vt.T @ U.T
+
+        # 3) translation
+        t = dst_center - R @ src_center
+        return R, t
+
     def fit_rigid(
         self,
         im_template: Union[np.ndarray, torch.Tensor],
-        im_moving: Union[np.ndarray, torch.Tensor],
+        im_moving:  Union[np.ndarray, torch.Tensor],
         inl_thresh: float = 2.0,
-        max_iter: int = 10,
+        max_iter:  int    = 10,
         confidence: float = 0.99,
+        constraint: str   = 'homography',
         **kwargs,
-    ):
-        ## Compute keypoints
+    ) -> np.ndarray:
+        """
+        Estimate a constrained warp between two images using matched points.
+        Returns:
+            warp_matrix (np.ndarray[3x3]) - the resulting transformation.
+        """
+        # 1) detect & match keypoints
         kptsA, kptsB = self._forward_rigid(im_template, im_moving, **kwargs)
-        kptsA, kptsB = (torch.as_tensor(pts, device=self.device) for pts in (kptsA, kptsB))
 
-        ## Confirm lengths are sufficient for homography
-        if len(kptsA) < 4:
-            print(f'Not enough keypoints to estimate homography. Found {len(kptsA)} keypoints.')
-            warp_matrix = np.eye(3)
-            return warp_matrix
-        
-        # Convert keypoints to numpy arrays
+        # 2) to numpy
         src_pts = kptsA.cpu().numpy().astype(np.float32)
         dst_pts = kptsB.cpu().numpy().astype(np.float32)
 
-        # Estimate homography using OpenCV's MAGSAC
-        warp_matrix, inliers = cv2.findHomography(
-            srcPoints=src_pts,
-            dstPoints=dst_pts,
-            method=cv2.USAC_MAGSAC,
-            ransacReprojThreshold=inl_thresh,
-            maxIters=max_iter,
-            confidence=confidence,
-        )
-        inliers = inliers.squeeze().astype(np.bool_)
-        print(f"Found {inliers.sum()} inliers out of {len(src_pts)} keypoints.") if self.verbose > 1 else None
-        
-        warp_matrix = np.eye(3) if warp_matrix is None else warp_matrix
+        if len(kptsA) < 3:
+            # not enough for homography, fallback to identity
+            warnings.warn(f"number of points is less than needed for homography transform. len(kptsA)={len(kptsA)}")
+            warp_matrix = np.eye(3)
 
+        # 3) dispatch on constraint
+        elif constraint == 'rigid':
+            R, t = self._compute_rigid_transform(src_pts, dst_pts)
+            warp_matrix = np.eye(3, dtype=np.float32)
+            warp_matrix[:2, :2] = R
+            warp_matrix[:2, 2   ] = t
+            return warp_matrix
+
+        elif constraint == 'euclidean':
+            import skimage
+            # pure rigid (rotation + translation) via RANSAC
+            model_robust, inliers = skimage.measure.ransac(
+                (src_pts, dst_pts),
+                skimage.transform.EuclideanTransform,
+                min_samples=2,                 # 2 points suffice for rigid
+                residual_threshold=inl_thresh, # inlier threshold
+                max_trials=max_iter,           # max RANSAC iterations
+                stop_probability=confidence     # desired confidence
+            )
+            if model_robust is None:
+                raise RuntimeError("Euclidean (rigid) fit failed")
+            warp_matrix = model_robust.params    # 3×3 homogeneous matrix
+            return warp_matrix.astype(np.float32)
+
+        elif constraint == 'similarity':
+            # rotation + translation + uniform scale via OpenCV
+            M_sim, inliers = cv2.estimateAffinePartial2D(
+                src_pts, dst_pts,
+                method=cv2.RANSAC,
+                ransacReprojThreshold=inl_thresh,
+                maxIters=max_iter,
+                confidence=confidence,
+            )
+            if M_sim is None:
+                raise RuntimeError("Similarity fit failed")
+            warp_matrix = np.vstack([M_sim, [0.0, 0.0, 1.0]])
+            return warp_matrix.astype(np.float32)
+
+        elif constraint == 'affine':
+            M_affine, status = cv2.estimateAffine2D(
+                src_pts, dst_pts,
+                method=cv2.RANSAC,
+                ransacReprojThreshold=inl_thresh,
+                maxIters       =max_iter,
+                confidence     =confidence,
+            )
+            if M_affine is None:
+                raise RuntimeError("Affine fit failed")
+            return np.vstack([M_affine, [0.0, 0.0, 1.0]])
+
+        elif constraint == 'homography':
+            if len(kptsA) < 4:
+                # not enough for homography, fallback to identity
+                warnings.warn(f"number of points is less than needed for homography transform. len(kptsA)={len(kptsA)}")
+                warp_matrix = np.eye(3)
+            else:
+                # full projective homography
+                warp_matrix, inliers = cv2.findHomography(
+                    src_pts, dst_pts,
+                    method=cv2.USAC_MAGSAC,
+                    ransacReprojThreshold=inl_thresh,
+                    maxIters       =max_iter,
+                    confidence     =confidence,
+                )
+            
+        else:
+            raise ValueError(f"Unknown constraint: {constraint}")
+        
+        # 4) check for failure
+        if warp_matrix is None:
+            raise RuntimeError("Homography fit failed")
+            
         ## If verbose > 2, make a plot of corresponding points
         if self.verbose > 2:
             alpha = float(np.clip(1 - (len(src_pts) / 2000), 0.2, 1))
