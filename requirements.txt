@@ -8,7 +8,7 @@ numpy==2.2.5
 opencv_contrib_python_headless<=4.11.0.86
 optuna==4.3.0
 Pillow==11.2.1
-pytest==8.3.5
+pytest==8.4.0
 scikit_learn==1.6.1
 scipy==1.15.2
 seaborn==0.13.2
