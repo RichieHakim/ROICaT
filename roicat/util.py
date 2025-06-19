@@ -1650,3 +1650,57 @@ def labels_to_labelsBySession(labels, n_roi_bySession):
     labels_bySession = split_iby_session(x=labels, n_roi_per_session=n_roi_bySession)
 
     return labels_bySession
+
+def invert_ucids(
+        ucids: Union[np.ndarray, list],
+        max_ucid: int = None,
+    ) -> Union[np.ndarray, list]:
+    """
+    Invert UCIDs to make ucids_inverse where ucids_inverse[i] =
+    argwhere(ucids == i) for all i in range(len(ucids)).
+    Elements with UCID=-1 are discarded. Missing ucid values are set to -1.
+    RH 2025
+    
+    Args:
+        ucids (Union[np.ndarray, list]): 
+            UCIDs to invert. Should be a 1D array or list of integers.
+            Should be the ucids from a single session.
+        max_ucid (int, optional): 
+            Maximum UCID value to use. If not provided, it will be inferred from
+            the input UCIDs. If provided, it should be greater than or equal to
+            the maximum UCID in the input. This is useful if you are combining
+            multiple sessions with different UCID ranges.
+            (Default is ``None``)
+    
+    Returns:
+        (Union[np.ndarray, list]): 
+            Inverted UCIDs where ucids_inverse[i] = argwhere(ucids == i) for all
+            i in range(len(ucids)).
+    """
+    if isinstance(ucids, list):
+        ucids = np.array(ucids, dtype=np.int64)
+        flag_list = True
+    elif not isinstance(ucids, np.ndarray):
+        raise ValueError(f'ROICaT ERROR: ucids must be a list or numpy array, but got {type(ucids)}.')
+    else:
+        flag_list = False
+    
+    if max_ucid is None:
+        max_ucid = np.max(ucids) + 1 if len(ucids) > 0 else 0
+    elif max_ucid < np.max(ucids) + 1:
+        raise ValueError(f'ROICaT ERROR: n_ucids={max_ucid} is less than the maximum UCID in the input ucids={np.max(ucids)}. Please provide a larger max_ucid value.')
+    
+    ucids_inverse = np.full((max_ucid,), -1, dtype=np.int64)
+    for i in range(len(ucids)):
+        if ucids[i] >= 0:
+            if ucids_inverse[ucids[i]] == -1:
+                ucids_inverse[ucids[i]] = i
+            else:
+                raise ValueError(f'ROICaT ERROR: Duplicate UCID {ucids[i]} found at indices {ucids_inverse[ucids[i]]} and {i}. UCIDs must be unique.')
+    
+    if flag_list:
+        ucids_inverse = ucids_inverse.tolist()
+    else:
+        ucids_inverse = ucids_inverse.astype(np.int64)
+        
+    return ucids_inverse
