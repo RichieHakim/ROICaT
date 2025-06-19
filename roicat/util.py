@@ -1686,11 +1686,11 @@ def invert_ucids(
         flag_list = False
     
     if max_ucid is None:
-        max_ucid = np.max(ucids) + 1 if len(ucids) > 0 else 0
-    elif max_ucid < np.max(ucids) + 1:
+        max_ucid = np.max(ucids) if len(ucids) > 0 else 0
+    elif max_ucid < np.max(ucids):
         raise ValueError(f'ROICaT ERROR: n_ucids={max_ucid} is less than the maximum UCID in the input ucids={np.max(ucids)}. Please provide a larger max_ucid value.')
     
-    ucids_inverse = np.full((max_ucid,), -1, dtype=np.int64)
+    ucids_inverse = np.full((max_ucid + 1,), -1, dtype=np.int64)
     for i in range(len(ucids)):
         if ucids[i] >= 0:
             if ucids_inverse[ucids[i]] == -1:
