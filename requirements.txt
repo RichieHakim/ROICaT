@@ -16,7 +16,7 @@ sparse==0.17.0
 tqdm==4.67.1
 umap_learn==0.5.7
 xxhash==3.5.0
-bokeh==3.7.2
+bokeh==3.7.3
 psutil==7.0.0
 py_cpuinfo==9.0.0
 PyYAML==6.0.2
