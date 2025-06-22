@@ -6,7 +6,7 @@ matplotlib==3.10.3
 natsort==8.4.0
 numpy==2.2.6
 opencv_contrib_python_headless<=4.11.0.86
-optuna==4.3.0
+optuna==4.4.0
 Pillow==11.2.1
 pytest==8.4.1
 scikit_learn==1.7.0
