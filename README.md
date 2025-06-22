@@ -175,7 +175,7 @@ sudo docker run -it -p 7860:7860 --platform=linux/amd64 --shm-size=10g registry.
 - [ ] Try other clustering methods
 - [x] Make image aligner based on image similarity + RANSAC of centroids or s_SF
 - [ ] Better post-hoc curation metrics and visualizations
-- [ ] Improve non-rigid image registration methods (border performance)
+- [ ] Discount the non-rigid warp masks towards the edges to be more like the rigid warp map in order improve border performance
 - [ ] Make non-rigid image registration optional
 #### code improvements:
 - [ ] **Finish ROIextractors integration**
