@@ -24,7 +24,7 @@ mat73==0.65
 torch==2.7.1
 torchvision==0.22.1
 torchaudio==2.7.1
-selenium==4.33.0
+selenium==4.34.0
 skl2onnx==1.19.1
 onnx==1.17.0
 onnxruntime==1.21.1
