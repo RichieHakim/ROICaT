@@ -1538,12 +1538,14 @@ def match_arrays_with_ucids(
         for u, idx in dicts_ucids[i_sesh].items():
             if u >= 0:
                 arrays_out[i_sesh][u] = arrays[i_sesh][idx]
+                
+    lens_arrays = [a.shape[0] if hasattr(a, 'shape') else len(a) for a in arrays_out]
 
     if not return_indices:
         return arrays_out
     else:
         return arrays_out, match_arrays_with_ucids(
-            arrays=[np.arange(len(a), dtype=np.float32) for a in arrays],
+            arrays=[np.arange(lens_arrays[ii], dtype=np.float32) for ii, a in enumerate(arrays)],
             ucids=ucids,
             return_indices=False,
             squeeze=squeeze,
