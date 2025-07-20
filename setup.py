@@ -110,6 +110,8 @@ with open(str(dir_parent / "roicat" / "__init__.py"), "r") as f:
         if line.startswith("__version__"):
             version = line.split("=")[1].strip().replace("\"", "").replace("\'", "")
             break
+    else:
+        raise ValueError("Version number not found in __init__.py")
 
 setup(
     name='roicat',
