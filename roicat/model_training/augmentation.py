@@ -469,3 +469,29 @@ class Random_occlusion(Module):
             return out
         else:
             return tensor
+        
+class Clip(Module):
+    """
+    Clips the input tensor to the specified range.
+    RH 2025
+    """
+    def __init__(self, min_val:float=0, max_val:float=1, p:float=1.0):
+        """
+        Initializes the class.
+        Args:
+            min_val (float):
+                Minimum value to clip to.
+            max_val (float):
+                Maximum value to clip to.
+            p (float):
+                Probability of applying the clipping.
+        """
+        super().__init__()
+        self.min_val = min_val
+        self.max_val = max_val
+        self.p = p
+
+    def forward(self, tensor: torch.Tensor) -> torch.Tensor:
+        if torch.rand(1) < self.p:
+            return torch.clamp(tensor, self.min_val, self.max_val)
+        return tensor
