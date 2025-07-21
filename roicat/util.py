@@ -367,11 +367,11 @@ def system_info(verbose: bool = False,) -> Dict:
     try:
         import cpuinfo
         import multiprocessing as mp
-        # cpu_info = cpuinfo.get_cpu_info()
+        cpu_info_raw = cpuinfo.get_cpu_info()
         cpu_n_cores = mp.cpu_count()
-        cpu_brand = cpuinfo.cpuinfo.CPUID().get_processor_brand(cpuinfo.cpuinfo.CPUID().get_max_extension_support())
+        cpu_brand = cpu_info_raw.get('brand_raw', 'Unknown')
         cpu_info = {'n_cores': cpu_n_cores, 'brand': cpu_brand}
-        if 'flags' in cpu_info:
+        if 'flags' in cpu_info_raw:
             cpu_info['flags'] = 'omitted'
     except Exception as e:
         warnings.warn(f'RH WARNING: unable to get cpu info. Got error: {e}')
