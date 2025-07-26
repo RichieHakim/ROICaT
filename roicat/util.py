@@ -144,6 +144,7 @@ def get_default_parameters(
                             'patchSize': 31,
                             'fastThreshold': 20,
                         },
+                        'NullRegistration': {},  ## No registration, no warping.
                     },
                     'constraint': 'affine',  ## Must be one of {'rigid', 'euclidean', 'similarity', 'affine', 'homography'}. Choose constraint based on expected changes in images; use the simplest constraint that is applicable.
                     'kwargs_RANSAC': {  ## Parameters related to the RANSAC algorithm used for point/descriptor based registration methods.
@@ -169,6 +170,7 @@ def get_default_parameters(
                             'poly_n': 5,
                             'poly_sigma': 1.5,            
                         },
+                        'NullRegistration': {},
                     },
                 },
                 'transform_ROIs': {
