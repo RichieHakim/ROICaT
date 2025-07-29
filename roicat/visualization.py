@@ -1,8 +1,10 @@
-import copy
-import os
 from typing import List, Tuple, Union, Optional, Dict, Any, Callable, Iterable
+
 import copy
 import os
+import copy
+import os
+import warnings
 
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -543,6 +545,9 @@ def select_region_scatterPlot(
                 np.linspace(0, images_overlay.shape[1], num=sz_im_0, endpoint=False),
                 np.linspace(0, images_overlay.shape[2], num=sz_im_1, endpoint=False),
             ), axis=-1))
+
+            if im_interp.size == 0:
+                warnings.warn(f'Image {idx} is empty after interpolation. Skipping. Increase size_images_overlay.')
 
             image_rgb = np.stack([norm_img(im_interp), norm_img(im_interp), norm_img(im_interp)], axis=-1) if im_interp.ndim == 2 else im_interp
 
