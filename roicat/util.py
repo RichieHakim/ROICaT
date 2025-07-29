@@ -144,6 +144,7 @@ def get_default_parameters(
                             'patchSize': 31,
                             'fastThreshold': 20,
                         },
+                        'NullRegistration': {},  ## No registration, no warping.
                     },
                     'constraint': 'affine',  ## Must be one of {'rigid', 'euclidean', 'similarity', 'affine', 'homography'}. Choose constraint based on expected changes in images; use the simplest constraint that is applicable.
                     'kwargs_RANSAC': {  ## Parameters related to the RANSAC algorithm used for point/descriptor based registration methods.
@@ -169,6 +170,7 @@ def get_default_parameters(
                             'poly_n': 5,
                             'poly_sigma': 1.5,            
                         },
+                        'NullRegistration': {},
                     },
                 },
                 'transform_ROIs': {
@@ -367,11 +369,11 @@ def system_info(verbose: bool = False,) -> Dict:
     try:
         import cpuinfo
         import multiprocessing as mp
-        # cpu_info = cpuinfo.get_cpu_info()
+        cpu_info_raw = cpuinfo.get_cpu_info()
         cpu_n_cores = mp.cpu_count()
-        cpu_brand = cpuinfo.cpuinfo.CPUID().get_processor_brand(cpuinfo.cpuinfo.CPUID().get_max_extension_support())
+        cpu_brand = cpu_info_raw.get('brand_raw', 'Unknown')
         cpu_info = {'n_cores': cpu_n_cores, 'brand': cpu_brand}
-        if 'flags' in cpu_info:
+        if 'flags' in cpu_info_raw:
             cpu_info['flags'] = 'omitted'
     except Exception as e:
         warnings.warn(f'RH WARNING: unable to get cpu info. Got error: {e}')
@@ -1538,12 +1540,14 @@ def match_arrays_with_ucids(
         for u, idx in dicts_ucids[i_sesh].items():
             if u >= 0:
                 arrays_out[i_sesh][u] = arrays[i_sesh][idx]
+                
+    lens_arrays = [a.shape[0] if hasattr(a, 'shape') else len(a) for a in arrays_out]
 
     if not return_indices:
         return arrays_out
     else:
         return arrays_out, match_arrays_with_ucids(
-            arrays=[np.arange(len(a), dtype=np.float32) for a in arrays],
+            arrays=[np.arange(lens_arrays[ii], dtype=np.float32) for ii, a in enumerate(arrays)],
             ucids=ucids,
             return_indices=False,
             squeeze=squeeze,

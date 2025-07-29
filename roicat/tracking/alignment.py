@@ -248,6 +248,7 @@ class Aligner(util.ROICaT_Module):
                 'bandpass_freqs': [1, 30],
                 'order': 5,
             },
+            'NullRegistration': {},
         },
         constraint: str = 'affine',
         kwargs_RANSAC: dict = {
@@ -289,6 +290,8 @@ class Aligner(util.ROICaT_Module):
                   features and LightGlue matcher.
                 * 'SIFT': Feature-based registration using SIFT keypoints.
                 * 'ORB': Feature-based registration using ORB keypoints.
+                * 'PhaseCorrelation': Phase correlation registration.
+                * 'NullRegistration': No registration, just returns identity
                 (Default is 'RoMa')
             kwargs_method (dict):
                 Keyword arguments for the selected method. The keys are method
@@ -353,6 +356,7 @@ class Aligner(util.ROICaT_Module):
             'PhaseCorrelation': PhaseCorrelationRegistration,
             'SIFT': SIFT,
             'ORB': ORB,
+            'NullRegistration': NullRegistration,
         }
         assert method in methods_lut, f"method must be one of {methods_lut.keys()}"
         model = methods_lut[method](
@@ -650,6 +654,7 @@ class Aligner(util.ROICaT_Module):
                 'poly_n': 5,
                 'poly_sigma': 1.5,            
             },
+            'NullRegistration': {},
         },
     ) -> np.ndarray:
         """
@@ -684,6 +689,8 @@ class Aligner(util.ROICaT_Module):
                 * 'RoMa': Non-rigid registration using the RoMa algorithm.
                 * 'OpticalFlowFarneback': Optical flow using OpenCV's
                   calcOpticalFlowFarneback.
+                * 'NullRegistration': No registration, just returns identity
+                  (remappingIdx) for each image.
                 (Default is 'RoMa')
             kwargs_method (dict):
                 Keyword arguments for the selected method. The keys are method
@@ -718,6 +725,7 @@ class Aligner(util.ROICaT_Module):
             'RoMa': RoMa,
             'DeepFlow': DeepFlow,
             'OpticalFlowFarneback': OpticalFlowFarneback,
+            'NullRegistration': NullRegistration,
         }
         assert method in methods_lut, f"method must be one of {methods_lut.keys()}"
         model = methods_lut[method](
@@ -2442,3 +2450,40 @@ class PhaseCorrelationRegistration(ImageRegistrationMethod):
 
         return warp_matrix
 
+
+class NullRegistration(ImageRegistrationMethod):
+    """
+    Null registration method that does nothing.
+    RH 2024
+
+    Args:
+        device (str):
+            Device to use for computations.
+        verbose (bool):
+            Whether to print progress updates.
+    """    
+    def __init__(
+        self,
+        device: Optional[str] = None,
+        verbose: bool = False,
+    ):
+        super().__init__(device=device, verbose=verbose)
+
+    def fit_rigid(
+        self,
+        im_template: Union[np.ndarray, torch.Tensor],
+        im_moving: Union[np.ndarray, torch.Tensor],
+        **kwargs,
+    ):
+        return np.eye(3, dtype=np.float32)[:2, :]  # Identity matrix for rigid transformation
+    
+    def _forward_nonrigid(
+        self,
+        im_template: Union[np.ndarray, torch.Tensor],
+        im_moving: Union[np.ndarray, torch.Tensor],
+        **kwargs,
+    ):
+        h, w = im_moving.shape[:2]
+        x_grid, y_grid = np.meshgrid(np.arange(0., w).astype(np.float32), np.arange(0., h).astype(np.float32), indexing='xy')
+        remappingIdx = np.stack([x_grid, y_grid], axis=-1)
+        return remappingIdx

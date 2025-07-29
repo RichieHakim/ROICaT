@@ -432,6 +432,10 @@ class Data_roicat(util.ROICaT_Module):
         self.n_sessions = n_sessions
         self.n_roi = n_roi
         self.n_roi_total = n_roi_total
+        
+        ## Make session_bool
+        self._make_session_bool()
+        
         print(f"Completed: Set spatialFootprints for {len(sf_all)} sessions successfully.") if self._verbose else None
 
     def set_FOV_images(
@@ -1091,9 +1095,6 @@ class Data_suite2p(Data_roicat):
         spatialFootprints = self.import_spatialFootprints()
         self.set_spatialFootprints(spatialFootprints=spatialFootprints, um_per_pixel=um_per_pixel)
 
-        ## Make session_bool
-        self._make_session_bool()
-
         ## Make spatial footprint centroids
         self._make_spatialFootprintCentroids(method=centroid_method)
         
@@ -1461,7 +1462,6 @@ class Data_caiman(Data_roicat):
         FOV_images = self.import_FOV_images(self.paths_resultsFiles)
         self.set_FOV_images(FOV_images=FOV_images)
         self._make_spatialFootprintCentroids(method=centroid_method)
-        self._make_session_bool()
         self.transform_spatialFootprints_to_ROIImages(out_height_width=out_height_width)
         self.set_class_labels(labels=class_labels) if class_labels is not None else None
 
@@ -1817,9 +1817,6 @@ class Data_roiextractors(Data_roicat):
             warnings.warn(f'Failed to retrieve and/or set FOV images. Please set FOV images manually using self.set_FOV_images(). Error: {e}')
             self.set_FOVHeightWidth(FOV_height=fallback_FOV_height_width[0], FOV_width=fallback_FOV_height_width[1])
 
-        ## Make session_bool
-        self._make_session_bool()
-
         ## Make spatial footprint centroids
         self._make_spatialFootprintCentroids(method=centroid_method)
 
@@ -1960,6 +1957,5 @@ def make_smaller_data(
 
     data_out._make_spatialFootprintCentroids()
     data_out.transform_spatialFootprints_to_ROIImages()
-    data_out._make_session_bool()
 
     return data_out
