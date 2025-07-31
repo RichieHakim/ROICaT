@@ -429,8 +429,8 @@ class Clusterer(util.ROICaT_Module):
                 Boolean array indicating which ROIs belong to which session.
                 Shape: *(n_rois, n_sessions)*
             min_cluster_size (int): 
-                Minimum cluster size to be considered a cluster. (Default is
-                *2*)
+                Minimum cluster size to be considered a cluster. Can be 'all'.
+                (Default is *2*)
             n_iter_violationCorrection (int): 
                 Number of iterations to correct for clusters with multiple ROIs
                 per session. This is done to overcome the issues with
@@ -489,6 +489,10 @@ class Clusterer(util.ROICaT_Module):
             self.labels = np.ones(d.shape[0], dtype=int) * -1
             return self.labels
             
+        n_sessions = session_bool.shape[1]
+        if min_cluster_size == 'all':
+            min_cluster_size = n_sessions
+            print(f'Setting min_cluster_size to {min_cluster_size} (all ROIs in a session)') if self._verbose else None
 
         print('Fitting with HDBSCAN and splitting clusters with multiple ROIs per session') if self._verbose else None
         for ii in tqdm(range(n_iter_violationCorrection)):
@@ -496,7 +500,6 @@ class Clusterer(util.ROICaT_Module):
             d_clusterMerge = float(np.mean(d.data) + 1*np.std(d.data)) if d_clusterMerge is None else float(d_clusterMerge)
             n_steps_clusterSplit = int(n_steps_clusterSplit)
 
-            n_sessions = session_bool.shape[1]
             max_dist=(d.max() - d.min()) * 1000
 
             self.hdbs = hdbscan.HDBSCAN(
@@ -1325,6 +1328,8 @@ def score_labels(
     ignore_negOne: bool = False, 
     thresh_perfect: float = 0.9999999999, 
     compute_mutual_info: bool = False,
+    compute_homogeneity_completeness_v_measure: bool = False,
+    compute_pair_confusion: bool = False
 ) -> Dict[str, Union[float, Tuple[int, int]]]:
     """
     Computes the score of the clustering by finding the best match using the
@@ -1351,6 +1356,11 @@ def score_labels(
         compute_mutual_info (bool):
             If set to ``True``, the adjusted mutual info score is also computed.
             (Default is ``False``)
+        compute_homogeneity_completeness_v_measure (bool):
+            If set to ``True``, the homogeneity, completeness, and v-measure
+            scores are also computed. (Default is ``False``)
+        compute_pair_confusion (bool):
+            If set to ``True``, the pair confusion matrix is also computed.
     
     Returns:
         (dict): dictionary containing:
@@ -1411,12 +1421,39 @@ def score_labels(
     ## compute perfect score
     score_weighted_perfect = np.sum(bool_true.sum(axis=1)[hi[0]] * (cc_matched > thresh_perfect)) / bool_true[hi[0]].sum()
     score_unweighted_perfect = np.mean(cc_matched > thresh_perfect)
+
+    ## SKLEARN METRICS
+    ### First change all -1 values to a unique value that is not present in the labels
+    uniques = np.unique(np.concatenate((labels_true, labels_test)))
+    ### Make a bunch of values greater than the maximum value in the labels
+    n_minusOne_true = np.sum(labels_true == -1)
+    n_minusOne_test = np.sum(labels_test == -1)
+    labels_true_sk, labels_test_sk = labels_true.copy(), labels_test.copy()
+    labels_true_sk[labels_true == -1] = uniques.max() + np.arange(1, n_minusOne_true + 1)
+    labels_test_sk[labels_test == -1] = uniques.max() + np.arange(n_minusOne_true + 1, n_minusOne_true + n_minusOne_test + 1)
     
     ## compute adjusted rand score
-    score_rand = sklearn.metrics.adjusted_rand_score(labels_true, labels_test)
-    
+    score_rand = sklearn.metrics.adjusted_rand_score(labels_true=labels_true_sk, labels_pred=labels_test_sk)
+
     ## compute adjusted mutual info score
-    score_mutual_info = sklearn.metrics.adjusted_mutual_info_score(labels_true, labels_test) if compute_mutual_info else None
+    score_mutual_info = sklearn.metrics.adjusted_mutual_info_score(labels_true=labels_true_sk, labels_pred=labels_test_sk) if compute_mutual_info else None
+
+    ## compute homogeneity, completeness, and v-measure
+    homogeneity, completeness, v_measure = sklearn.metrics.homogeneity_completeness_v_measure(labels_true=labels_true_sk, labels_pred=labels_test_sk, beta=1.0) if compute_homogeneity_completeness_v_measure else (None, None, None)
+
+    ## compute pair confusion matrix
+    pair_confusion = sklearn.metrics.cluster.pair_confusion_matrix(labels_true=labels_true_sk, labels_pred=labels_test_sk).tolist() if compute_pair_confusion else None
+    if pair_confusion is not None:
+        p = np.array(pair_confusion)
+        TP, TN, FP, FN = p[1, 1], p[0, 0], p[0, 1], p[1, 0]
+        pc_accuracy = (TP + TN) / (TP + TN + FP + FN)
+        
+        N_all = TN + FP
+        P_all = TP + FN
+        pc_accuracy_norm = (TP/P_all + TN/N_all) / (TP/P_all + TN/N_all + FP/N_all + FN/P_all)
+    else:
+        pc_accuracy = None
+        pc_accuracy_norm = None
 
     out = {
         'score_weighted_partial': score_weighted_partial,
@@ -1425,6 +1462,12 @@ def score_labels(
         'score_unweighted_perfect': score_unweighted_perfect,
         'adj_rand_score': score_rand,
         'adj_mutual_info_score': score_mutual_info,
+        'homogeneity_score': homogeneity,
+        'completeness_score': completeness,
+        'v_measure_score': v_measure,
+        'pair_confusion_score': pair_confusion,
+        'pair_confusion_accuracy_score': pc_accuracy,
+        'pair_confusion_accuracy_norm_score': pc_accuracy_norm,
         'ignore_negOne': ignore_negOne,
         'idx_hungarian': hi,
     }
