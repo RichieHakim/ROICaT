@@ -15,4 +15,4 @@ for pkg in __all__:
 
 from .__main__ import run_pipeline
 
-__version__ = '1.5.3'
+__version__ = '1.5.4'
