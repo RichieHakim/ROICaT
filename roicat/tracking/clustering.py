@@ -1327,9 +1327,6 @@ def score_labels(
     labels_true: np.ndarray, 
     ignore_negOne: bool = False, 
     thresh_perfect: float = 0.9999999999, 
-    compute_mutual_info: bool = False,
-    compute_homogeneity_completeness_v_measure: bool = False,
-    compute_pair_confusion: bool = False
 ) -> Dict[str, Union[float, Tuple[int, int]]]:
     """
     Computes the score of the clustering by finding the best match using the
@@ -1353,14 +1350,6 @@ def score_labels(
         thresh_perfect (float): 
             Threshold for perfect match. Mostly used for numerical stability.
             (Default is *0.9999999999*)
-        compute_mutual_info (bool):
-            If set to ``True``, the adjusted mutual info score is also computed.
-            (Default is ``False``)
-        compute_homogeneity_completeness_v_measure (bool):
-            If set to ``True``, the homogeneity, completeness, and v-measure
-            scores are also computed. (Default is ``False``)
-        compute_pair_confusion (bool):
-            If set to ``True``, the pair confusion matrix is also computed.
     
     Returns:
         (dict): dictionary containing:
@@ -1387,40 +1376,35 @@ def score_labels(
                 'Hungarian Indices'. Indices of the best matched sets.
     """
     assert len(labels_test) == len(labels_true), 'RH ERROR: labels_test and labels_true must be the same length.'
-    if ignore_negOne:
-        labels_test = np.array(labels_test.copy(), dtype=int)
-        labels_true = np.array(labels_true.copy(), dtype=int)
-        
-        labels_test = labels_test[labels_true > -1].copy()
-        labels_true = labels_true[labels_true > -1].copy()
+    labels_test = np.array(labels_test.copy(), dtype=int)
+    labels_true = np.array(labels_true.copy(), dtype=int)
 
     ## convert labels to boolean
-    bool_test = np.stack([labels_test==l for l in np.unique(labels_test)], axis=0).astype(np.float32)
-    bool_true = np.stack([labels_true==l for l in np.unique(labels_true)], axis=0).astype(np.float32)
+    uniques_test, uniques_true = np.unique(labels_test), np.unique(labels_true)
+    bool_test = np.stack([labels_test==l for l in uniques_test], axis=0).astype(np.float32)
+    bool_true = np.stack([labels_true==l for l in uniques_true], axis=0).astype(np.float32)
 
+    # Hungarian matching score
+    if ignore_negOne:        
+        # labels_test = labels_test[labels_true > -1].copy()
+        # labels_true = labels_true[labels_true > -1].copy()
+        bool_test[uniques_test == -1, :] = 0.0
+        bool_true[uniques_true == -1, :] = 0.0
     if bool_test.shape[0] < bool_true.shape[0]:
         bool_test = np.concatenate((bool_test, np.zeros((bool_true.shape[0] - bool_test.shape[0], bool_true.shape[1]))))
-
-    ## compute cross-correlation matrix, and crop to 
-    na = bool_true.shape[0]
-    cc = np.corrcoef(x=bool_true, y=bool_test)[:na][:,na:]  ## corrcoef returns the concatenated cross-corr matrix (self corr mat along diagonal). The indexing at the end is to extract just the cross-corr mat
-    cc[np.isnan(cc)] = 0
-
+    ## compute confusion / correlation matrix
+    with np.errstate(divide='ignore', invalid='ignore'):
+        cc = np.nan_to_num((bool_true @ bool_test.T) / (bool_true.sum(axis=1)[:, None]), nan=0.0, posinf=0.0, neginf=0.0)  ## normalize by the number of elements in each set
     ## find hungarian assignment matching indices
-    hi = scipy.optimize.linear_sum_assignment(
-        cost_matrix=cc,
-        maximize=True,
-    )
-
+    hi = scipy.optimize.linear_sum_assignment(cost_matrix=cc, maximize=True)
     ## extract correlation scores of matches
     cc_matched = cc[hi[0], hi[1]]
-
-    ## compute score
-    score_weighted_partial = np.sum(cc_matched * bool_true.sum(axis=1)[hi[0]]) / bool_true[hi[0]].sum()
-    score_unweighted_partial = np.mean(cc_matched)
-    ## compute perfect score
-    score_weighted_perfect = np.sum(bool_true.sum(axis=1)[hi[0]] * (cc_matched > thresh_perfect)) / bool_true[hi[0]].sum()
-    score_unweighted_perfect = np.mean(cc_matched > thresh_perfect)
+    label_weights = bool_true.sum(axis=1)[hi[0]]  ## reweighting vector is the number of elements in each true set
+    label_weights_norm = label_weights / label_weights.sum()  ## normalize the weights
+    hungarian_match_score_weighted_partial = cc_matched @ label_weights_norm
+    hungarian_match_score_unweighted_partial = cc_matched.mean()
+    hungarian_match_score_weighted_perfect = (cc_matched > thresh_perfect).astype(float) @ label_weights_norm
+    hungarian_match_score_unweighted_perfect = (cc_matched > thresh_perfect).mean()
 
     ## SKLEARN METRICS
     ### First change all -1 values to a unique value that is not present in the labels
@@ -1435,14 +1419,17 @@ def score_labels(
     ## compute adjusted rand score
     score_rand = sklearn.metrics.adjusted_rand_score(labels_true=labels_true_sk, labels_pred=labels_test_sk)
 
+    ## compute fowlkes mallows score
+    score_fowlkes_mallows = sklearn.metrics.fowlkes_mallows_score(labels_true=labels_true_sk, labels_pred=labels_test_sk)
+
     ## compute adjusted mutual info score
-    score_mutual_info = sklearn.metrics.adjusted_mutual_info_score(labels_true=labels_true_sk, labels_pred=labels_test_sk) if compute_mutual_info else None
+    score_mutual_info = sklearn.metrics.adjusted_mutual_info_score(labels_true=labels_true_sk, labels_pred=labels_test_sk)
 
     ## compute homogeneity, completeness, and v-measure
-    homogeneity, completeness, v_measure = sklearn.metrics.homogeneity_completeness_v_measure(labels_true=labels_true_sk, labels_pred=labels_test_sk, beta=1.0) if compute_homogeneity_completeness_v_measure else (None, None, None)
+    homogeneity, completeness, v_measure = sklearn.metrics.homogeneity_completeness_v_measure(labels_true=labels_true_sk, labels_pred=labels_test_sk, beta=1.0)
 
     ## compute pair confusion matrix
-    pair_confusion = sklearn.metrics.cluster.pair_confusion_matrix(labels_true=labels_true_sk, labels_pred=labels_test_sk).tolist() if compute_pair_confusion else None
+    pair_confusion = sklearn.metrics.cluster.pair_confusion_matrix(labels_true=labels_true_sk, labels_pred=labels_test_sk).tolist()
     if pair_confusion is not None:
         p = np.array(pair_confusion)
         TP, TN, FP, FN = p[1, 1], p[0, 0], p[0, 1], p[1, 0]
@@ -1456,18 +1443,19 @@ def score_labels(
         pc_accuracy_norm = None
 
     out = {
-        'score_weighted_partial': score_weighted_partial,
-        'score_weighted_perfect': score_weighted_perfect,
-        'score_unweighted_partial': score_unweighted_partial,
-        'score_unweighted_perfect': score_unweighted_perfect,
-        'adj_rand_score': score_rand,
-        'adj_mutual_info_score': score_mutual_info,
-        'homogeneity_score': homogeneity,
-        'completeness_score': completeness,
-        'v_measure_score': v_measure,
-        'pair_confusion_score': pair_confusion,
-        'pair_confusion_accuracy_score': pc_accuracy,
-        'pair_confusion_accuracy_norm_score': pc_accuracy_norm,
+        'hungarian_score_weighted_partial': float(hungarian_match_score_weighted_partial),
+        'hungarian_score_weighted_perfect': float(hungarian_match_score_weighted_perfect),
+        'hungarian_score_unweighted_partial': float(hungarian_match_score_unweighted_partial),
+        'hungarian_score_unweighted_perfect': float(hungarian_match_score_unweighted_perfect),
+        'adj_rand_score': float(score_rand),
+        'fowlkes_mallows_score': float(score_fowlkes_mallows),
+        'adj_mutual_info_score': float(score_mutual_info),
+        'homogeneity_score': float(homogeneity),
+        'completeness_score': float(completeness),
+        'v_measure_score': float(v_measure),
+        'pair_confusion_matrix': pair_confusion,
+        'pair_confusion_accuracy_score': float(pc_accuracy),
+        'pair_confusion_accuracy_norm_score': float(pc_accuracy_norm),
         'ignore_negOne': ignore_negOne,
         'idx_hungarian': hi,
     }
