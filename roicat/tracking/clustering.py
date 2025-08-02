@@ -429,8 +429,8 @@ class Clusterer(util.ROICaT_Module):
                 Boolean array indicating which ROIs belong to which session.
                 Shape: *(n_rois, n_sessions)*
             min_cluster_size (int): 
-                Minimum cluster size to be considered a cluster. (Default is
-                *2*)
+                Minimum cluster size to be considered a cluster. Can be 'all'.
+                (Default is *2*)
             n_iter_violationCorrection (int): 
                 Number of iterations to correct for clusters with multiple ROIs
                 per session. This is done to overcome the issues with
@@ -489,6 +489,10 @@ class Clusterer(util.ROICaT_Module):
             self.labels = np.ones(d.shape[0], dtype=int) * -1
             return self.labels
             
+        n_sessions = session_bool.shape[1]
+        if min_cluster_size == 'all':
+            min_cluster_size = n_sessions
+            print(f'Setting min_cluster_size to {min_cluster_size} (all ROIs in a session)') if self._verbose else None
 
         print('Fitting with HDBSCAN and splitting clusters with multiple ROIs per session') if self._verbose else None
         for ii in tqdm(range(n_iter_violationCorrection)):
@@ -496,7 +500,6 @@ class Clusterer(util.ROICaT_Module):
             d_clusterMerge = float(np.mean(d.data) + 1*np.std(d.data)) if d_clusterMerge is None else float(d_clusterMerge)
             n_steps_clusterSplit = int(n_steps_clusterSplit)
 
-            n_sessions = session_bool.shape[1]
             max_dist=(d.max() - d.min()) * 1000
 
             self.hdbs = hdbscan.HDBSCAN(
@@ -1324,7 +1327,6 @@ def score_labels(
     labels_true: np.ndarray, 
     ignore_negOne: bool = False, 
     thresh_perfect: float = 0.9999999999, 
-    compute_mutual_info: bool = False,
 ) -> Dict[str, Union[float, Tuple[int, int]]]:
     """
     Computes the score of the clustering by finding the best match using the
@@ -1348,9 +1350,6 @@ def score_labels(
         thresh_perfect (float): 
             Threshold for perfect match. Mostly used for numerical stability.
             (Default is *0.9999999999*)
-        compute_mutual_info (bool):
-            If set to ``True``, the adjusted mutual info score is also computed.
-            (Default is ``False``)
     
     Returns:
         (dict): dictionary containing:
@@ -1377,54 +1376,86 @@ def score_labels(
                 'Hungarian Indices'. Indices of the best matched sets.
     """
     assert len(labels_test) == len(labels_true), 'RH ERROR: labels_test and labels_true must be the same length.'
-    if ignore_negOne:
-        labels_test = np.array(labels_test.copy(), dtype=int)
-        labels_true = np.array(labels_true.copy(), dtype=int)
-        
-        labels_test = labels_test[labels_true > -1].copy()
-        labels_true = labels_true[labels_true > -1].copy()
+    labels_test = np.array(labels_test, dtype=int)
+    labels_true = np.array(labels_true, dtype=int)
 
     ## convert labels to boolean
-    bool_test = np.stack([labels_test==l for l in np.unique(labels_test)], axis=0).astype(np.float32)
-    bool_true = np.stack([labels_true==l for l in np.unique(labels_true)], axis=0).astype(np.float32)
+    uniques_test, uniques_true = np.unique(labels_test), np.unique(labels_true)
+    bool_test = np.stack([labels_test==l for l in uniques_test], axis=0).astype(np.float32)
+    bool_true = np.stack([labels_true==l for l in uniques_true], axis=0).astype(np.float32)
 
+    # Hungarian matching score
+    if ignore_negOne:        
+        # labels_test = labels_test[labels_true > -1].copy()
+        # labels_true = labels_true[labels_true > -1].copy()
+        bool_test[uniques_test == -1, :] = 0.0
+        bool_true[uniques_true == -1, :] = 0.0
     if bool_test.shape[0] < bool_true.shape[0]:
         bool_test = np.concatenate((bool_test, np.zeros((bool_true.shape[0] - bool_test.shape[0], bool_true.shape[1]))))
-
-    ## compute cross-correlation matrix, and crop to 
-    na = bool_true.shape[0]
-    cc = np.corrcoef(x=bool_true, y=bool_test)[:na][:,na:]  ## corrcoef returns the concatenated cross-corr matrix (self corr mat along diagonal). The indexing at the end is to extract just the cross-corr mat
-    cc[np.isnan(cc)] = 0
-
+    ## compute confusion / correlation matrix
+    with np.errstate(divide='ignore', invalid='ignore'):
+        cc = np.nan_to_num((bool_true @ bool_test.T) / (bool_true.sum(axis=1)[:, None]), nan=0.0, posinf=0.0, neginf=0.0)  ## normalize by the number of elements in each set
     ## find hungarian assignment matching indices
-    hi = scipy.optimize.linear_sum_assignment(
-        cost_matrix=cc,
-        maximize=True,
-    )
-
+    hi = scipy.optimize.linear_sum_assignment(cost_matrix=cc, maximize=True)
     ## extract correlation scores of matches
     cc_matched = cc[hi[0], hi[1]]
+    label_weights = bool_true.sum(axis=1)[hi[0]]  ## reweighting vector is the number of elements in each true set
+    label_weights_norm = label_weights / label_weights.sum()  ## normalize the weights
+    hungarian_match_score_weighted_partial = cc_matched @ label_weights_norm
+    hungarian_match_score_unweighted_partial = cc_matched.mean()
+    hungarian_match_score_weighted_perfect = (cc_matched > thresh_perfect).astype(float) @ label_weights_norm
+    hungarian_match_score_unweighted_perfect = (cc_matched > thresh_perfect).mean()
 
-    ## compute score
-    score_weighted_partial = np.sum(cc_matched * bool_true.sum(axis=1)[hi[0]]) / bool_true[hi[0]].sum()
-    score_unweighted_partial = np.mean(cc_matched)
-    ## compute perfect score
-    score_weighted_perfect = np.sum(bool_true.sum(axis=1)[hi[0]] * (cc_matched > thresh_perfect)) / bool_true[hi[0]].sum()
-    score_unweighted_perfect = np.mean(cc_matched > thresh_perfect)
+    ## SKLEARN METRICS
+    ### First change all -1 values to a unique value that is not present in the labels
+    uniques = np.unique(np.concatenate((labels_true, labels_test)))
+    ### Make a bunch of values greater than the maximum value in the labels
+    n_minusOne_true = np.sum(labels_true == -1)
+    n_minusOne_test = np.sum(labels_test == -1)
+    labels_true_sk, labels_test_sk = labels_true.copy(), labels_test.copy()
+    labels_true_sk[labels_true == -1] = uniques.max() + np.arange(1, n_minusOne_true + 1)
+    labels_test_sk[labels_test == -1] = uniques.max() + np.arange(n_minusOne_true + 1, n_minusOne_true + n_minusOne_test + 1)
     
     ## compute adjusted rand score
-    score_rand = sklearn.metrics.adjusted_rand_score(labels_true, labels_test)
-    
+    score_rand = sklearn.metrics.adjusted_rand_score(labels_true=labels_true_sk, labels_pred=labels_test_sk)
+
+    ## compute fowlkes mallows score
+    score_fowlkes_mallows = sklearn.metrics.fowlkes_mallows_score(labels_true=labels_true_sk, labels_pred=labels_test_sk)
+
     ## compute adjusted mutual info score
-    score_mutual_info = sklearn.metrics.adjusted_mutual_info_score(labels_true, labels_test) if compute_mutual_info else None
+    score_mutual_info = sklearn.metrics.adjusted_mutual_info_score(labels_true=labels_true_sk, labels_pred=labels_test_sk)
+
+    ## compute homogeneity, completeness, and v-measure
+    homogeneity, completeness, v_measure = sklearn.metrics.homogeneity_completeness_v_measure(labels_true=labels_true_sk, labels_pred=labels_test_sk, beta=1.0)
+
+    ## compute pair confusion matrix
+    pair_confusion = sklearn.metrics.cluster.pair_confusion_matrix(labels_true=labels_true_sk, labels_pred=labels_test_sk).tolist()
+    if pair_confusion is not None:
+        p = np.array(pair_confusion)
+        TP, TN, FP, FN = p[1, 1], p[0, 0], p[0, 1], p[1, 0]
+        pc_accuracy = (TP + TN) / (TP + TN + FP + FN)
+        
+        N_all = TN + FP
+        P_all = TP + FN
+        pc_accuracy_norm = (TP/P_all + TN/N_all) / (TP/P_all + TN/N_all + FP/N_all + FN/P_all)
+    else:
+        pc_accuracy = None
+        pc_accuracy_norm = None
 
     out = {
-        'score_weighted_partial': score_weighted_partial,
-        'score_weighted_perfect': score_weighted_perfect,
-        'score_unweighted_partial': score_unweighted_partial,
-        'score_unweighted_perfect': score_unweighted_perfect,
-        'adj_rand_score': score_rand,
-        'adj_mutual_info_score': score_mutual_info,
+        'hungarian_score_weighted_partial': float(hungarian_match_score_weighted_partial),
+        'hungarian_score_weighted_perfect': float(hungarian_match_score_weighted_perfect),
+        'hungarian_score_unweighted_partial': float(hungarian_match_score_unweighted_partial),
+        'hungarian_score_unweighted_perfect': float(hungarian_match_score_unweighted_perfect),
+        'adj_rand_score': float(score_rand),
+        'fowlkes_mallows_score': float(score_fowlkes_mallows),
+        'adj_mutual_info_score': float(score_mutual_info),
+        'homogeneity_score': float(homogeneity),
+        'completeness_score': float(completeness),
+        'v_measure_score': float(v_measure),
+        'pair_confusion_matrix': pair_confusion,
+        'pair_confusion_accuracy_score': float(pc_accuracy),
+        'pair_confusion_accuracy_norm_score': float(pc_accuracy_norm),
         'ignore_negOne': ignore_negOne,
         'idx_hungarian': hi,
     }

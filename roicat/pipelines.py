@@ -39,7 +39,9 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
                 ``roicat.helpers.prepare_params()`` for details.
     """
     ## Start timer
+    tocs = []
     tic_start = time.time()
+    tocs.append(('start_time_absolute', time.time() - tic_start))
 
     ## Prepare params
     defaults = util.get_default_parameters(pipeline='tracking')
@@ -58,11 +60,12 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
     if custom_data is not None:
         print("Using custom data object.")
         data = custom_data
-    elif params['data_loading']['data_kind'] == 'suite2p':
-        assert params['data_loading']['dir_outer'] is not None, f"params['data_loading']['dir_outer'] must be specified if params['data_loading']['data_kind'] is 'suite2p'."
+    elif params['data_loading']['data_kind'] == 'data_suite2p':
+        assert params['data_loading']['dir_outer'] is not None, f"params['data_loading']['dir_outer'] must be specified if params['data_loading']['data_kind'] is 'data_suite2p'."
         paths_allStat = helpers.find_paths(
             dir_outer=params['data_loading']['dir_outer'],
             reMatch='stat.npy',
+            reMatch_in_path=params['data_loading']['reMatch_in_path'],
             depth=6,
             find_files=True,
             find_folders=False,
@@ -86,11 +89,11 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
             **{**params['data_loading']['common'], **params['data_loading']['data_suite2p']},
         )
         assert data.check_completeness(verbose=False)['tracking'], f"Data object is missing attributes necessary for tracking."
-    elif params['data_loading']['data_kind'] == 'roicat':
+    elif params['data_loading']['data_kind'] == 'data_roicat':
         paths_allDataObjs = helpers.find_paths(
             dir_outer=params['data_loading']['dir_outer'],
             reMatch=params['data_loading']['data_roicat']['filename_search'],
-            depth=1,
+            depth=6,
             find_files=False,
             find_folders=True,
             natsorted=True,
@@ -108,6 +111,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
 
     assert data.check_completeness(verbose=False)['tracking'], f"Data object is missing attributes necessary for tracking."
     assert data.n_sessions > 1, f"Data object must have more than one session to track (n_sessions={data.n_sessions})."
+    tocs.append(('data_loading', time.time() - tic_start))
 
 
     ## Alignment
@@ -147,6 +151,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
             remappingIdx=aligner.remappingIdx_geo,
             **params['alignment']['transform_ROIs'],
         );
+    tocs.append(('alignment', time.time() - tic_start))
 
 
 
@@ -159,6 +164,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
     blurrer.blur_ROIs(
         spatialFootprints=aligner.ROIs_aligned[:],
     )
+    tocs.append(('blurring', time.time() - tic_start))
 
 
     ## ROInet embedding
@@ -177,6 +183,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         **params['ROInet']['dataloader'],
     );
     roinet.generate_latents();
+    tocs.append(('ROInet', time.time() - tic_start))
 
 
     ## Scattering wavelet embedding
@@ -189,6 +196,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         ROI_images=roinet.ROI_images_rs,  ## All the cropped and resized ROI images
         batch_size=params['SWT']['batch_size'],
     );
+    tocs.append(('SWT', time.time() - tic_start))
 
 
     ## Compute similarities
@@ -198,7 +206,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         verbose=VERBOSE,  ## Whether to print outputs
         **params['similarity_graph']['sparsification']
     )
-    s_sf, s_NN, s_SWT, s_sesh = sim.compute_similarity_blockwise(
+    sim.compute_similarity_blockwise(
         spatialFootprints=blurrer.ROIs_blurred,  ## Mask spatial footprints
         features_NN=roinet.latents,  ## ROInet output latents
         features_SWT=swt.latents,  ## Scattering wavelet transform output latents
@@ -215,6 +223,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         k_min=data.n_sessions * params['similarity_graph']['normalization']['k_min'],
         algo_NN=params['similarity_graph']['normalization']['algo_NN'],
     )
+    tocs.append(('similarity_graph', time.time() - tic_start))
 
 
     ## Clustering
@@ -240,6 +249,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         kwargs_makeConjunctiveDistanceMatrix=kwargs_makeConjunctiveDistanceMatrix_best,
         **params['clustering']['pruning'],
     )
+    tocs.append(('make_conjunctive_distance', time.time() - tic_start))
 
     def choose_clustering_method(method='automatic', n_sessions_switch=8, n_sessions=None):
         if method == 'automatic':
@@ -268,8 +278,12 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         )
     else:
         raise ValueError('Clustering method not recognized. This should never happen.')
+    tocs.append(('clustering', time.time() - tic_start))
+
+
 
     quality_metrics = clusterer.compute_quality_metrics();
+    tocs.append(('quality_metrics', time.time() - tic_start))
 
     ## Collect results
     labels_squeezed, labels_bySession, labels_bool, labels_bool_bySession, labels_dict = tracking.clustering.make_label_variants(labels=labels, n_roi_bySession=data.n_roi)
@@ -302,6 +316,9 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
             "paths_stat": data.paths_stat if hasattr(data, 'paths_stat') else None,
             "paths_ops": data.paths_ops if hasattr(data, 'paths_ops') else None,
         },
+        "other": {
+            "run_times": util.JSON_Dict(tocs),
+        },
     }
 
     run_data = {
@@ -314,6 +331,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         'clusterer': clusterer.__dict__,
     }
     params_used = {name: mod['params'] for name, mod in run_data.items()}
+
 
     ## Print some results
     print(f'Number of clusters: {len(np.unique(results_clusters["labels"]))}')
@@ -467,7 +485,6 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
 
 
     ## End timer
-    tic_end = time.time()
-    print(f"Elapsed time: {tic_end - tic_start:.2f} seconds")
+    print(f"Elapsed time: {time.time() - tic_start:.2f} seconds")
     
     return results_all, run_data, params
