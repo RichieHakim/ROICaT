@@ -68,6 +68,7 @@ def get_default_parameters(
             'data_loading': {
                 'data_kind': 'data_suite2p',  ## Can be 'suite2p', 'roiextractors', or 'roicat'. See documentation and/or notebook on custom data loading for more details.
                 'dir_outer': None,  ## directory where directories containing below 'pathSuffixTo...' are
+                'reMatch_in_path': None,  ## regular expression string that must be found within the parent path of any discovered files. See helpers.find_paths
                 'common': {
                     'um_per_pixel': 1.0,  ## Number of microns per pixel for the imaging dataset. Doesn't need to be exact. Used for resizing the ROIs. Check the images of the resized ROIs to tweak.
                     'centroid_method': 'centerOfMass', ## Can be 'centerOfMass' or 'median'.
@@ -100,7 +101,7 @@ def get_default_parameters(
                 'fit_geometric': {
                     'template': 0.5,  ## Which session to use as a registration template. If input is float (ie 0.0, 0.5, 1.0, etc.), then it is the fractional position of the session to use; if input is int (ie 1, 2, 3), then it is the index of the session to use (0-indexed)
                     'template_method': 'image',  ## Can be 'sequential' or 'image'. If 'sequential', then the template is the FOV_image of the previous session. If 'image', then the template is the FOV_image of the session specified by 'template'.
-                    'mask_borders': [0, 0, 0, 0],  ## Number of pixels to mask from the borders of the FOV_image. Useful for removing artifacts from the edges of the FOV_image.
+                    'mask_borders': [0, 0, 0, 0],  ## Number of pixels to mask from the borders of the FOV_image. (top, bottom, left, right). Useful for removing artifacts from the edges of the FOV_image.
                     'method': 'RoMa',  ## Accuracy order (best to worst): RoMa (by far, but slow without a GPU), LoFTR, DISK_LightGlue, ECC_cv2, (the following are not recommended) SIFT, ORB
                     'kwargs_method': {
                         'RoMa': {
