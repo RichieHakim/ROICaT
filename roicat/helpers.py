@@ -289,7 +289,7 @@ def fill_in_dict(
             d.update({key: deepcopy(defaults[key])})
         elif isinstance(defaults[key], dict):
             assert isinstance(d[key], dict), f"Key '{key}' is a dict in defaults, but not in params. {' > '.join([f'{str(h)}' for h in hierarchy])}."
-            fill_in_dict(d[key], defaults[key], hierarchy=hierarchy+[key])
+            fill_in_dict(d[key], defaults[key], hierarchy=hierarchy+[key], verbose=verbose)
             
 
 def check_keys_subset(d, default_dict, hierarchy=['defaults']):
