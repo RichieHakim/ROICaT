@@ -1376,8 +1376,8 @@ def score_labels(
                 'Hungarian Indices'. Indices of the best matched sets.
     """
     assert len(labels_test) == len(labels_true), 'RH ERROR: labels_test and labels_true must be the same length.'
-    labels_test = np.array(labels_test.copy(), dtype=int)
-    labels_true = np.array(labels_true.copy(), dtype=int)
+    labels_test = np.array(labels_test, dtype=int)
+    labels_true = np.array(labels_true, dtype=int)
 
     ## convert labels to boolean
     uniques_test, uniques_true = np.unique(labels_test), np.unique(labels_true)
