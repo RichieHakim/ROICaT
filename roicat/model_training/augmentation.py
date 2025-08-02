@@ -253,8 +253,14 @@ class WarpPoints(Module):
         else:
             raise ValueError("Input tensor must be 3 or 4 dimensional.")
         
+        ## move meshgrid to the device of the input tensor
+        if self.meshgrid_in.device != tensor.device:
+            self.meshgrid_in = self.meshgrid_in.to(tensor.device)
+        if self.meshgrid_out.device != tensor.device:
+            self.meshgrid_out = self.meshgrid_out.to(tensor.device)
+
         if torch.rand(1) <= self.prob:
-            rands = torch.rand(5, self.n_warps)
+            rands = torch.rand(5, self.n_warps, device=tensor.device)  # shape: (5, n_warps)
             cx = rands[0,:] * (self.cx_range) + self.cx[0]
             cy = rands[1,:] * (self.cy_range) + self.cy[0]
             dx = rands[2,:] * (self.dx_range) + self.dx[0]
