@@ -1,5 +1,7 @@
+from typing import Union, Tuple, List, Dict, Optional, Any, Callable, Literal
+
 import warnings
-from typing import Union, Tuple, List, Dict, Optional, Any, Callable
+import math
 
 import numpy as np
 import scipy
@@ -1016,24 +1018,24 @@ class Clusterer(util.ROICaT_Module):
         )
         dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(dConj)
         # centers = (edges[1:] + edges[:-1]) / 2
-        if edges is None:
-            print('No crossover found, not plotting')
-            return None
+        if edges is d_crossover:
+            print('No crossover found')
         
         fig = plt.figure()
-        plt.stairs(dens_same, edges, linewidth=5)
-        plt.stairs(dens_same_crop, edges, linewidth=3)
-        plt.stairs(dens_diff, edges)
-        plt.stairs(dens_all, edges)
+        plt.stairs(dens_same, edges, linewidth=5, label='same')
+        plt.stairs(dens_same_crop, edges, linewidth=3, label='same_cropped') if dens_same_crop is not None else None
+        plt.stairs(dens_diff, edges, label='diff')
+        plt.stairs(dens_all, edges, label='all')
         # plt.stairs(dens_diff - dens_same, edges)
         # plt.stairs(dens_all - dens_diff, edges)
         # plt.stairs((dens_diff * dens_same)*1000, edges)
-        plt.axvline(d_crossover, color='k', linestyle='--')
+        plt.axvline(d_crossover, color='k', linestyle='--') if d_crossover is not None else None
         plt.ylim([dens_same.max()*-0.5, dens_same.max()*1.5])
         plt.title('Pairwise similarities')
         plt.xlabel('distance or prob(different)')
         plt.ylabel('counts or density')
-        plt.legend(['same', 'same (cropped)', 'diff', 'all', 'diff - same', 'all - diff', '(diff * same) * 1000', 'crossover'])
+        # plt.legend(['same', 'same (cropped)', 'diff', 'all', 'diff - same', 'all - diff', '(diff * same) * 1000', 'crossover'])
+        plt.legend()
         return fig
 
     def _fn_smooth(
@@ -1121,7 +1123,7 @@ class Clusterer(util.ROICaT_Module):
         dens_deriv = dens_diff - dens_same  ## difference in 'diff' and 'same' distributions
         dens_deriv[dens_diff.argmax():] = 0
         if torch.where(dens_deriv < 0)[0].shape[0] == 0:  ## if no crossover point, return None
-            return None, None, None, None, None, None
+            return None, dens_same, dens_diff, dens_all, edges, None
         idx_crossover = torch.where(dens_deriv < 0)[0][-1] + 1 
         d_crossover = edges[idx_crossover].item()
 
