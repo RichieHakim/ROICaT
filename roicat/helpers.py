@@ -6445,3 +6445,461 @@ def reshape_coo_manual(coo, new_shape):
     
     # Create a new COO matrix with the new indices.
     return scipy.sparse.coo_matrix((coo.data, (new_row, new_col)), shape=new_shape)
+
+
+#######################################################################################################################################
+################################################## TO BE ADDED ########################################################################
+#######################################################################################################################################
+
+
+def _csr_to_torch_coo(
+    x_csr: scipy.sparse.csr_matrix,
+    device: Union[str, torch.device],
+    values_dtype: torch.dtype,
+    requires_grad: bool,
+) -> Tuple[int, int, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Convert SciPy CSR -> Torch COO (row, col, val) on `device`.
+    Values carry gradient; indices are int64 (non-differentiable).
+    """
+    assert scipy.sparse.isspmatrix_csr(x_csr), "Input must be a scipy.sparse.csr_matrix"
+    x_coo = x_csr.tocoo(copy=False)
+    n_rows, n_cols = x_coo.shape
+    row = torch.from_numpy(x_coo.row.astype(np.int64, copy=False)).to(device)
+    col = torch.from_numpy(x_coo.col.astype(np.int64, copy=False)).to(device)
+    val = torch.from_numpy(x_coo.data).to(device=device, dtype=values_dtype)
+    val.requires_grad_(requires_grad)
+    return n_rows, n_cols, row, col, val
+def sparse_neighbors_l1(
+    x_csr: scipy.sparse.csr_matrix,
+    *,
+    adjacency_matrix: Optional[scipy.sparse.spmatrix] = None,
+    device: Union[str, torch.device] = "cuda",
+    values_dtype: torch.dtype = torch.float32,
+    requires_grad: bool = True,
+    accum_dtype: torch.dtype = torch.float64,
+    return_tensor: bool = False,
+    indices_device: Union[str, torch.device] = "cpu",
+) -> Union[
+    Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Tuple[int, int]],
+    torch.Tensor
+]:
+    """
+    Compute exact L1 (Manhattan) distances between selected pairs of rows in X.
+
+    By default (adjacency_matrix=None), only pairs that **overlap in at least one
+    column** are produced (found via an inverted index by column). If an
+    `adjacency_matrix` (SciPy sparse, shape (N,N)) is provided, its nonzeros
+    specify **exactly** which pairs (i, j) to compute, independent of overlap.
+
+    The distance is computed via:
+        d(i,j) = ||x_i||_1 + ||x_j||_1
+                 - 2 * sum_{c in overlap and same sign} min(|x_ic|, |x_jc|)
+
+    The implementation is autograd-friendly **for values only** and supports CPU/GPU.
+
+    Args:
+        x_csr:
+            (N, D) SciPy CSR matrix. Values may be +/-.
+        adjacency_matrix:
+            Optional (N, N) SciPy sparse matrix. Nonzero entries indicate **directed**
+            pairs (i, j) to compute. Diagonal entries are ignored. When provided,
+            we compute d(i,j) for those pairs, even if rows i and j have no overlap
+            (in which case the correction term is zero).
+        device:
+            'cuda' or 'cpu' for computation.
+        values_dtype:
+            dtype for X's values (grad-enabled). Typical: torch.float32/float64.
+        requires_grad:
+            Whether X's values require grad.
+        accum_dtype:
+            Internal accumulator dtype for reductions (default float64). Using
+            float64 mitigates cancellation when rows are very similar.
+        return_tensor:
+            If True, return `torch.sparse_coo_tensor(N,N)` with distances.
+            Otherwise return COO triplets `(row_idx, col_idx, values, (N,N))`.
+        indices_device:
+            Device for the returned index arrays when returning triplets.
+
+    Returns:
+        If return_tensor is False:
+            (row_idx, col_idx, dist_vals, (N, N))  # directed COO (no diagonal)
+        If return_tensor is True:
+            torch.sparse_coo_tensor with distances on edges.
+
+    Notes:
+        - Overlap corrections are aggregated via **sort → unique_consecutive →
+          scatter_add** to avoid nondeterministic atomic adds and improve perf.
+          (See PyTorch docs: `unique_consecutive`, `scatter_add_`.)  # noqa
+        - COO `torch.sparse.mm` supports backward for both inputs; CSR also
+          supported for forward.  # noqa
+    """
+    # -------- 1) Move X to Torch (COO) --------
+    N, D, row, col, val = _csr_to_torch_coo(
+        x_csr, device=device, values_dtype=values_dtype, requires_grad=requires_grad
+    )
+
+    # Prepare high-precision buffers for accumulation (helps numerical stability).
+    abs_val_acc = val.abs().to(accum_dtype)
+
+    # -------- 2) Row L1 norms: ||x_i||_1 = sum_j |x_ij| --------
+    row_l1 = torch.zeros(N, dtype=accum_dtype, device=device)
+    row_l1.scatter_add_(0, row, abs_val_acc)  # CUDA-enabled; sums per row
+
+    # Helper: compute undirected key for a pair (i,j) with i<j: key = i*N + j
+    def pair_key(i: torch.Tensor, j: torch.Tensor) -> torch.Tensor:
+        i_small = torch.minimum(i, j).to(torch.int64)
+        j_large = torch.maximum(i, j).to(torch.int64)
+        return i_small * N + j_large
+
+    # If user provided an adjacency, extract directed pairs to compute.
+    if adjacency_matrix is not None:
+        # -------- 3A) Build the requested edge set from adjacency (directed) --------
+        A = adjacency_matrix.tocoo(copy=False)
+        Ai = torch.from_numpy(A.row.astype(np.int64, copy=False)).to(device)
+        Aj = torch.from_numpy(A.col.astype(np.int64, copy=False)).to(device)
+        # Drop diagonal (distance is 0; typically useless downstream)
+        keep = Ai != Aj
+        Ai = Ai[keep]; Aj = Aj[keep]
+
+        # Base distances for all requested edges: ||xi||1 + ||xj||1
+        base = row_l1[Ai] + row_l1[Aj]  # accum_dtype
+
+        # We now need *only the corrections* for those edges where rows overlap.
+        # Strategy:
+        #   - Build a sorted set of **undirected** keys for requested edges.
+        #   - While enumerating per-column same-sign pairs, keep only pairs whose
+        #     key is in this set (via searchsorted membership test).
+        #   - Collect (key, contrib) across columns → reduce once (sort+segment sum).
+        A_ukeys = torch.unique(pair_key(Ai, Aj), sorted=True)  # int64, ascending
+
+        # Inverted index by (column, sign): group_key = (col<<1) | (val>0)
+        sign_bit = (val > 0).to(torch.int64)
+        group_key = (col.to(torch.int64) << 1) | sign_bit
+        perm = torch.argsort(group_key)
+        gk = group_key[perm]
+        r_sorted = row[perm]
+        v_sorted = val[perm].abs().to(accum_dtype)
+
+        # Group boundaries (runs of equal gk)
+        is_new = torch.ones_like(gk, dtype=torch.bool)
+        is_new[1:] = gk[1:] != gk[:-1]
+        gstart = torch.nonzero(is_new, as_tuple=False).flatten()
+        gend = torch.empty_like(gstart); gend[:-1] = gstart[1:]; gend[-1] = gk.numel()
+
+        # Accumulate only contributions whose key is in A_ukeys
+        all_keys = []
+        all_contribs = []
+
+        for s, e in zip(gstart.tolist(), gend.tolist()):
+            rs = r_sorted[s:e]; vs = v_sorted[s:e]
+            m = int(rs.numel())
+            if m < 2:
+                continue
+            tri = torch.triu_indices(m, m, offset=1, device=device)
+            a, b = tri[0], tri[1]
+            i = torch.minimum(rs[a], rs[b]); j = torch.maximum(rs[a], rs[b])
+            Kp = (i.to(torch.int64) * N) + j.to(torch.int64)
+            Cp = 2.0 * torch.minimum(vs[a], vs[b])  # accum_dtype
+
+            # Membership test via searchsorted on sorted A_ukeys
+            pos = torch.searchsorted(A_ukeys, Kp)
+            in_range = (pos >= 0) & (pos < A_ukeys.numel())
+            match = in_range & (A_ukeys[pos.clamp_max(A_ukeys.numel()-1)] == Kp)
+            if match.any():
+                all_keys.append(Kp[match])
+                all_contribs.append(Cp[match])
+
+        if all_keys:
+            K = torch.cat(all_keys, 0)
+            C = torch.cat(all_contribs, 0)
+            order = torch.argsort(K)
+            K = K[order]; C = C[order]
+            uK, inv = torch.unique_consecutive(K, return_inverse=True)
+            sums = torch.zeros(uK.numel(), dtype=accum_dtype, device=device)
+            sums.scatter_add_(0, inv, C)
+        else:
+            # No overlapping corrections for requested edges
+            uK = torch.empty(0, dtype=torch.int64, device=device)
+            sums = torch.empty(0, dtype=accum_dtype, device=device)
+
+        # Gather correction for each directed edge via its undirected key
+        K_query = pair_key(Ai, Aj)
+        pos = torch.searchsorted(uK, K_query)
+        in_range = (pos >= 0) & (pos < uK.numel())
+        matched = in_range & (uK[pos.clamp_max(max(0, uK.numel()-1))] == K_query)
+        corr = torch.zeros_like(base)
+        if matched.any():
+            corr[matched] = sums[pos[matched]]
+
+        # Final distances with numerical clamp
+        dij = torch.clamp(base - corr, min=torch.as_tensor(0.0, dtype=base.dtype, device=base.device), max=row_l1[Ai] + row_l1[Aj])
+
+        if return_tensor:
+            idx = torch.stack([Ai.to(indices_device), Aj.to(indices_device)], 0)
+            return torch.sparse_coo_tensor(idx, dij.to(values_dtype), (N, N))
+        else:
+            return (Ai.to(indices_device),
+                    Aj.to(indices_device),
+                    dij.to(values_dtype),
+                    (N, N))
+
+    # -------- 3B) No adjacency: enumerate only overlapping pairs (default) --------
+    # Group by (column, sign) to produce candidate pairs and their corrections.
+    sign_bit = (val > 0).to(torch.int64)
+    group_key = (col.to(torch.int64) << 1) | sign_bit
+    perm = torch.argsort(group_key)
+    gk = group_key[perm]
+    r_sorted = row[perm]
+    v_sorted = val[perm].abs().to(accum_dtype)
+
+    is_new = torch.ones_like(gk, dtype=torch.bool)
+    is_new[1:] = gk[1:] != gk[:-1]
+    gstart = torch.nonzero(is_new, as_tuple=False).flatten()
+    gend = torch.empty_like(gstart); gend[:-1] = gstart[1:]; gend[-1] = gk.numel()
+
+    all_keys = []
+    all_contribs = []
+
+    for s, e in zip(gstart.tolist(), gend.tolist()):
+        rs = r_sorted[s:e]; vs = v_sorted[s:e]
+        m = int(rs.numel())
+        if m < 2:
+            continue
+        tri = torch.triu_indices(m, m, offset=1, device=device)
+        a, b = tri[0], tri[1]
+        i = torch.minimum(rs[a], rs[b]); j = torch.maximum(rs[a], rs[b])
+        Kp = (i.to(torch.int64) * N) + j.to(torch.int64)
+        Cp = 2.0 * torch.minimum(vs[a], vs[b])
+        all_keys.append(Kp); all_contribs.append(Cp)
+
+    if not all_keys:
+        # No overlaps at all → empty graph
+        if return_tensor:
+            idx = torch.empty((2,0), dtype=torch.long, device=indices_device)
+            vals = torch.empty((0,), dtype=values_dtype, device=device)
+            return torch.sparse_coo_tensor(idx, vals, (N, N))
+        return (torch.empty(0, dtype=torch.long, device=indices_device),
+                torch.empty(0, dtype=torch.long, device=indices_device),
+                torch.empty(0, dtype=values_dtype, device=device),
+                (N, N))
+
+    K = torch.cat(all_keys, 0)
+    C = torch.cat(all_contribs, 0)
+
+    order = torch.argsort(K)
+    K = K[order]; C = C[order]
+    uK, inv = torch.unique_consecutive(K, return_inverse=True)   # stable runs
+    sums = torch.zeros(uK.numel(), dtype=accum_dtype, device=device)
+    sums.scatter_add_(0, inv, C)
+
+    # Decode undirected edges (i<j) from key and compute distances
+    I = (uK // N).to(torch.long)
+    J = (uK %  N).to(torch.long)
+    dij = torch.clamp(row_l1[I] + row_l1[J] - sums, min=torch.as_tensor(0.0, dtype=row_l1.dtype, device=row_l1.device), max=row_l1[I] + row_l1[J])
+
+    # Return directed COO by duplicating (i,j) and (j,i)
+    rows_dir = torch.cat([I, J], 0)
+    cols_dir = torch.cat([J, I], 0)
+    vals_dir = torch.cat([dij, dij], 0).to(values_dtype)
+
+    if return_tensor:
+        idx = torch.stack([rows_dir.to(indices_device), cols_dir.to(indices_device)], 0)
+        return torch.sparse_coo_tensor(idx, vals_dir, (N, N))
+    else:
+        return (rows_dir.to(indices_device), cols_dir.to(indices_device), vals_dir, (N, N))
+    
+
+from typing import Tuple, Union, Optional, Literal
+import numpy as np
+import torch
+import scipy.sparse
+import torch.nn.functional
+
+def masked_pairwise_similarity_dense(
+    X: torch.Tensor,
+    adjacency: scipy.sparse.spmatrix,
+    *,
+    metric: Literal["dot", "cosine", "sqeuclidean", "euclidean", "rbf"] = "cosine",
+    gamma: Optional[float] = None,
+    device: Union[str, torch.device] = "cuda",
+    accum_dtype: torch.dtype = torch.float32,
+    return_tensor: bool = True,
+    indices_device: Union[str, torch.device] = "cpu",
+    edges_per_chunk: Optional[int] = None,
+    eps: float = 1e-12,
+) -> Union[
+    Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Tuple[int, int]],
+    torch.Tensor
+]:
+    """
+    Compute pairwise similarities or distances ONLY at edges specified by a sparse adjacency (SDDMM pattern).
+
+    Overview
+    --------
+    Given dense features X ∈ Real^{Nxd} and a (usually symmetric) SciPy sparse adjacency A ∈ {0,1}^{NxN},
+    compute f(x_i, x_j) for every nonzero A[i,j], without forming the full NxN matrix.
+
+    Supported metrics (what is returned at each edge):
+      - 'dot'         → similarity: s(i,j) = x_i · x_j
+      - 'cosine'      → similarity: s(i,j) = (x_i · x_j) / (||x_i|| · ||x_j|| + eps)
+      - 'sqeuclidean' → distance:   d²(i,j) = ||x_i - x_j||²
+      - 'euclidean'   → distance:   d(i,j)  = ||x_i - x_j||
+      - 'rbf'         → kernel:     k(i,j)  = exp(-gamma · ||x_i - x_j||²), default gamma = 1/d
+
+    This is the standard “Sampled Dense-Dense MatMul” idea used in GNN libraries:
+    we *gather* features for all edges in one shot and apply a vectorized formula,
+    keeping output sparsity identical to the input adjacency.  [oai_citation:5‡DGL](https://www.dgl.ai/dgl_docs/generated/dgl.sparse.sddmm.html?utm_source=chatgpt.com) [oai_citation:6‡Vivek Bharadwaj](https://vivek-bharadwaj.com/pdf/ipdps22/ipdps22_slides.pdf?utm_source=chatgpt.com)
+
+    Important notes:
+      • 'dot' and 'cosine' are SIMILARITIES (higher = more similar). They are NOT the pdist-style
+        distances (e.g., 1 - cosine). If you want pdist-like “cosine distance”, compute (1 - cosine).
+      • 'sqeuclidean'/'euclidean' are true distances.
+      • Returns a directed graph: if A is symmetric you will get both (i,j) and (j,i).
+
+    Args:
+        X (torch.Tensor):
+            Dense feature matrix of shape (N, d). Gradients propagate to X.
+        adjacency (scipy.sparse.spmatrix):
+            Sparse (N, N) matrix whose nonzeros decide what to compute. Diagonal entries are ignored.
+            For an undirected result, pass a symmetric adjacency with corresponding nonzeros.
+        metric (str):
+            One of {'dot','cosine','sqeuclidean','euclidean','rbf'}. See “Supported metrics”.
+        gamma (float or None):
+            RBF gamma. If None, defaults to 1/d, which mirrors common practice.  (https://stackoverflow.com/questions/51603798/how-to-get-backward-gradients-from-sparse-matrices-in-pytorch-networks?utm_source=chatgpt.com)
+        device (str or torch.device):
+            Compute device ('cuda' or 'cpu'). X is moved to this device if needed.
+        accum_dtype (torch.dtype):
+            Internal accumulation dtype (e.g., float32/float64). Use float64 if you see cancellation.
+        return_tensor (bool):
+            If True, return a `torch.sparse_coo_tensor` of shape (N, N) with values at A's edges.
+            If False, return COO triplets `(row_idx, col_idx, values, (N,N))`.
+        indices_device (str or torch.device):
+            Device for the output indices if returning triplets (keep on 'cpu' to save VRAM).
+        edges_per_chunk (int or None):
+            Process edges in chunks to cap memory. None = one-shot over all edges.
+        eps (float):
+            Small constant added to norms for cosine stability. See PyTorch's cosine_similarity.  (https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.cosine_similarity.html?utm_source=chatgpt.com)
+
+    Returns:
+        If return_tensor:
+            torch.sparse_coo_tensor with shape (N, N).
+        Else:
+            (row_idx, col_idx, values, (N, N)) — directed COO triplets.
+
+    Parallels to common APIs:
+        • 'cosine' matches `torch.nn.functional.cosine_similarity` semantics (row-wise).  (https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.cosine_similarity.html?utm_source=chatgpt.com)
+        • 'rbf' mirrors scikit-learn's Gaussian kernel definition using ||x - y||².  (https://stackoverflow.com/questions/51603798/how-to-get-backward-gradients-from-sparse-matrices-in-pytorch-networks?utm_source=chatgpt.com)
+    """
+    assert X.dim() == 2, "X must be a 2D tensor of shape (N, d)"
+    N, d = X.shape
+    X = X.to(device)
+
+    # 1) Read edge list from SciPy adjacency; drop self-loops to avoid trivial edges
+    A = adjacency.tocoo(copy=False)
+    ei = torch.from_numpy(A.row.astype(np.int64, copy=False)).to(device)
+    ej = torch.from_numpy(A.col.astype(np.int64, copy=False)).to(device)
+    keep = ei != ej
+    ei = ei[keep]; ej = ej[keep]
+    E = int(ei.numel())
+    if E == 0:
+        if return_tensor:
+            idx = torch.empty((2, 0), dtype=torch.long, device=indices_device)
+            vals = torch.empty((0,), dtype=X.dtype, device=device)
+            return torch.sparse_coo_tensor(idx, vals, (N, N))
+        return (torch.empty(0, dtype=torch.long, device=indices_device),
+                torch.empty(0, dtype=torch.long, device=indices_device),
+                torch.empty(0, dtype=X.dtype, device=device),
+                (N, N))
+
+    # 2) Optional precompute of per-node squared norms (used by several metrics)
+    if metric in ("cosine", "sqeuclidean", "euclidean", "rbf"):
+        X_acc = X.to(accum_dtype)
+        x2 = (X_acc * X_acc).sum(dim=1)  # [N]
+
+    if metric == "rbf" and gamma is None:
+        gamma = 1.0 / float(d)  # common default
+
+    # 3) Vectorized edge kernel: gather endpoints once; compute per-edge value
+    def _values_for(batch: slice) -> torch.Tensor:
+        bi = ei[batch]; bj = ej[batch]        # [B]
+        Xi = X.index_select(0, bi)            # [B, d]
+        Xj = X.index_select(0, bj)            # [B, d]
+
+        if metric == "dot":
+            # Dot similarity
+            return (Xi * Xj).sum(dim=1, dtype=accum_dtype).to(X.dtype)
+
+        if metric == "cosine":
+            # Cosine similarity (same definition as torch.nn.functional.cosine_similarity)
+            # Option A (manual, reusing norms):
+            num = (Xi * Xj).sum(dim=1, dtype=accum_dtype)             # x_i · x_j
+            ni  = x2[bi].clamp_min(eps).sqrt()
+            nj  = x2[bj].clamp_min(eps).sqrt()
+            return (num / (ni * nj)).to(X.dtype)
+
+        if metric in ("sqeuclidean", "euclidean", "rbf"):
+            # Use identity: ||xi - xj||^2 = ||xi||^2 + ||xj||^2 - 2·(xi·xj)
+            dot = (Xi * Xj).sum(dim=1, dtype=accum_dtype)
+            d2  = (x2[bi] + x2[bj]) - 2.0 * dot
+            d2  = d2.clamp_min(0)  # numerical safety
+            if metric == "sqeuclidean":
+                return d2.to(X.dtype)
+            if metric == "euclidean":
+                return d2.sqrt().to(X.dtype)
+            # RBF (Gaussian) kernel
+            return torch.exp(-float(gamma) * d2).to(X.dtype)
+
+        raise ValueError(f"Unsupported metric: {metric}")
+
+    # 4) One-shot or chunked evaluation over edges
+    if edges_per_chunk is None:
+        vals = _values_for(slice(None))
+    else:
+        chunks = []
+        step = int(edges_per_chunk)
+        for s in range(0, E, step):
+            chunks.append(_values_for(slice(s, min(E, s + step))))
+        vals = torch.cat(chunks, dim=0)
+
+    if return_tensor:
+        idx = torch.stack([ei.to(indices_device), ej.to(indices_device)], dim=0)
+        return torch.sparse_coo_tensor(idx, vals, (N, N))
+    else:
+        return (ei.to(indices_device), ej.to(indices_device), vals, (N, N))
+
+
+class SetEnvironmentVariable:
+    def __init__(self, key, value):
+        self.key = key
+        self.value = value
+        self.original_value = None
+        self.had_original = False
+
+    def __enter__(self):
+        if self.key in os.environ:
+            self.original_value = os.environ[self.key]
+            self.had_original = True
+        os.environ[self.key] = self.value
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.had_original:
+            os.environ[self.key] = self.original_value
+        else:
+            del os.environ[self.key]
+
+class SetAttribute:
+    def __init__(self, obj, attr, value):
+        self.obj = obj
+        self.attr = attr
+        self.value = value
+        self.original_value = None
+
+    def __enter__(self):
+        self.original_value = getattr(self.obj, self.attr)
+        setattr(self.obj, self.attr, self.value)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        setattr(self.obj, self.attr, self.original_value)

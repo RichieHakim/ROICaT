@@ -331,6 +331,48 @@ class ROI_graph(util.ROICaT_Module):
         # s_SWT[s_SWT>(1-1e-5)] = 1.0
         s_SWT[s_SWT < 0] = 0
         s_SWT[range(s_SWT.shape[0]), range(s_SWT.shape[0])] = 0
+        
+        # print('1')
+        # d_sf = helpers.sparse_neighbors_l1(
+        #     x_csr=sf,
+        #     adjacency_matrix=None,
+        #     device='cpu',
+        #     values_dtype=torch.float32,
+        #     requires_grad=True,
+        #     accum_dtype=torch.float64,
+        #     return_tensor=False,
+        #     indices_device='cpu',
+        # )
+        # d_sf = scipy.sparse.coo_matrix((d_sf[2].detach().cpu().numpy(), (d_sf[0].detach().cpu().numpy(), d_sf[1].detach().cpu().numpy())), shape=d_sf[3]).tocsr()
+        
+        # print('2')
+        # s_sf = d_sf.copy()
+        # s_sf.data = 1 - s_sf.data
+        # # s_sf.data[s_sf.data < 1e-5] = 0  ## Likely due to numerical errors, some values are < 0 and very small. Rectify to fix.
+        # s_sf[range(s_sf.shape[0]), range(s_sf.shape[0])] = 0
+        # s_sf.eliminate_zeros()
+        
+        # print('3')
+        # s_NN, s_SWT = (helpers.masked_pairwise_similarity_dense(
+        #     X=v,
+        #     adjacency=s_sf,
+        #     metric='cosine',
+        #     # gamma: float | None = None,
+        #     device='cpu',
+        #     accum_dtype=torch.float32,
+        #     return_tensor=False,
+        #     indices_device='cpu',
+        #     edges_per_chunk=1_000,
+        #     eps=1e-12
+        # ) for v in (features_NN, features_SWT))
+        
+        # s_NN, s_SWT = (
+        #     scipy.sparse.coo_matrix((v[2].detach().cpu().numpy(), (v[0].detach().cpu().numpy(), v[1].detach().cpu().numpy())), shape=v[3]).tocsr()
+        #     for v in (s_NN, s_SWT)
+        # )
+        # s_NN, s_SWT = (torch.as_tensor(v.toarray()) for v in (s_NN, s_SWT))
+        # print('4')
+        
 
         session_bool = torch.as_tensor(ROI_session_bool, device='cpu', dtype=torch.float32)
         s_sesh = torch.logical_not((session_bool @ session_bool.T).type(torch.bool))
