@@ -5,6 +5,7 @@ import functools
 import PIL
 from pathlib import Path
 import math
+import os
 
 import numpy as np
 import scipy.optimize
@@ -359,7 +360,7 @@ class Aligner(util.ROICaT_Module):
             'NullRegistration': NullRegistration,
         }
         assert method in methods_lut, f"method must be one of {methods_lut.keys()}"
-        model = methods_lut[method](
+        self.model = methods_lut[method](
             device=self.device, 
             verbose=verbose,
             **kwargs_method[method],
@@ -403,7 +404,7 @@ class Aligner(util.ROICaT_Module):
                 elif template_method == 'image':
                     im_template = template
 
-                warp_matrix = model.fit_rigid(
+                warp_matrix = self.model.fit_rigid(
                     im_template=im_template,
                     im_moving=im_moving,
                     constraint=constraint,
@@ -449,9 +450,26 @@ class Aligner(util.ROICaT_Module):
             warp_matrices = np.stack(warp_matrices, axis=0)  ## shape: (N, 3, 3)
 
             return warp_matrices
-        
+
+        def _register_safe(ims_moving, template, template_method):
+            ## handle this error by wrapping this call in a duck typed try statement: NotImplementedError: The operator 'aten::kthvalue.values' is not currently implemented for the MPS device. If you want this op to be considered for addition please comment on https://github.com/pytorch/pytorch/issues/141287 and mention use-case, that resulted in missing op as well as commit hash 2236df1770800ffea5697b11b0bb0d910b2e59e1. As a temporary fix, you can set the environment variable `PYTORCH_ENABLE_MPS_FALLBACK=1` to use the CPU as a fallback for this op. WARNING: this will be slower than running natively on MPS.
+            try:
+                warp_matrices_all_to_template = _register(ims_moving=ims_moving, template=template, template_method=template_method)  ## shape: [(3, 3) * n_images]
+            except NotImplementedError as e:
+                warnings.warn(f"Error during keypoint matching: {e}")
+                if f"is not currently implemented for the" in str(e):
+                    print(f"Attempting fallback to CPU.")
+                    self.model = methods_lut[method](
+                        device='cpu', 
+                        verbose=verbose,
+                        **kwargs_method[method],
+                    )
+                    warp_matrices_all_to_template = _register(ims_moving=ims_moving, template=template, template_method=template_method)  ## shape: [(3, 3) * n_images]
+
+            return warp_matrices_all_to_template
+
         ## Run initial registration
-        warp_matrices_all_to_template = _register(ims_moving=ims_moving, template=template, template_method=template_method)  ## shape: [(3, 3) * n_images]
+        warp_matrices_all_to_template = _register_safe(ims_moving=ims_moving, template=template, template_method=template_method)  ## shape: [(3, 3) * n_images]
 
         # check alignment
         im_template_global = ims_moving[template] if template_method == 'sequential' else template
@@ -498,7 +516,7 @@ class Aligner(util.ROICaT_Module):
                     for idx_current in idx:
                         ## Run the registration algo
                         im_current = ims_moving[idx_current]
-                        warp_matrices_all_to_all[idx_current] = (_register(ims_moving=ims_moving, template=im_current, template_method='image'))  ## returns shape: (N, 3, 3)
+                        warp_matrices_all_to_all[idx_current] = (_register_safe(ims_moving=ims_moving, template=im_current, template_method='image'))  ## returns shape: (N, 3, 3)
                         ## Make the transpose the inverse of the warp matrices
                         # warp_matrices_all_to_all[:, idx_current] = np.linalg.inv(warp_matrices_all_to_all[idx_current])  ## inv along last two axes
                         ## warp the images
