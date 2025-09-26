@@ -19,7 +19,7 @@ xxhash==3.5.0
 bokeh==3.7.3
 psutil==7.0.0
 py_cpuinfo==9.0.0
-PyYAML==6.0.2
+PyYAML==6.0.3
 mat73==0.65
 torch==2.7.1
 torchvision==0.22.1
