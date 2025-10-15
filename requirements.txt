@@ -21,7 +21,7 @@ psutil==7.0.0
 py_cpuinfo==9.0.0
 PyYAML==6.0.2
 mat73==0.65
-torch==2.7.1
+torch==2.9.0
 torchvision==0.22.1
 torchaudio==2.7.1
 selenium==4.34.2
