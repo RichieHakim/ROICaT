@@ -194,6 +194,7 @@ sudo docker run -it -p 7860:7860 --platform=linux/amd64 --shm-size=10g registry.
 - [ ] Spruce up training code
 - [ ] Switch off pickling optuna save file
 - [ ] Try training on cellpose datasets
+- [ ] Python 3.13
 #### other:
 - [ ] Write the paper
 - [ ] Make tweet about it
