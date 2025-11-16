@@ -378,8 +378,9 @@ class Clusterer(util.ROICaT_Module):
         # sswt.data[sswt.data == 0] = 1e-10
 
         min_d = np.nanmin(self.dConj.data)
-        range_d = d_crossover - min_d
-        self.d_cutoff = min_d + range_d * stringency if d_cutoff is None else d_cutoff
+        if d_cutoff is None:
+            range_d = d_crossover - min_d
+            self.d_cutoff = min_d + range_d * stringency
         print(f'Pruning similarity graphs with d_cutoff = {self.d_cutoff}...') if self._verbose else None
 
         self.graph_pruned = self.dConj.copy()
@@ -531,7 +532,7 @@ class Clusterer(util.ROICaT_Module):
             labels = self.hdbs.labels_[:-1]
             self.labels = labels
 
-            print(f'Initial number of violating clusters: {len(np.unique(labels)[np.array([(session_bool[labels==u].sum(0)>1).sum().item() for u in np.unique(labels)]) > 0])}') if self._verbose else None
+            print(f'Initial number of violating clusters: {len(np.unique(labels)[np.array([(session_bool[labels==u].sum(0)>1).sum().item() for u in np.unique(labels)]) > 0])}, d_clusterMerge={d_clusterMerge:.2f}') if self._verbose else None
 
             ## Split up labels with multiple ROIs per session
             ## The below code is a bit of a mess, but it works.
@@ -1437,6 +1438,9 @@ def score_labels(
         
         N_all = TN + FP
         P_all = TP + FN
+        pc_precision = TP / (TP + FP) if (TP + FP) > 0 else 0
+        pc_recall = TP / (TP + FN) if (TP + FN) > 0 else 0
+        pc_f1 = (2 * pc_precision * pc_recall) / (pc_precision + pc_recall) if (pc_precision + pc_recall) > 0 else 0
         pc_accuracy_norm = (TP/P_all + TN/N_all) / (TP/P_all + TN/N_all + FP/N_all + FN/P_all)
     else:
         pc_accuracy = None
@@ -1456,6 +1460,10 @@ def score_labels(
         'pair_confusion_matrix': pair_confusion,
         'pair_confusion_accuracy_score': float(pc_accuracy),
         'pair_confusion_accuracy_norm_score': float(pc_accuracy_norm),
+        'pair_confusion_precision_score': float(pc_precision) if pc_precision is not None else None,
+        'pair_confusion_recall_score': float(pc_recall) if pc_recall is not None else None,
+        'pair_confusion_f1_score': float(pc_f1) if pc_f1 is not None else None,
+        'labels_test': labels_test.tolist(),
         'ignore_negOne': ignore_negOne,
         'idx_hungarian': hi,
     }
@@ -1599,9 +1607,10 @@ def plot_quality_metrics(quality_metrics: dict, labels: Union[np.ndarray, list],
     axs[1,0].set_xlabel('sample_silhouette score');
     axs[1,0].set_ylabel('roi sample counts');
 
-    _, counts = np.unique(labels[labels!=-1], return_counts=True)
+    u, c = np.unique((v:=np.array(labels))[v!=-1], return_counts=True)
+    n_sesh = np.bincount(c)
 
-    axs[1,1].hist(counts, n_sessions*2 + 1, range=(0, n_sessions+1));
+    axs[1,1].bar(np.arange(len(n_sesh)), n_sesh);
     axs[1,1].set_xlabel('n_sessions')
     axs[1,1].set_ylabel('cluster counts');
     
