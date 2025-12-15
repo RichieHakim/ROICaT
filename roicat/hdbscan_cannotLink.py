@@ -12,6 +12,7 @@ import scipy.sparse.csgraph as sp_csgraph
 from fast_hdbscan.disjoint_set import ds_rank_create, ds_find, ds_union_by_rank
 from fast_hdbscan.hdbscan import clusters_from_spanning_tree
 
+
 Number = Union[int, float]
 CSR = sp.csr_matrix
 
@@ -56,10 +57,10 @@ class MergeConstraint:
         Build a MergeConstraint from a dense (N,N) bool array or sparse CSR bool matrix.
 
         Args:
-            cannot_link:
+            cannot_link (Union[np.ndarray, CSR]):
                 Dense or sparse structure where cannot_link[i,j] == True means
                 points i and j must never be merged into the same MST component.
-            n_points:
+            n_points (int):
                 Number of points, N.
 
         Returns:
@@ -80,7 +81,9 @@ class MergeConstraint:
             cannot_link_csr.sum_duplicates()
             cannot_link_csr.sort_indices()
 
-            def any_cannot_link_across_sparse(comp_a: np.ndarray, comp_b: np.ndarray) -> bool:
+            def any_cannot_link_across_sparse(
+                comp_a: np.ndarray, comp_b: np.ndarray
+            ) -> bool:
                 comp_b_set = set(int(x) for x in comp_b.tolist())
                 for idx_a in comp_a.tolist():
                     row_indices = cannot_link_csr.getrow(int(idx_a)).indices
@@ -117,7 +120,9 @@ class MergeConstraint:
         np.fill_diagonal(cannot_link_dense, False)
         cannot_link_dense = np.logical_or(cannot_link_dense, cannot_link_dense.T)
 
-        def any_cannot_link_across_dense(comp_a: np.ndarray, comp_b: np.ndarray) -> bool:
+        def any_cannot_link_across_dense(
+            comp_a: np.ndarray, comp_b: np.ndarray
+        ) -> bool:
             return bool(np.any(cannot_link_dense[np.ix_(comp_a, comp_b)]))
 
         def pair_cannot_link_dense(i: int, j: int) -> bool:
@@ -157,9 +162,19 @@ class MergeConstraint:
         This is intentionally thin and may be slow for large components because
         it falls back to nested loops to answer:
             "is there any forbidden pair across these two components?"
+
+        Args:
+            pair_cannot_link (Callable[[int, int], bool]):
+                A function that returns True if points i and j cannot be in the same cluster.
+
+        Returns:
+            (MergeConstraint):
+                A constraint object.
         """
 
-        def any_cannot_link_across_func(comp_a: np.ndarray, comp_b: np.ndarray) -> bool:
+        def any_cannot_link_across_func(
+            comp_a: np.ndarray, comp_b: np.ndarray
+        ) -> bool:
             for i in comp_a.tolist():
                 for j in comp_b.tolist():
                     if pair_cannot_link(int(i), int(j)):
@@ -191,6 +206,20 @@ def _has_cannot_link_violation_csr_numba(
 
     Assumes CSR adjacency; does not require symmetry but will catch violations
     as long as at least one direction of (i,j) is present.
+
+    Args:
+        labels (np.ndarray):
+            Cluster labels for each point.
+        cannot_link_indptr (np.ndarray):
+            CSR indptr array for the cannot-link graph.
+        cannot_link_indices (np.ndarray):
+            CSR indices array for the cannot-link graph.
+        noise_label (int):
+            The label assigned to noise points.
+
+    Returns:
+        (bool):
+            True if a cannot-link violation is found.
     """
     n = labels.shape[0]
     for i in range(n):
@@ -218,20 +247,45 @@ def _maybe_split_labels_if_cannot_link_violated(
     """
     If posthoc cleanup is requested, avoid doing any splitting work unless
     there is an actual cannot-link violation.
+
+    Args:
+        labels (np.ndarray):
+            The cluster labels to check and potentially split.
+        merge_constraint (MergeConstraint):
+            The merge constraint object containing cannot-link information.
+        distances (Optional[Union[np.ndarray, CSR]]):
+            The distance matrix, used for splitting based on graph components.
+        noise_label (int):
+            The label assigned to noise points.
+
+    Returns:
+        (np.ndarray):
+            The (potentially modified) labels array.
     """
     labels_in = np.asarray(labels, dtype=np.int64)
 
     if merge_constraint.pair_cannot_link is None:
-        raise ValueError("posthoc_cleanup requires merge_constraint.pair_cannot_link to be available.")
+        raise ValueError(
+            "posthoc_cleanup requires merge_constraint.pair_cannot_link to be available."
+        )
 
     has_violation = False
 
     # ---- Path 1: numba CSR scan if payload exists ----
-    if (merge_constraint.cannot_link_indptr is not None) and (merge_constraint.cannot_link_indices is not None):
-        cannot_link_indptr = np.asarray(merge_constraint.cannot_link_indptr, dtype=np.int64)
-        cannot_link_indices = np.asarray(merge_constraint.cannot_link_indices, dtype=np.int64)
+    if (merge_constraint.cannot_link_indptr is not None) and (
+        merge_constraint.cannot_link_indices is not None
+    ):
+        cannot_link_indptr = np.asarray(
+            merge_constraint.cannot_link_indptr, dtype=np.int64
+        )
+        cannot_link_indices = np.asarray(
+            merge_constraint.cannot_link_indices, dtype=np.int64
+        )
 
-        if cannot_link_indptr.ndim == 1 and cannot_link_indptr.size == labels_in.shape[0] + 1:
+        if (
+            cannot_link_indptr.ndim == 1
+            and cannot_link_indptr.size == labels_in.shape[0] + 1
+        ):
             has_violation = bool(
                 _has_cannot_link_violation_csr_numba(
                     labels_in,
@@ -245,7 +299,9 @@ def _maybe_split_labels_if_cannot_link_violated(
 
     # ---- Path 2: pair iterator if available ----
     elif merge_constraint.iter_cannot_link_pairs is not None:
-        violations = find_cannot_link_violations(labels_in, merge_constraint=merge_constraint, noise_label=int(noise_label))
+        violations = find_cannot_link_violations(
+            labels_in, merge_constraint=merge_constraint, noise_label=int(noise_label)
+        )
         has_violation = bool(violations.shape[0] > 0)
 
     # ---- Path 3: cannot cheaply check -> conservatively split ----
@@ -267,6 +323,16 @@ def _maybe_split_labels_if_cannot_link_violated(
 def _dsu_find_numba(parent: np.ndarray, x: int) -> int:
     """
     DSU find with path compression (Numba).
+
+    Args:
+        parent (np.ndarray):
+            The parent array for the disjoint set union structure.
+        x (int):
+            The element to find.
+
+    Returns:
+        (int):
+            The root of the set containing x.
     """
     root = x
     while parent[root] != root:
@@ -289,6 +355,20 @@ def _csr_row_contains_numba(
 ) -> bool:
     """
     Linear membership test in a CSR row (Numba-safe, does not assume sorting).
+
+    Args:
+        indptr (np.ndarray):
+            CSR indptr array.
+        indices (np.ndarray):
+            CSR indices array.
+        row (int):
+            The row to search in.
+        value (int):
+            The value to search for.
+
+    Returns:
+        (bool):
+            True if the value is found in the row.
     """
     start = int(indptr[row])
     end = int(indptr[row + 1])
@@ -315,6 +395,18 @@ def _component_has_conflict_with_root_numba(
     For each node i in the smaller component:
         for each forbidden neighbor j in cannot_link[i]:
             if find(j) == root_large -> conflict
+
+    Args:
+        root_small (int): The root of the smaller component.
+        root_large (int): The root of the larger component.
+        parent (np.ndarray): DSU parent array.
+        head (np.ndarray): Head of the linked list for each component.
+        next_node (np.ndarray): Next node in the linked list for each component.
+        cannot_link_indptr (np.ndarray): CSR indptr for cannot-link constraints.
+        cannot_link_indices (np.ndarray): CSR indices for cannot-link constraints.
+
+    Returns:
+        bool: True if a conflict exists, False otherwise.
     """
     node = head[root_small]
     while node != -1:
@@ -342,10 +434,19 @@ def _constrained_kruskal_mst_csr_strict_sorted_numba(
 
     Inputs u_sorted, v_sorted, w_sorted MUST be sorted by increasing w.
 
+    Args:
+        u_sorted (np.ndarray): Source nodes of edges, sorted by weight.
+        v_sorted (np.ndarray): Destination nodes of edges, sorted by weight.
+        w_sorted (np.ndarray): Weights of edges, sorted.
+        cannot_link_indptr (np.ndarray): CSR indptr for cannot-link constraints.
+        cannot_link_indices (np.ndarray): CSR indices for cannot-link constraints.
+        n_points (int): Number of points.
+
     Returns:
-        mst_edges (np.ndarray):
-            Shape (<=N-1, 3), float64. Columns: [u, v, w]
-            This may be a forest if constraints prevent full connectivity.
+        (np.ndarray):
+            mst_edges (np.ndarray):
+                Shape (<=N-1, 3), float64. Columns: [u, v, w]
+                This may be a forest if constraints prevent full connectivity.
     """
     parent = np.empty(n_points, dtype=np.int32)
     size = np.empty(n_points, dtype=np.int32)
@@ -373,9 +474,9 @@ def _constrained_kruskal_mst_csr_strict_sorted_numba(
         # --- REAL FIX (robustness): always reject a directly-forbidden edge ---
         # This makes strict=True correct even if a user accidentally provides a
         # one-directional CSR adjacency (e.g. upper-triangular constraints).
-        if _csr_row_contains_numba(cannot_link_indptr, cannot_link_indices, a, b) or _csr_row_contains_numba(
-            cannot_link_indptr, cannot_link_indices, b, a
-        ):
+        if _csr_row_contains_numba(
+            cannot_link_indptr, cannot_link_indices, a, b
+        ) or _csr_row_contains_numba(cannot_link_indptr, cannot_link_indices, b, a):
             continue
 
         ra = _dsu_find_numba(parent, a)
@@ -429,6 +530,14 @@ def _ensure_csr_distance_matrix(distances: Union[np.ndarray, CSR]) -> CSR:
     IMPORTANT:
         - Do NOT call eliminate_zeros(): explicit off-diagonal zeros are meaningful edges.
         - Remove diagonal entries structurally so they do not affect core distances.
+
+    Args:
+        distances (Union[np.ndarray, CSR]):
+            The precomputed distance matrix.
+
+    Returns:
+        (CSR):
+            The validated and sanitized CSR distance matrix.
     """
     if sp.isspmatrix_csr(distances):
         distance_matrix_csr = distances.copy().astype(np.float64)
@@ -441,7 +550,9 @@ def _ensure_csr_distance_matrix(distances: Union[np.ndarray, CSR]) -> CSR:
 
     n_points = int(distance_matrix_csr.shape[0])
     if n_points == 0 or distance_matrix_csr.shape[1] != n_points:
-        raise ValueError("Precomputed distance matrix must be non-empty and square (N,N).")
+        raise ValueError(
+            "Precomputed distance matrix must be non-empty and square (N,N)."
+        )
 
     # ---- Remove diagonal structurally (preserves off-diagonal explicit zeros) ----
     coo = distance_matrix_csr.tocoo()
@@ -470,6 +581,14 @@ def _symmetrize_min_keep_present(distance_matrix_csr: CSR) -> CSR:
     IMPORTANT:
         - Preserve explicit off-diagonal zeros.
         - Do not use eliminate_zeros() or bool-mask multiply patterns (they often drop zeros).
+
+    Args:
+        distance_matrix_csr (CSR):
+            The sparse distance matrix.
+
+    Returns:
+        (CSR):
+            The symmetrized sparse distance matrix.
     """
     A = distance_matrix_csr.tocsr(copy=True)
     A.sum_duplicates()
@@ -530,6 +649,18 @@ def _core_distances_from_sparse_rows(
 ) -> np.ndarray:
     """
     Compute HDBSCAN core distances from a sparse precomputed distance graph.
+
+    Args:
+        distance_matrix_csr (CSR):
+            The sparse distance matrix.
+        min_samples (int):
+            The number of samples in a neighborhood for a point to be considered a core point.
+        sample_weights (Optional[np.ndarray]):
+            Weights for each sample.
+
+    Returns:
+        (np.ndarray):
+            The core distances for each point.
     """
     n_points = int(distance_matrix_csr.shape[0])
     core_distances = np.empty(n_points, dtype=np.float64)
@@ -544,9 +675,13 @@ def _core_distances_from_sparse_rows(
                 core_distances[idx_point] = np.inf
                 continue
 
-            neighbor_distances_sorted = np.sort(distance_matrix_csr.data[start:end], kind="mergesort")
+            neighbor_distances_sorted = np.sort(
+                distance_matrix_csr.data[start:end], kind="mergesort"
+            )
             if degree >= int(min_samples):
-                core_distances[idx_point] = float(neighbor_distances_sorted[int(min_samples) - 1])
+                core_distances[idx_point] = float(
+                    neighbor_distances_sorted[int(min_samples) - 1]
+                )
             else:
                 core_distances[idx_point] = float(neighbor_distances_sorted[-1])
         return core_distances
@@ -571,7 +706,9 @@ def _core_distances_from_sparse_rows(
 
         reached = False
         for idx_order in order.tolist():
-            cumulative_weight += float(sample_weights[int(neighbor_indices[int(idx_order)])])
+            cumulative_weight += float(
+                sample_weights[int(neighbor_indices[int(idx_order)])]
+            )
             if cumulative_weight >= target_weight:
                 core_distances[idx_point] = float(neighbor_distances[int(idx_order)])
                 reached = True
@@ -591,6 +728,16 @@ def _mutual_reachability_edges_upper_triangle(
     """
     Build an undirected edge list (u, v, w) from the upper triangle of a sparse
     distance matrix, with mutual reachability weights.
+
+    Args:
+        distance_matrix_csr (CSR):
+            The sparse distance matrix.
+        core_distances (np.ndarray):
+            The core distances for each point.
+
+    Returns:
+        (Tuple[np.ndarray, np.ndarray, np.ndarray]):
+            A tuple containing the source nodes, destination nodes, and weights of the edges.
     """
     coo = sp.triu(distance_matrix_csr, k=1).tocoo()
     if coo.nnz == 0:
@@ -617,6 +764,16 @@ def _kruskal_mst_unconstrained(
 ) -> np.ndarray:
     """
     Standard Kruskal MST on an undirected weighted graph.
+
+    Args:
+        n_points (int): The number of points.
+        u (np.ndarray): Source nodes of edges.
+        v (np.ndarray): Destination nodes of edges.
+        w (np.ndarray): Weights of edges.
+
+    Returns:
+        (np.ndarray):
+            The minimum spanning tree edges.
     """
     order = np.argsort(w, kind="mergesort")
     u_sorted = u[order]
@@ -662,8 +819,22 @@ def _kruskal_mst_constrained_hard(
         Skip edges whose merge would place any cannot-link pair in one component.
 
     This returns a spanning forest if constraints prevent full connectivity.
+
+    Args:
+        n_points (int): The number of points.
+        u (np.ndarray): Source nodes of edges.
+        v (np.ndarray): Destination nodes of edges.
+        w (np.ndarray): Weights of edges.
+        merge_constraint (MergeConstraint): The merge constraint object.
+
+    Returns:
+        (np.ndarray):
+            The constrained minimum spanning tree edges.
     """
-    if merge_constraint.cannot_link_indptr is None or merge_constraint.cannot_link_indices is None:
+    if (
+        merge_constraint.cannot_link_indptr is None
+        or merge_constraint.cannot_link_indices is None
+    ):
         raise ValueError(
             "strict=True requires merge_constraint built from a cannot-link matrix "
             "(must provide CSR payload arrays)."
@@ -675,10 +846,14 @@ def _kruskal_mst_constrained_hard(
     w_sorted = np.asarray(w[order], dtype=np.float64)
 
     cannot_link_indptr = np.asarray(merge_constraint.cannot_link_indptr, dtype=np.int64)
-    cannot_link_indices = np.asarray(merge_constraint.cannot_link_indices, dtype=np.int32)
+    cannot_link_indices = np.asarray(
+        merge_constraint.cannot_link_indices, dtype=np.int32
+    )
 
     if cannot_link_indptr.ndim != 1 or cannot_link_indptr.size != int(n_points) + 1:
-        raise ValueError("merge_constraint.cannot_link_indptr must have shape (N+1,) for strict=True.")
+        raise ValueError(
+            "merge_constraint.cannot_link_indptr must have shape (N+1,) for strict=True."
+        )
 
     mst_edges = _constrained_kruskal_mst_csr_strict_sorted_numba(
         u_sorted,
@@ -701,6 +876,16 @@ def _choose_large_finite_penalty(
 ) -> float:
     """
     Map user_penalty to a large finite value if the user passes +inf.
+
+    Args:
+        distances (Union[np.ndarray, CSR]): The distance matrix.
+        user_penalty (float): The user-provided penalty.
+        scale_quantile (float): The quantile to use for scaling.
+        factor (float): The factor to multiply the base value by.
+
+    Returns:
+        (float):
+            A large finite penalty value.
     """
     if np.isfinite(user_penalty):
         return float(user_penalty)
@@ -726,6 +911,15 @@ def _connect_components_with_penalty_edges(
     """
     If mst_edges is a forest, connect its components with penalty-weight edges
     so that we return an (N-1, 3) tree.
+
+    Args:
+        n_points (int): The number of points.
+        mst_edges (np.ndarray): The MST edges.
+        penalty (float): The penalty to use for connecting components.
+
+    Returns:
+        (np.ndarray):
+            The connected MST edges.
     """
     n_points = int(n_points)
     if mst_edges.shape[0] >= n_points - 1:
@@ -767,6 +961,14 @@ def _sanitize_mst_edge_weights(
 ) -> np.ndarray:
     """
     Replace any non-finite edge weights in the MST with a large finite penalty.
+
+    Args:
+        mst_edges (np.ndarray): The MST edges.
+        finite_penalty (float): The penalty to use.
+
+    Returns:
+        (np.ndarray):
+            The sanitized MST edges.
     """
     bad = ~np.isfinite(mst_edges[:, 2])
     if np.any(bad):
@@ -775,9 +977,18 @@ def _sanitize_mst_edge_weights(
     return mst_edges
 
 
-def connected_components_from_distance_graph(distances: Union[np.ndarray, CSR]) -> np.ndarray:
+def connected_components_from_distance_graph(
+    distances: Union[np.ndarray, CSR]
+) -> np.ndarray:
     """
     Compute connected components from the support of the precomputed distance graph.
+
+    Args:
+        distances (Union[np.ndarray, CSR]): The distance matrix.
+
+    Returns:
+        (np.ndarray):
+            The component labels for each point.
     """
     if isinstance(distances, np.ndarray):
         n_points = int(distances.shape[0])
@@ -791,7 +1002,9 @@ def connected_components_from_distance_graph(distances: Union[np.ndarray, CSR]) 
     adjacency.setdiag(0)
     adjacency.eliminate_zeros()
 
-    n_components, labels = sp_csgraph.connected_components(csgraph=adjacency, directed=False, return_labels=True)
+    n_components, labels = sp_csgraph.connected_components(
+        csgraph=adjacency, directed=False, return_labels=True
+    )
     _ = n_components
     return labels.astype(np.int64, copy=False)
 
@@ -804,6 +1017,15 @@ def find_cannot_link_violations(
 ) -> np.ndarray:
     """
     Enumerate cannot-link violations in the final cluster labels.
+
+    Args:
+        labels (np.ndarray): The cluster labels.
+        merge_constraint (MergeConstraint): The merge constraint object.
+        noise_label (int): The label for noise points.
+
+    Returns:
+        (np.ndarray):
+            An array of pairs of indices that violate the cannot-link constraints.
     """
     labels = np.asarray(labels)
     if merge_constraint.iter_cannot_link_pairs is None:
@@ -833,6 +1055,16 @@ def split_clusters_to_respect_cannot_link(
 ) -> np.ndarray:
     """
     Post-hoc cleanup: split any cluster that violates cannot-link constraints.
+
+    Args:
+        labels (np.ndarray): The cluster labels.
+        merge_constraint (MergeConstraint): The merge constraint object.
+        distances (Optional[Union[np.ndarray, CSR]]): The distance matrix.
+        noise_label (int): The label for noise points.
+
+    Returns:
+        (np.ndarray):
+            The modified labels after splitting.
     """
     labels_in = np.asarray(labels).astype(np.int64, copy=True)
 
@@ -885,7 +1117,9 @@ def split_clusters_to_respect_cannot_link(
             i = int(idx_list[a_i])
             for a_j in range(a_i + 1, len(idx_list)):
                 j = int(idx_list[a_j])
-                if merge_constraint.pair_cannot_link(i, j) or merge_constraint.pair_cannot_link(j, i):
+                if merge_constraint.pair_cannot_link(
+                    i, j
+                ) or merge_constraint.pair_cannot_link(j, i):
                     adjacency_conflict[i].append(j)
                     adjacency_conflict[j].append(i)
 
@@ -917,7 +1151,9 @@ def split_clusters_to_respect_cannot_link(
         for color in colors_present:
             if int(color) == 0:
                 continue
-            nodes_color = [node for node, c in color_of_node.items() if int(c) == int(color)]
+            nodes_color = [
+                node for node, c in color_of_node.items() if int(c) == int(color)
+            ]
             labels_in[np.asarray(nodes_color, dtype=np.int64)] = int(next_label)
             next_label += 1
 
@@ -939,9 +1175,37 @@ def fast_hdbscan_precomputed(
     cluster_selection_persistence: float = 0.0,
     sample_weights: Optional[np.ndarray] = None,
     return_trees: bool = False,
-) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray], Optional[object], Optional[np.ndarray]]:
+) -> Tuple[
+    np.ndarray, np.ndarray, Optional[np.ndarray], Optional[object], Optional[np.ndarray]
+]:
     """
     Run fast_hdbscan on a precomputed distance matrix (dense or sparse CSR).
+
+    Args:
+        distances (Union[np.ndarray, CSR]):
+            The precomputed distance matrix.
+        min_cluster_size (int):
+            The minimum size of clusters.
+        min_samples (Optional[int]):
+            The number of samples in a neighborhood for a point to be considered as a core point.
+        cluster_selection_method (str):
+            The method used to select clusters from the condensed tree.
+        allow_single_cluster (bool):
+            Whether to allow single-cluster solutions.
+        max_cluster_size (Number):
+            The maximum size of clusters.
+        cluster_selection_epsilon (float):
+            A distance threshold. Clusters below this value will be merged.
+        cluster_selection_persistence (float):
+            A measure of stability for cluster selection.
+        sample_weights (Optional[np.ndarray]):
+            Weights for each sample.
+        return_trees (bool):
+            Whether to return the condensed tree and linkage tree.
+
+    Returns:
+        (Tuple):
+            A tuple containing labels, probabilities, and optionally the condensed and linkage trees.
     """
     distance_matrix_csr = _ensure_csr_distance_matrix(distances)
     distance_matrix_csr = _symmetrize_min_keep_present(distance_matrix_csr)
@@ -958,27 +1222,29 @@ def fast_hdbscan_precomputed(
         min_samples=int(min_samples),
         sample_weights=sample_weights,
     )
-    u, v, w = _mutual_reachability_edges_upper_triangle(distance_matrix_csr, core_distances=core_distances)
+    u, v, w = _mutual_reachability_edges_upper_triangle(
+        distance_matrix_csr, core_distances=core_distances
+    )
     mst_edges = _kruskal_mst_unconstrained(n_points=n_points, u=u, v=v, w=w)
 
     if mst_edges.shape[0] < n_points - 1:
-        mst_edges = _connect_components_with_penalty_edges(n_points=n_points, mst_edges=mst_edges, penalty=np.inf)
+        mst_edges = _connect_components_with_penalty_edges(
+            n_points=n_points, mst_edges=mst_edges, penalty=np.inf
+        )
 
     finite_penalty = _choose_large_finite_penalty(distances, user_penalty=np.inf)
     mst_edges = _sanitize_mst_edge_weights(mst_edges, finite_penalty=finite_penalty)
 
-    return (
-        *clusters_from_spanning_tree(
-            mst_edges,
-            min_cluster_size=int(min_cluster_size),
-            cluster_selection_method=str(cluster_selection_method),
-            max_cluster_size=max_cluster_size,
-            allow_single_cluster=bool(allow_single_cluster),
-            cluster_selection_epsilon=float(cluster_selection_epsilon),
-            cluster_selection_persistence=float(cluster_selection_persistence),
-            sample_weights=sample_weights,
-        ),
-    )[: (None if return_trees else 2)]
+    return (*clusters_from_spanning_tree(
+        mst_edges,
+        min_cluster_size=int(min_cluster_size),
+        cluster_selection_method=str(cluster_selection_method),
+        max_cluster_size=max_cluster_size,
+        allow_single_cluster=bool(allow_single_cluster),
+        cluster_selection_epsilon=float(cluster_selection_epsilon),
+        cluster_selection_persistence=float(cluster_selection_persistence),
+        sample_weights=sample_weights,
+    ),)[: (None if return_trees else 2)]
 
 
 def fast_hdbscan_precomputed_with_merge_constraint(
@@ -997,9 +1263,45 @@ def fast_hdbscan_precomputed_with_merge_constraint(
     cluster_selection_persistence: float = 0.0,
     sample_weights: Optional[np.ndarray] = None,
     return_trees: bool = False,
-) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray], Optional[object], Optional[np.ndarray]]:
+) -> Tuple[
+    np.ndarray, np.ndarray, Optional[np.ndarray], Optional[object], Optional[np.ndarray]
+]:
     """
     Run fast_hdbscan on a precomputed distance matrix with merge constraints.
+
+    Args:
+        distances (Union[np.ndarray, CSR]):
+            The precomputed distance matrix.
+        merge_constraint (MergeConstraint):
+            The merge constraint object.
+        strict (bool):
+            Whether to strictly enforce constraints.
+        penalty (float):
+            The penalty for violating constraints in soft mode.
+        posthoc_cleanup (bool):
+            Whether to perform post-hoc cleanup of violations.
+        min_cluster_size (int):
+            The minimum size of clusters.
+        min_samples (Optional[int]):
+            The number of samples in a neighborhood for a point to be considered as a core point.
+        cluster_selection_method (str):
+            The method used to select clusters.
+        allow_single_cluster (bool):
+            Whether to allow single-cluster solutions.
+        max_cluster_size (Number):
+            The maximum size of clusters.
+        cluster_selection_epsilon (float):
+            Distance threshold for merging clusters.
+        cluster_selection_persistence (float):
+            Stability measure for cluster selection.
+        sample_weights (Optional[np.ndarray]):
+            Weights for each sample.
+        return_trees (bool):
+            Whether to return the condensed and linkage trees.
+
+    Returns:
+        (Tuple):
+            A tuple containing labels, probabilities, and optionally trees.
     """
     if not np.isfinite(penalty) and not np.isinf(penalty):
         raise ValueError("penalty must be finite or +inf.")
@@ -1019,7 +1321,9 @@ def fast_hdbscan_precomputed_with_merge_constraint(
         min_samples=int(min_samples),
         sample_weights=sample_weights,
     )
-    u, v, w = _mutual_reachability_edges_upper_triangle(distance_matrix_csr, core_distances=core_distances)
+    u, v, w = _mutual_reachability_edges_upper_triangle(
+        distance_matrix_csr, core_distances=core_distances
+    )
 
     if bool(strict):
         mst_edges = _kruskal_mst_constrained_hard(
@@ -1031,22 +1335,32 @@ def fast_hdbscan_precomputed_with_merge_constraint(
         )
     else:
         if merge_constraint.pair_cannot_link is None:
-            raise ValueError("strict=False requires merge_constraint.pair_cannot_link to be available.")
+            raise ValueError(
+                "strict=False requires merge_constraint.pair_cannot_link to be available."
+            )
 
         w_inflated = w.copy()
         for idx_edge in range(u.shape[0]):
             a = int(u[idx_edge])
             b = int(v[idx_edge])
-            if merge_constraint.pair_cannot_link(a, b) or merge_constraint.pair_cannot_link(b, a):
-                w_inflated[idx_edge] = float(max(float(w_inflated[idx_edge]), float(penalty)))
+            if merge_constraint.pair_cannot_link(
+                a, b
+            ) or merge_constraint.pair_cannot_link(b, a):
+                w_inflated[idx_edge] = float(
+                    max(float(w_inflated[idx_edge]), float(penalty))
+                )
 
         mst_edges = _kruskal_mst_unconstrained(n_points=n_points, u=u, v=v, w=w_inflated)
 
     # Always connect components at +inf so merges occur only at the top of the hierarchy.
     if mst_edges.shape[0] < n_points - 1:
-        mst_edges = _connect_components_with_penalty_edges(n_points=n_points, mst_edges=mst_edges, penalty=np.inf)
+        mst_edges = _connect_components_with_penalty_edges(
+            n_points=n_points, mst_edges=mst_edges, penalty=np.inf
+        )
 
-    finite_penalty = _choose_large_finite_penalty(distances, user_penalty=float(penalty))
+    finite_penalty = _choose_large_finite_penalty(
+        distances, user_penalty=float(penalty)
+    )
     mst_edges = _sanitize_mst_edge_weights(mst_edges, finite_penalty=finite_penalty)
 
     results = clusters_from_spanning_tree(
@@ -1088,9 +1402,31 @@ def fast_hdbscan_precomputed_with_cannot_link(
     cluster_selection_persistence: float = 0.0,
     sample_weights: Optional[np.ndarray] = None,
     return_trees: bool = False,
-) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray], Optional[object], Optional[np.ndarray]]:
+) -> Tuple[
+    np.ndarray, np.ndarray, Optional[np.ndarray], Optional[object], Optional[np.ndarray]
+]:
     """
     Backwards-compatible wrapper: cannot-link constraints via dense/sparse matrix.
+
+    Args:
+        distances (Union[np.ndarray, CSR]): The precomputed distance matrix.
+        cannot_link (Union[np.ndarray, CSR]): The cannot-link constraints.
+        strict (bool): Whether to strictly enforce constraints.
+        penalty (float): The penalty for violating constraints in soft mode.
+        posthoc_cleanup (bool): Whether to perform post-hoc cleanup.
+        min_cluster_size (int): Minimum size of clusters.
+        min_samples (Optional[int]): Number of samples for a core point.
+        cluster_selection_method (str): Method for cluster selection.
+        allow_single_cluster (bool): Whether to allow single-cluster solutions.
+        max_cluster_size (Number): Maximum size of clusters.
+        cluster_selection_epsilon (float): Distance threshold for merging.
+        cluster_selection_persistence (float): Stability measure for selection.
+        sample_weights (Optional[np.ndarray]): Weights for each sample.
+        return_trees (bool): Whether to return trees.
+
+    Returns:
+        (Tuple):
+            A tuple containing labels, probabilities, and optionally trees.
     """
     distance_matrix_csr = _ensure_csr_distance_matrix(distances)
     n_points = int(distance_matrix_csr.shape[0])
@@ -1118,12 +1454,6 @@ def fast_hdbscan_precomputed_with_cannot_link(
     )
 
 
-
-
-
-
-
-
 #############################
 ###### TESTING SUITE ########
 #############################
@@ -1135,17 +1465,10 @@ import scipy.spatial.distance as ssd
 from sklearn.metrics import adjusted_rand_score
 
 from fast_hdbscan.hdbscan import fast_hdbscan as fast_hdbscan_feature_space
-# from fast_hdbscan.precomputed import (
-#     MergeConstraint,
-#     find_cannot_link_violations,
-#     split_clusters_to_respect_cannot_link,
-#     fast_hdbscan_precomputed,
-#     fast_hdbscan_precomputed_with_cannot_link,
-#     fast_hdbscan_precomputed_with_merge_constraint,
-# )
 
 
 def _dense_pairwise_distances_euclidean(data: np.ndarray) -> np.ndarray:
+    """Computes dense pairwise Euclidean distances."""
     condensed = ssd.pdist(data, metric="euclidean")
     dense = ssd.squareform(condensed)
     return dense.astype(np.float64, copy=False)
@@ -1168,10 +1491,13 @@ def _dense_to_knn_csr(distances: np.ndarray, *, k: int) -> sp.csr_matrix:
                 rows.append(int(i))
                 cols.append(int(j))
                 vals.append(float(d[int(j)]))
-    return sp.csr_matrix((np.asarray(vals), (np.asarray(rows), np.asarray(cols))), shape=(n, n))
+    return sp.csr_matrix(
+        (np.asarray(vals), (np.asarray(rows), np.asarray(cols))), shape=(n, n)
+    )
 
 
 def test_precomputed_matches_feature_space_on_dense_distances():
+    """Tests if precomputed HDBSCAN matches feature-space HDBSCAN on dense distances."""
     rng = np.random.default_rng(0)
 
     data_a = rng.normal(loc=-2.0, scale=0.3, size=(40, 2))
@@ -1204,6 +1530,7 @@ def test_precomputed_matches_feature_space_on_dense_distances():
 
 
 def test_empty_cannot_link_dense_is_noop_vs_unconstrained():
+    """Tests if an empty dense cannot-link matrix is a no-op compared to unconstrained."""
     rng = np.random.default_rng(1)
 
     data = rng.normal(size=(60, 3)).astype(np.float64, copy=False)
@@ -1231,6 +1558,7 @@ def test_empty_cannot_link_dense_is_noop_vs_unconstrained():
 
 
 def test_empty_cannot_link_sparse_is_noop_vs_unconstrained():
+    """Tests if an empty sparse cannot-link matrix is a no-op compared to unconstrained."""
     rng = np.random.default_rng(11)
 
     data = rng.normal(size=(50, 2)).astype(np.float64, copy=False)
@@ -1258,6 +1586,7 @@ def test_empty_cannot_link_sparse_is_noop_vs_unconstrained():
 
 
 def test_strict_true_requires_matrix_payload_for_callable():
+    """Tests if strict=True requires a matrix payload for a callable constraint."""
     rng = np.random.default_rng(12)
     data = rng.normal(size=(12, 2)).astype(np.float64, copy=False)
     distances = _dense_pairwise_distances_euclidean(data)
@@ -1282,10 +1611,13 @@ def test_strict_true_requires_matrix_payload_for_callable():
     except ValueError:
         did_raise = True
 
-    assert did_raise, "strict=True should require a matrix-backed MergeConstraint (CSR payload arrays)."
+    assert (
+        did_raise
+    ), "strict=True should require a matrix-backed MergeConstraint (CSR payload arrays)."
 
 
 def test_soft_mode_callable_matches_dense_matrix_behavior():
+    """Tests if soft mode with a callable matches dense matrix behavior."""
     rng = np.random.default_rng(2)
 
     data = rng.normal(size=(35, 2)).astype(np.float64, copy=False)
@@ -1303,7 +1635,9 @@ def test_soft_mode_callable_matches_dense_matrix_behavior():
         cannot_link_dense[i, j] = True
         cannot_link_dense[j, i] = True
 
-    merge_from_dense = MergeConstraint.from_cannot_link_matrix(cannot_link_dense, n_points=n)
+    merge_from_dense = MergeConstraint.from_cannot_link_matrix(
+        cannot_link_dense, n_points=n
+    )
 
     def pair_cannot_link(i: int, j: int) -> bool:
         return bool(cannot_link_dense[int(i), int(j)])
@@ -1335,6 +1669,7 @@ def test_soft_mode_callable_matches_dense_matrix_behavior():
 
 
 def test_posthoc_cleanup_removes_violation_small_graph():
+    """Tests if post-hoc cleanup removes a violation on a small graph."""
     distances = np.array(
         [
             [0.0, 0.1, 10.0, 10.0],
@@ -1367,6 +1702,7 @@ def test_posthoc_cleanup_removes_violation_small_graph():
 
 
 def test_merge_constraint_sanitizes_symmetry_and_diagonal_dense():
+    """Tests if MergeConstraint sanitizes symmetry and diagonal for dense input."""
     n = 5
     cannot_link = np.zeros((n, n), dtype=bool)
     cannot_link[0, 0] = True
@@ -1385,12 +1721,15 @@ def test_merge_constraint_sanitizes_symmetry_and_diagonal_dense():
 
     # Iteration should contain (0,1) exactly once.
     assert mc.iter_cannot_link_pairs is not None
-    pairs = set(tuple(sorted((int(i), int(j)))) for (i, j) in mc.iter_cannot_link_pairs())
+    pairs = set(
+        tuple(sorted((int(i), int(j)))) for (i, j) in mc.iter_cannot_link_pairs()
+    )
     assert (0, 1) in pairs
     assert (0, 0) not in pairs
 
 
 def test_merge_constraint_dense_vs_sparse_equivalent_pairs_and_checks():
+    """Tests if dense and sparse MergeConstraints have equivalent pairs and checks."""
     rng = np.random.default_rng(21)
     n = 25
 
@@ -1405,25 +1744,34 @@ def test_merge_constraint_dense_vs_sparse_equivalent_pairs_and_checks():
         cannot_link[j, i] = True
 
     mc_dense = MergeConstraint.from_cannot_link_matrix(cannot_link, n_points=n)
-    mc_sparse = MergeConstraint.from_cannot_link_matrix(sp.csr_matrix(cannot_link), n_points=n)
+    mc_sparse = MergeConstraint.from_cannot_link_matrix(
+        sp.csr_matrix(cannot_link), n_points=n
+    )
 
     assert mc_dense.pair_cannot_link is not None
     assert mc_sparse.pair_cannot_link is not None
     assert mc_dense.iter_cannot_link_pairs is not None
     assert mc_sparse.iter_cannot_link_pairs is not None
 
-    pairs_dense = set(tuple(sorted((int(i), int(j)))) for (i, j) in mc_dense.iter_cannot_link_pairs())
-    pairs_sparse = set(tuple(sorted((int(i), int(j)))) for (i, j) in mc_sparse.iter_cannot_link_pairs())
+    pairs_dense = set(
+        tuple(sorted((int(i), int(j)))) for (i, j) in mc_dense.iter_cannot_link_pairs()
+    )
+    pairs_sparse = set(
+        tuple(sorted((int(i), int(j)))) for (i, j) in mc_sparse.iter_cannot_link_pairs()
+    )
     assert pairs_dense == pairs_sparse
 
     # Spot-check pair queries.
     for _ in range(100):
         i = int(rng.integers(0, n))
         j = int(rng.integers(0, n))
-        assert bool(mc_dense.pair_cannot_link(i, j)) == bool(mc_sparse.pair_cannot_link(i, j))
+        assert bool(mc_dense.pair_cannot_link(i, j)) == bool(
+            mc_sparse.pair_cannot_link(i, j)
+        )
 
 
 def test_precomputed_handles_sparse_distance_graph_with_isolated_node():
+    """Tests if precomputed HDBSCAN handles a sparse graph with an isolated node."""
     # Sparse distance graph with one isolated node (degree 0) -> core distance inf.
     n = 5
     rows = np.array([0, 1, 2, 3, 0, 1, 2, 3], dtype=np.int64)
@@ -1444,6 +1792,7 @@ def test_precomputed_handles_sparse_distance_graph_with_isolated_node():
 
 
 def test_posthoc_split_fixes_cross_component_violation():
+    """Tests if post-hoc splitting fixes a cross-component violation."""
     # Two disconnected components in the distance graph (CSR).
     # Start with a "bad" clustering that merges everything into one cluster,
     # then ensure posthoc splitting separates components and removes violations.
@@ -1482,7 +1831,9 @@ def test_posthoc_split_fixes_cross_component_violation():
     merge_constraint = MergeConstraint.from_cannot_link_matrix(cannot_link, n_points=n)
 
     labels_bad = np.zeros(n, dtype=np.int64)  # everything in one cluster
-    violations_before = find_cannot_link_violations(labels_bad, merge_constraint=merge_constraint)
+    violations_before = find_cannot_link_violations(
+        labels_bad, merge_constraint=merge_constraint
+    )
     assert violations_before.shape[0] >= 1
 
     labels_fixed = split_clusters_to_respect_cannot_link(
@@ -1490,7 +1841,9 @@ def test_posthoc_split_fixes_cross_component_violation():
         merge_constraint=merge_constraint,
         distances=distances_csr,
     )
-    violations_after = find_cannot_link_violations(labels_fixed, merge_constraint=merge_constraint)
+    violations_after = find_cannot_link_violations(
+        labels_fixed, merge_constraint=merge_constraint
+    )
     assert violations_after.shape[0] == 0
 
     # And ensure the two components are not forced into the same final label.
@@ -1498,6 +1851,8 @@ def test_posthoc_split_fixes_cross_component_violation():
 
 
 def test_find_violations_requires_iterable_pairs():
+    """Tests if find_cannot_link_violations requires iterable pairs."""
+
     def pair_cannot_link(i: int, j: int) -> bool:
         return (int(i) == 0 and int(j) == 1) or (int(i) == 1 and int(j) == 0)
 
