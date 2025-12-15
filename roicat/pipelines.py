@@ -57,10 +57,19 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
     )
 
     
+    data_kind = params['data_loading']['data_kind']
+    data_kind_aliases = {
+        'roicat': 'data_roicat',
+        'data_roicat': 'data_roicat',
+        'suite2p': 'data_suite2p',
+        'data_suite2p': 'data_suite2p',
+    }
+    data_kind = data_kind_aliases.get(data_kind, data_kind)
+
     if custom_data is not None:
         print("Using custom data object.")
         data = custom_data
-    elif params['data_loading']['data_kind'] == 'data_suite2p':
+    elif data_kind == 'data_suite2p':
         assert params['data_loading']['dir_outer'] is not None, f"params['data_loading']['dir_outer'] must be specified if params['data_loading']['data_kind'] is 'data_suite2p'."
         paths_allStat = helpers.find_paths(
             dir_outer=params['data_loading']['dir_outer'],
@@ -89,7 +98,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
             **{**params['data_loading']['common'], **params['data_loading']['data_suite2p']},
         )
         assert data.check_completeness(verbose=False)['tracking'], f"Data object is missing attributes necessary for tracking."
-    elif params['data_loading']['data_kind'] == 'data_roicat':
+    elif data_kind == 'data_roicat':
         paths_allDataObjs = helpers.find_paths(
             dir_outer=params['data_loading']['dir_outer'],
             reMatch=params['data_loading']['data_roicat']['filename_search'],
@@ -99,7 +108,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
             natsorted=True,
         )[:]
         assert len(paths_allDataObjs) == 1, f"ERROR: Found {len(paths_allDataObjs)} files matching the search pattern '{params['data_loading']['data_roicat']['filename_search']}' in '{params['data_loading']['dir_outer']}'. Exactly one file must be found."
-        
+
         data = data_importing.Data_roicat()
         # data.load(path_load=paths_allDataObjs[0])
 
@@ -168,6 +177,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
 
 
     ## ROInet embedding
+
     dir_temp = tempfile.gettempdir()
 
     roinet = ROInet.ROInet_embedder(

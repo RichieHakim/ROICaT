@@ -34,6 +34,57 @@ def test_system_info():
     util.system_info(verbose=True)
 
 
+def test_match_arrays_with_ucids_return_indices_handles_duplicate_ucids():
+    """Ensure match_arrays_with_ucids can recover indices when sessions
+    contain more ROIs than there are UCIDs."""
+
+    arrays = [
+        np.arange(3, dtype=np.float32)[:, None],
+        np.arange(8, dtype=np.float32)[:, None],
+    ]
+    ucids = [
+        np.array([0, 1, 2], dtype=np.int64),
+        np.array([0, 1, 2, 3, 4, 5, 0, 1], dtype=np.int64),
+    ]
+
+    arrays_out, indices_out = util.match_arrays_with_ucids(
+        arrays=arrays,
+        ucids=ucids,
+        squeeze=True,
+        return_indices=True,
+        prog_bar=False,
+    )
+
+    # Shapes are determined by the maximum UCID across sessions (0-5 -> 6 rows)
+    assert arrays_out[0].shape == (6, 1)
+    assert arrays_out[1].shape == (6, 1)
+
+    # The first session maps one-to-one and leaves trailing UCIDs empty
+    np.testing.assert_array_equal(
+        arrays_out[0][:3, 0],
+        np.arange(3, dtype=np.float32),
+    )
+    assert np.isnan(arrays_out[0][3:, 0]).all()
+
+    # The second session keeps the last occurrence of each UCID even when more
+    # ROIs exist than UCIDs, verifying we did not hit an IndexError.
+    np.testing.assert_array_equal(
+        arrays_out[1][:, 0],
+        np.array([6, 7, 2, 3, 4, 5], dtype=np.float32),
+    )
+
+    # The returned indices track the original ROI positions used for each UCID.
+    np.testing.assert_array_equal(
+        indices_out[0][:3],
+        np.array([0, 1, 2], dtype=np.float32),
+    )
+    assert np.isnan(indices_out[0][3:]).all()
+    np.testing.assert_array_equal(
+        indices_out[1],
+        np.array([6, 7, 2, 3, 4, 5], dtype=np.float32),
+    )
+
+
 ######################################################################################################################################
 ####################################################### DATA_IMPORTING ###############################################################
 ######################################################################################################################################

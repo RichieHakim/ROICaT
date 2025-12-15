@@ -1542,7 +1542,9 @@ def match_arrays_with_ucids(
             if u >= 0:
                 arrays_out[i_sesh][u] = arrays[i_sesh][idx]
                 
-    lens_arrays = [a.shape[0] if hasattr(a, 'shape') else len(a) for a in arrays_out]
+    # Use the original array lengths so we can recover the correct source indices
+    # even when the per-session arrays contain more ROIs than there are UCIDs.
+    lens_arrays = [a.shape[0] if hasattr(a, 'shape') else len(a) for a in arrays]
 
     if not return_indices:
         return arrays_out
