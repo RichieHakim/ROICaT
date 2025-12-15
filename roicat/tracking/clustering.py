@@ -1,5 +1,6 @@
 import warnings
-from typing import Union, Tuple, List, Dict, Optional, Any, Callable
+from typing import Union, Tuple, List, Dict, Optional, Any, Callable, Iterable, Literal
+import math
 
 import numpy as np
 import scipy
@@ -83,6 +84,8 @@ class Clusterer(util.ROICaT_Module):
             Number of bins to use for the pairwise similarity distribution.
         smoothing_window_bins Optional[int]:
             Number of bins to use when smoothing the distribution.
+        device (torch.device):
+            The device to use for computation.
         verbose (bool):
             Specifies how much information to print out: \n
                 * 0/False: Warnings only
@@ -97,6 +100,7 @@ class Clusterer(util.ROICaT_Module):
         s_sesh: Optional[scipy.sparse.csr_matrix] = None,
         n_bins: Optional[int] = None,
         smoothing_window_bins: Optional[int] = None,
+        device: Union[str, torch.device] = 'cpu',
         verbose: bool = True,
     ):
         """
@@ -137,6 +141,24 @@ class Clusterer(util.ROICaT_Module):
         self.smooth_window = helpers.make_odd(self.n_bins // 10, mode='up') if smoothing_window_bins is None else smoothing_window_bins
         # print(f'Pruning similarity graphs with {self.n_bins} bins and smoothing window {smoothing_window}...') if self._verbose else None
         
+        self.device = torch.device(device) if isinstance(device, str) else device
+        self.dsl = DistributionSeparationLoss(
+            num_bins=self.n_bins,
+            kernel="sigmoid",
+            temperature=None,
+            chunk_size=None,
+            scale_diff_by_ratio=True,
+            sigma_bins_smooth=self.smooth_window,
+            overlap_weight=1.0,
+            margin_weight=0.5,
+            mass_weight=0.0,
+            margin=0.20,
+            mass_target=0.05,
+            device=self.device,
+            dtype=torch.float32,
+        )
+
+
     def find_optimal_parameters_for_pruning(
         self,
         kwargs_findParameters: Dict[str, Union[int, float, bool]] = {
@@ -343,7 +365,9 @@ class Clusterer(util.ROICaT_Module):
             s_sesh=None,
             **kwargs_makeConjunctiveDistanceMatrix
         )
-        dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(self.dConj)
+        # dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(self.dConj)
+        loss, out_dict = self.dsl.forward(d_conj=self.dConj, s_sesh_inv=self.s_sesh_inv)
+        dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = (out_dict[key] for key in ['dens_same_crop', 'dens_same', 'dens_diff', 'dens_all', 'edges', 'hard_crossover'])
 
         if convert_to_probability:        
             ## convert into probabilities
@@ -1015,7 +1039,10 @@ class Clusterer(util.ROICaT_Module):
             s_sesh=None,
             **kwargs
         )
-        dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(dConj)
+        # dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(dConj)
+        loss, out_dict = self.dsl.forward(d_conj=self.dConj, s_sesh_inv=self.s_sesh_inv)
+        dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = (out_dict[key] for key in ['dens_same_crop', 'dens_same', 'dens_diff', 'dens_all', 'edges', 'hard_crossover'])
+
         # centers = (edges[1:] + edges[:-1]) / 2
         if edges is None:
             print('No crossover found, not plotting')
@@ -1192,7 +1219,10 @@ class Clusterer(util.ROICaT_Module):
             sig_SWT_kwargs=sig_SWT_kwargs,
         )
         
-        dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(dConj)
+        # dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(dConj)
+        loss, out_dict = self.dsl.forward(d_conj=dConj, s_sesh_inv=self.s_sesh_inv)
+        dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = (out_dict[key] for key in ['dens_same_crop', 'dens_same', 'dens_diff', 'dens_all', 'edges', 'hard_crossover'])
+
         if dens_same_crop is None:
             return 0
 
@@ -1286,6 +1316,438 @@ class Clusterer(util.ROICaT_Module):
             } if hasattr(self, 'seqHung_performance') else None,
         })
         return self.quality_metrics
+    
+
+class SoftHistogram(torch.nn.Module):
+    """
+    Differentiable 1D histogram for values in a fixed range, with optional chunking.
+
+    RH 2025
+
+    Supports two kernels:
+
+    1) 'sigmoid': smooth top-hats via a difference of sigmoids at bin edges.
+       - Parameter `temperature` (τ) controls sharpness. A good default is
+         τ ≈ (bin_width / 4).
+
+    2) 'triangular': Parzen window with triangular basis centered at bin centers.
+       - Piecewise-linear, concentrates mass similarly to a standard histogram.
+
+    Args:
+        num_bins (int):
+            Number of bins over the closed interval [value_min, value_max].
+        value_min (float):
+            Lower bound of histogram range (inclusive).
+        value_max (float):
+            Upper bound of histogram range (inclusive).
+        kernel (Literal['sigmoid', 'triangular']):
+            Basis function for soft counts.
+            - 'triangular': Parzen window with triangular basis centered at bin centers.
+              Faster, but not that smooth
+            - 'sigmoid': smooth top-hats via a difference of sigmoids at bin edges.
+              Smooth gradients, but slower.
+        temperature (Optional[float]):
+            Kernel sharpness. If None, defaults to (bin_width / 4) for 'sigmoid'
+            and (bin_width) for 'triangular' (the triangular kernel ignores this).
+        chunk_size (Optional[int]):
+            If not None, process input values in chunks of this size to bound
+            peak memory. Recommended for very large N.
+        oob_behavior (Literal['warn', 'raise', 'ignore']):
+            Behavior when input values are outside [value_min, value_max]:
+            - 'warn': issue a RuntimeWarning and clamp values in forward.
+            - 'raise': raise ValueError.
+            - 'ignore': do nothing (values will be clamped in forward).
+        device (Optional[str]):
+            Torch device for buffers. If None, inferred at runtime from input.
+        dtype (torch.dtype):
+            Floating dtype for internal buffers.
+
+    Notes:
+        - Returns *unnormalized* counts (sum equals number of input samples).
+        - Complexity is O(N * B); use chunking to cap memory when N or B is large.
+    """            
+    def __init__(
+        self,
+        num_bins: int,
+        value_min: float = 0.0,
+        value_max: float = 1.0,
+        *,
+        kernel: Literal["sigmoid", "triangular"] = "sigmoid",
+        temperature: Optional[float] = None,
+        chunk_size: Optional[int] = None,
+        oob_behavior: Literal["warn","raise","ignore"]="warn",
+        device: Optional[str] = None,
+        dtype: torch.dtype = torch.float32,
+    ) -> None:
+        super().__init__()
+        assert num_bins >= 2, "num_bins must be >= 2"
+        assert value_max > value_min, "value_max must be > value_min"
+        self.num_bins = int(num_bins)
+        self.value_min = float(value_min)
+        self.value_max = float(value_max)
+        self.kernel = kernel
+        self.chunk_size = int(chunk_size) if chunk_size is not None else None
+        self.oob_behavior = oob_behavior
+        self.dtype = dtype
+
+        # Static bin geometry
+        edges = torch.linspace(self.value_min, self.value_max, self.num_bins + 1, dtype=dtype, device=device)
+        centers = 0.5 * (edges[:-1] + edges[1:])
+        bin_width = (self.value_max - self.value_min) / self.num_bins
+
+        # Register as buffers (moved with .to(device))
+        self.register_buffer("edges", edges, persistent=False)  ## persistent=False means not saved in state_dict, but still tracked by the optimizer and can be found at self.edges
+        self.register_buffer("centers", centers, persistent=False)
+        self.register_buffer("bin_width", torch.tensor(bin_width, dtype=dtype, device=device), persistent=False)
+
+        # Temperature defaults
+        if temperature is None:
+            if self.kernel == "sigmoid":
+                temperature = float(bin_width) / 4.0
+            elif self.kernel == "triangular":
+                temperature = float(bin_width)  # unused, placeholder for API symmetry
+            else:
+                raise ValueError(f"Unknown kernel: {self.kernel}")
+        self.register_buffer("temperature", torch.tensor(float(temperature), dtype=dtype, device=device), persistent=False)
+
+    @torch.no_grad()
+    def _check_range(self, values: torch.Tensor) -> None:
+        """
+        Check if input values are within the histogram range [value_min, value_max].
+        Handles out-of-bounds (OOB) values based on `oob_behavior`.
+        """
+        if values.isnan().any() or values.isinf().any():
+            raise ValueError("Input values contain NaN or Inf.")
+        eps = 1e-6
+        vmin = float(values.min().item())
+        vmax = float(values.max().item())
+        lo_bound = self.value_min - eps
+        hi_bound = self.value_max + eps
+
+        if vmin < lo_bound or vmax > hi_bound:
+            n_low = int((values < lo_bound).sum().item())
+            n_high = int((values > hi_bound).sum().item())
+            n = values.numel()
+            msg = (f"{n_low + n_high}/{n} values out of histogram bounds [{self.value_min}, {self.value_max}] "
+                   f"value extrema: (min={vmin:.6f}, max={vmax:.6f}). "
+                   f"{'They will be clamped if forward(clamp=True).' if self.oob_behavior!='raise' else ''}")
+
+            if self.oob_behavior == "raise":
+                raise ValueError(msg)
+            elif self.oob_behavior == "warn":
+                warnings.warn(msg, RuntimeWarning)
+            # elif "ignore": do nothing
+
+    def _hist_sigmoid_chunk(self, values: torch.Tensor) -> torch.Tensor:
+        """
+        Soft counts via difference of sigmoids at edges (correct sign).
+        Ensures non-negative bin contributions up to fp roundoff.
+        Slower than triangular, but smoother gradients.
+        """
+        # Make CDF increasing in edge: F(e | v) = σ((e - v)/τ)
+        z = (self.edges[None, :] - values[:, None]) / self.temperature  # (Nc, B+1)
+        cdf_vals = torch.sigmoid(z)
+
+        # Bin mass = F(e_{k+1}) - F(e_k) >= 0
+        counts = (cdf_vals[:, 1:] - cdf_vals[:, :-1]).sum(dim=0)  ## performs a kind of recursive subtraction between neighboring bins
+
+        # Optional: guard tiny negatives from fp error (e.g., -1e-12)
+        return counts.clamp_min(0)
+
+    def _hist_triangular_chunk(self, values: torch.Tensor) -> torch.Tensor:
+        """Soft counts via triangular Parzen windows centered at bin centers (chunk)."""
+        # Distance in bin-width units
+        u = (values[:, None] - self.centers[None, :]) / self.bin_width  # (Nc, B); broadcasted difference
+        weights = torch.clamp(1.0 - u.abs(), min=0.0)  # triangle of base 2 bin_width; non-negative values only within appropriate bins
+        return weights.sum(dim=0)  # (B,)
+
+    def forward(self, values: torch.Tensor, *, clamp: bool = True) -> torch.Tensor:
+        """
+        Compute differentiable histogram counts for 1-D values.
+
+        Args:
+            values (torch.Tensor):
+                1-D tensor of samples, typically in [value_min, value_max].
+            clamp (bool):
+                If True, clamp values to [value_min, value_max] before binning.
+
+        Returns:
+            counts (torch.Tensor):
+                1-D tensor of length `num_bins` with soft counts (sum ≈ len(values)).
+        """
+        if values.ndim != 1:
+            values = values.reshape(-1)
+        if clamp:
+            values = values.clamp(min=self.value_min, max=self.value_max)
+
+        # Range & device handling
+        self._check_range(values)
+        ## Move buffers to the same device as values
+        device = values.device
+        if self.edges.device != device:
+            self.edges = self.edges.to(device=device, dtype=self.dtype)
+            self.centers = self.centers.to(device=device, dtype=self.dtype)
+            self.bin_width = self.bin_width.to(device=device, dtype=self.dtype)
+            self.temperature = self.temperature.to(device=device, dtype=self.dtype)
+
+        counts = torch.zeros(self.num_bins, device=device, dtype=self.dtype)
+
+        # If no chunking
+        if self.chunk_size is None or values.numel() <= self.chunk_size:
+            if self.kernel == "sigmoid":
+                counts = self._hist_sigmoid_chunk(values)
+            else:
+                counts = self._hist_triangular_chunk(values)
+            return counts
+
+        # Stream in chunks to keep peak memory bounded
+        num = values.numel()
+        for start in range(0, num, self.chunk_size):
+            stop = min(start + self.chunk_size, num)
+            v = values[start:stop]
+            if self.kernel == "sigmoid":
+                counts += self._hist_sigmoid_chunk(v)
+            else:
+                counts += self._hist_triangular_chunk(v)
+        return counts
+
+
+class DistributionSeparationLoss(torch.nn.Module):
+    """
+    Differentiable separation objective for 'same' vs 'different' distance distributions.
+
+    RH 2025
+
+    This class estimates:
+        - dens_all: histogram of all pairwise distances (from d_conj.data).
+        - dens_diff: histogram of intra-session (known-different) distances.
+        - dens_same: softplus(dens_all - alpha * dens_diff).
+
+    Then it minimizes:
+        L = w_overlap * sum(p_same * p_diff)
+          + w_margin  * relu(margin - (mean_diff - mean_same))
+          + w_mass    * (mass_same - mass_target)^2
+    where p_* are normalized densities over bins and means are
+    expectation over bin centers.
+
+    Args:
+        num_bins (int):
+            Number of bins in [0, 1] for the distance histograms.
+        kernel (Literal['sigmoid', 'triangular']):
+            Soft histogram kernel (passed to SoftHistogram).
+        temperature (Optional[float]):
+            Kernel sharpness (passed to SoftHistogram). If None, a sensible
+            default based on bin width is used.
+        chunk_size (Optional[int]):
+            Histogram chunk size (samples) for streaming accumulation.
+        scale_diff_by_ratio (bool):
+            If True, scale dens_diff by len(all)/len(intra).
+        sigma_bins_smooth (Optional[float]):
+            Optional Gaussian smoothing (in bin units) after histogramming.
+        overlap_weight (float):
+            Weight for overlap penalty.
+        margin_weight (float):
+            Weight for mean-separation margin penalty.
+        mass_weight (float):
+            Weight for optional mass prior penalty.
+        margin (float):
+            Desired mean separation on [0, 1].
+        mass_target (float):
+            Prior fraction of 'same' mass among all pairs. Set weight=0 to disable.
+        device (Optional[str]):
+            Torch device for buffers.
+        dtype (torch.dtype):
+            Floating dtype.
+    """
+
+    def __init__(
+        self,
+        num_bins: int = 128,
+        *,
+        kernel: Literal["sigmoid", "triangular"] = "sigmoid",
+        temperature: Optional[float] = None,
+        chunk_size: Optional[int] = None,
+        scale_diff_by_ratio: bool = True,
+        sigma_bins_smooth: Optional[float] = None,
+        overlap_weight: float = 1.0,
+        margin_weight: float = 0.5,
+        mass_weight: float = 0.0,
+        margin: float = 0.20,
+        mass_target: float = 0.05,
+        device: Optional[str] = None,
+        dtype: torch.dtype = torch.float32,
+    ) -> None:
+        super().__init__()
+        self.hist = SoftHistogram(
+            num_bins=num_bins,
+            value_min=0.0,
+            value_max=1.0,
+            kernel=kernel,
+            temperature=temperature,
+            chunk_size=chunk_size,
+            device=device,
+            dtype=dtype,
+        )
+        self.num_bins = int(num_bins)
+        self.scale_diff_by_ratio = bool(scale_diff_by_ratio)
+        self.sigma_bins_smooth = sigma_bins_smooth
+        self.overlap_weight = float(overlap_weight)
+        self.margin_weight = float(margin_weight)
+        self.mass_weight = float(mass_weight)
+        self.margin = float(margin)
+        self.mass_target = float(mass_target)
+        self.dtype = dtype
+
+    def _normalize_safe(self, x: torch.Tensor) -> torch.Tensor:
+        eps = torch.finfo(x.dtype).eps
+        s = x.sum()
+        return x / (s + eps)
+
+    def _soft_crossover(self, a: torch.Tensor, b: torch.Tensor) -> float:
+        """Soft argmin over |a - b| to report a crossover distance (diagnostic)."""
+        gap = (a - b).abs()
+        w = torch.softmax(-gap / 1e-3, dim=0)
+        centers = self.hist.centers
+        return float((w * centers).sum().detach().cpu())
+    
+    def _gaussian_smooth1d(
+        self,
+        x: torch.Tensor,
+        sigma_bins: Optional[float] = None,
+    ) -> torch.Tensor:
+        """
+        Lightweight Gaussian smoothing over bins for stabilization.
+
+        Args:
+            x (torch.Tensor): 1-D vector.
+            sigma_bins (Optional[float]): Standard deviation in *bin* units.
+                If None or <= 0, returns x unchanged.
+
+        Returns:
+            (torch.Tensor): Smoothed 1-D vector.
+        """
+        if not sigma_bins or sigma_bins <= 0:
+            return x
+        # Kernel size ~ 6*sigma (odd)
+        radius = max(1, int(math.ceil(3.0 * sigma_bins)))
+        kx = torch.arange(-radius, radius + 1, device=x.device, dtype=x.dtype)
+        kernel = torch.exp(-0.5 * (kx / float(sigma_bins)) ** 2)
+        kernel = kernel / kernel.sum()
+        x_pad = torch.nn.functional.pad(x[None, None, :], (radius, radius), mode="replicate")
+        y = torch.nn.functional.conv1d(x_pad, kernel[None, None, :])[0, 0]
+        return y
+
+    def forward(
+        self,
+        d_conj: scipy.sparse.csr_matrix,
+        s_sesh_inv: scipy.sparse.csr_matrix,
+    ) -> Tuple[torch.Tensor, Dict[str, float]]:
+        """
+        Compute separation loss from sparse distance matrices.
+
+        Args:
+            d_conj (scipy.sparse.csr_matrix):
+                Conjunctive distance matrix (values in [0, 1]).
+            s_sesh_inv (scipy.sparse.csr_matrix):
+                Mask for intra-session (known 'different') pairs; same shape as d_conj.
+
+        Returns:
+            (tuple):
+                loss (torch.Tensor):
+                    Scalar objective suitable for backprop.
+                info (Dict[str, float]):
+                    Diagnostics and summarized curves (detached).
+        """
+        # Pull values
+        v_all_np = d_conj.data
+        d_intra = d_conj.multiply(s_sesh_inv)
+        d_intra.eliminate_zeros()
+        if d_intra.nnz == 0:
+            # Degenerate case: no negatives to anchor the 'different' distribution
+            nan = torch.tensor(float("nan"), device=self.hist.edges.device, dtype=self.dtype)
+            return nan, {"error": "no_intra_pairs"}
+
+        v_diff_np = d_intra.data
+
+        # Convert to tensors on the histogram's device/dtype
+        device = self.hist.edges.device
+        v_all = torch.as_tensor(v_all_np, device=device, dtype=self.dtype)
+        v_diff = torch.as_tensor(v_diff_np, device=device, dtype=self.dtype)
+
+        # Histograms (unnormalized counts)
+        dens_all = self.hist(v_all, clamp=True)
+        dens_diff = self.hist(v_diff, clamp=True)
+
+        if self.scale_diff_by_ratio:
+            scale = (v_all.numel() / max(1, v_diff.numel()))
+            dens_diff = dens_diff * scale
+
+        # Stabilize with optional smoothing (helps if counts are jagged)
+        if self.sigma_bins_smooth and self.sigma_bins_smooth > 0:
+            dens_all = self._gaussian_smooth1d(dens_all, sigma_bins=self.sigma_bins_smooth)
+            dens_diff = self._gaussian_smooth1d(dens_diff, sigma_bins=self.sigma_bins_smooth)
+
+        # 'Same' as positive part of (all - diff)
+        dens_same = torch.nn.functional.softplus(dens_all - dens_diff)  # ≥ 0
+        
+        # Make a cropped version of 'same' (zero after crossover)
+        idx_crossover = torch.where(dens_diff > dens_same + dens_same.max()*0.10)[0][0] + 1 if (dens_same > dens_diff).any() else self.num_bins
+        d_crossover = self.hist.edges[idx_crossover].item()
+        dens_same_crop = dens_same.clone()
+        dens_same_crop[idx_crossover:] = 0  # zero out after crossover
+
+        # Normalize to probability mass functions over bins
+        p_same = self._normalize_safe(dens_same)
+        p_diff = self._normalize_safe(dens_diff)
+
+        # Overlap loss (encourage disjoint support)
+        L_overlap = (p_same * p_diff).sum()
+
+        # Mean-margin loss (push means apart)
+        centers = self.hist.centers
+        mu_same = (p_same * centers).sum()
+        mu_diff = (p_diff * centers).sum()
+        L_margin = torch.nn.functional.relu(self.margin - (mu_diff - mu_same))
+
+        # Optional mass prior (fraction of 'same' among all)
+        frac_same = dens_same.sum() / (dens_all.sum() + torch.finfo(dens_all.dtype).eps)
+        L_mass = (frac_same - self.mass_target) ** 2
+
+        # Total loss
+        loss = (
+            self.overlap_weight * L_overlap
+            + self.margin_weight * L_margin
+            + self.mass_weight * L_mass
+        )
+
+        # Diagnostics (detach to CPU)
+        info = {
+            "loss": float(loss.detach().cpu()),
+            "L_overlap": float(L_overlap.detach().cpu()),
+            "L_margin": float(L_margin.detach().cpu()),
+            "L_mass": float(L_mass.detach().cpu()),
+            "mu_same": float(mu_same.detach().cpu()),
+            "mu_diff": float(mu_diff.detach().cpu()),
+            "frac_same": float(frac_same.detach().cpu()),
+            "soft_crossover": self._soft_crossover(dens_diff, dens_same),
+            "hard_crossover": d_crossover,
+
+            "p_same": p_same.detach().cpu().numpy(),
+            "p_diff": p_diff.detach().cpu().numpy(),
+            "dens_all": dens_all.detach().cpu().numpy(),
+            "dens_diff": dens_diff.detach().cpu().numpy(),
+            "dens_same": dens_same.detach().cpu().numpy(),
+            "dens_same_crop": dens_same_crop.detach().cpu().numpy(),
+
+            "v_all": v_all_np,
+            "v_diff": v_diff_np,
+
+            "centers": self.hist.centers.detach().cpu().numpy(),
+            "edges": self.hist.edges.detach().cpu().numpy(),
+        }
+        # Optional: you can add the full curves if you want to log them.
+        return loss, info
+
         
 
 def attach_fully_connected_node(
