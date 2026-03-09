@@ -83,6 +83,21 @@ jobs:
           conda info
           conda list
 
+    - name: Set up Chrome browser
+      id: setup-chrome
+      uses: browser-actions/setup-chrome@v1
+      with:
+        chrome-version: stable
+
+    - name: Set up ChromeDriver
+      id: setup-chromedriver
+      uses: nanasess/setup-chromedriver@v2
+
+    - name: Verify browser and driver installation
+      run: |
+        chrome --version || google-chrome --version || chromium --version || chromium-browser --version
+        chromedriver --version
+
     - name: Check specs of the machine -- Linux
       if: startsWith(matrix.platform, 'ubuntu')
       run: |
@@ -142,6 +157,8 @@ jobs:
       run: |
         # pip install tox tox-gh-actions
         pip install pytest pytest-cov
+        export CHROME_BIN=$(command -v chrome || command -v google-chrome || command -v chromium || command -v chromium-browser || true)
+        export CHROMEDRIVER_BIN=$(command -v chromedriver || true)
         # python -m pytest -v -rP --capture=tee-sys --cov=roicat --cov-report=xml:coverage.xml --color=yes
         python -m pytest -v -rP --capture=tee-sys --cov=roicat --cov-report=xml:coverage.xml --color=yes
 
