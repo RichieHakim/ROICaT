@@ -25,10 +25,46 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.action_chains import ActionChains
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.firefox.options import Options as FirefoxOptions
 
 hv.extension("bokeh")
+
+
+def setup_webdriver():
+    """Initialize a headless webdriver with explicit browser/driver paths for CI."""
+    errors = []
+
+    ## Try Chrome first (common path in CI and local development)
+    try:
+        chrome_options = Options()
+        chrome_options.add_argument("--window-size=1280,1280")
+        chrome_options.add_argument("--headless=new")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+
+        chrome_bin = os.environ.get("CHROME_BIN")
+        if chrome_bin:
+            chrome_options.binary_location = chrome_bin
+
+        chromedriver_bin = os.environ.get("CHROMEDRIVER_BIN")
+        service = Service(executable_path=chromedriver_bin) if chromedriver_bin else Service()
+
+        return webdriver.Chrome(service=service, options=chrome_options)
+    except Exception as e:
+        errors.append(f"Chrome initialization failed: {e}")
+
+    ## Fallback to Firefox, which is commonly available on CI runners.
+    try:
+        firefox_options = FirefoxOptions()
+        firefox_options.add_argument("--headless")
+        return webdriver.Firefox(options=firefox_options)
+    except Exception as e:
+        errors.append(f"Firefox initialization failed: {e}")
+
+    raise RuntimeError("Could not initialize any supported webdriver. " + " | ".join(errors))
 
 def get_tempdir_free_space():
     temp_dir = tempfile.gettempdir()
@@ -198,27 +234,16 @@ def test_interactive_drawing():
                 server_process.join()
                 raise Exception("Server is not up and running!")
 
-            print("Setup chrome webdriver...")
-            service = Service()
-            chrome_options = Options()
-            chrome_options.add_argument("--window-size=1280,1280")
-
-            ## For local testing, comment out these options to visualize actions in bokeh / selenium server.
-            chrome_options.add_argument("--headless")
-            chrome_options.add_argument("--disable-gpu")
-
-            ## if you are on latest version say selenium v4.6.0 or higher, you don't have to use third party library such as WebDriverManager
+            print("Setup webdriver...")
             print("Driver parameter sanity check...")
-            driver = webdriver.Chrome(service=service, options=chrome_options)
+            driver = setup_webdriver()
             capabilities = driver.capabilities
             print("Browser Name: {}".format(capabilities.get("browserName")))
             print("Browser Version: {}".format(capabilities.get("browserVersion")))
             print("Platform Name: {}".format(capabilities.get("platformName")))
-            print(
-                "Chrome Driver Version: {}".format(
-                    capabilities.get("chrome").get("chromedriverVersion")
-                )
-            )
+            chrome_caps = capabilities.get("chrome", {})
+            if isinstance(chrome_caps, dict):
+                print("Chrome Driver Version: {}".format(chrome_caps.get("chromedriverVersion")))
 
             print("Get to the Bokeh server...")
             driver.get("http://localhost:5006/test_drawing")

@@ -83,6 +83,21 @@ jobs:
           conda info
           conda list
 
+    - name: Set up Chrome browser
+      id: setup-chrome
+      uses: browser-actions/setup-chrome@v1
+      with:
+        chrome-version: stable
+
+    - name: Set up ChromeDriver
+      id: setup-chromedriver
+      uses: nanasess/setup-chromedriver@v2
+
+    - name: Verify browser and driver installation
+      run: |
+        chrome --version || google-chrome --version || chromium --version || chromium-browser --version
+        chromedriver --version
+
     - name: Check specs of the machine -- Linux
       if: startsWith(matrix.platform, 'ubuntu')
       run: |
@@ -139,9 +154,13 @@ jobs:
         python -c "import torch, torchvision; print(f'Using versions: torch=={torch.__version__}, torchvision=={torchvision.__version__}');  print('torch.cuda.is_available() = ', torch.cuda.is_available())"
 
     - name: Run pytest and generate coverage report
+      env:
+        CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+        CHROMEDRIVER_BIN: ${{ steps.setup-chromedriver.outputs.chromedriver-path }}
       run: |
         # pip install tox tox-gh-actions
         pip install pytest pytest-cov
+        python -c "import os; print('CHROME_BIN=', os.environ.get('CHROME_BIN')); print('CHROMEDRIVER_BIN=', os.environ.get('CHROMEDRIVER_BIN'))"
         # python -m pytest -v -rP --capture=tee-sys --cov=roicat --cov-report=xml:coverage.xml --color=yes
         python -m pytest -v -rP --capture=tee-sys --cov=roicat --cov-report=xml:coverage.xml --color=yes
 
