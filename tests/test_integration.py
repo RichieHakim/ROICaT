@@ -156,7 +156,7 @@ def test_pipeline_tracking_simple(dir_data_test):
         checker = helpers.Equivalence_checker(
             kwargs_allclose={'rtol': 1e-5, 'equal_nan': True},
             assert_mode=False,
-            verbose=1,
+            verbose=True,
         )
         checks = checker(test=run_data, true=run_data_true)
         flat_checks = helpers.flatten_dict(checks)

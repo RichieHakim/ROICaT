@@ -39,6 +39,7 @@ def test_internal_package_tests():
     Test packages.
     RH 2023
     """
+    import importlib
     from pathlib import Path
 
     import pytest
@@ -59,25 +60,21 @@ def test_internal_package_tests():
     for pkg_s in packages:
         ## Try to import the package
         try:
-            exec(f'import {pkg_s}')
+            pkg_h = importlib.import_module(pkg_s)
             print(f'RH: Successfully imported {pkg_s}')
         except ImportError:
             warnings.warn(f'RH: Could not import {pkg_s}. Skipping tests.')
             continue
 
-        else:
-            try:
-                ## Get a handle on the package
-                pkg_h = eval(pkg_s)
+        try:
+            ## Get the path to the package
+            path_pkg = str(Path(pkg_h.__file__).parent)
 
-                ## Get the path to the package
-                path_pkg = str(Path(pkg_h.__file__).parent)
-
-                ## Run the tests
-                pytest.main([path_pkg, '-v'])
-            except Exception as e:
-                warnings.warn(f'RH: Could not run tests for {pkg_s}. Error: {e}')
-                continue
+            ## Run the tests
+            pytest.main([path_pkg, '-v'])
+        except Exception as e:
+            warnings.warn(f'RH: Could not run tests for {pkg_s}. Error: {e}')
+            continue
 
 
 def test_importing_packages():
