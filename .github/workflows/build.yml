@@ -7,15 +7,15 @@ on:
     # branches: [ "main", "dev" ]
   pull_request:
     # branches: [ "main" ]
-    # branches: [ "dev" ]    
-    branches: [ "main", "dev" ]        
+    # branches: [ "dev" ]
+    branches: [ "main", "dev" ]
   workflow_dispatch:
     inputs:
       name:
-        description: 'description'     
-        required: false                     
-        default: '' 
-        
+        description: 'description'
+        required: false
+        default: ''
+
 permissions:
   contents: read
 
@@ -23,7 +23,7 @@ jobs:
 
   build:
 
-    name: ${{ matrix.platform }}, py${{ matrix.python-version }}, ${{ matrix.extra }}, ${{ matrix.install-level }}
+    name: ${{ matrix.platform }}, py${{ matrix.python-version }}, ${{ matrix.extra }}
     runs-on: ${{ matrix.platform }}
     strategy:
       fail-fast: false
@@ -38,7 +38,7 @@ jobs:
           macos-latest,
           macos-14,
         ]
-        python-version: [ 
+        python-version: [
           # "3.8",
           # "3.9",
           "3.10",
@@ -50,13 +50,9 @@ jobs:
           all,
           all_latest,
         ]
-        install-level: [
-          system,
-          # user,
-        ]
 
     steps:
-    
+
     - name: Set up conda
       uses: conda-incubator/setup-miniconda@v3
       with:
@@ -76,7 +72,7 @@ jobs:
 
     - name: Check out repository code
       uses: actions/checkout@v4
-        
+
     - name: Prepare PowerShell
       shell: pwsh
       run: |
@@ -134,17 +130,11 @@ jobs:
         df -h
         echo "OS info (uname -a):"
         uname -a
-    
 
-    - name: Install repo with pip dependencies -- system-level
-      if: matrix.install-level == 'system'
+
+    - name: Install repo with pip dependencies
       run: |
-        ## install dependencies with optional extras
         pip install -v -e .[${{ matrix.extra }}]
-    - name: Install repo with pip dependencies -- user-level
-      if: matrix.install-level == 'user'
-      run: |
-        pip install -v -e .[${{ matrix.extra }}] --user
 
 
     - name: Check installed packages
@@ -161,7 +151,6 @@ jobs:
         # pip install tox tox-gh-actions
         pip install pytest pytest-cov
         python -c "import os; print('CHROME_BIN=', os.environ.get('CHROME_BIN')); print('CHROMEDRIVER_BIN=', os.environ.get('CHROMEDRIVER_BIN'))"
-        # python -m pytest -v -rP --capture=tee-sys --cov=roicat --cov-report=xml:coverage.xml --color=yes
         python -m pytest -v -rP --capture=tee-sys --cov=roicat --cov-report=xml:coverage.xml --color=yes
 
     - name: Upload coverage reports to Codecov

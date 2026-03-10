@@ -1,3 +1,5 @@
+__version__ = '1.6.0'
+
 __all__ = [
     'classification',
     'tracking',
@@ -14,5 +16,3 @@ for pkg in __all__:
     exec('from . import ' + pkg)
 
 from .__main__ import run_pipeline
-
-__version__ = '1.5.5'

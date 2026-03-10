@@ -840,7 +840,7 @@ def idx_to_oneHot(
         max = np.max
         zeros = np.zeros
         arange = np.arange
-        dtype = np.bool_ if dtype is None else dtype
+        dtype = bool if dtype is None else dtype
     elif type(arr) is torch.Tensor:
         max = torch.max
         zeros = torch.zeros
@@ -881,7 +881,7 @@ def cosine_kernel_2D(
     x, y = np.meshgrid(range(image_size[1]), range(image_size[0]))  # note dim 1:X and dim 2:Y
     dist = np.sqrt((y - int(center[1])) ** 2 + (x - int(center[0])) ** 2)
     dist_scaled = (dist/(width/2))*np.pi
-    dist_scaled[np.abs(dist_scaled > np.pi)] = np.pi
+    dist_scaled[dist_scaled > np.pi] = np.pi
     k_cos = (np.cos(dist_scaled) + 1)/2
     return k_cos
 
@@ -912,7 +912,7 @@ def idx2bool(
     """
     if length is None:
         length = np.uint64(np.max(idx) + 1)
-    out = np.zeros(length, dtype=np.bool_)
+    out = np.zeros(length, dtype=bool)
     out[idx] = True
     return out
 
@@ -1250,7 +1250,7 @@ def scipy_sparse_to_torch_coo(
     # print(values.dtype)
     indices = np.vstack((coo.row, coo.col))
 
-    i = torch.LongTensor(indices)
+    i = torch.as_tensor(indices, dtype=torch.int64)
     # v = torch.FloatTensor(values)
     v = torch.as_tensor(values, dtype=dtype) if dtype is not None else values
     shape = coo.shape
@@ -1290,8 +1290,8 @@ def pydata_sparse_to_torch_coo(
 #     indices = np.vstack((coo.row, coo.col))
     indices = coo.coords
 
-    i = torch.LongTensor(indices)
-    v = torch.FloatTensor(values)
+    i = torch.as_tensor(indices, dtype=torch.int64)
+    v = torch.as_tensor(values, dtype=torch.float32)
     shape = coo.shape
     return torch.sparse_coo_tensor(i, v, torch.Size(shape))
 
@@ -1344,7 +1344,8 @@ def get_nums_from_string(string_with_nums):
             The numbers from the string    
             If there are no numbers, return None.        
     """
-    idx_nums = [ii in str(np.arange(10)) for ii in string_with_nums]
+    _digits = set('0123456789')
+    idx_nums = [ch in _digits for ch in string_with_nums]
     
     nums = []
     for jj, val in enumerate(idx_nums):
@@ -3969,7 +3970,7 @@ def find_geometric_transformation(
     ## cast mask to bool then to uint8
     if mask is not None:
         assert isinstance(mask, np.ndarray), f"mask must be a numpy array. Got {type(mask)}"
-        if np.issubdtype(mask.dtype, np.bool_) or np.issubdtype(mask.dtype, np.uint8):
+        if np.issubdtype(mask.dtype, bool) or np.issubdtype(mask.dtype, np.uint8):
             pass
         else:
             mask = (mask != 0).astype(np.uint8)
@@ -5647,7 +5648,7 @@ class Toeplitz_convolution2d():
             p_r = self.x_shape[1]+1 if p_r==0 else p_r
         
         if batching:
-            idx_crop = np.zeros((self.so), dtype=np.bool_)
+            idx_crop = np.zeros((self.so), dtype=bool)
             idx_crop[p_t:p_b, p_l:p_r] = True
             idx_crop = idx_crop.reshape(-1)
             out = out_v[idx_crop,:].T
@@ -6179,9 +6180,12 @@ class Equivalence_checker():
             if self._verbose:
                 ## Come up with a way to describe the difference between the two values. Something like the following:
                 ### IF the arrays are numeric, then calculate the relative difference
-                dtypes_numeric = (np.number, np.bool_, np.integer, np.floating, np.complexfloating)
+                dtypes_numeric = (np.number, bool, np.integer, np.floating, np.complexfloating)
                 if any([np.issubdtype(test.dtype, dtype) and np.issubdtype(true.dtype, dtype) for dtype in dtypes_numeric]):
-                    diff = np.abs(test - true)
+                    ## Cast booleans to int to avoid TypeError on subtraction in NumPy 2.0
+                    test_num = test.astype(int) if np.issubdtype(test.dtype, bool) else test
+                    true_num = true.astype(int) if np.issubdtype(true.dtype, bool) else true
+                    diff = np.abs(test_num - true_num)
                     at = np.abs(true)
                     r_diff = diff / at if np.all(at != 0) else np.inf
                     r_diff_mean, r_diff_max, any_nan = np.nanmean(r_diff), np.nanmax(r_diff), np.any(np.isnan(r_diff))
@@ -6193,8 +6197,12 @@ class Equivalence_checker():
                     reason = f"Equivalence: Relative difference: mean={r_diff_mean:.3e}, max={r_diff_max:.3e}, any_nan={any_nan}, n_elements={n_elements}, n_mismatches={n_mismatches}, frac_mismatches={frac_mismatches:.3e}"
                 else:
                     reason = f"Values are not numpy numeric types. types: {test.dtype}, {true.dtype}"
+            else:
+                reason = "allclose failed"
+        elif out is None:
+            reason = "check skipped (exception)"
         else:
-            reason = "equivlance"
+            reason = "equivalence"
 
         return out, reason
 
@@ -6233,8 +6241,35 @@ class Equivalence_checker():
             if path[-1].startswith('_'):
                 return (None, 'excluded from testing')
 
+        ## SCIPY SPARSE MATRIX
+        if scipy.sparse.issparse(true):
+            if not scipy.sparse.issparse(test):
+                result = (False, f'type mismatch: test is {type(test).__name__}, true is {type(true).__name__}')
+            elif true.shape != test.shape:
+                result = (False, f'shape mismatch: test={test.shape}, true={true.shape}')
+            else:
+                diff_sparse = (test - true).tocsr()
+                diff_sparse.eliminate_zeros()
+                if diff_sparse.nnz == 0:
+                    result = (True, 'equivalence')
+                else:
+                    rtol = self._kwargs_allclose.get('rtol', 1e-7)
+                    atol = self._kwargs_allclose.get('atol', 0)
+                    abs_diff = abs(diff_sparse)
+                    abs_true = abs(true).tocsr()
+                    tol = atol + rtol * abs_true
+                    exceeded = abs_diff - tol
+                    exceeded.eliminate_zeros()
+                    is_close = all(x <= 0 for x in exceeded.data) if exceeded.nnz > 0 else True
+                    if is_close:
+                        result = (True, 'equivalence')
+                    else:
+                        n_elements = true.shape[0] * true.shape[1]
+                        n_mismatches = int(np.sum(exceeded.data > 0))
+                        max_violation = float(np.max(exceeded.data))
+                        result = (False, f"sparse allclose failed: n_mismatches={n_mismatches}, max_violation={max_violation:.3e}, n_elements={n_elements}")
         ## NP.NDARRAY
-        if isinstance(true, np.ndarray):
+        elif isinstance(true, np.ndarray):
             result = self._checker(test, true, path)
         ## NP.SCALAR
         elif np.isscalar(true):

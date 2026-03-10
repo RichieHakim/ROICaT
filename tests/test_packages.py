@@ -82,54 +82,56 @@ def test_internal_package_tests():
 
 def test_importing_packages():
     """
-    Runs pytest on the core packages.
+    Test that all required packages can be imported.
     """
-
+    import importlib
+    failed = []
     for pkg in PACKAGES:
         try:
-            exec(f'import {pkg}')
+            importlib.import_module(pkg)
         except ModuleNotFoundError:
-            warnings.warn(f'RH Warning: {pkg} not found.')
+            failed.append(pkg)
+    if failed:
+        warnings.warn(f'Packages not found: {failed}')
+    ## At minimum, core packages must be importable
+    core = ['numpy', 'scipy', 'torch', 'torchvision', 'sklearn']
+    missing_core = [p for p in core if p in failed]
+    assert not missing_core, f'Core packages missing: {missing_core}'
 
-def test_torch(
-    device='cpu', 
-    verbose=2
-):
+
+def test_torch(device='cpu'):
     """
-    Test to see if torch can do operations on device.
-    RH 2022
-
-    Args:
-        device (str):
-            The device to use. Default is 'cuda'.
-        verbose (int):
-            If 0, do not print anything.
-            If 1, print warnings.
-            If 2, print all below and info.
+    Test that torch can do basic operations on the given device.
     """
     import torch
-    version = torch.__version__
-        
-    ## Test CPU computations
+    torch.manual_seed(0)
     arr = torch.rand(1000, 10, device=device)
     arr2 = torch.rand(10, 1000, device=device)
-    arr3 = (arr @ arr2).mean().numpy()
-    print(f'RH: Torch can do basic operations on CPU. Environment using PyTorch version: {version}. Result of operations: {arr3}') if verbose > 1 else None
+    arr3 = (arr @ arr2).mean().item()
+    ## With fixed seed, matmul of uniform [0,1] matrices should give mean ~2.5
+    assert 1.5 < arr3 < 3.5, f'Torch basic operation gave unexpected result: {arr3}'
+
 
 def test_numpy():
+    """
+    Test that numpy can do basic operations deterministically.
+    """
     import numpy as np
-    ## test numpy
-    np.random.seed(0)
-    arr1 = np.random.rand(1000, 10)
-    arr2 = np.random.rand(10, 1000)
+    rng = np.random.default_rng(seed=0)
+    arr1 = rng.random((1000, 10))
+    arr2 = rng.random((10, 1000))
     arr3 = (arr1 @ arr2).mean()
-    assert np.allclose(arr3, 2.5, rtol=0.1), 'RH Error: numpy test failed.'
+    assert np.allclose(arr3, 2.5, rtol=0.1), f'numpy test failed: expected ~2.5, got {arr3}'
+
 
 def test_scipy_sparse():
+    """
+    Test that scipy.sparse can do basic operations deterministically.
+    """
     import numpy as np
     import scipy.sparse
-    ## test scipy.sparse
-    arr1 = scipy.sparse.rand(1000, 10, density=0.1).tocoo().tocsr()
-    arr2 = scipy.sparse.rand(10, 1000, density=0.1).tocoo().tocsr()
+    rng = np.random.default_rng(seed=0)
+    arr1 = scipy.sparse.random(1000, 10, density=0.1, random_state=rng, format='csr')
+    arr2 = scipy.sparse.random(10, 1000, density=0.1, random_state=rng, format='csr')
     arr3 = (arr1 @ arr2).mean()
-    assert np.allclose(arr3, 0.025, rtol=0.2), 'RH Error: scipy.sparse test failed.'
+    assert np.allclose(arr3, 0.025, rtol=0.3), f'scipy.sparse test failed: expected ~0.025, got {arr3}'

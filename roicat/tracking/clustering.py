@@ -123,8 +123,8 @@ class Clusterer(util.ROICaT_Module):
         ## assert that all feature similarity matrices have the same nnz
         assert self.s_sf.nnz == self.s_NN_z.nnz == self.s_SWT_z.nnz
 
-        self.s_sesh_inv = (self.s_sf != 0).astype(np.bool_)
-        self.s_sesh_inv[self.s_sesh.astype(np.bool_)] = False
+        self.s_sesh_inv = (self.s_sf != 0).astype(bool)
+        self.s_sesh_inv[self.s_sesh.astype(bool)] = False
         self.s_sesh_inv.eliminate_zeros()
 
         self.s_sesh = self.s_sesh.tolil()

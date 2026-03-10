@@ -1369,8 +1369,8 @@ def _transform_statFile_to_neuropilMasks(
     rois_to_stack = []
     
     for jj, roi in enumerate(stat):
-        lam = np.ones(len(roi['neuropil_mask']), dtype=np.bool_)
-        dtype = np.bool_
+        lam = np.ones(len(roi['neuropil_mask']), dtype=bool)
+        dtype = bool
         ypix, xpix = np.unravel_index(roi['neuropil_mask'], shape=(frame_height_width[0], frame_height_width[1]), order='C')
         ypix = ypix + shifts[0]
         xpix = xpix + shifts[1]
@@ -1640,7 +1640,7 @@ class Data_caiman(Data_roicat):
             assert np.all(coords_diff < 1.01) and np.all(coords_diff > -0.01), \
                 "RH ERROR: sparse.COO object has strange .coords attribute. sf_rs.coords[0] should all be 0 or 1. An ROI is possibly all zeros."
             
-            idx_split = (sf_rs>0).astype(np.bool_).sum((1,2)).todense().cumsum()[:-1]
+            idx_split = (sf_rs>0).astype(bool).sum((1,2)).todense().cumsum()[:-1]
             coords_split = [np.split(sf_rs.coords[ii], idx_split) for ii in [0,1,2]]
             coords_split[1] = [coords - centroids[0][ii] + half_widths[0] for ii,coords in enumerate(coords_split[1])]
             coords_split[2] = [coords - centroids[1][ii] + half_widths[1] for ii,coords in enumerate(coords_split[2])]
@@ -1937,7 +1937,7 @@ def make_smaller_data(
         for im in data.FOV_images[:n_sessions]])
     n_ROIs_per_sesh = [min(n_ROIs, n) for n in d_n_ROIs] if n_ROIs is not None else d_n_ROIs
 
-    frame = np.zeros((d_height, d_width), dtype=np.bool_)
+    frame = np.zeros((d_height, d_width), dtype=bool)
     frame[bounds_y[0]:bounds_y[1], bounds_x[0]:bounds_x[1]] = True
     frame_flat = frame.reshape(-1)
 

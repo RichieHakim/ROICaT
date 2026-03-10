@@ -3,13 +3,18 @@ from pathlib import Path
 import warnings
 import tempfile
 
+import numpy as np
+import pytest
+
 import roicat
 from roicat import helpers, ROInet, pipelines, util
 
 
+@pytest.mark.integration
 def test_pipeline_tracking_simple(dir_data_test):
     defaults = util.get_default_parameters(pipeline='tracking')
     seed = 0
+    util.set_random_seed(seed=seed, deterministic=False)
     params_partial = {
         'general': {
             'use_GPU': False,
@@ -108,13 +113,27 @@ def test_pipeline_tracking_simple(dir_data_test):
     results, run_data, params = pipelines.pipeline_tracking(params)
 
     #check that results fields are not empty
-    assert results['clusters'] != 0, "Error: clusters field is empty"
-    assert results['ROIs'] != 0, "Error: ROIs field is empty"
-    assert results['input_data'] != 0, "Error: input_data field is empty"
-    assert results['clusters']['quality_metrics'] != 0, "Error: quality_metrics field is empty"
-    
+    assert isinstance(results['clusters'], dict) and len(results['clusters']) > 0, "Error: clusters field is empty"
+    assert isinstance(results['ROIs'], dict) and len(results['ROIs']) > 0, "Error: ROIs field is empty"
+    assert isinstance(results['input_data'], dict) and len(results['input_data']) > 0, "Error: input_data field is empty"
+    assert isinstance(results['clusters']['quality_metrics'], dict) and len(results['clusters']['quality_metrics']) > 0, "Error: quality_metrics field is empty"
+
     assert len(results['clusters']['labels_dict']) == len(results['clusters']['quality_metrics']['cluster_intra_means']), "Error: Cluster data is mismatched"
     assert len(results['clusters']['labels_dict']) == results['clusters']['labels_bool_bySession'][0].shape[1], "Error: Cluster data is mismatched"
+
+    ## Assert that labels contain at least some non-(-1) clusters
+    labels = np.array(results['clusters']['labels'])
+    assert np.any(labels >= 0), "Error: no valid clusters found (all labels are -1)"
+
+    ## Assert labels length matches sum of ROIs across sessions
+    n_roi_total = sum(len(lb) for lb in results['clusters']['labels_bySession'])
+    assert len(labels) == n_roi_total, f"Error: labels length ({len(labels)}) does not match total ROIs ({n_roi_total})"
+
+    ## Assert numeric quality metrics are finite
+    for metric_name, metric_values in results['clusters']['quality_metrics'].items():
+        metric_arr = np.asarray(metric_values)
+        if np.issubdtype(metric_arr.dtype, np.number):
+            assert np.all(np.isfinite(metric_arr)), f"Error: quality metric '{metric_name}' contains non-finite values"
 
     ## Save results
     path_results_output = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'results_output.richfile')
@@ -125,31 +144,40 @@ def test_pipeline_tracking_simple(dir_data_test):
     print(f"Saving to: {path_run_data_output}")
     util.RichFile_ROICaT(path=path_run_data_output).save(run_data, overwrite=True)
 
-    ## Check run_data equality
+    ## Golden reference comparison (diagnostic only).
+    ## This is a non-blocking check that warns on mismatches but does not fail
+    ## the test. It is expected to break when algorithms, dependencies, or
+    ## floating-point behavior change. The property-based assertions above are
+    ## the actual pass/fail criteria.
     path_run_data_true = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'run_data.richfile')
-    print(f"Loading true run_data from {path_run_data_true}")
-    run_data_true = util.RichFile_ROICaT(path=path_run_data_true).load()
-
-    print(f"run_data_true loaded. Checking equality")
-    checker = helpers.Equivalence_checker(
-        kwargs_allclose={'rtol': 1e-5, 'equal_nan': True},
-        assert_mode=False,
-        verbose=1,
-    )
-    checks = checker(test=run_data, true=run_data_true)
-    fails = [key for key, val in helpers.flatten_dict(checks).items() if val[0]==False]
-    if len(fails) > 0:
-        warnings.warn(f"run_data equality check failed for keys: {fails}. Checks: {checks}")
+    if Path(path_run_data_true).exists():
+        print(f"Loading reference run_data from {path_run_data_true}")
+        run_data_true = util.RichFile_ROICaT(path=path_run_data_true).load()
+        checker = helpers.Equivalence_checker(
+            kwargs_allclose={'rtol': 1e-5, 'equal_nan': True},
+            assert_mode=False,
+            verbose=1,
+        )
+        checks = checker(test=run_data, true=run_data_true)
+        flat_checks = helpers.flatten_dict(checks)
+        n_passed = sum(1 for val in flat_checks.values() if val[0] is True)
+        n_failed = sum(1 for val in flat_checks.values() if val[0] is False)
+        n_skipped = sum(1 for val in flat_checks.values() if val[0] is None)
+        n_total = len(flat_checks)
+        print(f"Equivalence check summary: {n_passed}/{n_total} passed, {n_failed} failed, {n_skipped} skipped")
+        fails = [key for key, val in flat_checks.items() if val[0] is False]
+        if len(fails) > 0:
+            warnings.warn(f"Golden reference mismatch for {len(fails)} keys: {fails}")
     else:
-        print(f"run_data equality check finished successfully")
-    
-            
+        print(f"No reference run_data found at {path_run_data_true}, skipping equivalence check")
+
+
 # def test_ROInet(make_ROIs, array_hasher):
 #     ROI_images = make_ROIs
 #     size_im=(36,36)
 #     data_custom = roicat.data_importing.Data_roicat()
 #     data_custom.set_ROI_images(ROI_images, um_per_pixel=1.5)
-    
+
 #     DEVICE = helpers.set_device(use_GPU=True, verbose=True)
 #     dir_temp = tempfile.gettempdir()
 
@@ -166,9 +194,9 @@ def test_pipeline_tracking_simple(dir_data_test):
 #         ROI_images=data_custom.ROI_images,  ## Input images of ROIs
 #         um_per_pixel=data_custom.um_per_pixel,  ## Resolution of FOV
 #         pref_plot=False,  ## Whether or not to plot the ROI sizes
-        
+
 #         jit_script_transforms=False,  ## (advanced) Whether or not to use torch.jit.script to speed things up
-        
+
 #         batchSize_dataloader=8,  ## (advanced) PyTorch dataloader batch_size
 #         pinMemory_dataloader=True,  ## (advanced) PyTorch dataloader pin_memory
 #         numWorkers_dataloader=mp.cpu_count(),  ## (advanced) PyTorch dataloader num_workers
@@ -182,7 +210,7 @@ def test_pipeline_tracking_simple(dir_data_test):
 #     assert dataloader.shape[1] == size_im[0], "Error: dataloader shape does not match input image size"
 #     assert dataloader.shape[2] == size_im[1], "Error: dataloader shape does not match input image size"
 #     assert latents.shape[0] == data_custom.n_roi_total, "Error: latents shape does not match n_roi_total"
-    
+
 
 
 ## Make a CLI to call the tests
@@ -194,4 +222,3 @@ if __name__ == '__main__':
     args = parser.parse_args()
     dir_data_test = args.dir_data_test
     test_pipeline_tracking_simple(dir_data_test)
-
