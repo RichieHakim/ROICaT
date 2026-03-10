@@ -333,7 +333,7 @@ class ROI_graph(util.ROICaT_Module):
         s_SWT[range(s_SWT.shape[0]), range(s_SWT.shape[0])] = 0
 
         session_bool = torch.as_tensor(ROI_session_bool, device='cpu', dtype=torch.float32)
-        s_sesh = torch.logical_not((session_bool @ session_bool.T).type(torch.bool))
+        s_sesh = torch.logical_not((session_bool @ session_bool.T).to(dtype=torch.bool))
 
         # s_sf = s_sf.multiply(s_sesh.numpy())
         # s_sf.eliminate_zeros()

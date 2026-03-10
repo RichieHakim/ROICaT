@@ -2672,7 +2672,7 @@ class ImageLabeler:
             width, height = pil_img.size
             new_width = int(width * self._resize_factor)
             new_height = int(height * self._resize_factor)
-            pil_img = pil_img.resize((new_width, new_height), resample=PIL.Image.LANCZOS)
+            pil_img = pil_img.resize((new_width, new_height), resample=PIL.Image.Resampling.LANCZOS)
             ## Display image
             self._img_tk = ImageTk.PhotoImage(pil_img)
             self._img_label.image = self._img_tk  # keep a reference to the PhotoImage object
@@ -4181,11 +4181,11 @@ def remap_images(
         if isinstance(images, np.ndarray):
             images = torch.as_tensor(images, device=device, dtype=torch.float32)
         elif isinstance(images, torch.Tensor):
-            images = images.to(device=device).type(torch.float32)
+            images = images.to(device=device, dtype=torch.float32)
         if isinstance(remappingIdx, np.ndarray):
             remappingIdx = torch.as_tensor(remappingIdx, device=device, dtype=torch.float32)
         elif isinstance(remappingIdx, torch.Tensor):
-            remappingIdx = remappingIdx.to(device=device).type(torch.float32)
+            remappingIdx = remappingIdx.to(device=device, dtype=torch.float32)
         interpolation = {
             'linear': 'bilinear',
             'nearest': 'nearest',

@@ -355,8 +355,8 @@ class Horizontal_stripe_shift(Module):
         self.alpha_max = int(alpha_min_max[1] + 1)
         self.alpha_range = int(alpha_min_max[1] - alpha_min_max[0])
         
-        self.idx_odd   = (torch.arange(im_size[0]) % 2).type(torch.bool)
-        self.idx_even = ((torch.arange(im_size[0])+1) % 2).type(torch.bool)
+        self.idx_odd   = (torch.arange(im_size[0]) % 2).to(dtype=torch.bool)
+        self.idx_even = ((torch.arange(im_size[0])+1) % 2).to(dtype=torch.bool)
         
         self.prob = prob
         
@@ -370,8 +370,8 @@ class Horizontal_stripe_shift(Module):
             alpha = torch.randint(low=self.alpha_min, high=self.alpha_max, size=[n_ims]) * (torch.randint(low=0, high=2, size=[n_ims])*2 - 1)
 #             alpha = (torch.randint(high=self.alpha_max-self.alpha_min, size=[n_ims]) + self.alpha_min) * (torch.randint(high=2, size=[n_ims])*2 - 1)
             alpha_half = alpha/2
-            alphas_odd  =  torch.ceil(alpha_half).type(torch.int64)
-            alphas_even = -torch.floor(alpha_half).type(torch.int64)
+            alphas_odd  =  torch.ceil(alpha_half).to(dtype=torch.int64)
+            alphas_even = -torch.floor(alpha_half).to(dtype=torch.int64)
 
             out = torch.zeros_like(tensor)
             for ii in range(out.shape[0]):
@@ -471,7 +471,7 @@ class Random_occlusion(Module):
             mask = torch.ones_like(tensor)
             mask[:, idx_rand[0]:, :] = torch.zeros(1)
 
-            out = tensor * self.rotator(mask).type(torch.bool)
+            out = tensor * self.rotator(mask).to(dtype=torch.bool)
             return out
         else:
             return tensor
