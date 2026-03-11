@@ -244,16 +244,14 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         s_sesh=sim.s_sesh,
         verbose=VERBOSE,
     )
-    if params['clustering']['mixing_method'] == 'automatic':
-        kwargs_makeConjunctiveDistanceMatrix_best = clusterer.find_optimal_parameters_for_pruning(
-            seed=SEED,
-            **params['clustering']['parameters_automatic_mixing'],
-        )
-    elif params['clustering']['mixing_method'] == 'manual':
+    if params['clustering'].get('mixing_method', 'automatic') == 'manual':
         kwargs_makeConjunctiveDistanceMatrix_best = params['clustering']['parameters_manual_mixing']
     else:
-        ## Not implemented
-        raise NotImplementedError(f"Mixing method '{params['clustering']['mixing_method']}' is not implemented. Select from: ['automatic', 'manual']")
+        ## Default: NB calibration → freeze-sigmoid → 3-param DE
+        kwargs_makeConjunctiveDistanceMatrix_best = clusterer.find_optimal_parameters_for_pruning(
+            seed=SEED,
+            **params['clustering'].get('parameters_automatic_mixing', {}),
+        )
 
     clusterer.make_pruned_similarity_graphs(
         kwargs_makeConjunctiveDistanceMatrix=kwargs_makeConjunctiveDistanceMatrix_best,

@@ -218,26 +218,24 @@ def get_default_parameters(
                 },
             },
             'clustering': {
-                'mixing_method': 'automatic',  ## Can be 'automatic' or 'manual'. If 'automatic', then the parameters are found automatically. If 'manual', then the parameters are set manually.
+                'mixing_method': 'automatic',  ## 'automatic' (NB calibration + freeze-sigmoid DE) or 'manual'
                 'parameters_automatic_mixing': {
-                    'n_bins': None,  ## Number of bins to use for the histograms of the distributions
-                    'smoothing_window_bins': None,  ## Number of bins to use to smooth the distributions
-                    'kwargs_findParameters': {
-                        'n_patience': 300,  ## Number of optimization epoch to wait for tol_frac to converge
-                        'tol_frac': 0.001,  ## Fractional change below which optimization will conclude
-                        'max_trials': 1200,  ## Max number of optimization epochs
-                        'max_duration': 60*10,  ## Max amount of time (in seconds) to allow optimization to proceed for
-                    },
+                    'n_bins': None,  ## Number of bins for histograms. None = heuristic.
+                    'smoothing_window_bins': None,  ## Smoothing window for distributions. None = heuristic.
+                    'subsample_pairs': None,  ## Subsample this many pairs for speedup. None = use all.
                     'bounds_findParameters': {
                         'power_NN': [0.0, 2.],  ## Bounds for the exponent applied to s_NN
                         'power_SWT': [0.0, 2.],  ## Bounds for the exponent applied to s_SWT
-                        'p_norm': [-5, -0.1],  ## Bounds for the p-norm p value (Minkowski) applied to mix the matrices
-                        'sig_NN_kwargs_mu': [0., 1.0],  ## Bounds for the sigmoid center for s_NN
-                        'sig_NN_kwargs_b': [0.1, 1.5],  ## Bounds for the sigmoid slope for s_NN
-                        'sig_SWT_kwargs_mu': [0., 1.0],  ## Bounds for the sigmoid center for s_SWT
-                        'sig_SWT_kwargs_b': [0.1, 1.5],  ## Bounds for the sigmoid slope for s_SWT
+                        'p_norm': [-5, -0.1],  ## Bounds for the p-norm (Minkowski) mixing parameter
                     },
-                    'n_jobs_findParameters': -1,  ## Number of CPU cores to use (-1 is all cores)
+                    'de_kwargs': {
+                        'maxiter': 100,  ## Max DE generations
+                        'tol': 1e-6,  ## Convergence tolerance
+                        'popsize': 15,  ## Population size multiplier
+                        'mutation': [0.5, 1.5],  ## DE mutation range
+                        'recombination': 0.7,  ## DE crossover probability
+                        'polish': True,  ## L-BFGS-B polish after DE
+                    },
                 },
                 'parameters_manual_mixing': {
                     'power_SF': 1.0,   ## s_sf**power_SF   (Higher values means clustering is more sensitive to spatial overlap of ROIs)

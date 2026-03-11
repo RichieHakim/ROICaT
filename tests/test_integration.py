@@ -94,11 +94,11 @@ def test_pipeline_tracking_simple(dir_data_test):
         },
         'clustering': {
             'parameters_automatic_mixing': {
-                'kwargs_findParameters': {
-                    'n_patience': 30,  ## Reduced number to speed up
-                    'max_trials': 100,  ## Reduced number to speed up
+                'de_kwargs': {
+                    'maxiter': 20,  ## Reduced to speed up test
+                    'popsize': 5,  ## Smaller population for test speed
+                    'polish': False,  ## Skip L-BFGS-B polish in test
                 },
-                'n_jobs_findParameters': 1,  ## THIS IS CRITICAL TO ENSURE REPORDUCIBILITY. Parallelization prevents reproducibility.
             },
         },
         'results_saving': {

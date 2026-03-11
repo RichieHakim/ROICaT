@@ -133,5 +133,8 @@ dmypy.json
 data_test/
 .vscode/
 .fuse_hidden*
-__pycache__/
 .fr-*
+agent_assets/
+AGENTS.md
+CLAUDE.md
+manuscript/

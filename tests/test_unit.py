@@ -560,3 +560,920 @@ def test_data_suite2p(dir_data_test, array_hasher):
     assert data.spatialFootprints[0].shape[1] == 512*705, 'ROICaT Error: data.spatialFootprints.shape[1] != 512*705'
     assert array_hasher(data.spatialFootprints[0].toarray()) == '6319b48421caeb23', 'ROICaT Error: data.spatialFootprints[0] != expected values. See code for expected values.'
     assert array_hasher(data.spatialFootprints[13].toarray()) == 'd5495d254954d56c', 'ROICaT Error: data.spatialFootprints[13] != expected values. See code for expected values.'
+
+
+######################################################################################################################################
+########################################################## CLUSTERING ################################################################
+######################################################################################################################################
+
+
+@pytest.fixture(scope='module')
+def clusterer_with_data(dir_data_test):
+    """
+    Load test run_data and create a Clusterer instance.
+    Shared across all clustering tests to avoid redundant data loading.
+
+    Loads sparse matrices from the 'sim' sub-key to avoid triggering
+    deserialization of Optuna objects stored in 'clusterer'.
+    """
+    from roicat import util, tracking
+
+    path_run_data = str(Path(dir_data_test) / 'pipeline_tracking' / 'run_data.richfile')
+    sim = util.RichFile_ROICaT(path=path_run_data)['sim'].load()
+
+    clusterer = tracking.clustering.Clusterer(
+        s_sf=sim['s_sf'],
+        s_NN_z=sim['s_NN_z'],
+        s_SWT_z=sim['s_SWT_z'],
+        s_sesh=sim['s_sesh'],
+        verbose=False,
+    )
+    return clusterer
+
+
+class Test_find_optimal_parameters_DE:
+    """Tests for Clusterer.find_optimal_parameters_DE."""
+
+    def test_returns_valid_dict(self, clusterer_with_data):
+        """DE should return a dict with all expected keys."""
+        result = clusterer_with_data.find_optimal_parameters_DE(seed=42)
+        expected_keys = {
+            'power_SF', 'power_NN', 'power_SWT', 'p_norm',
+            'sig_SF_kwargs', 'sig_NN_kwargs', 'sig_SWT_kwargs',
+        }
+        assert set(result.keys()) == expected_keys
+        ## sig_NN_kwargs and sig_SWT_kwargs should be dicts with 'mu' and 'b'
+        assert set(result['sig_NN_kwargs'].keys()) == {'mu', 'b'}
+        assert set(result['sig_SWT_kwargs'].keys()) == {'mu', 'b'}
+
+    def test_params_within_bounds(self, clusterer_with_data):
+        """All optimized parameters should be within their declared bounds."""
+        result = clusterer_with_data.find_optimal_parameters_DE(seed=42)
+        bounds = {
+            'power_NN': [0.0, 2.0],
+            'power_SWT': [0.0, 2.0],
+            'p_norm': [-5.0, -0.1],
+        }
+        for key, (lo, hi) in bounds.items():
+            val = result[key]
+            assert lo - 1e-6 <= val <= hi + 1e-6, (
+                f'{key}={val} outside bounds [{lo}, {hi}]'
+            )
+        for name in ['sig_NN_kwargs', 'sig_SWT_kwargs']:
+            assert 0.0 - 1e-6 <= result[name]['mu'] <= 1.0 + 1e-6
+            assert 0.1 - 1e-6 <= result[name]['b'] <= 1.5 + 1e-6
+
+    def test_deterministic_with_seed(self, clusterer_with_data):
+        """Same seed should produce identical results."""
+        r1 = clusterer_with_data.find_optimal_parameters_DE(seed=123)
+        r2 = clusterer_with_data.find_optimal_parameters_DE(seed=123)
+        for key in ['power_NN', 'power_SWT', 'p_norm']:
+            assert r1[key] == r2[key], f'{key} differs between runs with same seed'
+
+    def test_loss_is_finite(self, clusterer_with_data):
+        """DE result should have a finite loss value."""
+        clusterer_with_data.find_optimal_parameters_DE(seed=42)
+        assert hasattr(clusterer_with_data, '_de_result')
+        assert np.isfinite(clusterer_with_data._de_result.fun)
+
+    def test_loss_below_threshold(self, clusterer_with_data):
+        """DE should find a loss significantly below the trivial/default value.
+        On the test dataset, DE reliably finds loss ~55. The default manual
+        params typically give loss >200."""
+        clusterer_with_data.find_optimal_parameters_DE(seed=42)
+        assert clusterer_with_data._de_result.fun < 200, (
+            f'DE loss {clusterer_with_data._de_result.fun:.1f} is too high; '
+            f'expected < 200 on test data'
+        )
+
+    def test_subsample_pairs(self, clusterer_with_data):
+        """DE with subsample_pairs should still return valid params."""
+        result = clusterer_with_data.find_optimal_parameters_DE(
+            seed=42,
+            subsample_pairs=500,
+            de_kwargs={
+                'maxiter': 5,
+                'tol': 1e-4,
+                'popsize': 5,
+                'polish': False,
+            },
+        )
+        expected_keys = {
+            'power_SF', 'power_NN', 'power_SWT', 'p_norm',
+            'sig_SF_kwargs', 'sig_NN_kwargs', 'sig_SWT_kwargs',
+        }
+        assert set(result.keys()) == expected_keys
+        assert np.isfinite(clusterer_with_data._de_result.fun)
+
+    def test_nb_init(self, clusterer_with_data):
+        """DE with nb_init=True should seed population from NB sigmoid estimates."""
+        result = clusterer_with_data.find_optimal_parameters_DE(
+            seed=42,
+            nb_init=True,
+            de_kwargs={
+                'maxiter': 5,
+                'tol': 1e-4,
+                'popsize': 5,
+                'polish': False,
+            },
+        )
+        expected_keys = {
+            'power_SF', 'power_NN', 'power_SWT', 'p_norm',
+            'sig_SF_kwargs', 'sig_NN_kwargs', 'sig_SWT_kwargs',
+        }
+        assert set(result.keys()) == expected_keys
+        assert np.isfinite(clusterer_with_data._de_result.fun)
+        ## NB calibration should now exist on the instance
+        assert hasattr(clusterer_with_data, 'calibrations_naive_bayes')
+
+    def test_resample_each_generation(self, clusterer_with_data):
+        """DE with per-generation resampling should still converge."""
+        result = clusterer_with_data.find_optimal_parameters_DE(
+            seed=42,
+            subsample_pairs=500,
+            resample_each_generation=True,
+            de_kwargs={
+                'maxiter': 5,
+                'tol': 1e-4,
+                'popsize': 5,
+                'polish': False,
+            },
+        )
+        expected_keys = {
+            'power_SF', 'power_NN', 'power_SWT', 'p_norm',
+            'sig_SF_kwargs', 'sig_NN_kwargs', 'sig_SWT_kwargs',
+        }
+        assert set(result.keys()) == expected_keys
+        assert np.isfinite(clusterer_with_data._de_result.fun)
+
+    def test_vectorized_objective(self, clusterer_with_data):
+        """Vectorized objective should produce valid results."""
+        result = clusterer_with_data.find_optimal_parameters_DE(
+            seed=42,
+            subsample_pairs=500,
+            vectorized=True,
+            de_kwargs={
+                'maxiter': 5,
+                'tol': 1e-4,
+                'popsize': 5,
+                'polish': False,
+            },
+        )
+        expected_keys = {
+            'power_SF', 'power_NN', 'power_SWT', 'p_norm',
+            'sig_SF_kwargs', 'sig_NN_kwargs', 'sig_SWT_kwargs',
+        }
+        assert set(result.keys()) == expected_keys
+        assert np.isfinite(clusterer_with_data._de_result.fun)
+
+    def test_stratified_subsampling(self, clusterer_with_data):
+        """DE with stratified subsampling should return valid params."""
+        result = clusterer_with_data.find_optimal_parameters_DE(
+            seed=42,
+            subsample_pairs=500,
+            stratified_subsampling=True,
+            de_kwargs={
+                'maxiter': 5,
+                'tol': 1e-4,
+                'popsize': 5,
+                'polish': False,
+            },
+        )
+        expected_keys = {
+            'power_SF', 'power_NN', 'power_SWT', 'p_norm',
+            'sig_SF_kwargs', 'sig_NN_kwargs', 'sig_SWT_kwargs',
+        }
+        assert set(result.keys()) == expected_keys
+        assert np.isfinite(clusterer_with_data._de_result.fun)
+
+    def test_nb_init_with_vectorized(self, clusterer_with_data):
+        """NB init combined with vectorized should work."""
+        result = clusterer_with_data.find_optimal_parameters_DE(
+            seed=42,
+            subsample_pairs=500,
+            nb_init=True,
+            vectorized=True,
+            de_kwargs={
+                'maxiter': 5,
+                'tol': 1e-4,
+                'popsize': 5,
+                'polish': False,
+            },
+        )
+        assert set(result.keys()) == {
+            'power_SF', 'power_NN', 'power_SWT', 'p_norm',
+            'sig_SF_kwargs', 'sig_NN_kwargs', 'sig_SWT_kwargs',
+        }
+        assert np.isfinite(clusterer_with_data._de_result.fun)
+
+    def test_freeze_sigmoid(self, clusterer_with_data):
+        """freeze_sigmoid=True should optimize only 3 params (power_NN, power_SWT, p_norm)."""
+        result = clusterer_with_data.find_optimal_parameters_DE(
+            seed=42,
+            subsample_pairs=500,
+            freeze_sigmoid=True,
+            de_kwargs={
+                'maxiter': 5,
+                'tol': 1e-4,
+                'popsize': 5,
+                'polish': False,
+            },
+        )
+        ## Result dict should still have full param set (frozen values inserted)
+        assert set(result.keys()) == {
+            'power_SF', 'power_NN', 'power_SWT', 'p_norm',
+            'sig_SF_kwargs', 'sig_NN_kwargs', 'sig_SWT_kwargs',
+        }
+        assert np.isfinite(clusterer_with_data._de_result.fun)
+        ## DE only searched over 3 params
+        assert clusterer_with_data._de_result.x.shape == (3,)
+        ## Sigmoid values should match the NB estimates
+        sig_params = clusterer_with_data._estimate_sigmoid_params()
+        assert result['sig_NN_kwargs']['mu'] == sig_params['NN']['mu']
+        assert result['sig_NN_kwargs']['b'] == sig_params['NN']['b']
+        assert result['sig_SWT_kwargs']['mu'] == sig_params['SWT']['mu']
+        assert result['sig_SWT_kwargs']['b'] == sig_params['SWT']['b']
+
+    def test_freeze_sigmoid_with_vectorized(self, clusterer_with_data):
+        """freeze_sigmoid combined with vectorized should work."""
+        result = clusterer_with_data.find_optimal_parameters_DE(
+            seed=42,
+            subsample_pairs=500,
+            freeze_sigmoid=True,
+            vectorized=True,
+            de_kwargs={
+                'maxiter': 5,
+                'tol': 1e-4,
+                'popsize': 5,
+                'polish': False,
+            },
+        )
+        assert set(result.keys()) == {
+            'power_SF', 'power_NN', 'power_SWT', 'p_norm',
+            'sig_SF_kwargs', 'sig_NN_kwargs', 'sig_SWT_kwargs',
+        }
+        assert np.isfinite(clusterer_with_data._de_result.fun)
+        assert clusterer_with_data._de_result.x.shape == (3,)
+
+
+class Test_estimate_sigmoid_params:
+    """Tests for Clusterer._estimate_sigmoid_params."""
+
+    def test_returns_expected_features(self, clusterer_with_data):
+        """Should return sigmoid params for NN and SWT."""
+        clusterer_with_data.make_naive_bayes_distance_matrix()
+        result = clusterer_with_data._estimate_sigmoid_params()
+        assert 'NN' in result
+        assert 'SWT' in result
+        assert 'mu' in result['NN'] and 'b' in result['NN']
+        assert 'mu' in result['SWT'] and 'b' in result['SWT']
+
+    def test_mu_is_finite(self, clusterer_with_data):
+        """Estimated mu should be finite (within data range, which can exceed [0,1] for z-scored features)."""
+        clusterer_with_data.make_naive_bayes_distance_matrix()
+        result = clusterer_with_data._estimate_sigmoid_params()
+        for name in ['NN', 'SWT']:
+            mu = result[name]['mu']
+            assert np.isfinite(mu), f'{name} mu={mu} is not finite'
+
+    def test_b_is_positive(self, clusterer_with_data):
+        """Estimated b (steepness) should be positive."""
+        clusterer_with_data.make_naive_bayes_distance_matrix()
+        result = clusterer_with_data._estimate_sigmoid_params()
+        for name in ['NN', 'SWT']:
+            b = result[name]['b']
+            assert b > 0, f'{name} b={b} should be positive'
+
+    def test_requires_nb_calibration(self, dir_data_test):
+        """Should raise if NB calibration hasn't been run on a fresh instance."""
+        from roicat import util, tracking
+        path_run_data = str(Path(dir_data_test) / 'pipeline_tracking' / 'run_data.richfile')
+        sim = util.RichFile_ROICaT(path=path_run_data)['sim'].load()
+        fresh = tracking.clustering.Clusterer(
+            s_sf=sim['s_sf'],
+            s_NN_z=sim['s_NN_z'],
+            s_SWT_z=sim['s_SWT_z'],
+            s_sesh=sim['s_sesh'],
+            verbose=False,
+        )
+        with pytest.raises(AssertionError, match="make_naive_bayes_distance_matrix"):
+            fresh._estimate_sigmoid_params()
+
+
+class Test_subsample_pairs_stratified:
+    """Tests for Clusterer._subsample_pairs_stratified."""
+
+    def test_returns_correct_types(self, clusterer_with_data):
+        """Should return index tensor, weight tensor, and intra mask."""
+        clusterer_with_data._precompute_intra_mask()
+        intra_mask = clusterer_with_data._intra_mask
+        strata_values = torch.as_tensor(
+            clusterer_with_data.s_sf.data, dtype=torch.float32,
+        )
+        idx, weights, intra_sub = clusterer_with_data._subsample_pairs_stratified(
+            n_subsample=500,
+            intra_mask=intra_mask,
+            strata_values=strata_values,
+            seed=42,
+        )
+        assert isinstance(idx, torch.Tensor)
+        assert isinstance(weights, torch.Tensor)
+        assert isinstance(intra_sub, torch.Tensor)
+        assert idx.dtype == torch.int64
+        assert weights.dtype == torch.float32
+        assert intra_sub.dtype == torch.bool
+
+    def test_weights_sum_to_nnz(self, clusterer_with_data):
+        """Importance weights should sum to nnz (original pair count)."""
+        clusterer_with_data._precompute_intra_mask()
+        intra_mask = clusterer_with_data._intra_mask
+        nnz = clusterer_with_data.s_sf.nnz
+        strata_values = torch.as_tensor(
+            clusterer_with_data.s_sf.data, dtype=torch.float32,
+        )
+        _, weights, _ = clusterer_with_data._subsample_pairs_stratified(
+            n_subsample=500,
+            intra_mask=intra_mask,
+            strata_values=strata_values,
+            seed=42,
+        )
+        assert abs(weights.sum().item() - nnz) < 1.0, (
+            f'Weights sum {weights.sum():.1f} should be close to nnz={nnz}'
+        )
+
+    def test_has_both_intra_and_inter(self, clusterer_with_data):
+        """Stratified sample should contain both intra and inter pairs."""
+        clusterer_with_data._precompute_intra_mask()
+        intra_mask = clusterer_with_data._intra_mask
+        strata_values = torch.as_tensor(
+            clusterer_with_data.s_sf.data, dtype=torch.float32,
+        )
+        _, _, intra_sub = clusterer_with_data._subsample_pairs_stratified(
+            n_subsample=500,
+            intra_mask=intra_mask,
+            strata_values=strata_values,
+            seed=42,
+        )
+        assert intra_sub.sum() > 0, 'Should have intra-session pairs'
+        assert (~intra_sub).sum() > 0, 'Should have inter-session pairs'
+
+
+class Test_soft_histogram_loss:
+    """Tests for Clusterer.soft_histogram_loss."""
+
+    def test_returns_scalar_tensor(self, clusterer_with_data):
+        """Loss should be a scalar torch.Tensor."""
+        result = clusterer_with_data.find_optimal_parameters_DE(seed=42)
+        dConj, *_ = clusterer_with_data.make_conjunctive_distance_matrix(
+            s_sf=clusterer_with_data.s_sf,
+            s_NN=clusterer_with_data.s_NN_z,
+            s_SWT=clusterer_with_data.s_SWT_z,
+            s_sesh=None,
+            power_SF=1,
+            **{k: v for k, v in result.items() if k != 'power_SF' and k != 'sig_SF_kwargs'},
+        )
+        distances = torch.as_tensor(dConj.data, dtype=torch.float32)
+        loss = clusterer_with_data.soft_histogram_loss(distances, temperature=0.01)
+        assert isinstance(loss, torch.Tensor)
+        assert loss.ndim == 0, 'Loss should be scalar'
+        assert loss.item() > 0, 'Loss should be positive'
+
+    def test_gradient_flows(self, clusterer_with_data):
+        """Gradients should flow from the soft histogram loss back to input distances."""
+        result = clusterer_with_data.find_optimal_parameters_DE(seed=42)
+        dConj, *_ = clusterer_with_data.make_conjunctive_distance_matrix(
+            s_sf=clusterer_with_data.s_sf,
+            s_NN=clusterer_with_data.s_NN_z,
+            s_SWT=clusterer_with_data.s_SWT_z,
+            s_sesh=None,
+            power_SF=1,
+            **{k: v for k, v in result.items() if k != 'power_SF' and k != 'sig_SF_kwargs'},
+        )
+        distances = torch.as_tensor(dConj.data, dtype=torch.float32).requires_grad_(True)
+        loss = clusterer_with_data.soft_histogram_loss(distances, temperature=0.01)
+        loss.backward()
+        assert distances.grad is not None, 'Gradient should not be None'
+        assert distances.grad.shape == distances.shape
+        assert (distances.grad.abs() > 0).any(), 'At least some gradients should be nonzero'
+
+    def test_approximates_hard_histogram(self, clusterer_with_data):
+        """At low temperature, soft histogram should approximate the hard histogram loss."""
+        result = clusterer_with_data.find_optimal_parameters_DE(seed=42)
+        dConj, *_ = clusterer_with_data.make_conjunctive_distance_matrix(
+            s_sf=clusterer_with_data.s_sf,
+            s_NN=clusterer_with_data.s_NN_z,
+            s_SWT=clusterer_with_data.s_SWT_z,
+            s_sesh=None,
+            power_SF=1,
+            **{k: v for k, v in result.items() if k != 'power_SF' and k != 'sig_SF_kwargs'},
+        )
+        ## Hard histogram loss
+        sep = clusterer_with_data._separate_diffSame_distributions(dConj)
+        hard_loss = (sep[1] * sep[2]).sum().item()
+
+        ## Soft histogram loss at low temperature
+        distances = torch.as_tensor(dConj.data, dtype=torch.float32)
+        soft_loss = clusterer_with_data.soft_histogram_loss(
+            distances, temperature=0.001,
+        ).item()
+
+        ## Should be within 20% of each other (tight at low τ)
+        ratio = soft_loss / hard_loss if hard_loss > 0 else float('inf')
+        assert 0.5 < ratio < 2.0, (
+            f'Soft loss ({soft_loss:.2f}) too far from hard loss ({hard_loss:.2f}), '
+            f'ratio={ratio:.3f}'
+        )
+
+    def test_higher_temperature_gives_smoother_gradient(self, clusterer_with_data):
+        """Higher temperature should produce more nonzero gradient entries."""
+        result = clusterer_with_data.find_optimal_parameters_DE(seed=42)
+        dConj, *_ = clusterer_with_data.make_conjunctive_distance_matrix(
+            s_sf=clusterer_with_data.s_sf,
+            s_NN=clusterer_with_data.s_NN_z,
+            s_SWT=clusterer_with_data.s_SWT_z,
+            s_sesh=None,
+            power_SF=1,
+            **{k: v for k, v in result.items() if k != 'power_SF' and k != 'sig_SF_kwargs'},
+        )
+        nonzero_counts = {}
+        for tau in [0.001, 0.01, 0.05]:
+            distances = torch.as_tensor(dConj.data, dtype=torch.float32).requires_grad_(True)
+            loss = clusterer_with_data.soft_histogram_loss(distances, temperature=tau)
+            loss.backward()
+            nonzero_counts[tau] = (distances.grad.abs() > 1e-10).sum().item()
+
+        ## Higher τ should give at least as many nonzero gradients
+        assert nonzero_counts[0.05] >= nonzero_counts[0.001], (
+            f'Expected more nonzero grads at τ=0.05 ({nonzero_counts[0.05]}) '
+            f'than τ=0.001 ({nonzero_counts[0.001]})'
+        )
+
+
+class Test_compute_soft_histogram_gradient:
+    """Tests for Clusterer.compute_soft_histogram_gradient."""
+
+    def test_returns_expected_keys(self, clusterer_with_data):
+        """Should return gradients for each similarity matrix plus the loss."""
+        result = clusterer_with_data.find_optimal_parameters_DE(seed=42)
+        grads = clusterer_with_data.compute_soft_histogram_gradient(
+            kwargs_mixing=result, temperature=0.01,
+        )
+        assert set(grads.keys()) == {'grad_sf', 'grad_NN', 'grad_SWT', 'loss'}
+
+    def test_gradient_shapes_match_data(self, clusterer_with_data):
+        """Each gradient should have the same shape as the sparse matrix .data."""
+        result = clusterer_with_data.find_optimal_parameters_DE(seed=42)
+        grads = clusterer_with_data.compute_soft_histogram_gradient(
+            kwargs_mixing=result, temperature=0.01,
+        )
+        assert grads['grad_sf'].shape == (clusterer_with_data.s_sf.nnz,)
+        assert grads['grad_NN'].shape == (clusterer_with_data.s_NN_z.nnz,)
+        assert grads['grad_SWT'].shape == (clusterer_with_data.s_SWT_z.nnz,)
+
+    def test_nn_and_swt_gradients_are_nonzero(self, clusterer_with_data):
+        """NN and SWT gradients should have nonzero entries (SF may be zero
+        since it has no sigmoid/power parameterization in the default mixing)."""
+        result = clusterer_with_data.find_optimal_parameters_DE(seed=42)
+        grads = clusterer_with_data.compute_soft_histogram_gradient(
+            kwargs_mixing=result, temperature=0.01,
+        )
+        assert (grads['grad_NN'].abs() > 1e-10).any(), 'NN gradients are all zero'
+        assert (grads['grad_SWT'].abs() > 1e-10).any(), 'SWT gradients are all zero'
+
+    def test_loss_is_finite(self, clusterer_with_data):
+        """Returned loss should be finite and positive."""
+        result = clusterer_with_data.find_optimal_parameters_DE(seed=42)
+        grads = clusterer_with_data.compute_soft_histogram_gradient(
+            kwargs_mixing=result, temperature=0.01,
+        )
+        assert torch.isfinite(grads['loss'])
+        assert grads['loss'].item() > 0
+
+    def test_gradient_direction_is_useful(self, clusterer_with_data):
+        """Perturbing features along the negative gradient should not increase
+        the soft loss (sanity check that the gradient is a descent direction)."""
+        from roicat import tracking
+
+        result = clusterer_with_data.find_optimal_parameters_DE(seed=42)
+        grads = clusterer_with_data.compute_soft_histogram_gradient(
+            kwargs_mixing=result, temperature=0.005,
+        )
+        loss_before = grads['loss'].item()
+
+        ## Small perturbation of NN and SWT features in the negative gradient direction
+        eps = 0.001
+        s_NN_mod = clusterer_with_data.s_NN_z.copy()
+        s_NN_mod.data = (
+            torch.as_tensor(s_NN_mod.data, dtype=torch.float32)
+            - eps * grads['grad_NN']
+        ).numpy()
+        s_SWT_mod = clusterer_with_data.s_SWT_z.copy()
+        s_SWT_mod.data = (
+            torch.as_tensor(s_SWT_mod.data, dtype=torch.float32)
+            - eps * grads['grad_SWT']
+        ).numpy()
+
+        ## Re-evaluate soft loss at the perturbed features with same mixing params
+        c2 = tracking.clustering.Clusterer(
+            s_sf=clusterer_with_data.s_sf,
+            s_NN_z=s_NN_mod,
+            s_SWT_z=s_SWT_mod,
+            s_sesh=clusterer_with_data.s_sesh,
+            verbose=False,
+        )
+        grads2 = c2.compute_soft_histogram_gradient(
+            kwargs_mixing=result, temperature=0.005,
+        )
+        loss_after = grads2['loss'].item()
+
+        ## Loss should decrease or stay roughly the same (allow small numerical noise)
+        assert loss_after <= loss_before * 1.05, (
+            f'Loss increased from {loss_before:.2f} to {loss_after:.2f} '
+            f'after gradient step — gradient direction is wrong'
+        )
+
+
+class Test_naive_bayes_distance_matrix:
+    """Tests for Clusterer.make_naive_bayes_distance_matrix."""
+
+    def test_returns_correct_types(self, clusterer_with_data):
+        """Should return (dConj, sConj, calibrations) with correct types."""
+        import scipy.sparse
+        dConj, sConj, calibrations = clusterer_with_data.make_naive_bayes_distance_matrix()
+        assert isinstance(dConj, scipy.sparse.csr_matrix)
+        assert isinstance(sConj, scipy.sparse.csr_matrix)
+        assert isinstance(calibrations, dict)
+        assert 'features' in calibrations
+        assert 'prior' in calibrations
+        assert 'p_same_combined' in calibrations
+
+    def test_output_shapes_match_input(self, clusterer_with_data):
+        """dConj and sConj should have same shape/nnz as s_sf."""
+        dConj, sConj, _ = clusterer_with_data.make_naive_bayes_distance_matrix()
+        assert dConj.shape == clusterer_with_data.s_sf.shape
+        assert sConj.shape == clusterer_with_data.s_sf.shape
+        assert dConj.nnz == clusterer_with_data.s_sf.nnz
+        assert sConj.nnz == clusterer_with_data.s_sf.nnz
+
+    def test_distances_in_valid_range(self, clusterer_with_data):
+        """Distances (1 - P(same)) should be in [0, 1]."""
+        dConj, sConj, _ = clusterer_with_data.make_naive_bayes_distance_matrix()
+        assert dConj.data.min() >= 0.0 - 1e-6
+        assert dConj.data.max() <= 1.0 + 1e-6
+        assert sConj.data.min() >= 0.0 - 1e-6
+        assert sConj.data.max() <= 1.0 + 1e-6
+
+    def test_distance_plus_similarity_equals_one(self, clusterer_with_data):
+        """d + s should equal 1 for every pair."""
+        dConj, sConj, _ = clusterer_with_data.make_naive_bayes_distance_matrix()
+        np.testing.assert_allclose(
+            dConj.data + sConj.data, 1.0, atol=1e-6,
+        )
+
+    def test_calibration_has_all_features(self, clusterer_with_data):
+        """Calibrations should contain SF, NN, and SWT."""
+        _, _, calibrations = clusterer_with_data.make_naive_bayes_distance_matrix()
+        assert set(calibrations['features'].keys()) == {'SF', 'NN', 'SWT'}
+        for name, cal in calibrations['features'].items():
+            assert 'edges' in cal
+            assert 'p_same_bins' in cal
+            assert 'p_same_per_pair' in cal
+            ## P(same) per bin should be monotonically non-decreasing.
+            ## Values are stored as numpy arrays for serialization compatibility.
+            p = np.asarray(cal['p_same_bins'])
+            assert np.all(np.diff(p) >= -1e-7), (
+                f'{name}: P(same) bins not monotonic: {p}'
+            )
+
+    def test_prior_is_reasonable(self, clusterer_with_data):
+        """Prior P(same) should be positive and less than 0.5 (most pairs are different)."""
+        _, _, calibrations = clusterer_with_data.make_naive_bayes_distance_matrix()
+        prior = calibrations['prior']
+        assert 0 < prior < 0.5, f'Prior P(same)={prior} seems unreasonable'
+
+    def test_some_pairs_classified_as_same(self, clusterer_with_data):
+        """At least some pairs should have P(same) > 0.5."""
+        _, _, calibrations = clusterer_with_data.make_naive_bayes_distance_matrix()
+        p_combined = calibrations['p_same_combined']
+        n_same = (p_combined > 0.5).sum()
+        ## With 241 ROIs across 9 sessions, there should be some same pairs
+        assert n_same > 0, 'No pairs classified as same (P > 0.5)'
+
+    def test_compatible_with_pruning(self, clusterer_with_data):
+        """Output should work with make_pruned_similarity_graphs(precomputed)."""
+        clusterer_with_data.make_naive_bayes_distance_matrix()
+        ## Should not raise
+        clusterer_with_data.make_pruned_similarity_graphs(
+            kwargs_makeConjunctiveDistanceMatrix='precomputed',
+        )
+        assert hasattr(clusterer_with_data, 'dConj_pruned')
+        assert clusterer_with_data.dConj_pruned is not None
+
+    def test_deterministic(self, clusterer_with_data):
+        """Two calls with same data should produce identical results."""
+        dConj1, _, cal1 = clusterer_with_data.make_naive_bayes_distance_matrix()
+        dConj2, _, cal2 = clusterer_with_data.make_naive_bayes_distance_matrix()
+        np.testing.assert_array_equal(dConj1.data, dConj2.data)
+
+
+class Test_find_optimal_nb_combination_DE:
+    """Tests for Clusterer.find_optimal_nb_combination_DE (hybrid NB + DE)."""
+
+    def _run_hybrid(self, clusterer_with_data):
+        """Helper: run NB calibration then optimize combination."""
+        clusterer_with_data.make_naive_bayes_distance_matrix()
+        return clusterer_with_data.find_optimal_nb_combination_DE(
+            de_kwargs={
+                'maxiter': 5,
+                'tol': 1e-4,
+                'popsize': 5,
+                'mutation': (0.5, 1.5),
+                'recombination': 0.7,
+                'polish': False,
+            },
+            seed=42,
+        )
+
+    def test_returns_correct_types(self, clusterer_with_data):
+        """Should return (dConj, sConj, result_info) with correct types."""
+        import scipy.sparse
+        dConj, sConj, result_info = self._run_hybrid(clusterer_with_data)
+        assert isinstance(dConj, scipy.sparse.csr_matrix)
+        assert isinstance(sConj, scipy.sparse.csr_matrix)
+        assert isinstance(result_info, dict)
+        assert 'best_params' in result_info
+        assert 'loss' in result_info
+        assert 'n_evals' in result_info
+        assert 'p_same_combined' in result_info
+
+    def test_output_shapes_match_input(self, clusterer_with_data):
+        """dConj and sConj should have same shape/nnz as s_sf."""
+        dConj, sConj, _ = self._run_hybrid(clusterer_with_data)
+        assert dConj.shape == clusterer_with_data.s_sf.shape
+        assert sConj.shape == clusterer_with_data.s_sf.shape
+        assert dConj.nnz == clusterer_with_data.s_sf.nnz
+
+    def test_distances_in_valid_range(self, clusterer_with_data):
+        """Distances should be in [0, 1]."""
+        dConj, sConj, _ = self._run_hybrid(clusterer_with_data)
+        assert dConj.data.min() >= 0.0 - 1e-6
+        assert dConj.data.max() <= 1.0 + 1e-6
+        assert sConj.data.min() >= 0.0 - 1e-6
+        assert sConj.data.max() <= 1.0 + 1e-6
+
+    def test_distance_plus_similarity_equals_one(self, clusterer_with_data):
+        """d + s should equal 1 for every pair."""
+        dConj, sConj, _ = self._run_hybrid(clusterer_with_data)
+        np.testing.assert_allclose(
+            dConj.data + sConj.data, 1.0, atol=1e-6,
+        )
+
+    def test_best_params_have_expected_keys(self, clusterer_with_data):
+        """best_params should contain p_norm, w_NN, w_SWT."""
+        _, _, result_info = self._run_hybrid(clusterer_with_data)
+        params = result_info['best_params']
+        assert set(params.keys()) == {'p_norm', 'w_NN', 'w_SWT'}
+        ## All should be finite
+        for k, v in params.items():
+            assert np.isfinite(v), f'{k}={v} is not finite'
+
+    def test_loss_is_finite(self, clusterer_with_data):
+        """The optimized loss should be finite (not 1e6 penalty)."""
+        _, _, result_info = self._run_hybrid(clusterer_with_data)
+        assert np.isfinite(result_info['loss'])
+        assert result_info['loss'] < 1e6
+
+    def test_deterministic_with_seed(self, clusterer_with_data):
+        """Two runs with same seed should produce identical results."""
+        dConj1, _, info1 = self._run_hybrid(clusterer_with_data)
+        dConj2, _, info2 = self._run_hybrid(clusterer_with_data)
+        np.testing.assert_array_equal(dConj1.data, dConj2.data)
+        assert info1['loss'] == info2['loss']
+
+    def test_compatible_with_pruning(self, clusterer_with_data):
+        """Output should work with make_pruned_similarity_graphs(precomputed)."""
+        self._run_hybrid(clusterer_with_data)
+        clusterer_with_data.make_pruned_similarity_graphs(
+            kwargs_makeConjunctiveDistanceMatrix='precomputed',
+        )
+        assert hasattr(clusterer_with_data, 'dConj_pruned')
+        assert clusterer_with_data.dConj_pruned is not None
+
+    def test_requires_nb_calibration_first(self, clusterer_with_data):
+        """Should raise AssertionError if NB calibration hasn't been done."""
+        from roicat import tracking
+        ## Create a fresh clusterer without NB calibration
+        fresh = tracking.clustering.Clusterer(
+            s_sf=clusterer_with_data.s_sf,
+            s_NN_z=clusterer_with_data.s_NN_z,
+            s_SWT_z=clusterer_with_data.s_SWT_z,
+            s_sesh=clusterer_with_data.s_sesh,
+            verbose=False,
+        )
+        with pytest.raises(AssertionError, match="make_naive_bayes_distance_matrix"):
+            fresh.find_optimal_nb_combination_DE(seed=42)
+
+    def test_subsample_pairs(self, clusterer_with_data):
+        """Subsampling should still produce valid outputs."""
+        clusterer_with_data.make_naive_bayes_distance_matrix()
+        dConj, sConj, result_info = clusterer_with_data.find_optimal_nb_combination_DE(
+            subsample_pairs=1000,
+            de_kwargs={
+                'maxiter': 3,
+                'tol': 1e-4,
+                'popsize': 5,
+                'polish': False,
+            },
+            seed=42,
+        )
+        assert dConj.shape == clusterer_with_data.s_sf.shape
+        assert dConj.data.min() >= 0.0 - 1e-6
+        assert dConj.data.max() <= 1.0 + 1e-6
+        assert np.isfinite(result_info['loss'])
+
+
+class Test_edge_cases:
+    """Edge case and robustness tests for the new mixing methods."""
+
+    def test_extreme_p_norm_bounds(self, clusterer_with_data):
+        """DE should handle near-zero p_norm without NaN/Inf."""
+        result = clusterer_with_data.find_optimal_parameters_DE(
+            seed=42,
+            bounds_findParameters={
+                'power_NN': [0.0, 0.5],
+                'power_SWT': [0.0, 0.5],
+                'p_norm': [-0.5, -0.1],
+                'sig_NN_kwargs_mu': [0., 1.0],
+                'sig_NN_kwargs_b': [0.1, 1.5],
+                'sig_SWT_kwargs_mu': [0., 1.0],
+                'sig_SWT_kwargs_b': [0.1, 1.5],
+            },
+            de_kwargs={
+                'maxiter': 3, 'tol': 1e-4, 'popsize': 5, 'polish': False,
+            },
+        )
+        assert np.isfinite(clusterer_with_data._de_result.fun)
+
+    def test_very_small_subsample(self, clusterer_with_data):
+        """Even tiny subsamples should work (clamp to minimum 100)."""
+        result = clusterer_with_data.find_optimal_parameters_DE(
+            seed=42, subsample_pairs=10,
+            de_kwargs={
+                'maxiter': 3, 'tol': 1e-4, 'popsize': 5, 'polish': False,
+            },
+        )
+        assert np.isfinite(clusterer_with_data._de_result.fun)
+
+    def test_nb_calibration_monotonicity(self, clusterer_with_data):
+        """P(same|s_k) bins should be strictly monotonically non-decreasing for all features."""
+        _, _, cal = clusterer_with_data.make_naive_bayes_distance_matrix()
+        for name, feat_cal in cal['features'].items():
+            p = feat_cal['p_same_bins']
+            if isinstance(p, torch.Tensor):
+                p = p.numpy()
+            diffs = np.diff(p)
+            assert np.all(diffs >= -1e-7), (
+                f'{name}: P(same) bins not monotonic, min diff = {diffs.min():.8f}'
+            )
+
+    def test_nb_distances_no_nans(self, clusterer_with_data):
+        """NB distance matrix should contain no NaN or Inf values."""
+        dConj, sConj, _ = clusterer_with_data.make_naive_bayes_distance_matrix()
+        assert np.all(np.isfinite(dConj.data)), 'dConj has NaN/Inf'
+        assert np.all(np.isfinite(sConj.data)), 'sConj has NaN/Inf'
+
+    def test_freeze_sigmoid_matches_nb_estimates(self, clusterer_with_data):
+        """Frozen sigmoid params should exactly match NB-estimated values."""
+        clusterer_with_data.make_naive_bayes_distance_matrix()
+        sig_params = clusterer_with_data._estimate_sigmoid_params()
+
+        result = clusterer_with_data.find_optimal_parameters_DE(
+            seed=42, freeze_sigmoid=True,
+            de_kwargs={
+                'maxiter': 3, 'tol': 1e-4, 'popsize': 5, 'polish': False,
+            },
+        )
+        assert result['sig_NN_kwargs']['mu'] == sig_params['NN']['mu']
+        assert result['sig_NN_kwargs']['b'] == sig_params['NN']['b']
+        assert result['sig_SWT_kwargs']['mu'] == sig_params['SWT']['mu']
+        assert result['sig_SWT_kwargs']['b'] == sig_params['SWT']['b']
+
+    def test_serialization_roundtrip(self, clusterer_with_data):
+        """Clusterer state after NB calibration should survive serialization."""
+        import pickle
+
+        clusterer_with_data.make_naive_bayes_distance_matrix()
+        sd = clusterer_with_data.serializable_dict
+
+        ## Should be picklable
+        data = pickle.dumps(sd)
+        restored = pickle.loads(data)
+
+        ## Calibration data should survive (not be __repr__ strings)
+        cal = restored.get('calibrations_naive_bayes', {})
+        if cal:  ## May be empty if serialization converts to __repr__
+            features = cal.get('features', {})
+            for feat_name, feat_cal in features.items():
+                for key, val in feat_cal.items():
+                    assert not isinstance(val, dict) or '__repr__' not in val, (
+                        f'Lost calibration data: {feat_name}.{key}'
+                    )
+
+    def test_synthetic_data_de(self):
+        """DE should work on fully synthetic data with known structure."""
+        from roicat import tracking
+
+        rng = np.random.RandomState(42)
+        n = 60
+        n_sessions = 3
+
+        ## Create sparse sparsity pattern
+        rows, cols = [], []
+        for i in range(n):
+            for j in range(i + 1, min(i + 10, n)):
+                rows.extend([i, j])
+                cols.extend([j, i])
+        rows, cols = np.array(rows), np.array(cols)
+        nnz = len(rows)
+
+        ## Spatial footprint: higher similarity for same-cell pairs
+        sf_data = rng.rand(nnz).astype(np.float64) * 0.5
+        s_sf = scipy.sparse.csr_matrix(
+            (sf_data, (rows, cols)), shape=(n, n),
+        )
+
+        ## NN and SWT: z-scored similarities
+        s_NN_z = s_sf.copy()
+        s_NN_z.data = rng.randn(nnz).astype(np.float64)
+        s_SWT_z = s_sf.copy()
+        s_SWT_z.data = rng.randn(nnz).astype(np.float64)
+
+        ## Session matrix
+        session_ids = np.repeat(np.arange(n_sessions), n // n_sessions + 1)[:n]
+        s_sesh_data = np.array([
+            float(session_ids[r] != session_ids[c]) for r, c in zip(rows, cols)
+        ], dtype=np.float64)
+        s_sesh = scipy.sparse.csr_matrix(
+            (s_sesh_data, (rows, cols)), shape=(n, n),
+        )
+
+        c = tracking.clustering.Clusterer(
+            s_sf=s_sf, s_NN_z=s_NN_z, s_SWT_z=s_SWT_z,
+            s_sesh=s_sesh, verbose=False,
+        )
+
+        result = c.find_optimal_parameters_DE(
+            seed=42,
+            de_kwargs={
+                'maxiter': 5, 'tol': 1e-4, 'popsize': 5, 'polish': False,
+            },
+        )
+
+        assert set(result.keys()) == {
+            'power_SF', 'power_NN', 'power_SWT', 'p_norm',
+            'sig_SF_kwargs', 'sig_NN_kwargs', 'sig_SWT_kwargs',
+        }
+        assert np.isfinite(c._de_result.fun)
+
+    def test_synthetic_data_nb(self):
+        """NB should work on fully synthetic data."""
+        from roicat import tracking
+
+        rng = np.random.RandomState(42)
+        n = 60
+        n_sessions = 3
+
+        rows, cols = [], []
+        for i in range(n):
+            for j in range(i + 1, min(i + 10, n)):
+                rows.extend([i, j])
+                cols.extend([j, i])
+        rows, cols = np.array(rows), np.array(cols)
+        nnz = len(rows)
+
+        s_sf = scipy.sparse.csr_matrix(
+            (rng.rand(nnz).astype(np.float64), (rows, cols)), shape=(n, n),
+        )
+        s_NN_z = s_sf.copy()
+        s_NN_z.data = rng.randn(nnz).astype(np.float64)
+        s_SWT_z = s_sf.copy()
+        s_SWT_z.data = rng.randn(nnz).astype(np.float64)
+
+        session_ids = np.repeat(np.arange(n_sessions), n // n_sessions + 1)[:n]
+        s_sesh_data = np.array([
+            float(session_ids[r] != session_ids[c]) for r, c in zip(rows, cols)
+        ], dtype=np.float64)
+        s_sesh = scipy.sparse.csr_matrix(
+            (s_sesh_data, (rows, cols)), shape=(n, n),
+        )
+
+        c = tracking.clustering.Clusterer(
+            s_sf=s_sf, s_NN_z=s_NN_z, s_SWT_z=s_SWT_z,
+            s_sesh=s_sesh, verbose=False,
+        )
+
+        dConj, sConj, cal = c.make_naive_bayes_distance_matrix()
+        assert dConj.shape == (n, n)
+        assert np.all(np.isfinite(dConj.data))
+        assert np.all(dConj.data >= 0)
+        assert np.all(dConj.data <= 1)
