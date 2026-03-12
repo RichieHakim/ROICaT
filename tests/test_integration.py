@@ -136,13 +136,13 @@ def test_pipeline_tracking_simple(dir_data_test):
             assert np.all(np.isfinite(metric_arr)), f"Error: quality metric '{metric_name}' contains non-finite values"
 
     ## Save results
-    path_results_output = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'results_output.richfile')
+    path_results_output = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'results_output.richfile.zip')
     print(f"Saving to: {path_results_output}")
-    util.RichFile_ROICaT(path=path_results_output).save(results, overwrite=True)
+    util.RichFile_ROICaT(path=path_results_output, backend='zip').save(results, overwrite=True)
 
-    path_run_data_output = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'run_data_output.richfile')
+    path_run_data_output = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'run_data_output.richfile.zip')
     print(f"Saving to: {path_run_data_output}")
-    util.RichFile_ROICaT(path=path_run_data_output).save(run_data, overwrite=True)
+    util.RichFile_ROICaT(path=path_run_data_output, backend='zip').save(run_data, overwrite=True)
 
     ## Golden reference comparison (diagnostic only).
     ## This is a non-blocking check that warns on mismatches but does not fail

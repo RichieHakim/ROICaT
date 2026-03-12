@@ -99,7 +99,8 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         )
         assert data.check_completeness(verbose=False)['tracking'], f"Data object is missing attributes necessary for tracking."
     elif data_kind == 'data_roicat':
-        paths_allDataObjs = helpers.find_paths(
+        ## Search for both directories (.richfile) and archive files (.sqlar, .zip, .tar)
+        paths_folders = helpers.find_paths(
             dir_outer=params['data_loading']['dir_outer'],
             reMatch=params['data_loading']['data_roicat']['filename_search'],
             depth=6,
@@ -107,10 +108,18 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
             find_folders=True,
             natsorted=True,
         )[:]
+        paths_files = helpers.find_paths(
+            dir_outer=params['data_loading']['dir_outer'],
+            reMatch=params['data_loading']['data_roicat']['filename_search'],
+            depth=6,
+            find_files=True,
+            find_folders=False,
+            natsorted=True,
+        )[:]
+        paths_allDataObjs = paths_folders + paths_files
         assert len(paths_allDataObjs) == 1, f"ERROR: Found {len(paths_allDataObjs)} files matching the search pattern '{params['data_loading']['data_roicat']['filename_search']}' in '{params['data_loading']['dir_outer']}'. Exactly one file must be found."
 
         data = data_importing.Data_roicat()
-        # data.load(path_load=paths_allDataObjs[0])
 
         data.import_from_dict(
             dict_load=util.RichFile_ROICaT(path=paths_allDataObjs[0]).load(),
@@ -350,22 +359,28 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
 
         dir_save = Path(params['results_saving']['dir_save']).resolve()
         name_save = str(params['results_saving']['prefix_name_save'])
+        richfile_backend = params['results_saving'].get('richfile_backend', 'zip')
+
+        ## Map backend to file extension: archive backends use .richfile.<ext>,
+        ## directory backend uses just .richfile
+        _backend_suffix = {'directory': 'richfile', 'sqlar': 'richfile.sqlar', 'zip': 'richfile.zip', 'tar': 'richfile.tar'}
+        rf_ext = _backend_suffix.get(richfile_backend, 'richfile')
 
         print(f'dir_save: {dir_save}')
 
         paths_save = {
             'results_clusters': str(Path(dir_save) / f'{name_save}.tracking.results_clusters.json'),
             'params_used':      str(Path(dir_save) / f'{name_save}.tracking.params_used.json'),
-            'results_all':      str(Path(dir_save) / f'{name_save}.tracking.results_all.richfile'),
-            'run_data':         str(Path(dir_save) / f'{name_save}.tracking.run_data.richfile'),
+            'results_all':      str(Path(dir_save) / f'{name_save}.tracking.results_all.{rf_ext}'),
+            'run_data':         str(Path(dir_save) / f'{name_save}.tracking.run_data.{rf_ext}'),
         }
 
         Path(dir_save).mkdir(parents=True, exist_ok=True)
 
         helpers.json_save(obj=results_clusters, filepath=paths_save['results_clusters']);
         helpers.json_save(obj=params_used, filepath=paths_save['params_used']);
-        util.RichFile_ROICaT(path=paths_save['results_all']).save(obj=results_all, overwrite=True);
-        util.RichFile_ROICaT(path=paths_save['run_data']).save(obj=run_data, overwrite=True);
+        util.RichFile_ROICaT(path=paths_save['results_all'], backend=richfile_backend).save(obj=results_all, overwrite=True);
+        util.RichFile_ROICaT(path=paths_save['run_data'], backend=richfile_backend).save(obj=run_data, overwrite=True);
 
     
         ## Visualize results

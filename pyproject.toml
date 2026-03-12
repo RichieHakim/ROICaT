@@ -38,7 +38,7 @@ core = [
     "skl2onnx==1.20.0",
     "onnx==1.20.1",
     "onnxruntime==1.24.1",
-    "richfile>=0.4.5",
+    "richfile>=0.5.3",
 ]
 classification = [
     "roicat[core]",

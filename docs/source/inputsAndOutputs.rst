@@ -15,9 +15,13 @@ Outputs
 #######
 
 The outputs of ROICaT tracking are encapsulated in a set of files. The main file
-is a ``...tracking.results_all.richfile`` directory that can be loaded using
-``roicat.util.RichFile_ROICaT``. It is a python dictionary with the following
-fields:
+is a ``...tracking.results_all.richfile`` (directory or archive) that can be
+loaded using ``roicat.util.RichFile_ROICaT``. Multiple storage backends are
+supported: ``'directory'`` (default, produces a folder tree), ``'sqlar'``
+(single SQLite archive), ``'zip'`` (single ZIP file), and ``'tar'`` (single TAR
+file). The backend can be configured via
+``params['results_saving']['richfile_backend']``. The result is a python
+dictionary with the following fields:
 
 Clusters
 ~~~~~~~~

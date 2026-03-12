@@ -275,6 +275,7 @@ def get_default_parameters(
             'results_saving': {
                 'dir_save': None,  ## Directory to save results to. If None, will not save.
                 'prefix_name_save': str(datetime.datetime.now().strftime("%Y%m%d_%H%M%S")),  ## Prefix to append to the saved files
+                'richfile_backend': 'zip',  ## Backend for saving richfile data. Options: 'directory', 'sqlar', 'zip' (default), 'tar'. Archive backends produce a single file instead of a directory tree.
                 'gif_frame_rate': 10.0 ## Frame rate for any GIFs saved
             },
         }
@@ -735,13 +736,36 @@ class ROICaT_Module:
 
 
 class RichFile_ROICaT(rf.RichFile):
+    """
+    RichFile subclass with ROICaT-specific type registrations (numpy arrays,
+    scipy sparse matrices, torch tensors, optuna studies, pandas DataFrames,
+    etc.).
+
+    Args:
+        path (Optional[Union[str, Path]]):
+            Path to save/load the richfile.
+        check (Optional[bool]):
+            Whether to perform validation checks.
+        safe_save (Optional[bool]):
+            Whether to use atomic save with temporary file.
+        backend (Optional[str]):
+            Storage backend. One of:
+            * ``'auto'``: auto-detect from existing path, or default to
+              ``'directory'`` for new saves.
+            * ``'directory'``: classic richfile directory tree.
+            * ``'sqlar'``: single-file SQLite archive (``.sqlar``).
+            * ``'zip'``: single-file ZIP archive (``.zip``, stored/no
+              compression).
+            * ``'tar'``: single-file plain TAR archive (``.tar``).
+    """
     def __init__(
         self,
         path: Optional[Union[str, Path]] = None,
         check: Optional[bool] = True,
         safe_save: Optional[bool] = True,
+        backend: Optional[str] = "auto",
     ):
-        super().__init__(path=path, check=check, safe_save=safe_save)
+        super().__init__(path=path, check=check, safe_save=safe_save, backend=backend)
 
 
         ## NUMPY ARRAY
