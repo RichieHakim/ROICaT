@@ -1851,12 +1851,6 @@ class Clusterer(util.ROICaT_Module):
         """
         Smooth a 1D tensor with a boxcar convolution.
 
-        Creates and caches a :class:`helpers.Convolver_1d` instance on the
-        first call (keyed on ``self.smooth_window`` and ``self.n_bins``). The
-        cache is invalidated when either parameter changes, so calling code
-        can freely update ``self.n_bins`` / ``self.smooth_window`` between
-        invocations.
-
         Args:
             x (torch.Tensor):
                 1D tensor to be smoothed.
@@ -1865,19 +1859,13 @@ class Clusterer(util.ROICaT_Module):
             (torch.Tensor):
                 Smoothed tensor, same shape as ``x``.
         """
-        ## Build or reuse cached smoother — invalidate when params change
-        cache_key = (self.smooth_window, self.n_bins)
-        if getattr(self, '_fn_smooth_cache_key', None) != cache_key:
-            self._fn_smooth_smoother = helpers.Convolver_1d(
-                kernel=torch.ones(self.smooth_window),
-                length_x=self.n_bins,
-                pad_mode='same',
-                correct_edge_effects=True,
-                device='cpu',
-            )
-            self._fn_smooth_cache_key = cache_key
-
-        return self._fn_smooth_smoother.convolve(x)
+        return helpers.Convolver_1d(
+            kernel=torch.ones(self.smooth_window),
+            length_x=self.n_bins,
+            pad_mode='same',
+            correct_edge_effects=True,
+            device='cpu',
+        ).convolve(x)
 
     ####################################################################
     ## Shared histogram overlap computation
