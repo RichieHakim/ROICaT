@@ -44,7 +44,7 @@ jobs:
           # "3.10",
           "3.11",
           "3.12",
-          "3.13",
+          # "3.13",  ## Many scientific deps lack py3.13 wheels (hdbscan, kymatio, onnx2torch)
         ]
         extra: [
           all,

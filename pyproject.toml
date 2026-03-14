@@ -9,7 +9,7 @@ description = "A library for classifying and tracking ROIs."
 readme = "README.md"
 license = "GPL-3.0-only"
 license-files = ["LICENSE.md"]
-requires-python = ">=3.11, <3.14"
+requires-python = ">=3.11, <3.13"
 authors = [{name = "Richard Hakim"}]
 keywords = ["neuroscience", "neuroimaging", "machine learning", "deep learning"]
 
@@ -38,7 +38,7 @@ core = [
     "skl2onnx==1.20.0",
     "onnx==1.20.1",
     "onnxruntime==1.24.1",
-    "richfile>=0.5.3",
+    "richfile>=0.5.5",
 ]
 classification = [
     "roicat[core]",
