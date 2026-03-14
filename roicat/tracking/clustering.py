@@ -98,6 +98,7 @@ class Clusterer(util.ROICaT_Module):
         s_sesh: Optional[scipy.sparse.csr_matrix] = None,
         n_bins: Optional[int] = None,
         smoothing_window_bins: Optional[int] = None,
+        session_bool: Optional[np.ndarray] = None,
         verbose: bool = True,
     ):
         """
@@ -137,6 +138,8 @@ class Clusterer(util.ROICaT_Module):
         self.n_bins = max(min(self.s_sf.nnz // 10000, 200), 20) if n_bins is None else n_bins
         self.smooth_window = helpers.make_odd(self.n_bins // 10, mode='up') if smoothing_window_bins is None else smoothing_window_bins
 
+        self._session_bool = session_bool
+
     def find_optimal_parameters_for_pruning(
         self,
         bounds_findParameters: Dict[str, List[float]] = {
@@ -173,8 +176,8 @@ class Clusterer(util.ROICaT_Module):
 
         This method replaces the original Optuna TPE search (see
         :meth:`_find_optimal_parameters_for_pruning_optuna` in the legacy
-        section). The two-stage approach achieves ~3.6x better separation
-        quality in ~30% less wall-clock time on typical datasets.
+        section). The two-stage approach achieves better separation quality
+        (lower histogram overlap) on typical datasets.
         RH 2023 / 2025
 
         Args:
@@ -183,14 +186,26 @@ class Clusterer(util.ROICaT_Module):
                 ``power_SWT``, ``p_norm``.
             de_kwargs (Dict[str, Any]):
                 Keyword arguments for
-                ``scipy.optimize.differential_evolution``.
+                ``scipy.optimize.differential_evolution``: \n
+                * ``maxiter`` (int): Maximum number of DE generations.
+                * ``tol`` (float): Convergence tolerance on the loss.
+                * ``popsize`` (int): Population size multiplier
+                  (actual population = ``popsize * n_params``).
+                * ``mutation`` (Tuple[float, float]): Differential
+                  weight range ``(min, max)`` for dithering.
+                * ``recombination`` (float): Crossover probability
+                  in ``[0, 1]``.
+                * ``polish`` (bool): If ``True``, run L-BFGS-B from
+                  the best DE solution. Often has no effect on
+                  piecewise-constant histogram loss.
             n_bins (Optional[int]):
                 Overwrites ``n_bins`` from ``__init__``.
             smoothing_window_bins (Optional[int]):
                 Overwrites ``smoothing_window_bins`` from ``__init__``.
             subsample_pairs (Optional[int]):
                 If not ``None``, subsample this many pairs for histogram
-                loss evaluation. Maintains intra/inter ratio.
+                loss evaluation. Maintains intra/inter ratio. If ``None``,
+                auto-computed based on pair counts.
             seed (Optional[int]):
                 Random seed for reproducibility.
 
@@ -209,9 +224,8 @@ class Clusterer(util.ROICaT_Module):
             ],
         )
 
-        ## Delegate to find_optimal_parameters_DE with freeze_sigmoid=True.
-        ## This runs NB calibration → Fisher sigmoid estimation → 3-param DE.
-        return self.find_optimal_parameters_DE(
+        ## NB calibration → Fisher sigmoid estimation → 3-param DE.
+        return self._find_optimal_parameters_DE(
             bounds_findParameters=bounds_findParameters,
             de_kwargs=de_kwargs,
             n_bins=n_bins,
@@ -315,7 +329,7 @@ class Clusterer(util.ROICaT_Module):
         ## the first n_sample_intra entries
         return torch.cat([intra_idx[perm_intra], inter_idx[perm_inter]])
 
-    def find_optimal_parameters_DE(
+    def _find_optimal_parameters_DE(
         self,
         bounds_findParameters: Dict[str, List[float]] = {
             'power_NN': [0.0, 2.],
@@ -338,77 +352,57 @@ class Clusterer(util.ROICaT_Module):
         smoothing_window_bins: Optional[int] = None,
         subsample_pairs: Optional[int] = None,
         seed: Optional[int] = None,
-        freeze_sigmoid: bool = False,
-        nb_init: bool = False,
-        vectorized: bool = False,
-        resample_each_generation: bool = False,
-        stratified_subsampling: bool = False,
+        freeze_sigmoid: bool = True,
     ) -> Dict:
         """
         Find optimal mixing parameters using scipy differential evolution.
 
-        Alternative to :meth:`find_optimal_parameters_for_pruning` that uses
-        differential evolution instead of Optuna TPE. Often finds better
-        optima because the histogram overlap loss is piecewise constant
-        (hard bins), which defeats gradient-based methods but is well-suited
-        to evolutionary strategies.
+        When ``freeze_sigmoid=True`` (default), sigmoid parameters (mu, b)
+        for NN and SWT are estimated from NB calibration curves via Fisher's
+        linear discriminant and held fixed, reducing the search to 3
+        parameters (``power_NN``, ``power_SWT``, ``p_norm``). When
+        ``False``, all 7 parameters are optimized jointly.
 
-        Uses the same parameterization (sigmoid → power → p-norm) and the
-        same histogram overlap loss as the Optuna method. The inner loop
-        operates entirely on precomputed torch tensors — no scipy sparse
-        operations per evaluation — yielding ~8–10x speedup on large data.
-
-        When ``freeze_sigmoid=True``, sigmoid parameters (mu, b) for NN and
-        SWT are estimated from NB calibration curves via Fisher's linear
-        discriminant and held fixed, reducing the search from 7 to 3
-        parameters (power_NN, power_SWT, p_norm). This is the recommended
-        mode — the NB-estimated sigmoid params leverage the full pair
-        distribution (not just the subsample), yielding better separation
-        than the full 7-parameter search.
+        The inner loop operates entirely on precomputed torch tensors — no
+        scipy sparse operations per evaluation. When subsampling is active,
+        the subsample is redrawn each DE generation to reduce overfitting
+        to a specific pair subset.
         RH 2025
 
         Args:
             bounds_findParameters (Dict[str, List[float]]):
-                Bounds for each parameter. Keys must match the active
-                parameter set (7-param or 3-param depending on
-                ``freeze_sigmoid``).
+                Bounds for each parameter. When ``freeze_sigmoid=True``,
+                only ``power_NN``, ``power_SWT``, ``p_norm`` are used.
+                When ``False``, all 7 keys are needed.
             de_kwargs (Dict[str, Any]):
                 Keyword arguments for
-                ``scipy.optimize.differential_evolution``.
+                ``scipy.optimize.differential_evolution``: \n
+                * ``maxiter`` (int): Maximum number of DE generations.
+                * ``tol`` (float): Convergence tolerance on the loss.
+                * ``popsize`` (int): Population size multiplier
+                  (actual population = ``popsize * n_params``).
+                * ``mutation`` (Tuple[float, float]): Differential
+                  weight range ``(min, max)`` for dithering.
+                * ``recombination`` (float): Crossover probability
+                  in ``[0, 1]``.
+                * ``polish`` (bool): If ``True``, run L-BFGS-B from
+                  the best DE solution. Often has no effect on
+                  piecewise-constant histogram loss.
             n_bins (Optional[int]):
                 Overwrites ``n_bins`` from __init__.
             smoothing_window_bins (Optional[int]):
                 Overwrites ``smoothing_window_bins`` from __init__.
             subsample_pairs (Optional[int]):
                 If not ``None``, subsample this many pairs for histogram
-                loss. Maintains intra/inter ratio. E.g. ``200_000`` for
-                4M+ pair datasets gives ~7x speedup with minimal quality
-                loss.
+                loss. Maintains intra/inter ratio. If ``None``,
+                auto-computed: subsamples to 1.1M (100k intra + 1M inter)
+                when there are enough pairs, otherwise uses all pairs.
             seed (Optional[int]):
                 Random seed for reproducibility.
             freeze_sigmoid (bool):
                 If ``True``, fix sigmoid params from NB calibration,
-                reducing DE to 3 parameters. Runs NB calibration
-                automatically if needed.
-            nb_init (bool):
-                If ``True``, seed ~20% of the DE population from NB-estimated
-                sigmoid parameters. Runs NB calibration automatically if
-                needed. Uses scipy DE's ``init`` parameter. (Default is
-                ``False``)
-            vectorized (bool):
-                If ``True``, use scipy DE with ``vectorized=True`` and
-                ``updating='deferred'``, rewriting the objective to process
-                a batch of parameter vectors simultaneously for speedup.
-                (Default is ``False``)
-            resample_each_generation (bool):
-                If ``True`` and ``subsample_pairs`` is set, use the DE
-                ``callback`` to redraw a fresh subsample at the start of
-                each generation, reducing variance from any single subsample.
-                (Default is ``False``)
-            stratified_subsampling (bool):
-                If ``True`` and ``subsample_pairs`` is set, use
-                :meth:`_subsample_pairs_stratified` instead of
-                :meth:`_subsample_pairs`. (Default is ``False``)
+                reducing DE to 3 parameters. If ``False``, optimize
+                all 7 parameters jointly.
 
         Returns:
             (Dict):
@@ -417,13 +411,12 @@ class Clusterer(util.ROICaT_Module):
                     :meth:`make_conjunctive_distance_matrix`.
         """
         ## Store parameter (but not data) args as attributes
-        self.params['find_optimal_parameters_DE'] = self._locals_to_params(
+        self.params['_find_optimal_parameters_DE'] = self._locals_to_params(
             locals_dict=locals(),
             keys=[
                 'bounds_findParameters', 'de_kwargs', 'n_bins',
                 'smoothing_window_bins', 'subsample_pairs', 'seed',
-                'freeze_sigmoid', 'nb_init', 'vectorized',
-                'resample_each_generation', 'stratified_subsampling',
+                'freeze_sigmoid',
             ],
         )
 
@@ -433,27 +426,40 @@ class Clusterer(util.ROICaT_Module):
         self._seed = seed
 
         ################################################################
-        ## Determine parameter layout: 7-param (full) or 3-param (frozen)
+        ## Auto-compute subsample size if not specified
+        ################################################################
+        if not hasattr(self, '_intra_mask') or self._intra_mask is None:
+            self._precompute_intra_mask()
+        if subsample_pairs is None:
+            n_intra = int(self._intra_mask.sum())
+            n_inter = self.s_sf.nnz - n_intra
+            ## Subsample only if we have enough pairs to meet minimums
+            min_intra = 100_000
+            min_inter = 1_000_000
+            if n_intra >= min_intra and n_inter >= min_inter:
+                subsample_pairs = min_intra + min_inter
+            ## Otherwise use all pairs
+
+        ################################################################
+        ## Determine parameter layout: 3-param (frozen) or 7-param (full)
         ################################################################
         _frozen_sig = None
-        if freeze_sigmoid or nb_init:
-            ## Estimate sigmoid params from NB calibration curves
+        if freeze_sigmoid:
             if not hasattr(self, 'calibrations_naive_bayes') or self.calibrations_naive_bayes is None:
                 self.make_naive_bayes_distance_matrix()
             sig_params = self._estimate_sigmoid_params()
-            if freeze_sigmoid:
-                _frozen_sig = {
-                    'mu_NN': sig_params['NN']['mu'],
-                    'b_NN': sig_params['NN']['b'],
-                    'mu_SWT': sig_params['SWT']['mu'],
-                    'b_SWT': sig_params['SWT']['b'],
-                }
-                print(
-                    f'  Freezing sigmoid: NN(mu={_frozen_sig["mu_NN"]:.3f}, '
-                    f'b={_frozen_sig["b_NN"]:.1f}), '
-                    f'SWT(mu={_frozen_sig["mu_SWT"]:.3f}, '
-                    f'b={_frozen_sig["b_SWT"]:.1f})'
-                ) if self._verbose else None
+            _frozen_sig = {
+                'mu_NN': sig_params['NN']['mu'],
+                'b_NN': sig_params['NN']['b'],
+                'mu_SWT': sig_params['SWT']['mu'],
+                'b_SWT': sig_params['SWT']['b'],
+            }
+            print(
+                f'  Freezing sigmoid: NN(mu={_frozen_sig["mu_NN"]:.3f}, '
+                f'b={_frozen_sig["b_NN"]:.1f}), '
+                f'SWT(mu={_frozen_sig["mu_SWT"]:.3f}, '
+                f'b={_frozen_sig["b_SWT"]:.1f})'
+            ) if self._verbose else None
 
         if freeze_sigmoid:
             param_keys = ['power_NN', 'power_SWT', 'p_norm']
@@ -464,63 +470,6 @@ class Clusterer(util.ROICaT_Module):
                 'sig_SWT_kwargs_mu', 'sig_SWT_kwargs_b',
             ]
         scipy_bounds = [tuple(bounds_findParameters[k]) for k in param_keys]
-        n_params = len(param_keys)
-
-        ################################################################
-        ## NB init: build initial population seeding ~20% from NB estimates
-        ################################################################
-        _init_population = None
-        if nb_init and not freeze_sigmoid:
-            ## Use NB-estimated sigmoid params as anchor for 20% of population
-            popsize_val = de_kwargs.get('popsize', 15)
-            n_pop = max(popsize_val * n_params, 1)
-            n_nb_seeds = max(int(n_pop * 0.20), 1)
-
-            rng_nb = np.random.default_rng(seed if seed is not None else 0)
-            ## Full random population (n_pop, n_params) in [0, 1] (normalized)
-            pop_norm = rng_nb.random((n_pop, n_params))
-
-            ## Build NB seed rows: mu/b from NB estimates, others random
-            lo = np.array([b[0] for b in scipy_bounds], dtype=np.float64)
-            hi = np.array([b[1] for b in scipy_bounds], dtype=np.float64)
-
-            ## Indices in param_keys for the sigmoid params
-            idx_mu_NN = param_keys.index('sig_NN_kwargs_mu')
-            idx_b_NN = param_keys.index('sig_NN_kwargs_b')
-            idx_mu_SWT = param_keys.index('sig_SWT_kwargs_mu')
-            idx_b_SWT = param_keys.index('sig_SWT_kwargs_b')
-
-            for i in range(n_nb_seeds):
-                ## Clip NB estimates to bounds, convert to [0,1] normalized
-                mu_nn_val = float(np.clip(sig_params['NN']['mu'], lo[idx_mu_NN], hi[idx_mu_NN]))
-                b_nn_val = float(np.clip(sig_params['NN']['b'], lo[idx_b_NN], hi[idx_b_NN]))
-                mu_swt_val = float(np.clip(sig_params['SWT']['mu'], lo[idx_mu_SWT], hi[idx_mu_SWT]))
-                b_swt_val = float(np.clip(sig_params['SWT']['b'], lo[idx_b_SWT], hi[idx_b_SWT]))
-
-                ## Small jitter so seeds are not identical
-                jitter = rng_nb.normal(0.0, 0.05, size=n_params)
-                pop_norm[i, idx_mu_NN] = float(np.clip(
-                    (mu_nn_val - lo[idx_mu_NN]) / (hi[idx_mu_NN] - lo[idx_mu_NN]) + jitter[idx_mu_NN],
-                    0.0, 1.0,
-                ))
-                pop_norm[i, idx_b_NN] = float(np.clip(
-                    (b_nn_val - lo[idx_b_NN]) / (hi[idx_b_NN] - lo[idx_b_NN]) + jitter[idx_b_NN],
-                    0.0, 1.0,
-                ))
-                pop_norm[i, idx_mu_SWT] = float(np.clip(
-                    (mu_swt_val - lo[idx_mu_SWT]) / (hi[idx_mu_SWT] - lo[idx_mu_SWT]) + jitter[idx_mu_SWT],
-                    0.0, 1.0,
-                ))
-                pop_norm[i, idx_b_SWT] = float(np.clip(
-                    (b_swt_val - lo[idx_b_SWT]) / (hi[idx_b_SWT] - lo[idx_b_SWT]) + jitter[idx_b_SWT],
-                    0.0, 1.0,
-                ))
-
-            _init_population = pop_norm
-            print(
-                f'  NB init: seeded {n_nb_seeds}/{n_pop} population members '
-                f'from NB sigmoid estimates'
-            ) if self._verbose else None
 
         ################################################################
         ## Precompute tensors — eliminates all sparse operations from
@@ -548,28 +497,16 @@ class Clusterer(util.ROICaT_Module):
             """Return (sf_t, nn_t, swt_t, intra_mask) after optional subsampling."""
             nnz_full = sf_t_full.shape[0]
             if subsample_pairs is not None and subsample_pairs < nnz_full:
-                if stratified_subsampling:
-                    strata_vals = sf_t_full  ## stratify on SF values
-                    sidx, _, intra_sub = self._subsample_pairs_stratified(
-                        n_subsample=subsample_pairs,
-                        intra_mask=intra_mask_full,
-                        strata_values=strata_vals,
-                        seed=resample_seed if resample_seed is not None else 77777,
-                    )
-                    return (
-                        sf_t_full[sidx], nn_t_full[sidx], swt_t_full[sidx], intra_sub,
-                    )
-                else:
-                    sidx = self._subsample_pairs(
-                        n_subsample=subsample_pairs,
-                        intra_mask=intra_mask_full,
-                        seed=resample_seed if resample_seed is not None else 77777,
-                    )
-                    frac = subsample_pairs / nnz_full
-                    n_si = max(int(int(intra_mask_full.sum().item()) * frac), 100)
-                    im = torch.zeros(sidx.shape[0], dtype=torch.bool)
-                    im[:n_si] = True
-                    return sf_t_full[sidx], nn_t_full[sidx], swt_t_full[sidx], im
+                sidx = self._subsample_pairs(
+                    n_subsample=subsample_pairs,
+                    intra_mask=intra_mask_full,
+                    seed=resample_seed if resample_seed is not None else 77777,
+                )
+                frac = subsample_pairs / nnz_full
+                n_si = max(int(int(intra_mask_full.sum().item()) * frac), 100)
+                im = torch.zeros(sidx.shape[0], dtype=torch.bool)
+                im[:n_si] = True
+                return sf_t_full[sidx], nn_t_full[sidx], swt_t_full[sidx], im
             else:
                 return sf_t_full, nn_t_full, swt_t_full, intra_mask_full
 
@@ -655,9 +592,11 @@ class Clusterer(util.ROICaT_Module):
                 mu_SWT, b_SWT = float(x[5]), float(x[6])
             p = p_norm_val if abs(p_norm_val) > 1e-9 else 1e-9
 
-            ## Activation: sigmoid → clamp → power (in-place on temporaries)
+            ## Compute NN activation
             nn_act = torch.sigmoid(b_NN * (nn_w - mu_NN))
             nn_act.clamp_(min=1e-8).pow_(power_NN)
+
+            ## SWT activation
             swt_act = torch.sigmoid(b_SWT * (swt_w - mu_SWT))
             swt_act.clamp_(min=1e-8).pow_(power_SWT)
 
@@ -673,25 +612,8 @@ class Clusterer(util.ROICaT_Module):
                 smoother=smoother,
                 scale_factor=sc,
             )
+
             return loss
-
-        ################################################################
-        ## Vectorized objective — accepts (n_params, n_population) input
-        ################################################################
-        def objective_vectorized(X):
-            """
-            Vectorized objective for scipy DE ``vectorized=True`` mode.
-            X has shape ``(n_params, n_population)``. Returns array of
-            shape ``(n_population,)`` with loss values.
-            """
-            n_pop_batch = X.shape[1]
-            losses = np.empty(n_pop_batch, dtype=np.float64)
-
-            ## Process each candidate individually using the scalar helper
-            for j in range(n_pop_batch):
-                losses[j] = objective_scalar(X[:, j])
-
-            return losses
 
         ################################################################
         ## Configure and run differential evolution
@@ -700,40 +622,23 @@ class Clusterer(util.ROICaT_Module):
 
         de_kwargs_use = dict(de_kwargs)
 
-        ## Attach resample callback if requested
-        _callbacks: List[Any] = []
-        if resample_each_generation and subsample_pairs is not None:
-            _callbacks.append(_resample_callback)
-        if _callbacks:
+        nnz_full = sf_t_full.shape[0]
+
+        ## Always resample each generation when subsampling
+        if subsample_pairs is not None and subsample_pairs < nnz_full:
             existing_cb = de_kwargs_use.pop('callback', None)
-            if existing_cb is not None:
-                _callbacks.insert(0, existing_cb)
-            ## Wrap list into a single callable
             def _combined_callback(xk, convergence=None):
-                for cb in _callbacks:
-                    cb(xk, convergence)
+                _resample_callback(xk, convergence)
+                if existing_cb is not None:
+                    existing_cb(xk, convergence)
             de_kwargs_use['callback'] = _combined_callback
 
-        ## Attach NB init population
-        if _init_population is not None:
-            de_kwargs_use['init'] = _init_population
-
-        if vectorized:
-            de_kwargs_use['vectorized'] = True
-            de_kwargs_use['updating'] = 'deferred'
-            self._de_result = scipy.optimize.differential_evolution(
-                func=objective_vectorized,
-                bounds=scipy_bounds,
-                seed=seed,
-                **de_kwargs_use,
-            )
-        else:
-            self._de_result = scipy.optimize.differential_evolution(
-                func=objective_scalar,
-                bounds=scipy_bounds,
-                seed=seed,
-                **de_kwargs_use,
-            )
+        self._de_result = scipy.optimize.differential_evolution(
+            func=objective_scalar,
+            bounds=scipy_bounds,
+            seed=seed,
+            **de_kwargs_use,
+        )
 
         ## Extract best parameters
         x_best = self._de_result.x
@@ -1582,39 +1487,39 @@ class Clusterer(util.ROICaT_Module):
         RH 2023
 
         Args:
-            s_sf (Optional[scipy.sparse.csr_matrix]): 
+            s_sf (Optional[scipy.sparse.csr_matrix]):
                 Similarity matrix for spatial footprints. (Default is ``None``)
-            s_NN (Optional[scipy.sparse.csr_matrix]): 
+            s_NN (Optional[scipy.sparse.csr_matrix]):
                 Similarity matrix for neural network features. (Default is
                 ``None``)
-            s_SWT (Optional[scipy.sparse.csr_matrix]): 
+            s_SWT (Optional[scipy.sparse.csr_matrix]):
                 Similarity matrix for scattering wavelet transform features.
                 (Default is ``None``)
-            s_sesh (Optional[scipy.sparse.csr_matrix]): 
+            s_sesh (Optional[scipy.sparse.csr_matrix]):
                 The session similarity matrix. (Default is ``None``)
-            power_SF (float): 
+            power_SF (float):
                 Power to which to raise the spatial footprint similarity.
                 (Default is *1*)
-            power_NN (float): 
+            power_NN (float):
                 Power to which to raise the neural network similarity. (Default
                 is *1*)
-            power_SWT (float): 
+            power_SWT (float):
                 Power to which to raise the scattering wavelet transform
                 similarity. (Default is *1*)
-            p_norm (float): 
+            p_norm (float):
                 p-norm to use for the conjunction of the similarity matrices.
                 (Default is *1*)
-            sig_SF_kwargs (Dict[str, float]): 
+            sig_SF_kwargs (Dict[str, float]):
                 Keyword arguments for the sigmoid function applied to the
                 spatial footprint overlap similarity matrix. See
                 helpers.generalised_logistic_function for details. (Default is
                 {'mu':0.5, 'b':0.5})
-            sig_NN_kwargs (Dict[str, float]): 
+            sig_NN_kwargs (Dict[str, float]):
                 Keyword arguments for the sigmoid function applied to the neural
                 network similarity matrix. See
                 helpers.generalised_logistic_function for details. (Default is
                 {'mu':0.5, 'b':0.5})
-            sig_SWT_kwargs (Dict[str, float]): 
+            sig_SWT_kwargs (Dict[str, float]):
                 Keyword arguments for the sigmoid function applied to the
                 scattering wavelet transform similarity matrix. See
                 helpers.generalised_logistic_function for details. (Default is
@@ -1622,22 +1527,22 @@ class Clusterer(util.ROICaT_Module):
 
         Returns:
             (Tuple): Tuple containing:
-                dConj (scipy.sparse.csr_matrix): 
+                dConj (scipy.sparse.csr_matrix):
                     Conjunction of the three similarity matrices.
-                sConj (scipy.sparse.csr_matrix): 
+                sConj (scipy.sparse.csr_matrix):
                     The session similarity matrix.
-                sSF_data (np.ndarray): 
+                sSF_data (np.ndarray):
                     Activated spatial footprint similarity matrix.
-                sNN_data (np.ndarray): 
+                sNN_data (np.ndarray):
                     Activated neural network similarity matrix.
-                sSWT_data (np.ndarray): 
+                sSWT_data (np.ndarray):
                     Activated scattering wavelet transform similarity matrix.
-                sConj_data (np.ndarray): 
+                sConj_data (np.ndarray):
                     Activated session similarity matrix.
         """
         assert (s_sf is not None) or (s_NN is not None) or (s_SWT is not None), \
             'At least one of s_sf, s_NN, or s_SWT must be provided.'
-        
+
         ## Store parameter (but not data) args as attributes
         self.params['make_conjunctive_distance_matrix'] = self._locals_to_params(
             locals_dict=locals(),
@@ -1651,15 +1556,16 @@ class Clusterer(util.ROICaT_Module):
                 'sig_SWT_kwargs',
             ],
         )
-        
+
         p_norm = 1e-9 if p_norm == 0 else p_norm
 
         sSF_data = self._activation_function(s_sf.data, sig_SF_kwargs, power_SF) if s_sf is not None else None
         sNN_data = self._activation_function(s_NN.data, sig_NN_kwargs, power_NN) if s_NN is not None else None
+
         sSWT_data = self._activation_function(s_SWT.data, sig_SWT_kwargs, power_SWT) if s_SWT is not None else None
 
         s_list = [s for s in [sSF_data, sNN_data, sSWT_data] if s is not None]
-        
+
         sConj_data = self._pNorm(
             s_list=s_list,
             p=p_norm,
@@ -1711,7 +1617,7 @@ class Clusterer(util.ROICaT_Module):
         fn_power = lambda x, p: x ** p if p is not None else x
         
         return fn_power(torch.clamp(fn_sigmoid(s, sig_kwargs), min=0), power)
-        
+
     def _pNorm(
         self, 
         s_list: List[Optional[torch.Tensor]], 
@@ -1884,7 +1790,7 @@ class Clusterer(util.ROICaT_Module):
         'same' and 'different' distance distributions.
 
         Shared core used by :meth:`_separate_diffSame_distributions`,
-        :meth:`find_optimal_parameters_DE` (scalar objective), and
+        :meth:`_find_optimal_parameters_DE` (scalar objective), and
         :meth:`find_optimal_nb_combination_DE` (NB objective).
 
         The 'different' distribution is estimated by scaling the intra-session
@@ -2107,7 +2013,7 @@ class Clusterer(util.ROICaT_Module):
     ## benchmarking. They are NOT used by the default pipeline.
     ##
     ## The recommended approach is find_optimal_parameters_for_pruning()
-    ## which calls find_optimal_parameters_DE(freeze_sigmoid=True).
+    ## which calls _find_optimal_parameters_DE(freeze_sigmoid=True).
     ##
     ####################################################################
     ####################################################################
@@ -2368,129 +2274,6 @@ class Clusterer(util.ROICaT_Module):
         print(f'Completed NB combination DE. Best loss: {nb_de_result.fun:.2f}, params: {best_params}') if self._verbose else None
         return dConj, sConj, result_info
 
-    def soft_histogram_loss(
-        self,
-        distances: torch.Tensor,
-        temperature: float = 0.01,
-    ) -> torch.Tensor:
-        """
-        **LEGACY** — Differentiable soft histogram overlap loss.
-        Abandoned because smooth losses cause feature suppression
-        (power→0 for one modality). Kept for research reference.
-        RH 2025
-        """
-        n_bins_val = self.n_bins
-        edges_f64 = torch.linspace(0.0, 1.0, n_bins_val + 1, dtype=torch.float64)
-        d_f64 = distances.double()
-        d_col = d_f64.unsqueeze(1)
-        left_edges = edges_f64[:-1].unsqueeze(0)
-        right_edges = edges_f64[1:].unsqueeze(0)
-        tau = max(float(temperature), 1e-15)
-        soft_bins_f64 = torch.sigmoid((d_col - left_edges) / tau) - torch.sigmoid((d_col - right_edges) / tau)
-        soft_bins = soft_bins_f64.to(dtype=distances.dtype)
-
-        if not hasattr(self, '_intra_mask') or self._intra_mask is None:
-            self._precompute_intra_mask()
-        intra_m = torch.as_tensor(self._intra_mask)
-        n_all = distances.shape[0]
-        n_intra = int(intra_m.sum().item())
-        scale_factor = n_all / max(n_intra, 1)
-
-        counts_all = soft_bins.sum(dim=0)
-        counts_intra = soft_bins[intra_m].sum(dim=0)
-        dens_diff = counts_intra * scale_factor
-        smooth_window = helpers.make_odd(n_bins_val // 10, mode='up')
-        smoother = helpers.Convolver_1d(
-            kernel=torch.ones(smooth_window), length_x=n_bins_val,
-            pad_mode='same', correct_edge_effects=True, device='cpu',
-        )
-        dens_same_raw = torch.clamp(counts_all - dens_diff, min=0.0)
-        dens_same = smoother.convolve(dens_same_raw)
-        loss = (dens_same * dens_diff).sum()
-        return loss
-
-    def compute_soft_histogram_gradient(
-        self,
-        kwargs_mixing: Dict,
-        temperature: float = 0.01,
-    ) -> Dict[str, torch.Tensor]:
-        """
-        **LEGACY** — Compute autograd gradients of the soft histogram loss
-        w.r.t. raw similarity data. Abandoned (same reason as
-        :meth:`soft_histogram_loss`). Kept for research reference.
-        RH 2025
-        """
-        power_NN = float(kwargs_mixing.get('power_NN', 1.0))
-        power_SWT = float(kwargs_mixing.get('power_SWT', 1.0))
-        p_norm_val = float(kwargs_mixing.get('p_norm', -4.0))
-        sig_NN_kw = kwargs_mixing.get('sig_NN_kwargs') or {'mu': 0.5, 'b': 1.0}
-        sig_SWT_kw = kwargs_mixing.get('sig_SWT_kwargs') or {'mu': 0.5, 'b': 1.0}
-        mu_NN, b_NN = float(sig_NN_kw.get('mu', 0.5)), float(sig_NN_kw.get('b', 1.0))
-        mu_SWT, b_SWT = float(sig_SWT_kw.get('mu', 0.5)), float(sig_SWT_kw.get('b', 1.0))
-        p = p_norm_val if abs(p_norm_val) > 1e-9 else 1e-9
-
-        sf_raw = torch.as_tensor(np.ascontiguousarray(self.s_sf.data), dtype=torch.float32).clone().requires_grad_(True)
-        nn_raw = torch.as_tensor(np.ascontiguousarray(self.s_NN_z.data), dtype=torch.float32).clone().requires_grad_(True)
-        swt_raw = torch.as_tensor(np.ascontiguousarray(self.s_SWT_z.data), dtype=torch.float32).clone().requires_grad_(True)
-
-        sf_act = torch.clamp(sf_raw, min=1e-8).pow(1.0)
-        nn_act = torch.clamp(torch.sigmoid(b_NN * (nn_raw - mu_NN)), min=1e-8).pow(power_NN)
-        swt_act = torch.clamp(torch.sigmoid(b_SWT * (swt_raw - mu_SWT)), min=1e-8).pow(power_SWT)
-
-        sf_p = torch.pow(torch.clamp(sf_act, min=1e-8), p)
-        nn_p = torch.pow(nn_act, p)
-        swt_p = torch.pow(swt_act, p)
-        distances = 1.0 - ((sf_p + nn_p + swt_p) / 3.0).pow(1.0 / p)
-
-        loss = self.soft_histogram_loss(distances=distances, temperature=temperature)
-        loss.backward()
-        return {
-            'grad_sf': sf_raw.grad.detach(), 'grad_NN': nn_raw.grad.detach(),
-            'grad_SWT': swt_raw.grad.detach(), 'loss': loss.detach(),
-        }
-
-    def _subsample_pairs_stratified(
-        self,
-        n_subsample: int,
-        intra_mask: torch.Tensor,
-        strata_values: torch.Tensor,
-        n_strata: int = 10,
-        seed: Optional[int] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        **LEGACY** — Quantile-stratified pair subsampling. Benchmarked
-        poorly vs uniform subsampling. Kept for research reference.
-        RH 2025
-        """
-        intra_mask = torch.as_tensor(intra_mask)
-        nnz = strata_values.shape[0]
-        rng = torch.Generator()
-        rng.manual_seed(seed if seed is not None else 42)
-        quantiles = torch.linspace(0.0, 1.0, n_strata + 1, dtype=torch.float32)
-        edges = torch.quantile(strata_values.float(), quantiles)
-        edges[-1] = edges[-1] + 1e-6
-        bin_idx = torch.bucketize(strata_values, edges[1:-1])
-        n_per_stratum_base = max(n_subsample // n_strata, 1)
-        all_sample_idx: List[torch.Tensor] = []
-        all_weights: List[torch.Tensor] = []
-        all_intra: List[torch.Tensor] = []
-        for b in range(n_strata):
-            stratum_idx = torch.where(bin_idx == b)[0]
-            n_b = stratum_idx.shape[0]
-            if n_b == 0:
-                continue
-            n_sample_b = min(n_b, n_per_stratum_base)
-            perm = torch.randperm(n_b, generator=rng)[:n_sample_b]
-            chosen = stratum_idx[perm]
-            w_b = torch.full((n_sample_b,), float(n_b) / float(n_sample_b), dtype=torch.float32)
-            all_sample_idx.append(chosen)
-            all_weights.append(w_b)
-            intra_b = torch.as_tensor(np.asarray(intra_mask)[chosen.numpy()])
-            all_intra.append(intra_b)
-        sample_idx = torch.cat(all_sample_idx)
-        importance_weights = torch.cat(all_weights)
-        intra_mask_subsample = torch.cat(all_intra)
-        return sample_idx, importance_weights, intra_mask_subsample
 
 
 def attach_fully_connected_node(

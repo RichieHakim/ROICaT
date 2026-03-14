@@ -410,6 +410,7 @@ class Aligner(util.ROICaT_Module):
                     **kwargs_RANSAC,
                 )
                 warp_matrices_raw.append(warp_matrix)
+                helpers.clear_gpu_cache(gc_collect=False)
 
             # compose warp transforms
             warp_matrices = []
@@ -452,6 +453,7 @@ class Aligner(util.ROICaT_Module):
         
         ## Run initial registration
         warp_matrices_all_to_template = _register(ims_moving=ims_moving, template=template, template_method=template_method)  ## shape: [(3, 3) * n_images]
+        helpers.clear_gpu_cache()
 
         # check alignment
         im_template_global = ims_moving[template] if template_method == 'sequential' else template
@@ -509,6 +511,8 @@ class Aligner(util.ROICaT_Module):
                         # score_all_to_all[:, idx_current] = score_all_to_all[idx_current]  ## add the transpose of the score matrix
                         alignment_all_to_all[idx_current] = score_all_to_all[idx_current] > self.z_threshold  ## returns a boolean array of shape (n_images,)
                         # alignment_all_to_all[:, idx_current] = alignment_all_to_all[idx_current]  ## add the transpose of the alignment matrix
+                        ## Free GPU memory between iterations to prevent accumulation
+                        helpers.clear_gpu_cache(gc_collect=False)
                         
                     ## Recompute warp matrices based on shortest path between each image and the template (through the all_to_all alignment matrix)
                     ### Make a connection graph by appending the template alignment_matrix (1D) on top of the all_to_all alignment_matrix (N x N)
@@ -1752,7 +1756,7 @@ class RoMa(ImageRegistrationMethod):
         **kwargs,
     ):
         h, w = im_moving.shape[0], im_moving.shape[1]
-        
+
         ## Pass images through RoMa model to get flow field
         ff, certainty = self._match(im_template, im_moving, device=self.device)
 
@@ -1762,9 +1766,18 @@ class RoMa(ImageRegistrationMethod):
             kptsA, kptsB = self.model.to_pixel_coordinates(matches, h, w, h, w)
             return kptsA, kptsB, certainty
 
-        ## Batch the points
+        ## Batch the points — catch degenerate cases where certainty is all zero
         batch_ns = [int(batch.sum()) for batch in helpers.make_batches(np.ones(self.n_points), batch_size=self.batch_size, min_batch_size=10)]
-        outs = [get_points(ff, certainty, num=n) for n in batch_ns]
+        outs = []
+        for n in batch_ns:
+            try:
+                outs.append(get_points(ff, certainty, num=n))
+            except RuntimeError:
+                ## multinomial fails when certainty is all zero (degenerate pair)
+                break
+        if len(outs) == 0:
+            ## Return empty keypoints — fit_rigid will fall back to identity
+            return torch.zeros(0, 2), torch.zeros(0, 2)
 
         kptsA, kptsB, certainty = [torch.cat([out[ii] for out in outs], dim=0) for ii in range(3)]
 

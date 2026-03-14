@@ -170,7 +170,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
             **params['alignment']['transform_ROIs'],
         );
     tocs.append(('alignment', time.time() - tic_start))
-
+    helpers.clear_gpu_cache()
 
 
     ## Blur ROIs
@@ -203,6 +203,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
     );
     roinet.generate_latents();
     tocs.append(('ROInet', time.time() - tic_start))
+    helpers.clear_gpu_cache()
 
 
     ## Scattering wavelet embedding
@@ -216,6 +217,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         batch_size=params['SWT']['batch_size'],
     );
     tocs.append(('SWT', time.time() - tic_start))
+    helpers.clear_gpu_cache()
 
 
     ## Compute similarities
@@ -243,6 +245,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         algo_NN=params['similarity_graph']['normalization']['algo_NN'],
     )
     tocs.append(('similarity_graph', time.time() - tic_start))
+    helpers.clear_gpu_cache()
 
 
     ## Clustering
@@ -251,6 +254,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         s_NN_z=sim.s_NN_z,
         s_SWT_z=sim.s_SWT_z,
         s_sesh=sim.s_sesh,
+        session_bool=data.session_bool,
         verbose=VERBOSE,
     )
     if params['clustering'].get('mixing_method', 'automatic') == 'manual':
