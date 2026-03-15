@@ -149,7 +149,7 @@ def test_pipeline_tracking_simple(dir_data_test):
     ## the test. It is expected to break when algorithms, dependencies, or
     ## floating-point behavior change. The property-based assertions above are
     ## the actual pass/fail criteria.
-    path_run_data_true = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'run_data.richfile')
+    path_run_data_true = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'run_data.richfile.zip')
     if Path(path_run_data_true).exists():
         print(f"Loading reference run_data from {path_run_data_true}")
         run_data_true = util.RichFile_ROICaT(path=path_run_data_true).load()

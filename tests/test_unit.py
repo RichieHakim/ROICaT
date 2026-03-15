@@ -169,7 +169,7 @@ class Test_RichFile_ROICaT:
 
     def test_load_existing_test_data(self, dir_data_test):
         """Should load the existing directory-format test data."""
-        path = str(Path(dir_data_test) / 'pipeline_tracking' / 'run_data.richfile')
+        path = str(Path(dir_data_test) / 'pipeline_tracking' / 'run_data.richfile.zip')
         rf = util.RichFile_ROICaT(path=path)
         sim = rf['sim'].load()
         assert isinstance(sim, dict)
@@ -664,7 +664,7 @@ def clusterer_with_data(dir_data_test):
     """
     from roicat import util, tracking
 
-    path_run_data = str(Path(dir_data_test) / 'pipeline_tracking' / 'run_data.richfile')
+    path_run_data = str(Path(dir_data_test) / 'pipeline_tracking' / 'run_data.richfile.zip')
     sim = util.RichFile_ROICaT(path=path_run_data)['sim'].load()
 
     clusterer = tracking.clustering.Clusterer(
@@ -805,7 +805,7 @@ class Test_estimate_sigmoid_params:
     def test_requires_nb_calibration(self, dir_data_test):
         """Should raise if NB calibration hasn't been run on a fresh instance."""
         from roicat import util, tracking
-        path_run_data = str(Path(dir_data_test) / 'pipeline_tracking' / 'run_data.richfile')
+        path_run_data = str(Path(dir_data_test) / 'pipeline_tracking' / 'run_data.richfile.zip')
         sim = util.RichFile_ROICaT(path=path_run_data)['sim'].load()
         fresh = tracking.clustering.Clusterer(
             s_sf=sim['s_sf'],
