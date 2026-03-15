@@ -33,6 +33,14 @@ def add_args(parser: argparse.ArgumentParser):
     ## verbose
     parser.add_argument('--verbose', action='store_true', help='Print verbose output')
 
+    ## use_onnx
+    parser.add_argument('--use_onnx', action='store_true', default=False,
+        help='Use ONNX runtime for ROInet inference (faster on CPU)')
+
+    ## export_csv
+    parser.add_argument('--export_csv', type=str, default=None,
+        help='Path to export tracking results as CSV')
+
     # Other arguments
     ## version
     parser.add_argument('--version', action='store_true', help='Print the version number.')
@@ -47,6 +55,8 @@ def run_pipeline(
     dir_save: Optional[str] = None,
     prefix_name_save: Optional[str] = None,
     verbose: bool = False,
+    use_onnx: bool = False,
+    export_csv: Optional[str] = None,
 ):
     """
     Call a pipeline with the specified parameters.
@@ -72,8 +82,19 @@ def run_pipeline(
     inplace_update_if_not_none(params['results_saving'], 'prefix_name_save', prefix_name_save)
     inplace_update_if_not_none(params['general'], 'verbose', verbose)
 
+    # Enable ONNX runtime for ROInet inference if requested
+    if use_onnx:
+        params['ROInet']['network']['use_onnx'] = True
+
     # Run pipeline
     results, run_data, params = PIPELINES[pipeline_name](params=params)
+
+    # Export tracking results to CSV if requested
+    if export_csv:
+        if hasattr(util, 'export_tracking_results_to_csv'):
+            util.export_tracking_results_to_csv(results, export_csv)
+        else:
+            print("Warning: export_tracking_results_to_csv not available in this version of ROICaT")
 
 
 def _prepare_path(path, must_exist=False):
@@ -118,6 +139,8 @@ def main():
             dir_save=dir_save,
             prefix_name_save=prefix_name_save,
             verbose=args.verbose,
+            use_onnx=args.use_onnx,
+            export_csv=args.export_csv,
         )
 
 
