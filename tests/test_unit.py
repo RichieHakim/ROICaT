@@ -1200,3 +1200,49 @@ class Test_edge_cases:
         assert np.all(dConj.data <= 1)
 
 
+######################################################################################################################################
+################################################### ROI SIZE VALIDATION ##############################################################
+######################################################################################################################################
+
+
+class Test_check_roi_sizes:
+    def test_normal_rois(self):
+        """Normal ROIs should pass all checks."""
+        from roicat.helpers import check_roi_sizes
+
+        np.random.seed(42)
+        H, W = 100, 100
+        sfs = [scipy.sparse.random(10, H*W, density=0.01, format='csr')]
+        result = check_roi_sizes(sfs, H, W, verbose=False)
+        assert result['n_too_small'] == 0
+        assert result['n_too_large'] == 0
+
+    def test_too_small_detected(self):
+        """Very small ROIs should be flagged."""
+        from roicat.helpers import check_roi_sizes
+
+        H, W = 100, 100
+        ## Create ROI with only 2 nonzero pixels
+        data = np.array([1.0, 1.0])
+        row = np.array([0, 0])
+        col = np.array([0, 1])
+        sf = scipy.sparse.csr_matrix((data, (row, col)), shape=(1, H*W))
+        result = check_roi_sizes([sf], H, W, min_pixels=5, verbose=False)
+        assert result['n_too_small'] == 1
+
+    def test_too_large_detected(self):
+        """ROIs covering >10% of FOV should be flagged."""
+        from roicat.helpers import check_roi_sizes
+
+        H, W = 100, 100
+        ## Create ROI covering 20% of pixels
+        n_pix = H * W
+        n_active = n_pix // 5  ## 20%
+        data = np.ones(n_active)
+        row = np.zeros(n_active, dtype=int)
+        col = np.arange(n_active)
+        sf = scipy.sparse.csr_matrix((data, (row, col)), shape=(1, n_pix))
+        result = check_roi_sizes([sf], H, W, max_fraction=0.1, verbose=False)
+        assert result['n_too_large'] == 1
+
+
