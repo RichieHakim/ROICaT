@@ -169,10 +169,11 @@ def get_default_parameters(
                             'winsize': 128,
                             'iterations': 15,
                             'poly_n': 5,
-                            'poly_sigma': 1.5,            
+                            'poly_sigma': 1.5,
                         },
                         'NullRegistration': {},
                     },
+                    'border_discount_width': 50,  ## Width in pixels of the border blending zone. Non-rigid warp is discounted toward the geometric warp at FOV edges. Set to 0 to disable.
                 },
                 'transform_ROIs': {
                     'normalize': True,  ## If True, normalize the spatial footprints to have a sum of 1.

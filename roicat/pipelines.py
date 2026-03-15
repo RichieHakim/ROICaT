@@ -152,14 +152,27 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
     aligner.transform_images_geometric(FOV_images);
 
     if params['alignment']['fit_nonrigid']['method']:
+        ## Extract border_discount_width before passing to fit_nonrigid
+        params_nonrigid = {k: v for k, v in params['alignment']['fit_nonrigid'].items() if k != 'border_discount_width'}
+        border_width = params['alignment']['fit_nonrigid'].get('border_discount_width', 50)
+
         aligner.fit_nonrigid(
             ims_moving=aligner.ims_registered_geo,  ## Input images. Typically the geometrically registered images
             remappingIdx_init=aligner.remappingIdx_geo,  ## The remappingIdx between the original images (and ROIs) and ims_moving
-            **params['alignment']['fit_nonrigid'],
+            **params_nonrigid,
         )
         aligner.transform_images_nonrigid(FOV_images);
+
+        ## Discount non-rigid warp at FOV borders
+        if border_width > 0:
+            aligner.remappingIdx_nonrigid = helpers.discount_edge_nonrigid(
+                remappingIdx_geo=aligner.remappingIdx_geo,
+                remappingIdx_nonrigid=aligner.remappingIdx_nonrigid,
+                border_width=border_width,
+            )
+
         aligner.transform_ROIs(
-            ROIs=data.spatialFootprints, 
+            ROIs=data.spatialFootprints,
             remappingIdx=aligner.remappingIdx_nonrigid,
             **params['alignment']['transform_ROIs'],
         );

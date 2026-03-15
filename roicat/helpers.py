@@ -6512,3 +6512,62 @@ def reshape_coo_manual(coo, new_shape):
     
     # Create a new COO matrix with the new indices.
     return scipy.sparse.coo_matrix((coo.data, (new_row, new_col)), shape=new_shape)
+
+
+def discount_edge_nonrigid(
+    remappingIdx_geo: np.ndarray,
+    remappingIdx_nonrigid: np.ndarray,
+    border_width: int = 50,
+) -> np.ndarray:
+    """
+    Blend non-rigid remapping indices toward geometric-only indices near
+    FOV borders.  At the border the warp equals the geometric-only warp;
+    at ``border_width`` pixels inward it equals the full non-rigid warp.
+    The transition is a raised-cosine (smooth, no discontinuities in the
+    first derivative).
+
+    Args:
+        remappingIdx_geo (np.ndarray):
+            Geometric-only remapping indices. Shape *(N, H, W, 2)*.
+        remappingIdx_nonrigid (np.ndarray):
+            Full (geometric + non-rigid) remapping indices. Shape
+            *(N, H, W, 2)*.
+        border_width (int):
+            Width in pixels of the blending zone measured inward from each
+            border.  Larger values produce a more gradual transition.
+
+    Returns:
+        (np.ndarray):
+            remappingIdx_blended (np.ndarray):
+                Blended remapping indices. Shape *(N, H, W, 2)*.
+    """
+    assert remappingIdx_geo.shape == remappingIdx_nonrigid.shape
+    N, H, W, _ = remappingIdx_nonrigid.shape
+
+    if border_width <= 0:
+        return remappingIdx_nonrigid.copy()
+
+    ## Build 2-D weight mask: 0 at edges, 1 at border_width inward
+    ## Uses distance from nearest border with raised-cosine transition
+    dist_top = np.arange(H).astype(np.float64)
+    dist_bottom = np.arange(H - 1, -1, -1).astype(np.float64)
+    dist_left = np.arange(W).astype(np.float64)
+    dist_right = np.arange(W - 1, -1, -1).astype(np.float64)
+
+    dist_v = np.minimum(dist_top, dist_bottom)  ## (H,)
+    dist_h = np.minimum(dist_left, dist_right)  ## (W,)
+
+    ## Minimum distance from any border
+    dist_2d = np.minimum(dist_v[:, None], dist_h[None, :])  ## (H, W)
+
+    ## Raised-cosine transition: 0 at border, 1 at border_width
+    weight = np.clip(dist_2d / border_width, 0.0, 1.0)
+    weight = 0.5 * (1.0 - np.cos(np.pi * weight))  ## raised-cosine
+
+    ## Broadcast over N images and 2 channels
+    weight = weight[None, :, :, None]  ## (1, H, W, 1)
+
+    ## Blend: at border (weight=0) use geo, interior (weight=1) use nonrigid
+    remappingIdx_blended = remappingIdx_geo + weight * (remappingIdx_nonrigid - remappingIdx_geo)
+
+    return remappingIdx_blended

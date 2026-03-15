@@ -1200,3 +1200,61 @@ class Test_edge_cases:
         assert np.all(dConj.data <= 1)
 
 
+######################################################################################################################################
+################################################# DISCOUNT EDGE NONRIGID #############################################################
+######################################################################################################################################
+
+
+class Test_discount_edge_nonrigid:
+    def test_identity_at_zero_border(self):
+        """With border_width=0, output should equal nonrigid input."""
+        from roicat.helpers import discount_edge_nonrigid
+        N, H, W = 2, 50, 60
+        geo = np.random.rand(N, H, W, 2).astype(np.float64)
+        nonrigid = geo + np.random.rand(N, H, W, 2) * 0.1
+        result = discount_edge_nonrigid(geo, nonrigid, border_width=0)
+        np.testing.assert_array_equal(result, nonrigid)
+
+    def test_border_equals_geo(self):
+        """At the very edge (pixel 0), output should equal geometric warp."""
+        from roicat.helpers import discount_edge_nonrigid
+        N, H, W = 2, 100, 100
+        geo = np.zeros((N, H, W, 2))
+        nonrigid = np.ones((N, H, W, 2))
+        result = discount_edge_nonrigid(geo, nonrigid, border_width=30)
+        ## At corners (0,0), weight should be 0 -> result equals geo
+        np.testing.assert_allclose(result[:, 0, 0, :], 0.0, atol=1e-10)
+        np.testing.assert_allclose(result[:, 0, -1, :], 0.0, atol=1e-10)
+        np.testing.assert_allclose(result[:, -1, 0, :], 0.0, atol=1e-10)
+
+    def test_interior_equals_nonrigid(self):
+        """Well inside the border zone, output should equal nonrigid."""
+        from roicat.helpers import discount_edge_nonrigid
+        N, H, W = 1, 200, 200
+        geo = np.zeros((N, H, W, 2))
+        nonrigid = np.ones((N, H, W, 2))
+        result = discount_edge_nonrigid(geo, nonrigid, border_width=30)
+        ## At center (100, 100), well past border_width -> result should equal nonrigid
+        np.testing.assert_allclose(result[:, 100, 100, :], 1.0, atol=1e-10)
+
+    def test_smooth_transition(self):
+        """Weight should increase monotonically from edge to interior."""
+        from roicat.helpers import discount_edge_nonrigid
+        N, H, W = 1, 100, 100
+        geo = np.zeros((N, H, W, 2))
+        nonrigid = np.ones((N, H, W, 2))
+        result = discount_edge_nonrigid(geo, nonrigid, border_width=30)
+        ## Along top edge, going inward: values should increase
+        edge_profile = result[0, :50, 50, 0]  ## top half, middle column
+        assert np.all(np.diff(edge_profile[:35]) >= -1e-10), "Weight should be monotonically increasing from edge inward"
+
+    def test_output_shape(self):
+        """Output shape should match input shapes."""
+        from roicat.helpers import discount_edge_nonrigid
+        N, H, W = 3, 80, 120
+        geo = np.random.rand(N, H, W, 2)
+        nonrigid = np.random.rand(N, H, W, 2)
+        result = discount_edge_nonrigid(geo, nonrigid, border_width=20)
+        assert result.shape == (N, H, W, 2)
+
+
