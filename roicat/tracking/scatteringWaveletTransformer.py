@@ -57,6 +57,13 @@ class SWT(util.ROICaT_Module):
             ],
         )
 
+        ## Monkey-patch for scipy >= 1.17 compatibility (sph_harm removed).
+        ## sph_harm(m, n, theta, phi) was replaced by sph_harm_y(n, m, theta, phi)
+        ## with swapped argument order for both (m,n) and (theta,phi).
+        import scipy.special
+        if not hasattr(scipy.special, 'sph_harm'):
+            scipy.special.sph_harm = lambda m, n, theta, phi: scipy.special.sph_harm_y(n, m, phi, theta)
+
         from kymatio.torch import Scattering2D
 
         self._verbose = verbose

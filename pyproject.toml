@@ -25,7 +25,7 @@ core = [
     "pytest==9.0.2",
     "PyYAML==6.0.3",
     "scikit-learn==1.8.0",
-    "scipy==1.16.3",
+    "scipy==1.17.1",
     "seaborn==0.13.2",
     "sparse==0.17.0",
     "tqdm==4.67.3",
