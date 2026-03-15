@@ -783,3 +783,66 @@ def plot_confusion_matrix(
 
     plt.ylabel('True label',      fontdict={'size': figsize[0]*2})
     plt.xlabel('Predicted label', fontdict={'size': figsize[0]*2})
+
+
+def plot_curation_metrics(
+    quality_metrics: dict,
+    n_sessions: int,
+    figsize: tuple = (15, 10),
+) -> plt.Figure:
+    """
+    Plot post-hoc curation metrics for tracking results.
+
+    Displays distributions of cluster quality, session coverage, and
+    composite tracking confidence.
+
+    Args:
+        quality_metrics (dict):
+            Dictionary of quality metrics from the clustering pipeline.
+            Must contain: 'cluster_silhouette', 'cluster_intra_means',
+            'cluster_n_sessions', 'cluster_tracking_confidence',
+            'cluster_size', 'sample_silhouette'.
+        n_sessions (int):
+            Total number of sessions in the experiment.
+        figsize (tuple):
+            Figure size. (Default is ``(15, 10)``)
+
+    Returns:
+        (matplotlib.figure.Figure):
+            fig (matplotlib.figure.Figure):
+                The matplotlib figure.
+    """
+    fig, axs = plt.subplots(nrows=2, ncols=3, figsize=figsize)
+
+    axs[0, 0].hist(quality_metrics['cluster_silhouette'], 50)
+    axs[0, 0].set_xlabel('cluster silhouette')
+    axs[0, 0].set_ylabel('count')
+    axs[0, 0].set_title('Cluster Cohesion')
+
+    axs[0, 1].hist(quality_metrics['cluster_intra_means'], 50)
+    axs[0, 1].set_xlabel('intra-cluster mean similarity')
+    axs[0, 1].set_ylabel('count')
+    axs[0, 1].set_title('Intra-Cluster Similarity')
+
+    axs[0, 2].hist(quality_metrics['cluster_tracking_confidence'], 50)
+    axs[0, 2].set_xlabel('tracking confidence')
+    axs[0, 2].set_ylabel('count')
+    axs[0, 2].set_title('Composite Tracking Confidence')
+
+    axs[1, 0].hist(quality_metrics['cluster_n_sessions'], bins=n_sessions, range=(0.5, n_sessions + 0.5))
+    axs[1, 0].set_xlabel('sessions per cluster')
+    axs[1, 0].set_ylabel('count')
+    axs[1, 0].set_title('Session Coverage')
+
+    axs[1, 1].hist(quality_metrics['cluster_size'], 50)
+    axs[1, 1].set_xlabel('ROIs per cluster')
+    axs[1, 1].set_ylabel('count')
+    axs[1, 1].set_title('Cluster Size')
+
+    axs[1, 2].hist(quality_metrics['sample_silhouette'], 50)
+    axs[1, 2].set_xlabel('sample silhouette')
+    axs[1, 2].set_ylabel('count')
+    axs[1, 2].set_title('Per-ROI Quality')
+
+    fig.tight_layout()
+    return fig

@@ -1200,3 +1200,103 @@ class Test_edge_cases:
         assert np.all(dConj.data <= 1)
 
 
+######################################################################################################################################
+################################################## CURATION METRICS ##################################################################
+######################################################################################################################################
+
+
+@pytest.fixture(scope='module')
+def clusterer_with_quality_metrics(dir_data_test):
+    """
+    Load a Clusterer with quality metrics already computed, including the new
+    session coverage and tracking confidence metrics.
+
+    Loads sparse matrices and labels from the saved run_data, then calls
+    compute_quality_metrics with session_bool so the new metrics are populated.
+    """
+    from roicat import util, tracking
+
+    path_run_data = str(Path(dir_data_test) / 'pipeline_tracking' / 'run_data.richfile.zip')
+    rd = util.RichFile_ROICaT(path=path_run_data)
+    sim = rd['sim'].load()
+    clusterer_data = rd['clusterer'].load()
+
+    clusterer = tracking.clustering.Clusterer(
+        s_sf=sim['s_sf'],
+        s_NN_z=sim['s_NN_z'],
+        s_SWT_z=sim['s_SWT_z'],
+        s_sesh=sim['s_sesh'],
+        session_bool=clusterer_data['_session_bool'],
+        verbose=False,
+    )
+
+    ## Set the attributes needed for compute_quality_metrics
+    clusterer.sConj = clusterer_data['sConj']
+    clusterer.dConj = clusterer_data['dConj']
+    clusterer.labels = clusterer_data['labels']
+
+    ## Do NOT transfer hdbs — the serialized object may not deserialize
+    ## into a real HDBSCAN instance, which would cause attribute errors.
+
+    clusterer.compute_quality_metrics()
+    return clusterer
+
+
+class Test_curation_metrics:
+    """Tests for post-hoc curation quality metrics."""
+
+    def test_cluster_n_sessions_present(self, clusterer_with_quality_metrics):
+        """quality_metrics should contain the new session-based keys."""
+        qm = clusterer_with_quality_metrics.quality_metrics
+        assert 'cluster_n_sessions' in qm
+        assert 'cluster_size' in qm
+        assert 'cluster_tracking_confidence' in qm
+        assert 'cluster_session_coverage' in qm
+
+    def test_cluster_n_sessions_range(self, clusterer_with_quality_metrics):
+        """cluster_n_sessions for valid clusters should be between 1 and n_sessions."""
+        clusterer = clusterer_with_quality_metrics
+        n_sessions = clusterer._session_bool.shape[1]
+        n_sessions_arr = np.array(clusterer.quality_metrics['cluster_n_sessions'])
+        ucids = np.array(clusterer.quality_metrics['cluster_labels_unique'])
+        valid_mask = np.array(ucids) >= 0
+        assert np.all(n_sessions_arr[valid_mask] >= 1)
+        assert np.all(n_sessions_arr <= n_sessions)
+
+    def test_tracking_confidence_range(self, clusterer_with_quality_metrics):
+        """tracking_confidence should be in [0, 1]."""
+        conf = np.array(clusterer_with_quality_metrics.quality_metrics['cluster_tracking_confidence'])
+        assert np.all(conf >= 0)
+        assert np.all(conf <= 1)
+
+    def test_cluster_size_sums(self, clusterer_with_quality_metrics):
+        """Sum of cluster sizes should equal total number of ROIs."""
+        clusterer = clusterer_with_quality_metrics
+        labels = np.array(clusterer.labels)
+        total_size = sum(clusterer.quality_metrics['cluster_size'])
+        assert total_size == len(labels)
+
+    def test_session_coverage_range(self, clusterer_with_quality_metrics):
+        """session_coverage for valid clusters should be in (0, 1]."""
+        qm = clusterer_with_quality_metrics.quality_metrics
+        cov = np.array(qm['cluster_session_coverage'])
+        ucids = np.array(qm['cluster_labels_unique'])
+        valid_mask = np.array(ucids) >= 0
+        assert np.all(cov[valid_mask] > 0)
+        assert np.all(cov <= 1)
+
+    def test_backward_compatible(self, clusterer_with_quality_metrics):
+        """Original quality_metrics keys should still be present."""
+        qm = clusterer_with_quality_metrics.quality_metrics
+        for key in ['cluster_intra_means', 'cluster_intra_mins', 'cluster_intra_maxs',
+                     'cluster_silhouette', 'sample_silhouette', 'cluster_labels_unique']:
+            assert key in qm, f"Missing original key: {key}"
+
+    def test_metric_lengths_consistent(self, clusterer_with_quality_metrics):
+        """All per-cluster metrics should have the same length."""
+        qm = clusterer_with_quality_metrics.quality_metrics
+        n = len(qm['cluster_labels_unique'])
+        assert len(qm['cluster_n_sessions']) == n
+        assert len(qm['cluster_size']) == n
+        assert len(qm['cluster_session_coverage']) == n
+        assert len(qm['cluster_tracking_confidence']) == n
