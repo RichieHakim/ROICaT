@@ -1310,7 +1310,6 @@ class TestFastHDBSCAN:
         labels = clusterer.fit(
             d_conj=d_conj,
             session_bool=session_bool,
-            backend='fast_hdbscan',
         )
         assert isinstance(labels, np.ndarray)
         assert labels.shape == (session_bool.shape[0],)
@@ -1322,16 +1321,37 @@ class TestFastHDBSCAN:
         labels = clusterer.fit(
             d_conj=d_conj,
             session_bool=session_bool,
-            backend='fast_hdbscan',
         )
-        for u in np.unique(labels):
-            if u == -1:
+        for ucid in np.unique(labels):
+            if ucid == -1:
                 continue
-            mask = labels == u
-            session_counts = session_bool[mask].sum(axis=0)
+            mask = labels == ucid
+            sessions_in_cluster = session_bool[mask]
+            session_counts = sessions_in_cluster.sum(axis=0)
             assert np.all(session_counts <= 1), (
-                f"Cluster {u} has session violations: {session_counts}"
+                f"Cluster {ucid} has same-session violations: "
+                f"session_counts={session_counts[session_counts > 1]}"
             )
+
+    def test_fast_hdbscan_no_violations_across_seeds(self):
+        """Cannot-link constraints should hold across different random seeds."""
+        for seed in [0, 7, 42, 99, 123]:
+            clusterer, d_conj, session_bool = _make_synthetic_clusterer(
+                n_sessions=5, n_rois_per_session=15, seed=seed,
+            )
+            labels = clusterer.fit(
+                d_conj=d_conj,
+                session_bool=session_bool,
+            )
+            for ucid in np.unique(labels):
+                if ucid == -1:
+                    continue
+                mask = labels == ucid
+                session_counts = session_bool[mask].sum(axis=0)
+                assert np.all(session_counts <= 1), (
+                    f"seed={seed}, cluster {ucid}: same-session violation "
+                    f"session_counts={session_counts[session_counts > 1]}"
+                )
 
     def test_fast_hdbscan_violations_attribute(self, synthetic_setup):
         """violations_labels should be empty with cannot-link constraints."""
@@ -1339,7 +1359,6 @@ class TestFastHDBSCAN:
         clusterer.fit(
             d_conj=d_conj,
             session_bool=session_bool,
-            backend='fast_hdbscan',
         )
         assert hasattr(clusterer, 'violations_labels')
         assert len(clusterer.violations_labels) == 0
@@ -1350,7 +1369,6 @@ class TestFastHDBSCAN:
         labels = clusterer.fit(
             d_conj=d_conj,
             session_bool=session_bool,
-            backend='fast_hdbscan',
         )
         n_clusters = len(set(labels) - {-1})
         assert n_clusters > 0, "Expected at least one cluster"
@@ -1361,7 +1379,6 @@ class TestFastHDBSCAN:
         labels = clusterer.fit(
             d_conj=d_conj,
             session_bool=session_bool,
-            backend='fast_hdbscan',
         )
         non_noise = labels[labels >= 0]
         if len(non_noise) > 0:
@@ -1375,7 +1392,6 @@ class TestFastHDBSCAN:
         labels = clusterer.fit(
             d_conj=d_conj,
             session_bool=session_bool,
-            backend='fast_hdbscan',
         )
         u, c = np.unique(labels[labels >= 0], return_counts=True)
         assert np.all(c >= 2), f"Found singleton clusters: {u[c < 2]}"
@@ -1387,7 +1403,6 @@ class TestFastHDBSCAN:
         labels = clusterer.fit(
             d_conj=empty_d,
             session_bool=session_bool,
-            backend='fast_hdbscan',
         )
         assert np.all(labels == -1)
 
@@ -1397,7 +1412,6 @@ class TestFastHDBSCAN:
         clusterer.fit(
             d_conj=d_conj,
             session_bool=session_bool,
-            backend='fast_hdbscan',
         )
         assert hasattr(clusterer, 'hdbs')
         assert hasattr(clusterer.hdbs, 'labels_')
@@ -1409,24 +1423,20 @@ class TestFastHDBSCAN:
         clusterer.fit(
             d_conj=d_conj,
             session_bool=session_bool,
-            backend='fast_hdbscan',
         )
         assert 'fit' in clusterer.params
         assert clusterer.params['fit']['backend'] == 'fast_hdbscan'
 
-    def test_auto_backend_selects_fast(self, synthetic_setup):
-        """backend='auto' should select fast_hdbscan when available."""
-        from roicat.tracking.clustering import _HAS_FAST_HDBSCAN
-        if not _HAS_FAST_HDBSCAN:
-            pytest.skip("fast_hdbscan not installed")
+    def test_default_backend_is_fast_hdbscan(self, synthetic_setup):
+        """Calling fit() without backend= should use fast_hdbscan."""
         clusterer, d_conj, session_bool = synthetic_setup
         clusterer.fit(
             d_conj=d_conj,
             session_bool=session_bool,
-            backend='auto',
         )
         ## Should have used fast_hdbscan (no fully connected node)
         assert not getattr(clusterer, '_fit_used_fully_connected_node', True)
+        assert clusterer.params['fit']['backend'] == 'fast_hdbscan'
 
     def test_backend_invalid_raises(self, synthetic_setup):
         """An invalid backend string should raise ValueError."""
@@ -1445,7 +1455,6 @@ class TestFastHDBSCAN:
             d_conj=d_conj,
             session_bool=session_bool,
             d_clusterMerge=0.5,
-            backend='fast_hdbscan',
         )
         assert isinstance(labels, np.ndarray)
 
@@ -1456,7 +1465,6 @@ class TestFastHDBSCAN:
             d_conj=d_conj,
             session_bool=session_bool,
             min_cluster_size='all',
-            backend='fast_hdbscan',
         )
         ## All non-noise clusters should have exactly n_sessions members
         n_sessions = session_bool.shape[1]
@@ -1479,7 +1487,6 @@ class TestFastHDBSCANQualityMetrics:
         clusterer.fit(
             d_conj=d_conj,
             session_bool=session_bool,
-            backend='fast_hdbscan',
         )
         metrics = clusterer._extract_hdbscan_quality_metrics()
         assert 'sample_probabilities' in metrics
@@ -1489,6 +1496,42 @@ class TestFastHDBSCANQualityMetrics:
         ## Probabilities should be a list of floats matching n_rois
         assert isinstance(metrics['sample_probabilities'], list)
         assert len(metrics['sample_probabilities']) == session_bool.shape[0]
+
+    def test_core_distances_extracted(self):
+        """fast_hdbscan should expose per-point core distances."""
+        clusterer, d_conj, session_bool = _make_synthetic_clusterer(
+            n_sessions=4, n_rois_per_session=15, seed=99,
+        )
+        clusterer.fit(
+            d_conj=d_conj,
+            session_bool=session_bool,
+        )
+        metrics = clusterer._extract_hdbscan_quality_metrics()
+        assert 'sample_coreDistances' in metrics
+        assert metrics['sample_coreDistances'] is not None
+        assert isinstance(metrics['sample_coreDistances'], list)
+        assert len(metrics['sample_coreDistances']) == session_bool.shape[0]
+        assert all(isinstance(v, float) for v in metrics['sample_coreDistances'])
+
+    def test_mst_edge_weights_extracted(self):
+        """fast_hdbscan should expose sorted MST edge weights."""
+        clusterer, d_conj, session_bool = _make_synthetic_clusterer(
+            n_sessions=4, n_rois_per_session=15, seed=99,
+        )
+        clusterer.fit(
+            d_conj=d_conj,
+            session_bool=session_bool,
+        )
+        metrics = clusterer._extract_hdbscan_quality_metrics()
+        assert 'mst_edge_weights' in metrics
+        assert metrics['mst_edge_weights'] is not None
+        assert isinstance(metrics['mst_edge_weights'], list)
+        ## MST on n points has n-1 edges
+        n_rois = session_bool.shape[0]
+        assert len(metrics['mst_edge_weights']) == n_rois - 1
+        ## Weights should be sorted
+        weights = metrics['mst_edge_weights']
+        assert weights == sorted(weights)
 
 
 ######################################################################################################################################

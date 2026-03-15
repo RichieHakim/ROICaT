@@ -13,11 +13,7 @@ import torch
 from tqdm.auto import tqdm
 # import optuna
 
-try:
-    from fast_hdbscan import HDBSCAN as FastHDBSCAN
-    _HAS_FAST_HDBSCAN = True
-except ImportError:
-    _HAS_FAST_HDBSCAN = False
+from fast_hdbscan import HDBSCAN as FastHDBSCAN
 
 from .. import helpers, util
 
@@ -1180,22 +1176,20 @@ class Clusterer(util.ROICaT_Module):
         split_intraSession_clusters: bool = True,
         discard_failed_pruning: bool = True,
         n_steps_clusterSplit: int = 100,
-        backend: str = 'auto',
+        backend: str = 'fast_hdbscan',
     ) -> np.ndarray:
         """
         Fits clustering using HDBSCAN with same-session constraint enforcement.
 
-        When ``backend='fast_hdbscan'`` (or ``'auto'`` with fast_hdbscan
-        installed), uses ``fast_hdbscan.HDBSCAN`` with native cannot-link
-        constraints. The cannot-link matrix is built from ``self.s_sesh_inv``
-        (True where two ROIs are from the SAME session), which prevents
-        same-session ROIs from ever being placed in the same cluster during
-        MST construction. This eliminates the need for iterative violation
-        correction.
+        By default (``backend='fast_hdbscan'``), uses ``fast_hdbscan.HDBSCAN``
+        with native cannot-link constraints. The cannot-link matrix is built
+        from ``self.s_sesh_inv`` (True where two ROIs are from the SAME
+        session), which prevents same-session ROIs from ever being placed in
+        the same cluster during MST construction. This eliminates the need
+        for iterative violation correction.
 
-        When ``backend='legacy'`` (or ``'auto'`` without fast_hdbscan),
-        falls back to the original ``hdbscan.HDBSCAN`` with iterative
-        violation correction via dendrogram walk-back.
+        Set ``backend='legacy'`` to use the original ``hdbscan.HDBSCAN`` with
+        iterative violation correction via dendrogram walk-back.
 
         RH 2023 / 2025
 
@@ -1236,13 +1230,12 @@ class Clusterer(util.ROICaT_Module):
                 the same session. Only used with ``backend='legacy'``. (Default
                 is *100*)
             backend (str):
-                Which HDBSCAN implementation to use. One of: \n
-                * ``'auto'``: Use fast_hdbscan if available, else legacy.
-                * ``'fast_hdbscan'``: Use fast_hdbscan (raises if not
-                  installed).
+                Which HDBSCAN implementation to use: \n
+                * ``'fast_hdbscan'``: Use fast_hdbscan with native cannot-link
+                  constraints (default).
                 * ``'legacy'``: Use legacy hdbscan with iterative violation
                   correction. \n
-                (Default is ``'auto'``)
+                (Default is ``'fast_hdbscan'``)
 
         Returns:
             (np.ndarray):
@@ -1265,23 +1258,7 @@ class Clusterer(util.ROICaT_Module):
             ],
         )
 
-        ## Resolve backend
-        if backend == 'auto':
-            use_fast = _HAS_FAST_HDBSCAN
-        elif backend == 'fast_hdbscan':
-            assert _HAS_FAST_HDBSCAN, (
-                "fast_hdbscan is not installed. Install with: "
-                "pip install git+https://github.com/TutteInstitute/fast_hdbscan.git"
-            )
-            use_fast = True
-        elif backend == 'legacy':
-            use_fast = False
-        else:
-            raise ValueError(
-                f"backend must be 'auto', 'fast_hdbscan', or 'legacy'. Got: {backend!r}"
-            )
-
-        if use_fast:
+        if backend == 'fast_hdbscan':
             return self._fit_fast_hdbscan(
                 d_conj=d_conj,
                 session_bool=session_bool,
@@ -1289,7 +1266,7 @@ class Clusterer(util.ROICaT_Module):
                 cluster_selection_method=cluster_selection_method,
                 d_clusterMerge=d_clusterMerge,
             )
-        else:
+        elif backend == 'legacy':
             return self._fit_legacy_hdbscan(
                 d_conj=d_conj,
                 session_bool=session_bool,
@@ -1301,6 +1278,10 @@ class Clusterer(util.ROICaT_Module):
                 split_intraSession_clusters=split_intraSession_clusters,
                 discard_failed_pruning=discard_failed_pruning,
                 n_steps_clusterSplit=n_steps_clusterSplit,
+            )
+        else:
+            raise ValueError(
+                f"backend must be 'fast_hdbscan' or 'legacy'. Got: {backend!r}"
             )
 
     def _fit_fast_hdbscan(
@@ -2167,12 +2148,23 @@ class Clusterer(util.ROICaT_Module):
 
         Legacy hdbscan (with attach_fully_connected_node) stores an extra
         trailing element for the fully connected node that must be stripped.
-        fast_hdbscan does not add extra nodes.
+        fast_hdbscan does not add extra nodes but exposes additional
+        attributes: ``_core_distances`` (per-point core distance) and
+        ``_min_spanning_tree`` (MST edge array).
 
         Returns:
             (Dict):
-                Dictionary with 'sample_outlierScores' and
-                'sample_probabilities' keys.
+                Dictionary with keys: \n
+                * ``sample_probabilities``: list of floats, per-ROI membership
+                  strength.
+                * ``sample_outlierScores``: list of floats (legacy) or ``None``
+                  (fast_hdbscan).
+                * ``sample_coreDistances``: list of floats (fast_hdbscan) or
+                  ``None`` (legacy).  Per-point core distance used for mutual
+                  reachability.
+                * ``mst_edge_weights``: list of floats (fast_hdbscan) or
+                  ``None`` (legacy).  Sorted MST edge weights; useful for
+                  diagnosing cluster separation.
         """
         def to_list_of_floats(x):
             return [float(i) for i in x]
@@ -2195,6 +2187,23 @@ class Clusterer(util.ROICaT_Module):
             result['sample_outlierScores'] = to_list_of_floats(scores)
         else:
             result['sample_outlierScores'] = None
+
+        ## Core distances (fast_hdbscan only)
+        core_dists = getattr(self.hdbs, '_core_distances', None)
+        if core_dists is not None:
+            if used_fcn:
+                core_dists = core_dists[:-1]
+            result['sample_coreDistances'] = to_list_of_floats(core_dists)
+        else:
+            result['sample_coreDistances'] = None
+
+        ## MST edge weights (fast_hdbscan only)
+        mst = getattr(self.hdbs, '_min_spanning_tree', None)
+        if mst is not None:
+            ## MST is (n-1, 3) array with columns [src, dst, weight]
+            result['mst_edge_weights'] = to_list_of_floats(np.sort(mst[:, 2]))
+        else:
+            result['mst_edge_weights'] = None
 
         return result
 
