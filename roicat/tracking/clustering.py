@@ -7,6 +7,7 @@ import scipy.optimize
 import scipy.sparse
 import scipy.signal
 import sklearn
+import sklearn.isotonic
 import matplotlib.pyplot as plt
 import torch
 from tqdm.auto import tqdm
@@ -97,6 +98,7 @@ class Clusterer(util.ROICaT_Module):
         s_sesh: Optional[scipy.sparse.csr_matrix] = None,
         n_bins: Optional[int] = None,
         smoothing_window_bins: Optional[int] = None,
+        session_bool: Optional[np.ndarray] = None,
         verbose: bool = True,
     ):
         """
@@ -135,139 +137,538 @@ class Clusterer(util.ROICaT_Module):
 
         self.n_bins = max(min(self.s_sf.nnz // 10000, 200), 20) if n_bins is None else n_bins
         self.smooth_window = helpers.make_odd(self.n_bins // 10, mode='up') if smoothing_window_bins is None else smoothing_window_bins
-        # print(f'Pruning similarity graphs with {self.n_bins} bins and smoothing window {smoothing_window}...') if self._verbose else None
-        
+
+        self._session_bool = session_bool
+
     def find_optimal_parameters_for_pruning(
         self,
-        kwargs_findParameters: Dict[str, Union[int, float, bool]] = {
-            'n_patience': 100,
-            'tol_frac': 0.05,
-            'max_trials': 350,
-            'max_duration': 60*10,
-            'value_stop': 0.0,
-        },
         bounds_findParameters: Dict[str, List[float]] = {
-            'power_NN': [0.0, 2.],  ## Bounds for the exponent applied to s_NN
-            'power_SWT': [0.0, 2.],  ## Bounds for the exponent applied to s_SWT
-            'p_norm': [-5, -0.1],  ## Bounds for the p-norm p value (Minkowski) applied to mix the matrices
-            'sig_NN_kwargs_mu': [0., 1.0],  ## Bounds for the sigmoid center for s_NN
-            'sig_NN_kwargs_b': [0.1, 1.5],  ## Bounds for the sigmoid slope for s_NN
-            'sig_SWT_kwargs_mu': [0., 1.0],  ## Bounds for the sigmoid center for s_SWT
-            'sig_SWT_kwargs_b': [0.1, 1.5],  ## Bounds for the sigmoid slope for s_SWT
+            'power_NN': [0.0, 2.],
+            'power_SWT': [0.0, 2.],
+            'p_norm': [-5, -0.1],
         },
-        n_jobs_findParameters: int = -1,
+        de_kwargs: Dict[str, Any] = {
+            'maxiter': 100,
+            'tol': 1e-6,
+            'popsize': 15,
+            'mutation': (0.5, 1.5),
+            'recombination': 0.7,
+            'polish': True,
+        },
         n_bins: Optional[int] = None,
         smoothing_window_bins: Optional[int] = None,
-        seed=None,
+        subsample_pairs: Optional[int] = None,
+        seed: Optional[int] = None,
     ) -> Dict:
         """
-        Find the optimal parameters for pruning the similarity graph.
-        How this function works: \n
-        1. Make a conjunctive distance matrix using a set of parameters for
-           the self.make_conjunctive_distance_matrix function.
-        2. Estimates the distribution of pairwise distances between ROIs assumed
-           to be the same and those assumed to be different ROIs. This is done
-           by comparing the difference in the distribution of pairwise distances
-           between ROIs from the same session and those from different sessions.
-           Ideally, the main difference will be the presence of 'same' ROIs in
-           the inter-session distribution. 
-        3. The optimal parameters are then updated using optuna in order to
-           maximize the separation between the 'same' and 'different'
-           distributions. \n
-        RH 2023
+        Find optimal mixing parameters for pruning the similarity graph.
+
+        Two-stage approach:
+
+        1. **Naive Bayes calibration**: For each similarity feature (SF, NN,
+           SWT), estimates ``P(same | s_k)`` from histogram subtraction. The
+           resulting per-feature calibration curves are used to analytically
+           estimate optimal sigmoid parameters ``(mu, b)`` via Fisher's linear
+           discriminant.
+        2. **Differential evolution**: With sigmoid parameters frozen from
+           stage 1, optimizes the remaining 3 parameters (``power_NN``,
+           ``power_SWT``, ``p_norm``) by minimizing the histogram overlap loss.
+
+        This method replaces the original Optuna TPE search (see
+        :meth:`_find_optimal_parameters_for_pruning_optuna` in the legacy
+        section). The two-stage approach achieves better separation quality
+        (lower histogram overlap) on typical datasets.
+        RH 2023 / 2025
 
         Args:
-            kwargs_findParameters (Dict[str, Union[int, float, bool]]): 
-                Keyword arguments for the Convergence_checker class __init__.
-            bounds_findParameters (Dict[str, Tuple[float, float]]):
-                Bounds for the parameters to be optimized.
-            n_jobs_findParameters (int):
-                Number of jobs to use when finding the optimal parameters. If
-                -1, use all available cores.
-            n_bins Optional[int]: 
-                Overwrites ``n_bins`` specified in __init__. \n
-                Number of bins to use when estimating the distributions. Using a
-                large number of bins makes finding the separation point more
-                noisy, and only slightly more accurate. (Default is ``None`` or
-                ``50``)
-            smoothing_window_bins (int): 
-                Overwrites ``smoothing_window_bins`` specified in __init__. \n
-                Number of bins to use when smoothing the distributions. Using a
-                small number of bins makes finding the separation point more
-                noisy, and only slightly more accurate. Aim for 5-10% of the
-                number of bins. (Default is ``None`` or ``5``)
-            seed (int):
-                Seed for the random number generator in the optuna sampler.
-                None: use a random seed.
+            bounds_findParameters (Dict[str, List[float]]):
+                Bounds for the 3 optimized parameters: ``power_NN``,
+                ``power_SWT``, ``p_norm``.
+            de_kwargs (Dict[str, Any]):
+                Keyword arguments for
+                ``scipy.optimize.differential_evolution``: \n
+                * ``maxiter`` (int): Maximum number of DE generations.
+                * ``tol`` (float): Convergence tolerance on the loss.
+                * ``popsize`` (int): Population size multiplier
+                  (actual population = ``popsize * n_params``).
+                * ``mutation`` (Tuple[float, float]): Differential
+                  weight range ``(min, max)`` for dithering.
+                * ``recombination`` (float): Crossover probability
+                  in ``[0, 1]``.
+                * ``polish`` (bool): If ``True``, run L-BFGS-B from
+                  the best DE solution. Often has no effect on
+                  piecewise-constant histogram loss.
+            n_bins (Optional[int]):
+                Overwrites ``n_bins`` from ``__init__``.
+            smoothing_window_bins (Optional[int]):
+                Overwrites ``smoothing_window_bins`` from ``__init__``.
+            subsample_pairs (Optional[int]):
+                If not ``None``, subsample this many pairs for histogram
+                loss evaluation. Maintains intra/inter ratio. If ``None``,
+                auto-computed based on pair counts.
+            seed (Optional[int]):
+                Random seed for reproducibility.
 
         Returns:
-            Dict:
+            (Dict):
                 kwargs_makeConjunctiveDistanceMatrix_best (Dict):
-                    The optimal parameters for the
-                    self.make_conjunctive_distance_matrix function.
+                    Optimal parameters for
+                    :meth:`make_conjunctive_distance_matrix`.
         """
-        import optuna
-
         ## Store parameter (but not data) args as attributes
         self.params['find_optimal_parameters_for_pruning'] = self._locals_to_params(
             locals_dict=locals(),
             keys=[
-                'kwargs_findParameters',
-                'bounds_findParameters',
-                'n_jobs_findParameters',
-                'n_bins',
-                'smoothing_window_bins',
-                'seed',
+                'bounds_findParameters', 'de_kwargs', 'n_bins',
+                'smoothing_window_bins', 'subsample_pairs', 'seed',
+            ],
+        )
+
+        ## NB calibration → Fisher sigmoid estimation → 3-param DE.
+        return self._find_optimal_parameters_DE(
+            bounds_findParameters=bounds_findParameters,
+            de_kwargs=de_kwargs,
+            n_bins=n_bins,
+            smoothing_window_bins=smoothing_window_bins,
+            subsample_pairs=subsample_pairs,
+            seed=seed,
+            freeze_sigmoid=True,
+        )
+
+    ####################################################################
+    ## Differential evolution parameter optimization
+    ####################################################################
+
+    def _precompute_intra_mask(self) -> np.ndarray:
+        """
+        Build a boolean mask of shape ``(nnz,)`` indicating which nonzero
+        entries in ``self.s_sf`` correspond to intra-session (known-different)
+        ROI pairs.
+
+        Uses an index-mapping trick: assigns each nonzero entry a unique 1-based
+        index, multiplies by the inverse session matrix to isolate intra-session
+        entries, then reads back which indices survived.
+
+        The result is stored as a numpy bool array (so that serialization via
+        ``serializable_dict`` preserves it). Call sites that need a torch tensor
+        should wrap with ``torch.as_tensor(self._intra_mask)``.
+        RH 2025
+
+        Returns:
+            (np.ndarray):
+                intra_mask (np.ndarray):
+                    Boolean numpy array, shape ``(self.s_sf.nnz,)``.
+        """
+        ## Map each nonzero entry to a unique 1-based index
+        idx_mat = self.s_sf.copy().astype(np.float64)
+        idx_mat.data = np.arange(1, self.s_sf.nnz + 1, dtype=np.float64)
+
+        ## Elementwise multiply with s_sesh_inv to keep only intra-session entries
+        masked = idx_mat.multiply(self.s_sesh_inv.astype(np.float64))
+        masked.eliminate_zeros()
+
+        ## Convert back to 0-based indices and build boolean mask
+        intra_indices = (masked.data - 1).astype(np.int64)
+        mask = np.zeros(self.s_sf.nnz, dtype=bool)
+        mask[intra_indices] = True
+
+        ## Store as a numpy bool array; callers convert with torch.as_tensor()
+        self._intra_mask = mask
+        return self._intra_mask
+
+    def _subsample_pairs(
+        self,
+        n_subsample: int,
+        intra_mask: torch.Tensor,
+        seed: Optional[int] = None,
+    ) -> torch.Tensor:
+        """
+        Subsample pair indices while preserving the intra/inter-session
+        ratio. Returns indices into the full nnz-length arrays.
+
+        Intra-session indices come first in the returned tensor, so the
+        intra mask for the subsample is simply ``True`` for the first
+        ``n_sample_intra`` entries.
+        RH 2025
+
+        Args:
+            n_subsample (int):
+                Target number of pairs to sample.
+            intra_mask (torch.Tensor):
+                Boolean tensor, shape ``(nnz,)``. ``True`` for
+                intra-session (known-different) pairs.
+            seed (Optional[int]):
+                Random seed for reproducibility.
+
+        Returns:
+            (torch.Tensor):
+                sample_idx (torch.Tensor):
+                    1D int64 tensor of sampled pair indices, length
+                    ``<= n_subsample``. Intra-session pairs come first.
+        """
+        ## Accept numpy or torch; convert to torch for all internal operations.
+        intra_mask = torch.as_tensor(intra_mask)
+
+        nnz = intra_mask.shape[0]
+        n_intra = int(intra_mask.sum().item())
+        n_inter = nnz - n_intra
+        frac = n_subsample / nnz
+        n_sample_intra = max(int(n_intra * frac), 100)
+        n_sample_inter = max(int(n_inter * frac), 100)
+
+        intra_idx = torch.where(intra_mask)[0]
+        inter_idx = torch.where(~intra_mask)[0]
+
+        rng = torch.Generator()
+        rng.manual_seed(seed if seed is not None else 42)
+
+        perm_intra = torch.randperm(n_intra, generator=rng)[:n_sample_intra]
+        perm_inter = torch.randperm(n_inter, generator=rng)[:n_sample_inter]
+
+        ## Intra first, then inter — intra_mask for subsample is True for
+        ## the first n_sample_intra entries
+        return torch.cat([intra_idx[perm_intra], inter_idx[perm_inter]])
+
+    def _find_optimal_parameters_DE(
+        self,
+        bounds_findParameters: Dict[str, List[float]] = {
+            'power_NN': [0.0, 2.],
+            'power_SWT': [0.0, 2.],
+            'p_norm': [-5, -0.1],
+            'sig_NN_kwargs_mu': [0., 1.0],
+            'sig_NN_kwargs_b': [0.1, 1.5],
+            'sig_SWT_kwargs_mu': [0., 1.0],
+            'sig_SWT_kwargs_b': [0.1, 1.5],
+        },
+        de_kwargs: Dict[str, Any] = {
+            'maxiter': 100,
+            'tol': 1e-6,
+            'popsize': 15,
+            'mutation': (0.5, 1.5),
+            'recombination': 0.7,
+            'polish': True,
+        },
+        n_bins: Optional[int] = None,
+        smoothing_window_bins: Optional[int] = None,
+        subsample_pairs: Optional[int] = None,
+        seed: Optional[int] = None,
+        freeze_sigmoid: bool = True,
+    ) -> Dict:
+        """
+        Find optimal mixing parameters using scipy differential evolution.
+
+        When ``freeze_sigmoid=True`` (default), sigmoid parameters (mu, b)
+        for NN and SWT are estimated from NB calibration curves via Fisher's
+        linear discriminant and held fixed, reducing the search to 3
+        parameters (``power_NN``, ``power_SWT``, ``p_norm``). When
+        ``False``, all 7 parameters are optimized jointly.
+
+        The inner loop operates entirely on precomputed torch tensors — no
+        scipy sparse operations per evaluation. When subsampling is active,
+        the subsample is redrawn each DE generation to reduce overfitting
+        to a specific pair subset.
+        RH 2025
+
+        Args:
+            bounds_findParameters (Dict[str, List[float]]):
+                Bounds for each parameter. When ``freeze_sigmoid=True``,
+                only ``power_NN``, ``power_SWT``, ``p_norm`` are used.
+                When ``False``, all 7 keys are needed.
+            de_kwargs (Dict[str, Any]):
+                Keyword arguments for
+                ``scipy.optimize.differential_evolution``: \n
+                * ``maxiter`` (int): Maximum number of DE generations.
+                * ``tol`` (float): Convergence tolerance on the loss.
+                * ``popsize`` (int): Population size multiplier
+                  (actual population = ``popsize * n_params``).
+                * ``mutation`` (Tuple[float, float]): Differential
+                  weight range ``(min, max)`` for dithering.
+                * ``recombination`` (float): Crossover probability
+                  in ``[0, 1]``.
+                * ``polish`` (bool): If ``True``, run L-BFGS-B from
+                  the best DE solution. Often has no effect on
+                  piecewise-constant histogram loss.
+            n_bins (Optional[int]):
+                Overwrites ``n_bins`` from __init__.
+            smoothing_window_bins (Optional[int]):
+                Overwrites ``smoothing_window_bins`` from __init__.
+            subsample_pairs (Optional[int]):
+                If not ``None``, subsample this many pairs for histogram
+                loss. Maintains intra/inter ratio. If ``None``,
+                auto-computed: subsamples to 1.1M (100k intra + 1M inter)
+                when there are enough pairs, otherwise uses all pairs.
+            seed (Optional[int]):
+                Random seed for reproducibility.
+            freeze_sigmoid (bool):
+                If ``True``, fix sigmoid params from NB calibration,
+                reducing DE to 3 parameters. If ``False``, optimize
+                all 7 parameters jointly.
+
+        Returns:
+            (Dict):
+                kwargs_makeConjunctiveDistanceMatrix_best (Dict):
+                    Optimal parameters for
+                    :meth:`make_conjunctive_distance_matrix`.
+        """
+        ## Store parameter (but not data) args as attributes
+        self.params['_find_optimal_parameters_DE'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'bounds_findParameters', 'de_kwargs', 'n_bins',
+                'smoothing_window_bins', 'subsample_pairs', 'seed',
+                'freeze_sigmoid',
             ],
         )
 
         self.n_bins = self.n_bins if n_bins is None else n_bins
-        self.smoothing_window_bins = self.smooth_window if smoothing_window_bins is None else smoothing_window_bins
-
+        self.smooth_window = self.smooth_window if smoothing_window_bins is None else smoothing_window_bins
         self.bounds_findParameters = bounds_findParameters
-
         self._seed = seed
-        np.random.seed(self._seed)
 
-        print('Finding mixing parameters using automated hyperparameter tuning...') if self._verbose else None
-        optuna.logging.set_verbosity(optuna.logging.WARNING)
-        self.checker = helpers.Convergence_checker_optuna(verbose=self._verbose>=2, **kwargs_findParameters)
-        prog_bar = helpers.OptunaProgressBar(
-            n_trials=kwargs_findParameters['max_trials'], 
-            # timeout=kwargs_findParameters['max_duration'],
-            # timeout=10,
-            mininterval=5.0,
+        ################################################################
+        ## Auto-compute subsample size if not specified
+        ################################################################
+        if not hasattr(self, '_intra_mask') or self._intra_mask is None:
+            self._precompute_intra_mask()
+        if subsample_pairs is None:
+            n_intra = int(self._intra_mask.sum())
+            n_inter = self.s_sf.nnz - n_intra
+            ## Subsample only if we have enough pairs to meet minimums
+            min_intra = 100_000
+            min_inter = 1_000_000
+            if n_intra >= min_intra and n_inter >= min_inter:
+                subsample_pairs = min_intra + min_inter
+            ## Otherwise use all pairs
+
+        ################################################################
+        ## Determine parameter layout: 3-param (frozen) or 7-param (full)
+        ################################################################
+        _frozen_sig = None
+        if freeze_sigmoid:
+            if not hasattr(self, 'calibrations_naive_bayes') or self.calibrations_naive_bayes is None:
+                self.make_naive_bayes_distance_matrix()
+            sig_params = self._estimate_sigmoid_params()
+            _frozen_sig = {
+                'mu_NN': sig_params['NN']['mu'],
+                'b_NN': sig_params['NN']['b'],
+                'mu_SWT': sig_params['SWT']['mu'],
+                'b_SWT': sig_params['SWT']['b'],
+            }
+            print(
+                f'  Freezing sigmoid: NN(mu={_frozen_sig["mu_NN"]:.3f}, '
+                f'b={_frozen_sig["b_NN"]:.1f}), '
+                f'SWT(mu={_frozen_sig["mu_SWT"]:.3f}, '
+                f'b={_frozen_sig["b_SWT"]:.1f})'
+            ) if self._verbose else None
+
+        if freeze_sigmoid:
+            param_keys = ['power_NN', 'power_SWT', 'p_norm']
+        else:
+            param_keys = [
+                'power_NN', 'power_SWT', 'p_norm',
+                'sig_NN_kwargs_mu', 'sig_NN_kwargs_b',
+                'sig_SWT_kwargs_mu', 'sig_SWT_kwargs_b',
+            ]
+        scipy_bounds = [tuple(bounds_findParameters[k]) for k in param_keys]
+
+        ################################################################
+        ## Precompute tensors — eliminates all sparse operations from
+        ## the inner loop.
+        ################################################################
+        sf_t_full = torch.as_tensor(
+            np.ascontiguousarray(self.s_sf.data), dtype=torch.float32,
+        ).clone()  ## shape (nnz,)
+        nn_t_full = torch.as_tensor(
+            np.ascontiguousarray(self.s_NN_z.data), dtype=torch.float32,
+        ).clone()  ## shape (nnz,)
+        swt_t_full = torch.as_tensor(
+            np.ascontiguousarray(self.s_SWT_z.data), dtype=torch.float32,
+        ).clone()  ## shape (nnz,)
+
+        ## Boolean mask for intra-session (known-different) pairs
+        if not hasattr(self, '_intra_mask') or self._intra_mask is None:
+            self._precompute_intra_mask()
+        intra_mask_full = torch.as_tensor(self._intra_mask)  ## shape (nnz,), bool
+
+        ################################################################
+        ## Helper: build working tensors (with optional subsampling)
+        ################################################################
+        def _build_working_tensors(resample_seed: Optional[int]):
+            """Return (sf_t, nn_t, swt_t, intra_mask) after optional subsampling."""
+            nnz_full = sf_t_full.shape[0]
+            if subsample_pairs is not None and subsample_pairs < nnz_full:
+                sidx = self._subsample_pairs(
+                    n_subsample=subsample_pairs,
+                    intra_mask=intra_mask_full,
+                    seed=resample_seed if resample_seed is not None else 77777,
+                )
+                ## Intra pairs come first in sidx. Compute actual intra count
+                ## using the same logic as _subsample_pairs to stay in sync.
+                n_intra_full = int(intra_mask_full.sum().item())
+                frac = subsample_pairs / nnz_full
+                n_si = min(max(int(n_intra_full * frac), 100), n_intra_full)
+                im = torch.zeros(sidx.shape[0], dtype=torch.bool)
+                im[:n_si] = True
+                return sf_t_full[sidx], nn_t_full[sidx], swt_t_full[sidx], im
+            else:
+                return sf_t_full, nn_t_full, swt_t_full, intra_mask_full
+
+        ## Initial working set
+        sf_t, nn_t, swt_t, intra_mask = _build_working_tensors(
+            resample_seed=(seed + 77777) if seed is not None else 77777,
         )
-        self.study = optuna.create_study(direction='minimize', sampler=optuna.samplers.TPESampler(
-            n_startup_trials=kwargs_findParameters['n_patience']//2,
-            seed=self._seed,
-        ))
-        self.study.optimize(
-            func=self._objectiveFn_distSameMagnitude, 
-            n_jobs=n_jobs_findParameters, 
-            callbacks=[self.checker.check, prog_bar],
-            n_trials=kwargs_findParameters['max_trials'],
-            # show_progress_bar=self._verbose >= 1,
-            show_progress_bar=False,
+
+        print(
+            f'  Working set: {sf_t.shape[0]} pairs '
+            f'({int(intra_mask.sum().item())} intra, '
+            f'{sf_t.shape[0] - int(intra_mask.sum().item())} inter)'
+        ) if self._verbose and subsample_pairs is not None else None
+
+        ################################################################
+        ## Build shared histogram infrastructure from current tensors
+        ################################################################
+        n_bins_val = self.n_bins
+        edges = torch.linspace(0, 1, n_bins_val + 1, dtype=torch.float32)
+        smooth_window = helpers.make_odd(n_bins_val // 10, mode='up')
+        smoother = helpers.Convolver_1d(
+            kernel=torch.ones(smooth_window),
+            length_x=n_bins_val,
+            pad_mode='same',
+            correct_edge_effects=True,
+            device='cpu',
         )
 
-        self.best_params = self.study.best_params.copy()
-        [self.best_params.pop(p) for p in [
-            # 'sig_SF_kwargs_mu',
-            # 'sig_SF_kwargs_b',
-            'sig_NN_kwargs_mu',
-            'sig_NN_kwargs_b',
-            'sig_SWT_kwargs_mu',
-            'sig_SWT_kwargs_b'] if p in self.best_params.keys()]
-        # # self.best_params['sig_SF_kwargs'] = {'mu': self.study.best_params['sig_SF_kwargs_mu'],
-        # #                                 'b': self.study.best_params['sig_SF_kwargs_b'],}
-        # self.best_params['sig_SF_kwargs'] = None
-        self.best_params['sig_NN_kwargs'] = {'mu': self.study.best_params['sig_NN_kwargs_mu'],
-                                        'b': self.study.best_params['sig_NN_kwargs_b'],}
-        self.best_params['sig_SWT_kwargs'] = {'mu': self.study.best_params['sig_SWT_kwargs_mu'],
-                                            'b': self.study.best_params['sig_SWT_kwargs_b'],}
+        ## Mutable containers so resample callback can update them in-place
+        _state = {
+            'sf_t': sf_t,
+            'nn_t': nn_t,
+            'swt_t': swt_t,
+            'intra_mask': intra_mask,
+            'generation': 0,
+        }
+        _state['intra_indices'] = torch.where(_state['intra_mask'])[0]
+        _state['sf_clamped'] = torch.clamp(_state['sf_t'], min=1e-8)
+        _state['n_all'] = _state['sf_t'].shape[0]
+        _state['n_intra'] = int(_state['intra_mask'].sum().item())
+        _state['scale_factor'] = _state['n_all'] / max(_state['n_intra'], 1)
 
-        self.kwargs_makeConjunctiveDistanceMatrix_best={
+        ################################################################
+        ## Resample callback — redraws subsampled tensors each generation
+        ################################################################
+        _generation_counter = [0]
+
+        def _resample_callback(xk, convergence=None):
+            """Redraw subsample at the start of each generation."""
+            gen = _generation_counter[0]
+            _generation_counter[0] += 1
+            new_seed = (seed + gen * 1000 + 99999) if seed is not None else (gen * 1000 + 99999)
+            sf_new, nn_new, swt_new, im_new = _build_working_tensors(resample_seed=new_seed)
+            _state['sf_t'] = sf_new
+            _state['nn_t'] = nn_new
+            _state['swt_t'] = swt_new
+            _state['intra_mask'] = im_new
+            _state['intra_indices'] = torch.where(im_new)[0]
+            _state['sf_clamped'] = torch.clamp(sf_new, min=1e-8)
+            _state['n_all'] = sf_new.shape[0]
+            _state['n_intra'] = int(im_new.sum().item())
+            _state['scale_factor'] = _state['n_all'] / max(_state['n_intra'], 1)
+
+        ################################################################
+        ## Scalar objective — evaluates one parameter vector at a time
+        ################################################################
+        def objective_scalar(x):
+            sf_w = _state['sf_t']
+            nn_w = _state['nn_t']
+            swt_w = _state['swt_t']
+            ii = _state['intra_indices']
+            sc = _state['scale_factor']
+
+            ## Unpack parameter vector
+            power_NN, power_SWT, p_norm_val = float(x[0]), float(x[1]), float(x[2])
+            if _frozen_sig is not None:
+                mu_NN = _frozen_sig['mu_NN']
+                b_NN = _frozen_sig['b_NN']
+                mu_SWT = _frozen_sig['mu_SWT']
+                b_SWT = _frozen_sig['b_SWT']
+            else:
+                mu_NN, b_NN = float(x[3]), float(x[4])
+                mu_SWT, b_SWT = float(x[5]), float(x[6])
+            p = p_norm_val if abs(p_norm_val) > 1e-9 else 1e-9
+
+            ## Compute NN activation
+            nn_act = torch.sigmoid(b_NN * (nn_w - mu_NN))
+            nn_act.clamp_(min=1e-8).pow_(power_NN)
+
+            ## SWT activation
+            swt_act = torch.sigmoid(b_SWT * (swt_w - mu_SWT))
+            swt_act.clamp_(min=1e-8).pow_(power_SWT)
+
+            ## p-norm mixing: distance = 1 - (mean(s_k^p))^(1/p)
+            sf_p = torch.pow(_state['sf_clamped'], p)
+            dist = 1.0 - ((sf_p + torch.pow(nn_act, p) + torch.pow(swt_act, p)) / 3.0).pow(1.0 / p)
+
+            ## Histogram overlap loss via shared helper
+            loss, _, _ = self._compute_histogram_overlap(
+                distances=dist,
+                intra_indices=ii,
+                edges=edges,
+                smoother=smoother,
+                scale_factor=sc,
+            )
+
+            return loss
+
+        ################################################################
+        ## Configure and run differential evolution
+        ################################################################
+        print('Finding mixing parameters using differential evolution...') if self._verbose else None
+
+        de_kwargs_use = dict(de_kwargs)
+
+        nnz_full = sf_t_full.shape[0]
+
+        ## Always resample each generation when subsampling
+        if subsample_pairs is not None and subsample_pairs < nnz_full:
+            existing_cb = de_kwargs_use.pop('callback', None)
+            def _combined_callback(xk, convergence=None):
+                _resample_callback(xk, convergence)
+                if existing_cb is not None:
+                    return existing_cb(xk, convergence)  ## propagate stop signal
+            de_kwargs_use['callback'] = _combined_callback
+
+        self._de_result = scipy.optimize.differential_evolution(
+            func=objective_scalar,
+            bounds=scipy_bounds,
+            seed=seed,
+            **de_kwargs_use,
+        )
+
+        ## Extract best parameters
+        x_best = self._de_result.x
+        if _frozen_sig is not None:
+            self.best_params = {
+                'power_NN': float(x_best[0]),
+                'power_SWT': float(x_best[1]),
+                'p_norm': float(x_best[2]),
+                'sig_NN_kwargs': {
+                    'mu': _frozen_sig['mu_NN'],
+                    'b': _frozen_sig['b_NN'],
+                },
+                'sig_SWT_kwargs': {
+                    'mu': _frozen_sig['mu_SWT'],
+                    'b': _frozen_sig['b_SWT'],
+                },
+            }
+        else:
+            self.best_params = {
+                'power_NN': float(x_best[0]),
+                'power_SWT': float(x_best[1]),
+                'p_norm': float(x_best[2]),
+                'sig_NN_kwargs': {'mu': float(x_best[3]), 'b': float(x_best[4])},
+                'sig_SWT_kwargs': {'mu': float(x_best[5]), 'b': float(x_best[6])},
+            }
+
+        self.kwargs_makeConjunctiveDistanceMatrix_best = {
             'power_SF': None,
             'power_NN': None,
             'power_SWT': None,
@@ -277,8 +678,351 @@ class Clusterer(util.ROICaT_Module):
             'sig_SWT_kwargs': None,
         }
         self.kwargs_makeConjunctiveDistanceMatrix_best.update(self.best_params)
-        print(f'Completed automatic parameter search. Best value found: {self.study.best_value} with parameters {self.best_params}') if self._verbose else None
+
+        print(
+            f'Completed DE parameter search. '
+            f'Best value: {self._de_result.fun:.2f}, '
+            f'evaluations: {self._de_result.nfev}, '
+            f'params: {self.best_params}'
+        ) if self._verbose else None
+
         return self.kwargs_makeConjunctiveDistanceMatrix_best
+
+    ####################################################################
+    ## Naive Bayes calibration and sigmoid estimation
+    ####################################################################
+
+    def _calibrate_feature_1d(
+        self,
+        s_data: torch.Tensor,
+        intra_mask: torch.Tensor,
+        n_bins: int,
+        smoother: 'helpers.Convolver_1d',
+        prob_clip: Tuple[float, float] = (1e-4, 1 - 1e-4),
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Estimate P(same | s_k) for a single similarity feature using
+        histogram subtraction.
+
+        Given raw similarity values for all pairs and the intra-session
+        (known-different) subset, estimates the "same" distribution as the
+        residual after subtracting the scaled intra-session distribution
+        from the overall distribution. Monotonicity is enforced (higher
+        similarity → higher P(same)).
+        RH 2025
+
+        Args:
+            s_data (torch.Tensor):
+                1D tensor of raw similarity values, shape ``(nnz,)``.
+            intra_mask (torch.Tensor):
+                Boolean tensor, shape ``(nnz,)``. ``True`` for
+                intra-session (known-different) pairs.
+            n_bins (int):
+                Number of histogram bins.
+            smoother (helpers.Convolver_1d):
+                1D convolver for smoothing histogram counts.
+            prob_clip (Tuple[float, float]):
+                Clamp P(same) to ``[lo, hi]`` to avoid logit divergence.
+
+        Returns:
+            (Dict[str, torch.Tensor]):
+                calibration (Dict[str, torch.Tensor]):
+                    Dictionary with keys ``'edges'``, ``'counts_all'``,
+                    ``'counts_diff'``, ``'counts_diff_smooth'``,
+                    ``'counts_same'``, ``'p_same_bins'``.
+        """
+        n_all = s_data.shape[0]
+        n_intra = int(intra_mask.sum().item())
+        scale = n_all / n_intra
+
+        ## Bin edges spanning the data range with small margin
+        lo = float(s_data.min()) - 1e-6
+        hi = float(s_data.max()) + 1e-6
+        edges = torch.linspace(lo, hi, n_bins + 1, dtype=torch.float32)
+
+        ## Histogram all values and intra-session values
+        counts_all, _ = torch.histogram(s_data, edges)
+        counts_intra, _ = torch.histogram(s_data[intra_mask], edges)
+
+        ## Scale intra counts to estimate the full "different" distribution
+        counts_diff = counts_intra * scale
+
+        ## "Same" distribution = residual, clamped non-negative.
+        ## Do NOT smooth counts_same — the smoothing kernel bleeds nonzero
+        ## mass into the left tail where the true same-count is zero, creating
+        ## an artificial P(same) floor. Raw residual preserves zeros.
+        counts_same = torch.clamp(counts_all - counts_diff, min=0)
+
+        ## Smooth only the "different" distribution (estimating the smooth
+        ## population envelope). counts_same stays raw/clamped.
+        counts_diff_smooth = smoother.convolve(counts_diff)
+
+        ## P(same | bin) = counts_same / (counts_same + counts_diff_smooth)
+        p_same_bins = counts_same / (counts_same + counts_diff_smooth + 1e-10)
+
+        ## Enforce monotonic increasing via isotonic regression, weighted by
+        ## total evidence per bin. Isotonic regression finds the best
+        ## monotonically-increasing fit — sparse tail bins (with few
+        ## observations) get negligible influence, avoiding artificial
+        ## P(same) floors.
+        ir = sklearn.isotonic.IsotonicRegression(
+            increasing=True,
+            y_min=float(prob_clip[0]),
+            y_max=float(prob_clip[1]),
+        )
+        evidence_weights = (counts_all + counts_diff_smooth).numpy()
+        evidence_weights = np.maximum(evidence_weights, 1e-10)
+        p_same_np = ir.fit_transform(
+            X=np.arange(n_bins, dtype=np.float64),
+            y=p_same_bins.numpy().astype(np.float64),
+            sample_weight=evidence_weights.astype(np.float64),
+        )
+        p_same_bins = torch.as_tensor(p_same_np, dtype=torch.float32)
+
+        ## Store all tensors as numpy so that serializable_dict can
+        ## preserve them (torch tensors are not in the allowed library list).
+        ## Call sites that need torch tensors convert with torch.as_tensor().
+        return {
+            'edges': edges.numpy(),
+            'counts_all': counts_all.numpy(),
+            'counts_diff': counts_diff.numpy(),
+            'counts_diff_smooth': counts_diff_smooth.numpy(),
+            'counts_same': counts_same.numpy(),
+            'p_same_bins': p_same_bins.numpy(),
+        }
+
+    def make_naive_bayes_distance_matrix(
+        self,
+        n_bins: Optional[int] = None,
+        smoothing_window_bins: Optional[int] = None,
+        prob_clip: Tuple[float, float] = (1e-4, 1 - 1e-4),
+    ) -> Tuple[scipy.sparse.csr_matrix, scipy.sparse.csr_matrix, Dict[str, Any]]:
+        """
+        Compute pairwise distance matrix using independent per-feature
+        calibration combined via naive Bayes.
+
+        For each similarity feature k (SF, NN, SWT), estimates the posterior
+        ``P(same | s_k)`` from a 1D histogram of similarity values, using
+        the intra-session (known-different) distribution as reference. The
+        per-feature posteriors are combined under conditional independence:
+
+        .. math::
+
+            \\text{logit}(P(\\text{same} | \\mathbf{s})) = \\sum_k \\text{logit}(P(\\text{same} | s_k)) - (K-1) \\cdot \\text{logit}(\\pi)
+
+        where :math:`\\pi` is the estimated prior P(same) and K is the
+        number of features.
+
+        **No iterative optimization** — just histogram + lookup. Typically
+        completes in under 1 second even on large datasets.
+        RH 2025
+
+        Args:
+            n_bins (Optional[int]):
+                Number of histogram bins per feature. If ``None``, uses
+                ``self.n_bins``.
+            smoothing_window_bins (Optional[int]):
+                Smoothing window. If ``None``, uses ``self.smooth_window``.
+            prob_clip (Tuple[float, float]):
+                Clamp P(same|s_k) to ``[lo, hi]`` before logit.
+
+        Returns:
+            (Tuple[scipy.sparse.csr_matrix, scipy.sparse.csr_matrix, Dict]):
+                dConj (scipy.sparse.csr_matrix):
+                    Distance matrix ``d = 1 - P(same|all)``.
+                sConj (scipy.sparse.csr_matrix):
+                    Similarity matrix ``s = P(same|all)``.
+                calibrations (Dict[str, Any]):
+                    Diagnostic dict with per-feature calibrations,
+                    prior, and combined P(same).
+        """
+        self.params['make_naive_bayes_distance_matrix'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=['n_bins', 'smoothing_window_bins', 'prob_clip'],
+        )
+
+        n_bins = self.n_bins if n_bins is None else n_bins
+        smooth_window = self.smooth_window if smoothing_window_bins is None else smoothing_window_bins
+
+        print('Computing naive Bayes distance matrix...') if self._verbose else None
+
+        ## Precompute intra-session mask
+        if not hasattr(self, '_intra_mask') or self._intra_mask is None:
+            self._precompute_intra_mask()
+        intra_mask = torch.as_tensor(self._intra_mask)
+
+        ## Build smoother (shared across features)
+        smoother = helpers.Convolver_1d(
+            kernel=torch.ones(smooth_window),
+            length_x=n_bins,
+            pad_mode='same',
+            correct_edge_effects=True,
+            device='cpu',
+        )
+
+        ## Features to calibrate: (name, raw similarity data)
+        features_raw = {
+            'SF': torch.as_tensor(self.s_sf.data, dtype=torch.float32),
+            'NN': torch.as_tensor(self.s_NN_z.data, dtype=torch.float32),
+            'SWT': torch.as_tensor(self.s_SWT_z.data, dtype=torch.float32),
+        }
+
+        calibrations = {'features': {}}
+        nnz = self.s_sf.nnz
+        logit_sum = torch.zeros(nnz, dtype=torch.float32)
+
+        ## Calibrate each feature independently
+        for name, s_data in features_raw.items():
+            cal = self._calibrate_feature_1d(
+                s_data=s_data,
+                intra_mask=intra_mask,
+                n_bins=n_bins,
+                smoother=smoother,
+                prob_clip=prob_clip,
+            )
+
+            ## Look up P(same) for each pair from its histogram bin.
+            ## cal values are numpy arrays; convert to torch for the lookup
+            ## then store result as numpy for serialization safety.
+            edges_t = torch.as_tensor(cal['edges'])
+            p_same_bins_t = torch.as_tensor(cal['p_same_bins'])
+            bin_idx = torch.searchsorted(
+                edges_t[1:-1].contiguous(), s_data,
+            )
+            bin_idx = torch.clamp(bin_idx, 0, n_bins - 1)
+            p_same_per_pair = p_same_bins_t[bin_idx]  ## torch, shape (nnz,)
+
+            ## Accumulate logit for naive Bayes combination
+            logit_p = torch.log(p_same_per_pair / (1.0 - p_same_per_pair))
+            logit_sum += logit_p
+
+            ## Store as numpy so serializable_dict preserves it
+            cal['p_same_per_pair'] = p_same_per_pair.numpy()
+            calibrations['features'][name] = cal
+
+            print(
+                f'  {name}: P(same) range '
+                f'[{p_same_per_pair.min():.4f}, {p_same_per_pair.max():.4f}], '
+                f'mean={p_same_per_pair.mean():.4f}'
+            ) if self._verbose else None
+
+        ## Estimate prior P(same)
+        K = len(features_raw)
+        prior_estimates = []
+        for cal in calibrations['features'].values():
+            total_same = cal['counts_same'].sum().item()
+            total = total_same + cal['counts_diff_smooth'].sum().item()
+            if total > 0:
+                prior_estimates.append(total_same / total)
+        prior = float(np.mean(prior_estimates)) if prior_estimates else 0.5
+        prior = float(np.clip(prior, prob_clip[0], prob_clip[1]))
+        calibrations['prior'] = prior
+
+        ## Naive Bayes log-odds combination
+        logit_prior = float(np.log(prior / (1.0 - prior)))
+        logit_combined = logit_sum - (K - 1) * logit_prior
+
+        ## Convert back to probability
+        p_same_combined = torch.sigmoid(logit_combined).numpy()
+        calibrations['p_same_combined'] = p_same_combined
+
+        ## Build sparse similarity and distance matrices
+        sConj = self.s_sf.copy()
+        sConj.data = p_same_combined.astype(np.float64)
+
+        dConj = sConj.copy()
+        dConj.data = 1.0 - dConj.data
+
+        ## Store for downstream use
+        self.dConj = dConj
+        self.sConj = sConj
+        self.calibrations_naive_bayes = calibrations
+
+        print(
+            f'  Combined P(same): mean={p_same_combined.mean():.4f}, '
+            f'prior={prior:.4f}, '
+            f'P(same)>0.5: {(p_same_combined > 0.5).sum()}/{nnz} '
+            f'({(p_same_combined > 0.5).mean() * 100:.1f}%)'
+        ) if self._verbose else None
+
+        return dConj, sConj, calibrations
+
+    def _estimate_sigmoid_params(self) -> Dict[str, Dict[str, float]]:
+        """
+        Estimate sigmoid parameters (mu, b) for NN and SWT from
+        NB calibration curves using Fisher's linear discriminant.
+
+        For each feature, finds the sigmoid ``sigma(b * (s - mu))`` that
+        best separates "same" and "different" distributions in the
+        calibration histogram. Uses a grid search over (mu, b) to maximize
+        the Fisher discriminant ratio in sigmoid-transformed space.
+
+        Requires :meth:`make_naive_bayes_distance_matrix` to have been
+        called first.
+        RH 2025
+
+        Returns:
+            (Dict[str, Dict[str, float]]):
+                sigmoid_params (Dict[str, Dict[str, float]]):
+                    Mapping from feature name to ``{'mu': float, 'b': float}``.
+        """
+        assert hasattr(self, 'calibrations_naive_bayes') and self.calibrations_naive_bayes is not None, (
+            "make_naive_bayes_distance_matrix() must be called before "
+            "_estimate_sigmoid_params()."
+        )
+
+        result = {}
+        for name in ['NN', 'SWT']:
+            cal = self.calibrations_naive_bayes['features'][name]
+            ## cal values are numpy arrays (stored that way for serialization)
+            edges = np.asarray(cal['edges'])
+            counts_same = np.asarray(cal['counts_same'])
+            counts_diff = np.asarray(cal['counts_diff_smooth'])
+
+            ## Bin centers in similarity space, shape (n_bins,)
+            centers_np = (edges[:-1] + edges[1:]) / 2.0
+
+            ## Normalized distribution weights, shape (n_bins,)
+            w_same = counts_same / (counts_same.sum() + 1e-10)
+            w_diff = counts_diff / (counts_diff.sum() + 1e-10)
+
+            ## Vectorized grid search over (mu, b) to maximize Fisher
+            ## discriminant in sigmoid-transformed space.
+            ## Grid shapes: mu (M,), b (B,) → sig_vals (M, B, n_bins)
+            mu_grid = np.linspace(
+                float(centers_np.min()), float(centers_np.max()), 50,
+            )
+            b_grid = np.linspace(0.5, 10.0, 30)
+            ## Broadcasting: (M,1,1) * ((1,1,n_bins) - (M,1,1))
+            sig_vals = 1.0 / (1.0 + np.exp(
+                -b_grid[None, :, None] * (centers_np[None, None, :] - mu_grid[:, None, None])
+            ))  ## shape (M, B, n_bins)
+
+            ## Weighted moments in sigmoid-transformed space
+            mu_same_sig = np.sum(w_same[None, None, :] * sig_vals, axis=2)  ## (M, B)
+            mu_diff_sig = np.sum(w_diff[None, None, :] * sig_vals, axis=2)  ## (M, B)
+            var_same_sig = np.sum(w_same[None, None, :] * (sig_vals - mu_same_sig[:, :, None]) ** 2, axis=2)
+            var_diff_sig = np.sum(w_diff[None, None, :] * (sig_vals - mu_diff_sig[:, :, None]) ** 2, axis=2)
+
+            ## Fisher discriminant ratio, shape (M, B)
+            denom = var_same_sig + var_diff_sig + 1e-12
+            fisher_grid = (mu_same_sig - mu_diff_sig) ** 2 / denom
+
+            ## Find best (mu, b)
+            best_idx = np.unravel_index(fisher_grid.argmax(), fisher_grid.shape)
+            best_mu = float(mu_grid[best_idx[0]])
+            best_b = float(b_grid[best_idx[1]])
+            best_fisher = float(fisher_grid[best_idx])
+
+            result[name] = {'mu': best_mu, 'b': best_b}
+
+            print(
+                f'  Sigmoid estimate for {name}: '
+                f'mu={best_mu:.4f}, b={best_b:.2f} '
+                f'(Fisher={best_fisher:.4f})'
+            ) if self._verbose else None
+
+        return result
 
     def make_pruned_similarity_graphs(
         self,
@@ -321,7 +1065,15 @@ class Clusterer(util.ROICaT_Module):
             ],
         )
 
-        if kwargs_makeConjunctiveDistanceMatrix is None:
+        ## If 'precomputed', use self.dConj/sConj set by a prior call
+        ## (e.g. make_naive_bayes_distance_matrix). Otherwise, compute
+        ## the conjunctive distance matrix from mixing parameters.
+        if kwargs_makeConjunctiveDistanceMatrix == 'precomputed':
+            assert hasattr(self, 'dConj') and self.dConj is not None, (
+                "kwargs_makeConjunctiveDistanceMatrix='precomputed' requires "
+                "self.dConj to be set (call make_naive_bayes_distance_matrix first)."
+            )
+        elif kwargs_makeConjunctiveDistanceMatrix is None:
             if hasattr(self, 'kwargs_makeConjunctiveDistanceMatrix_best'):
                 kwargs_makeConjunctiveDistanceMatrix = self.kwargs_makeConjunctiveDistanceMatrix_best
             else:
@@ -336,13 +1088,14 @@ class Clusterer(util.ROICaT_Module):
                 }
                 warnings.warn(f'No kwargs_makeConjunctiveDistanceMatrix provided. Using default parameters: {kwargs_makeConjunctiveDistanceMatrix}')
 
-        self.dConj, self.sConj, sSF_data, sNN_data, sSWT_data, sConj_data = self.make_conjunctive_distance_matrix(
-            s_sf=self.s_sf,
-            s_NN=self.s_NN_z,
-            s_SWT=self.s_SWT_z,
-            s_sesh=None,
-            **kwargs_makeConjunctiveDistanceMatrix
-        )
+        if kwargs_makeConjunctiveDistanceMatrix != 'precomputed':
+            self.dConj, self.sConj, sSF_data, sNN_data, sSWT_data, sConj_data = self.make_conjunctive_distance_matrix(
+                s_sf=self.s_sf,
+                s_NN=self.s_NN_z,
+                s_SWT=self.s_SWT_z,
+                s_sesh=None,
+                **kwargs_makeConjunctiveDistanceMatrix
+            )
         dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(self.dConj)
 
         if convert_to_probability:        
@@ -373,9 +1126,6 @@ class Clusterer(util.ROICaT_Module):
         }
 
         ssf, snn, sswt, ssesh = self.s_sf.copy(), self.s_NN_z.copy(), self.s_SWT_z.copy(), self.s_sesh.copy()
-        # ssf.data[ssf.data == 0] = 1e-10
-        # snn.data[snn.data == 0] = 1e-10
-        # sswt.data[sswt.data == 0] = 1e-10
 
         min_d = np.nanmin(self.dConj.data)
         if d_cutoff is None:
@@ -505,23 +1255,13 @@ class Clusterer(util.ROICaT_Module):
 
             self.hdbs = hdbscan.HDBSCAN(
                 min_cluster_size=min_cluster_size,
-            #     min_samples=None,
                 cluster_selection_epsilon=d_clusterMerge,
                 max_cluster_size=n_sessions,
                 metric='precomputed',
                 alpha=alpha,
-            #     p=None,
                 algorithm='generic',
-            #     leaf_size=100,
-            # #     memory=Memory(location=None),
-            #     approx_min_span_tree=False,
-            #     gen_min_span_tree=False,
-            #     core_dist_n_jobs=mp.cpu_count(),
                 cluster_selection_method=cluster_selection_method,
-            #     allow_single_cluster=False,
-            #     prediction_data=False,
-            #     match_reference_implementation=False,
-                max_dist=max_dist
+                max_dist=max_dist,
             )
 
             self.hdbs.fit(attach_fully_connected_node(
@@ -541,10 +1281,8 @@ class Clusterer(util.ROICaT_Module):
             ##  no more violations.
             if split_intraSession_clusters:
                 labels = labels.copy()
-                # d_cut = float(d.data.max())
 
-                sb_t = torch.as_tensor(session_bool, dtype=torch.float32) # (n_rois, n_sessions)
-                # print(f'num violating clusters: {np.unique(labels)[np.array([(session_bool[labels==u].sum(0)>1).sum().item() for u in np.unique(labels)]) > 0]}')
+                sb_t = torch.as_tensor(session_bool, dtype=torch.float32)  ## (n_rois, n_sessions)
                 n = len(d_conj.data)
                 dcd = np.sort(d_conj.data)
                 cuts_all = np.sort(np.unique([dcd[0]/2] + [dcd[int(n*ii)] for ii in np.linspace(0., 1., num=n_steps_clusterSplit, endpoint=False)[::-1]] + [dcd[-1]]))[::-1]
@@ -573,15 +1311,12 @@ class Clusterer(util.ROICaT_Module):
                     labels[(labels_new == -1) * idx_toUpdate] = -1
                 
                 if discard_failed_pruning:
-                    # print(f"Setting all clusters with redundant ROIs to label: -1. Number of clusters with redundant ROIs: {len(np.unique(labels[idx_toUpdate]))}") if self._verbose else None
-                    # print(f"IDs: {np.unique(labels[idx_toUpdate])}") if self._verbose else None
                     labels[idx_toUpdate] = -1
 
             l_u = np.unique(labels)
             l_u = l_u[l_u > -1]
             if ii < n_iter_violationCorrection - 1:
-                # print(f'Post-separation number of violating clusters: {n_violating_clusters}') if self._verbose else None
-                ## find sessions represented in each cluster and set distances to ROIs in those sessions to 1.
+                ## Find sessions represented in each cluster and set distances to ROIs in those sessions to 1.
                 d = d.tocsr()
                 for ii, l in enumerate(np.unique(labels)):
                     if l == -1:
@@ -650,8 +1385,6 @@ class Clusterer(util.ROICaT_Module):
 
         print(f"Clustering with CaImAn's sequential Hungarian algorithm method...") if self._verbose else None
         def find_matches(D_s):
-            # todo todocument
-
             matches = []
             costs = []
             for ii, D in enumerate(D_s):
@@ -757,39 +1490,39 @@ class Clusterer(util.ROICaT_Module):
         RH 2023
 
         Args:
-            s_sf (Optional[scipy.sparse.csr_matrix]): 
+            s_sf (Optional[scipy.sparse.csr_matrix]):
                 Similarity matrix for spatial footprints. (Default is ``None``)
-            s_NN (Optional[scipy.sparse.csr_matrix]): 
+            s_NN (Optional[scipy.sparse.csr_matrix]):
                 Similarity matrix for neural network features. (Default is
                 ``None``)
-            s_SWT (Optional[scipy.sparse.csr_matrix]): 
+            s_SWT (Optional[scipy.sparse.csr_matrix]):
                 Similarity matrix for scattering wavelet transform features.
                 (Default is ``None``)
-            s_sesh (Optional[scipy.sparse.csr_matrix]): 
+            s_sesh (Optional[scipy.sparse.csr_matrix]):
                 The session similarity matrix. (Default is ``None``)
-            power_SF (float): 
+            power_SF (float):
                 Power to which to raise the spatial footprint similarity.
                 (Default is *1*)
-            power_NN (float): 
+            power_NN (float):
                 Power to which to raise the neural network similarity. (Default
                 is *1*)
-            power_SWT (float): 
+            power_SWT (float):
                 Power to which to raise the scattering wavelet transform
                 similarity. (Default is *1*)
-            p_norm (float): 
+            p_norm (float):
                 p-norm to use for the conjunction of the similarity matrices.
                 (Default is *1*)
-            sig_SF_kwargs (Dict[str, float]): 
+            sig_SF_kwargs (Dict[str, float]):
                 Keyword arguments for the sigmoid function applied to the
                 spatial footprint overlap similarity matrix. See
                 helpers.generalised_logistic_function for details. (Default is
                 {'mu':0.5, 'b':0.5})
-            sig_NN_kwargs (Dict[str, float]): 
+            sig_NN_kwargs (Dict[str, float]):
                 Keyword arguments for the sigmoid function applied to the neural
                 network similarity matrix. See
                 helpers.generalised_logistic_function for details. (Default is
                 {'mu':0.5, 'b':0.5})
-            sig_SWT_kwargs (Dict[str, float]): 
+            sig_SWT_kwargs (Dict[str, float]):
                 Keyword arguments for the sigmoid function applied to the
                 scattering wavelet transform similarity matrix. See
                 helpers.generalised_logistic_function for details. (Default is
@@ -797,22 +1530,22 @@ class Clusterer(util.ROICaT_Module):
 
         Returns:
             (Tuple): Tuple containing:
-                dConj (scipy.sparse.csr_matrix): 
+                dConj (scipy.sparse.csr_matrix):
                     Conjunction of the three similarity matrices.
-                sConj (scipy.sparse.csr_matrix): 
+                sConj (scipy.sparse.csr_matrix):
                     The session similarity matrix.
-                sSF_data (np.ndarray): 
+                sSF_data (np.ndarray):
                     Activated spatial footprint similarity matrix.
-                sNN_data (np.ndarray): 
+                sNN_data (np.ndarray):
                     Activated neural network similarity matrix.
-                sSWT_data (np.ndarray): 
+                sSWT_data (np.ndarray):
                     Activated scattering wavelet transform similarity matrix.
-                sConj_data (np.ndarray): 
+                sConj_data (np.ndarray):
                     Activated session similarity matrix.
         """
         assert (s_sf is not None) or (s_NN is not None) or (s_SWT is not None), \
             'At least one of s_sf, s_NN, or s_SWT must be provided.'
-        
+
         ## Store parameter (but not data) args as attributes
         self.params['make_conjunctive_distance_matrix'] = self._locals_to_params(
             locals_dict=locals(),
@@ -826,27 +1559,25 @@ class Clusterer(util.ROICaT_Module):
                 'sig_SWT_kwargs',
             ],
         )
-        
+
         p_norm = 1e-9 if p_norm == 0 else p_norm
 
         sSF_data = self._activation_function(s_sf.data, sig_SF_kwargs, power_SF) if s_sf is not None else None
         sNN_data = self._activation_function(s_NN.data, sig_NN_kwargs, power_NN) if s_NN is not None else None
+
         sSWT_data = self._activation_function(s_SWT.data, sig_SWT_kwargs, power_SWT) if s_SWT is not None else None
 
         s_list = [s for s in [sSF_data, sNN_data, sSWT_data] if s is not None]
-        
+
         sConj_data = self._pNorm(
             s_list=s_list,
             p=p_norm,
         )
-        # sConj_data = sConj_data * s_sesh.data if s_sesh is not None else sConj_data
-        # sConj_data = sConj_data * np.logical_not(s_sesh.data) if s_sesh is not None else sConj_data
 
         ## make sConj
         sConj = s_sf.copy() if s_sf is not None else s_NN.copy() if s_NN is not None else s_SWT.copy()
-        sConj.data = sConj_data.numpy() 
+        sConj.data = sConj_data.numpy()
         sConj = sConj.multiply(s_sesh) if s_sesh is not None else sConj
-        # sConj.eliminate_zeros()
 
         ## make dConj
         dConj = sConj.copy()
@@ -889,7 +1620,7 @@ class Clusterer(util.ROICaT_Module):
         fn_power = lambda x, p: x ** p if p is not None else x
         
         return fn_power(torch.clamp(fn_sigmoid(s, sig_kwargs), min=0), power)
-        
+
     def _pNorm(
         self, 
         s_list: List[Optional[torch.Tensor]], 
@@ -910,17 +1641,6 @@ class Clusterer(util.ROICaT_Module):
         """
         s_list_noNones = [s for s in s_list if s is not None]
         return (torch.mean(torch.stack(s_list_noNones, axis=0)**p, dim=0))**(1/p)
-        # return np.linalg.norm(np.stack(s_list_noNones, axis=0), ord=p, axis=0)
-
-    # def plot_sigmoids(self):
-    #     fig, axs = plt.subplots(nrows=1, ncols=3, figsize=(16,4))
-    #     axs[0].plot(np.linspace(-0,2,1001), self.sig_sf(np.linspace(-5,5,1001)))
-    #     axs[0].set_title('sigmoid SF')
-    #     axs[1].plot(np.linspace(-1,1,1001), self.sig_NN(np.linspace(-5,5,1001)))
-    #     axs[1].set_title('sigmoid NN')
-    #     axs[2].plot(np.linspace(-1,1,1001), self.sig_SWT(np.linspace(-5,5,1001)))
-    #     axs[2].set_title('sigmoid SWT')
-
 
     def plot_similarity_relationships(
         self, 
@@ -1016,7 +1736,6 @@ class Clusterer(util.ROICaT_Module):
             **kwargs
         )
         dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(dConj)
-        # centers = (edges[1:] + edges[:-1]) / 2
         if edges is None:
             print('No crossover found, not plotting')
             return None
@@ -1026,15 +1745,12 @@ class Clusterer(util.ROICaT_Module):
         plt.stairs(dens_same_crop, edges, linewidth=3)
         plt.stairs(dens_diff, edges)
         plt.stairs(dens_all, edges)
-        # plt.stairs(dens_diff - dens_same, edges)
-        # plt.stairs(dens_all - dens_diff, edges)
-        # plt.stairs((dens_diff * dens_same)*1000, edges)
         plt.axvline(d_crossover, color='k', linestyle='--')
         plt.ylim([dens_same.max()*-0.5, dens_same.max()*1.5])
         plt.title('Pairwise similarities')
         plt.xlabel('distance or prob(different)')
         plt.ylabel('counts or density')
-        plt.legend(['same', 'same (cropped)', 'diff', 'all', 'diff - same', 'all - diff', '(diff * same) * 1000', 'crossover'])
+        plt.legend(['same', 'same (cropped)', 'diff', 'all', 'crossover'])
         return fig
 
     def _fn_smooth(
@@ -1042,15 +1758,15 @@ class Clusterer(util.ROICaT_Module):
         x: torch.Tensor,
     ) -> torch.Tensor:
         """
-        Smooths a 1D tensor using a convolution operation.
+        Smooth a 1D tensor with a boxcar convolution.
 
         Args:
-            x (torch.Tensor): 
+            x (torch.Tensor):
                 1D tensor to be smoothed.
 
         Returns:
-            (torch.Tensor): 
-                Smoothed tensor.
+            (torch.Tensor):
+                Smoothed tensor, same shape as ``x``.
         """
         return helpers.Convolver_1d(
             kernel=torch.ones(self.smooth_window),
@@ -1060,147 +1776,153 @@ class Clusterer(util.ROICaT_Module):
             device='cpu',
         ).convolve(x)
 
-    def _separate_diffSame_distributions(
-        self, 
-        d_conj: scipy.sparse.csr_matrix
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
+    ####################################################################
+    ## Shared histogram overlap computation
+    ####################################################################
+
+    def _compute_histogram_overlap(
+        self,
+        distances: torch.Tensor,
+        intra_indices: torch.Tensor,
+        edges: torch.Tensor,
+        smoother: 'helpers.Convolver_1d',
+        scale_factor: float,
+    ) -> Tuple[float, torch.Tensor, torch.Tensor]:
         """
-        Estimates the distribution of pairwise similarities for 'same' and
-        'different' pairs of ROIs. Estimate the 'same' distribution as the
-        difference between all pairwise distances (includes different and same)
-        and intra-session distances (known different). 
+        Compute the hard histogram overlap loss between the estimated
+        'same' and 'different' distance distributions.
+
+        Shared core used by :meth:`_separate_diffSame_distributions`,
+        :meth:`_find_optimal_parameters_DE` (scalar objective), and
+        :meth:`find_optimal_nb_combination_DE` (NB objective).
+
+        The 'different' distribution is estimated by scaling the intra-session
+        (known-different) histogram. The 'same' distribution is the residual
+        after subtracting the scaled intra counts from all counts, clamped
+        non-negative and then smoothed. The loss is the dot product of the
+        two estimated distributions (overlap area).
+
+        If no valid crossover point exists (i.e. the two distributions never
+        separate), ``loss`` is set to ``1e6`` as a penalty.
+        RH 2025
 
         Args:
-            d_conj (scipy.sparse.csr_matrix): 
+            distances (torch.Tensor):
+                1D float tensor of distance values, shape ``(n,)``.
+            intra_indices (torch.Tensor):
+                1D int64 tensor of indices into ``distances`` corresponding
+                to intra-session (known-different) pairs.
+            edges (torch.Tensor):
+                1D float tensor of bin edges, shape ``(n_bins + 1,)``.
+            smoother (helpers.Convolver_1d):
+                Pre-built 1D convolver for smoothing the 'same' distribution.
+            scale_factor (float):
+                ``n_all / n_intra`` — multiplier that scales the intra counts
+                up to the full population size.
+
+        Returns:
+            (Tuple[float, torch.Tensor, torch.Tensor]):
+                loss (float):
+                    Overlap area (dot product of dens_same and dens_diff),
+                    or ``1e6`` if no valid crossover exists.
+                dens_same (torch.Tensor):
+                    Smoothed estimated 'same' distribution, shape ``(n_bins,)``.
+                dens_diff (torch.Tensor):
+                    Scaled intra-session distribution (estimated 'different'),
+                    shape ``(n_bins,)``.
+        """
+        ## Histogram all distances and intra-session distances
+        counts_all, _ = torch.histogram(distances, edges)
+        counts_intra, _ = torch.histogram(distances[intra_indices], edges)
+
+        ## Scale intra counts to estimate the full 'different' distribution
+        dens_diff = counts_intra * scale_factor
+
+        ## 'Same' distribution = residual, clamped non-negative, then smoothed
+        dens_same = smoother.convolve(torch.clamp(counts_all - dens_diff, min=0))
+
+        ## Penalize if no valid crossover exists between the two distributions
+        dens_deriv = dens_diff - dens_same
+        dens_deriv[int(dens_diff.argmax().item()):] = 0
+        if not (dens_deriv < 0).any():
+            return 1e6, dens_same, dens_diff
+
+        return float((dens_same * dens_diff).sum().item()), dens_same, dens_diff
+
+    def _separate_diffSame_distributions(
+        self,
+        d_conj: scipy.sparse.csr_matrix,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
+        """
+        Estimate the 'same' and 'different' distance distributions from a
+        conjunctive distance matrix.
+
+        The 'same' distribution is estimated as the residual after subtracting
+        the scaled intra-session (known-different) distribution from the overall
+        distribution. Delegates core histogram overlap computation to
+        :meth:`_compute_histogram_overlap`.
+
+        Args:
+            d_conj (scipy.sparse.csr_matrix):
                 Conjunctive distance matrix.
 
         Returns:
             (tuple): tuple containing:
                 dens_same_crop (np.ndarray):
-                    Distribution density of pairwise similarities 
-                    that are assumed to be from the same ROI. It is
-                    'cropped' because values below crossover point
-                    between same and different distributions are set
-                    to zero.
+                    'Same' distribution with values below the crossover point
+                    zeroed out.
                 dens_same (np.ndarray):
-                    Un-cropped version of dens_same_crop.
+                    Un-cropped smoothed 'same' distribution.
                 dens_diff (np.ndarray):
-                    Distribution density of pairwise similarities
-                    that are assumed to be from different ROIs.
+                    Scaled intra-session 'different' distribution.
                 dens_all (np.ndarray):
-                    Distribution density of all pairwise similarities.
+                    Raw histogram counts over all pairs.
                 edges (np.ndarray):
-                    Edges of bins used to compute densities.
+                    Bin edges used for all histograms.
                 d_crossover (float):
-                    Distance at which the same and different distributions
-                    crossover.
+                    Distance at which the 'same' and 'different' distributions
+                    cross over.
         """
-        edges = torch.linspace(0,1, self.n_bins+1, dtype=torch.float32)
-        
-        d_all = d_conj.copy()
-        counts, _ = torch.histogram(torch.as_tensor(d_all.data, dtype=torch.float32), edges)
-        # dens_all = fn_smooth(counts / counts.sum())  ## distances of all pairs of ROIs
-        # dens_all = counts / counts.sum()  ## distances of all pairs of ROIs
-        dens_all = counts  ## distances of all pairs of ROIs
-        # dens_all = counts / counts[-1]  ## distances of all pairs of ROIs
+        ## Bin edges covering the full [0, 1] distance range
+        edges = torch.linspace(start=0, end=1, steps=self.n_bins + 1, dtype=torch.float32)
 
+        ## Extract all-pairs distances and compute raw histogram
+        dist_all = torch.as_tensor(d_conj.data, dtype=torch.float32)
+        dens_all, _ = torch.histogram(dist_all, edges)
+
+        ## Extract intra-session (known-different) distances via s_sesh_inv mask
         d_intra = d_conj.multiply(self.s_sesh_inv)
         d_intra.eliminate_zeros()
         if len(d_intra.data) == 0:
             return None, None, None, None, None, None
-        counts, _ = torch.histogram(torch.as_tensor(d_intra.data, dtype=torch.float32), edges)
-        # dens_diff = fn_smooth(counts / counts.sum())  ## distances of known differents
-        # dens_diff = counts / counts.sum()  ## distances of known differents
-        dens_diff = counts * (len(d_all.data) / len(d_intra.data))
-        # dens_diff = counts / counts[-1]  ## distances of known differents
+        dist_intra = torch.as_tensor(d_intra.data, dtype=torch.float32)
 
-        dens_same = dens_all - dens_diff  ## estimate the 'same' distribution as the different between all distances (includes different and same) and intra-session distances (known different)
-        dens_same = torch.maximum(dens_same, torch.as_tensor([0], dtype=torch.float32))
-        # dens_same = torch.as_tensor(scipy.signal.savgol_filter(dens_same.cpu().numpy(), self.smooth_window, 3))  ## smooth the 'same' distribution
-        dens_same = self._fn_smooth(dens_same)
+        ## Scale factor: ratio of all pairs to intra-session pairs
+        n_all = int(dens_all.sum().item())
+        n_intra = dist_intra.shape[0]
+        scale_factor = float(n_all) / max(n_intra, 1)
 
-        dens_deriv = dens_diff - dens_same  ## difference in 'diff' and 'same' distributions
-        dens_deriv[dens_diff.argmax():] = 0
-        if torch.where(dens_deriv < 0)[0].shape[0] == 0:  ## if no crossover point, return None
+        ## Compute scaled intra (different) distribution
+        counts_intra, _ = torch.histogram(dist_intra, edges)
+        dens_diff = counts_intra * scale_factor
+
+        ## Smoothed residual (same) — uses cached smoother in _fn_smooth
+        dens_same = self._fn_smooth(torch.clamp(dens_all - dens_diff, min=0))
+
+        ## Locate crossover: last bin before dens_diff peak where diff > same
+        dens_deriv = dens_diff - dens_same
+        dens_deriv[int(dens_diff.argmax().item()):] = 0
+        crossover_candidates = torch.where(dens_deriv < 0)[0]
+        if crossover_candidates.shape[0] == 0:
             return None, None, None, None, None, None
-        idx_crossover = torch.where(dens_deriv < 0)[0][-1] + 1 
-        d_crossover = edges[idx_crossover].item()
+        idx_crossover = int(crossover_candidates[-1].item()) + 1
+        d_crossover = float(edges[idx_crossover].item())
 
+        ## Zero out 'same' distribution below the crossover point
         dens_same_crop = dens_same.clone()
         dens_same_crop[idx_crossover:] = 0
+
         return dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover
-    def _objectiveFn_distSameMagnitude(
-        self, 
-        trial: object,
-    ) -> float:
-        """
-        Computes the magnitude of the 'same' distribution for Optuna
-        hyperparameter optimization.
-
-        The 'same' distribution refers to the distribution of distances between
-        pairs of ROIs that are estimated to be identical. As the parameters for
-        building the conjunctive distance matrix are optimized, the 'same' and
-        'different' distributions should separate from each other. The less the
-        two overlap, the larger the effective magnitude of the 'same'
-        distribution.
-
-        Args:
-            trial (optuna.trial.Trial): 
-                The Optuna trial object.
-
-        Returns:
-            (float): 
-                loss (float):
-                    The magnitude of the 'same' distribution. This output must
-                    be a scalar and is used to update the hyperparameters.
-        """
-        # power_SF = trial.suggest_float('power_SF', *self.bounds_findParameters['power_SF'], log=False)
-        power_SF = 1
-        power_NN = trial.suggest_float('power_NN', *self.bounds_findParameters['power_NN'], log=False)
-        power_SWT = trial.suggest_float('power_SWT', *self.bounds_findParameters['power_SWT'], log=False)
-        # power_SWT = 0
-        p_norm = trial.suggest_float('p_norm', *self.bounds_findParameters['p_norm'], log=False)
-        
-        # sig_SF_kwargs = {
-        #     'mu':trial.suggest_float('sig_SF_kwargs_mu', 0.1, 0.5, log=False),
-        #     'b':trial.suggest_float('sig_SF_kwargs_b', 0.1, 2, log=False),
-        # }
-        sig_SF_kwargs = None
-        sig_NN_kwargs = {
-            'mu':trial.suggest_float('sig_NN_kwargs_mu', *self.bounds_findParameters['sig_NN_kwargs_mu'], log=False),
-            'b':trial.suggest_float('sig_NN_kwargs_b', *self.bounds_findParameters['sig_NN_kwargs_b'], log=False),
-        }
-        # sig_NN_kwargs = None
-        sig_SWT_kwargs = {
-            'mu':trial.suggest_float('sig_SWT_kwargs_mu', *self.bounds_findParameters['sig_SWT_kwargs_mu'], log=False),
-            'b':trial.suggest_float('sig_SWT_kwargs_b', *self.bounds_findParameters['sig_SWT_kwargs_b'], log=False),
-        }
-        # sig_SWT_kwargs = None
-
-        dConj, sConj, sSF_data, sNN_data, sSWT_data, sConj_data = self.make_conjunctive_distance_matrix(
-            s_sf=self.s_sf,
-            s_NN=self.s_NN_z,
-            s_SWT=self.s_SWT_z,
-            s_sesh=None,
-            power_SF=power_SF,
-            power_NN=power_NN,
-            power_SWT=power_SWT,
-            p_norm=p_norm,
-        #     sig_sf_kwargs={'mu':1.0, 'b':0.5},
-            sig_SF_kwargs=sig_SF_kwargs,
-            sig_NN_kwargs=sig_NN_kwargs,
-            sig_SWT_kwargs=sig_SWT_kwargs,
-        )
-        
-        dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(dConj)
-        if dens_same_crop is None:
-            return 0
-
-        # loss = dens_same_crop.sum().item()
-        loss = (dens_same * dens_diff).sum().item()
-        
-        return loss  # Output must be a scalar. Used to update the hyperparameters
-    
 
     def compute_quality_metrics(
         self,
@@ -1250,8 +1972,6 @@ class Clusterer(util.ROICaT_Module):
         )
 
         import sklearn
-        ## Warn that current version is memory intensive and might be improved when sklearn 1.3 is released
-        # warnings.warn("Current version of silhouette samples calculation is memory intensive and will be improved when sklearn 1.3 is released.")
         import sparse
         d_dense = sparse.COO(dist_mat.copy().tocsr()).astype(np.float16)
         d_dense.fill_value = (dist_mat.data.max() - dist_mat.data.min()).astype(np.float16) * 10
@@ -1286,7 +2006,278 @@ class Clusterer(util.ROICaT_Module):
             } if hasattr(self, 'seqHung_performance') else None,
         })
         return self.quality_metrics
-        
+
+    ####################################################################
+    ####################################################################
+    ##
+    ## LEGACY / COMPARISON METHODS
+    ##
+    ## The methods below are retained for backward compatibility and
+    ## benchmarking. They are NOT used by the default pipeline.
+    ##
+    ## The recommended approach is find_optimal_parameters_for_pruning()
+    ## which calls _find_optimal_parameters_DE(freeze_sigmoid=True).
+    ##
+    ####################################################################
+    ####################################################################
+
+    def _find_optimal_parameters_for_pruning_optuna(
+        self,
+        kwargs_findParameters: Dict[str, Union[int, float, bool]] = {
+            'n_patience': 100,
+            'tol_frac': 0.05,
+            'max_trials': 350,
+            'max_duration': 60*10,
+            'value_stop': 0.0,
+        },
+        bounds_findParameters: Dict[str, List[float]] = {
+            'power_NN': [0.0, 2.],
+            'power_SWT': [0.0, 2.],
+            'p_norm': [-5, -0.1],
+            'sig_NN_kwargs_mu': [0., 1.0],
+            'sig_NN_kwargs_b': [0.1, 1.5],
+            'sig_SWT_kwargs_mu': [0., 1.0],
+            'sig_SWT_kwargs_b': [0.1, 1.5],
+        },
+        n_jobs_findParameters: int = -1,
+        n_bins: Optional[int] = None,
+        smoothing_window_bins: Optional[int] = None,
+        seed=None,
+    ) -> Dict:
+        """
+        **LEGACY** — Original Optuna TPE optimizer (7-param). Superseded by
+        :meth:`find_optimal_parameters_for_pruning` which uses NB calibration
+        + freeze-sigmoid DE and achieves ~3.6x better separation quality.
+
+        Requires ``optuna`` to be installed.
+        RH 2023
+
+        Args:
+            kwargs_findParameters (Dict[str, Union[int, float, bool]]):
+                Keyword arguments for the Convergence_checker class __init__.
+            bounds_findParameters (Dict[str, List[float]]):
+                Bounds for the 7 parameters to be optimized.
+            n_jobs_findParameters (int):
+                Number of parallel Optuna jobs. ``-1`` = all cores.
+            n_bins (Optional[int]):
+                Overwrites ``n_bins`` from ``__init__``.
+            smoothing_window_bins (Optional[int]):
+                Overwrites ``smoothing_window_bins`` from ``__init__``.
+            seed (Optional[int]):
+                Random seed.
+
+        Returns:
+            (Dict):
+                kwargs_makeConjunctiveDistanceMatrix_best (Dict):
+                    Optimal parameters for
+                    :meth:`make_conjunctive_distance_matrix`.
+        """
+        import optuna
+
+        self.params['find_optimal_parameters_for_pruning'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'kwargs_findParameters', 'bounds_findParameters',
+                'n_jobs_findParameters', 'n_bins', 'smoothing_window_bins', 'seed',
+            ],
+        )
+
+        self.n_bins = self.n_bins if n_bins is None else n_bins
+        self.smooth_window = self.smooth_window if smoothing_window_bins is None else smoothing_window_bins
+        self.bounds_findParameters = bounds_findParameters
+        self._seed = seed
+        np.random.seed(self._seed)
+
+        print('Finding mixing parameters using automated hyperparameter tuning...') if self._verbose else None
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+        self.checker = helpers.Convergence_checker_optuna(verbose=self._verbose >= 2, **kwargs_findParameters)
+        prog_bar = helpers.OptunaProgressBar(
+            n_trials=kwargs_findParameters['max_trials'],
+            mininterval=5.0,
+        )
+        self.study = optuna.create_study(direction='minimize', sampler=optuna.samplers.TPESampler(
+            n_startup_trials=kwargs_findParameters['n_patience'] // 2,
+            seed=self._seed,
+        ))
+        self.study.optimize(
+            func=self._objectiveFn_distSameMagnitude,
+            n_jobs=n_jobs_findParameters,
+            callbacks=[self.checker.check, prog_bar],
+            n_trials=kwargs_findParameters['max_trials'],
+            show_progress_bar=False,
+        )
+
+        self.best_params = self.study.best_params.copy()
+        [self.best_params.pop(p) for p in [
+            'sig_NN_kwargs_mu', 'sig_NN_kwargs_b',
+            'sig_SWT_kwargs_mu', 'sig_SWT_kwargs_b',
+        ] if p in self.best_params.keys()]
+        self.best_params['sig_NN_kwargs'] = {
+            'mu': self.study.best_params['sig_NN_kwargs_mu'],
+            'b': self.study.best_params['sig_NN_kwargs_b'],
+        }
+        self.best_params['sig_SWT_kwargs'] = {
+            'mu': self.study.best_params['sig_SWT_kwargs_mu'],
+            'b': self.study.best_params['sig_SWT_kwargs_b'],
+        }
+
+        self.kwargs_makeConjunctiveDistanceMatrix_best = {
+            'power_SF': None, 'power_NN': None, 'power_SWT': None,
+            'p_norm': None, 'sig_SF_kwargs': None,
+            'sig_NN_kwargs': None, 'sig_SWT_kwargs': None,
+        }
+        self.kwargs_makeConjunctiveDistanceMatrix_best.update(self.best_params)
+        print(f'Completed automatic parameter search. Best value found: {self.study.best_value} with parameters {self.best_params}') if self._verbose else None
+        return self.kwargs_makeConjunctiveDistanceMatrix_best
+
+    def _objectiveFn_distSameMagnitude(
+        self,
+        trial: object,
+    ) -> float:
+        """
+        **LEGACY** — Optuna objective function for histogram overlap loss.
+        Used by :meth:`_find_optimal_parameters_for_pruning_optuna`.
+        RH 2023
+        """
+        power_SF = 1
+        power_NN = trial.suggest_float('power_NN', *self.bounds_findParameters['power_NN'], log=False)
+        power_SWT = trial.suggest_float('power_SWT', *self.bounds_findParameters['power_SWT'], log=False)
+        p_norm = trial.suggest_float('p_norm', *self.bounds_findParameters['p_norm'], log=False)
+        sig_SF_kwargs = None
+        sig_NN_kwargs = {
+            'mu': trial.suggest_float('sig_NN_kwargs_mu', *self.bounds_findParameters['sig_NN_kwargs_mu'], log=False),
+            'b': trial.suggest_float('sig_NN_kwargs_b', *self.bounds_findParameters['sig_NN_kwargs_b'], log=False),
+        }
+        sig_SWT_kwargs = {
+            'mu': trial.suggest_float('sig_SWT_kwargs_mu', *self.bounds_findParameters['sig_SWT_kwargs_mu'], log=False),
+            'b': trial.suggest_float('sig_SWT_kwargs_b', *self.bounds_findParameters['sig_SWT_kwargs_b'], log=False),
+        }
+        dConj, sConj, sSF_data, sNN_data, sSWT_data, sConj_data = self.make_conjunctive_distance_matrix(
+            s_sf=self.s_sf, s_NN=self.s_NN_z, s_SWT=self.s_SWT_z, s_sesh=None,
+            power_SF=power_SF, power_NN=power_NN, power_SWT=power_SWT, p_norm=p_norm,
+            sig_SF_kwargs=sig_SF_kwargs, sig_NN_kwargs=sig_NN_kwargs, sig_SWT_kwargs=sig_SWT_kwargs,
+        )
+        dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(dConj)
+        if dens_same_crop is None:
+            return 0
+        return (dens_same * dens_diff).sum().item()
+
+    def find_optimal_nb_combination_DE(
+        self,
+        bounds: Optional[Dict[str, List[float]]] = None,
+        de_kwargs: Optional[Dict[str, Any]] = None,
+        subsample_pairs: Optional[int] = None,
+        seed: Optional[int] = None,
+    ) -> Tuple[scipy.sparse.csr_matrix, scipy.sparse.csr_matrix, Dict]:
+        """
+        **LEGACY** — Optimize weighted combination of per-feature NB P(same)
+        curves using DE. Superseded by
+        :meth:`find_optimal_parameters_for_pruning` (freeze-sigmoid DE)
+        which achieves ~28x better loss on the same data.
+        RH 2025
+        """
+        assert hasattr(self, 'calibrations_naive_bayes') and self.calibrations_naive_bayes is not None, (
+            "make_naive_bayes_distance_matrix() must be called before "
+            "find_optimal_nb_combination_DE()."
+        )
+        self.params['find_optimal_nb_combination_DE'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=['bounds', 'de_kwargs', 'subsample_pairs', 'seed'],
+        )
+        bounds_use = bounds if bounds is not None else {
+            'p_norm': [0.1, 5.0], 'w_NN': [0.0, 5.0], 'w_SWT': [0.0, 5.0],
+        }
+        de_kwargs_use = de_kwargs if de_kwargs is not None else {
+            'maxiter': 100, 'tol': 1e-6, 'popsize': 15,
+            'mutation': (0.5, 1.5), 'recombination': 0.7, 'polish': True,
+        }
+        scipy_bounds = [tuple(bounds_use['p_norm']), tuple(bounds_use['w_NN']), tuple(bounds_use['w_SWT'])]
+
+        cal = self.calibrations_naive_bayes['features']
+        p_sf_t = torch.as_tensor(cal['SF']['p_same_per_pair'], dtype=torch.float32)
+        p_nn_t = torch.as_tensor(cal['NN']['p_same_per_pair'], dtype=torch.float32)
+        p_swt_t = torch.as_tensor(cal['SWT']['p_same_per_pair'], dtype=torch.float32)
+
+        if not hasattr(self, '_intra_mask') or self._intra_mask is None:
+            self._precompute_intra_mask()
+        intra_mask = torch.as_tensor(self._intra_mask)
+
+        nnz = p_sf_t.shape[0]
+        if subsample_pairs is not None and subsample_pairs < nnz:
+            sample_idx = self._subsample_pairs(
+                n_subsample=subsample_pairs, intra_mask=intra_mask,
+                seed=(seed + 77777) if seed is not None else 77777,
+            )
+            frac = subsample_pairs / nnz
+            n_sample_intra = max(int(int(intra_mask.sum().item()) * frac), 100)
+            p_sf_t, p_nn_t, p_swt_t = p_sf_t[sample_idx], p_nn_t[sample_idx], p_swt_t[sample_idx]
+            intra_mask_use = torch.zeros(sample_idx.shape[0], dtype=torch.bool)
+            intra_mask_use[:n_sample_intra] = True
+        else:
+            intra_mask_use = intra_mask
+
+        n_bins_val = self.n_bins
+        edges = torch.linspace(0.0, 1.0, n_bins_val + 1, dtype=torch.float32)
+        smooth_window = helpers.make_odd(n_bins_val // 10, mode='up')
+        smoother = helpers.Convolver_1d(
+            kernel=torch.ones(smooth_window), length_x=n_bins_val,
+            pad_mode='same', correct_edge_effects=True, device='cpu',
+        )
+        n_all = p_sf_t.shape[0]
+        n_intra = int(intra_mask_use.sum().item())
+        scale_factor = n_all / max(n_intra, 1)
+        intra_indices = torch.where(intra_mask_use)[0]
+        p_sf_c = torch.clamp(p_sf_t, min=1e-6, max=1.0 - 1e-6)
+        p_nn_c = torch.clamp(p_nn_t, min=1e-6, max=1.0 - 1e-6)
+        p_swt_c = torch.clamp(p_swt_t, min=1e-6, max=1.0 - 1e-6)
+        w_sf_fixed = 1.0
+
+        def objective(x):
+            p_val, w_nn_val, w_swt_val = float(x[0]), float(x[1]), float(x[2])
+            p = p_val if abs(p_val) > 1e-9 else 1e-9
+            w_total = w_sf_fixed + w_nn_val + w_swt_val + 1e-10
+            p_combined = (
+                (w_sf_fixed * torch.pow(p_sf_c, p) + w_nn_val * torch.pow(p_nn_c, p)
+                 + w_swt_val * torch.pow(p_swt_c, p)) / w_total
+            ).pow(1.0 / p)
+            d_combined = 1.0 - p_combined
+            loss, _, _ = self._compute_histogram_overlap(
+                distances=d_combined, intra_indices=intra_indices,
+                edges=edges, smoother=smoother, scale_factor=scale_factor,
+            )
+            return loss
+
+        print('Optimizing NB combination weights with differential evolution...') if self._verbose else None
+        nb_de_result = scipy.optimize.differential_evolution(
+            func=objective, bounds=scipy_bounds, seed=seed, **de_kwargs_use,
+        )
+
+        p_val_best, w_nn_best, w_swt_best = float(nb_de_result.x[0]), float(nb_de_result.x[1]), float(nb_de_result.x[2])
+        p_best = p_val_best if abs(p_val_best) > 1e-9 else 1e-9
+        w_total_best = w_sf_fixed + w_nn_best + w_swt_best + 1e-10
+        p_sf_full = torch.clamp(torch.as_tensor(cal['SF']['p_same_per_pair'], dtype=torch.float32), min=1e-6, max=1.0 - 1e-6)
+        p_nn_full = torch.clamp(torch.as_tensor(cal['NN']['p_same_per_pair'], dtype=torch.float32), min=1e-6, max=1.0 - 1e-6)
+        p_swt_full = torch.clamp(torch.as_tensor(cal['SWT']['p_same_per_pair'], dtype=torch.float32), min=1e-6, max=1.0 - 1e-6)
+        p_same_combined_np = (
+            (w_sf_fixed * torch.pow(p_sf_full, p_best) + w_nn_best * torch.pow(p_nn_full, p_best)
+             + w_swt_best * torch.pow(p_swt_full, p_best)) / w_total_best
+        ).pow(1.0 / p_best).numpy()
+
+        sConj = self.s_sf.copy()
+        sConj.data = p_same_combined_np.astype(np.float64)
+        dConj = sConj.copy()
+        dConj.data = 1.0 - dConj.data
+        self.dConj = dConj
+        self.sConj = sConj
+        best_params = {'p_norm': p_val_best, 'w_NN': w_nn_best, 'w_SWT': w_swt_best}
+        result_info = {
+            'best_params': best_params, 'loss': float(nb_de_result.fun),
+            'n_evals': int(nb_de_result.nfev), 'p_same_combined': p_same_combined_np,
+        }
+        print(f'Completed NB combination DE. Best loss: {nb_de_result.fun:.2f}, params: {best_params}') if self._verbose else None
+        return dConj, sConj, result_info
+
+
 
 def attach_fully_connected_node(
     d: object,
@@ -1385,10 +2376,8 @@ def score_labels(
     bool_test = np.stack([labels_test==l for l in uniques_test], axis=0).astype(np.float32)
     bool_true = np.stack([labels_true==l for l in uniques_true], axis=0).astype(np.float32)
 
-    # Hungarian matching score
-    if ignore_negOne:        
-        # labels_test = labels_test[labels_true > -1].copy()
-        # labels_true = labels_true[labels_true > -1].copy()
+    ## Hungarian matching score
+    if ignore_negOne:
         bool_test[uniques_test == -1, :] = 0.0
         bool_true[uniques_true == -1, :] = 0.0
     if bool_test.shape[0] < bool_true.shape[0]:

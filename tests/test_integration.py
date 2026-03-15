@@ -94,11 +94,11 @@ def test_pipeline_tracking_simple(dir_data_test):
         },
         'clustering': {
             'parameters_automatic_mixing': {
-                'kwargs_findParameters': {
-                    'n_patience': 30,  ## Reduced number to speed up
-                    'max_trials': 100,  ## Reduced number to speed up
+                'de_kwargs': {
+                    'maxiter': 20,  ## Reduced to speed up test
+                    'popsize': 5,  ## Smaller population for test speed
+                    'polish': False,  ## Skip L-BFGS-B polish in test
                 },
-                'n_jobs_findParameters': 1,  ## THIS IS CRITICAL TO ENSURE REPORDUCIBILITY. Parallelization prevents reproducibility.
             },
         },
         'results_saving': {
@@ -136,20 +136,20 @@ def test_pipeline_tracking_simple(dir_data_test):
             assert np.all(np.isfinite(metric_arr)), f"Error: quality metric '{metric_name}' contains non-finite values"
 
     ## Save results
-    path_results_output = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'results_output.richfile')
+    path_results_output = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'results_output.richfile.zip')
     print(f"Saving to: {path_results_output}")
-    util.RichFile_ROICaT(path=path_results_output).save(results, overwrite=True)
+    util.RichFile_ROICaT(path=path_results_output, backend='zip').save(results, overwrite=True)
 
-    path_run_data_output = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'run_data_output.richfile')
+    path_run_data_output = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'run_data_output.richfile.zip')
     print(f"Saving to: {path_run_data_output}")
-    util.RichFile_ROICaT(path=path_run_data_output).save(run_data, overwrite=True)
+    util.RichFile_ROICaT(path=path_run_data_output, backend='zip').save(run_data, overwrite=True)
 
     ## Golden reference comparison (diagnostic only).
     ## This is a non-blocking check that warns on mismatches but does not fail
     ## the test. It is expected to break when algorithms, dependencies, or
     ## floating-point behavior change. The property-based assertions above are
     ## the actual pass/fail criteria.
-    path_run_data_true = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'run_data.richfile')
+    path_run_data_true = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'run_data.richfile.zip')
     if Path(path_run_data_true).exists():
         print(f"Loading reference run_data from {path_run_data_true}")
         run_data_true = util.RichFile_ROICaT(path=path_run_data_true).load()

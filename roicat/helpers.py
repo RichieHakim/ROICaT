@@ -95,7 +95,39 @@ def set_device(
         print(f'Using device: {device}')
 
     return device
-    
+
+
+def clear_gpu_cache(gc_collect: bool = True):
+    """
+    Clear GPU memory cache and optionally run garbage collection.
+
+    Releases unreferenced GPU tensors back to the OS. Works with CUDA,
+    MPS (Apple Silicon), and is a no-op on CPU-only systems. Call
+    between pipeline steps to prevent memory accumulation.
+
+    Args:
+        gc_collect (bool):
+            If ``True`` (default), run ``gc.collect()`` before clearing
+            the GPU cache. Set to ``False`` for lightweight clearing
+            inside tight loops where GC overhead or side effects are
+            undesirable.
+    RH 2025
+    """
+    if gc_collect:
+        gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    if hasattr(torch, 'mps') and torch.backends.mps.is_available():
+        torch.mps.empty_cache()
+    if gc_collect:
+        gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    if hasattr(torch, 'mps') and torch.backends.mps.is_available():
+        torch.mps.empty_cache()
+    if gc_collect:
+        gc.collect()
+
 
 def list_available_devices() -> dict:
     """
