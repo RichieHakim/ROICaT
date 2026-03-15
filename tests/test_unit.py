@@ -1198,3 +1198,35 @@ class Test_edge_cases:
         assert np.all(np.isfinite(dConj.data))
         assert np.all(dConj.data >= 0)
         assert np.all(dConj.data <= 1)
+
+
+######################################################################################################################################
+######################################### RICHFILE OPTIMIZE RESULT ###################################################################
+######################################################################################################################################
+
+def test_richfile_optimize_result_roundtrip(tmp_path):
+    """OptimizeResult should survive RichFile save/load."""
+    from scipy.optimize import OptimizeResult
+    from roicat.util import RichFile_ROICaT
+
+    result = OptimizeResult(
+        x=np.array([1.0, 2.0, 3.0]),
+        fun=0.5,
+        nfev=100,
+        nit=50,
+        success=True,
+        message='Optimization converged.',
+    )
+
+    path = str(tmp_path / 'test_result.richfile.zip')
+    rf = RichFile_ROICaT(path=path, backend='zip')
+    rf.save({'de_result': result})
+
+    loaded = RichFile_ROICaT(path=path).load()
+    assert isinstance(loaded['de_result'], OptimizeResult)
+    np.testing.assert_array_equal(loaded['de_result'].x, result.x)
+    assert loaded['de_result'].fun == result.fun
+    assert loaded['de_result'].nfev == result.nfev
+    assert loaded['de_result'].nit == result.nit
+    assert loaded['de_result'].success == result.success
+    assert loaded['de_result'].message == result.message
