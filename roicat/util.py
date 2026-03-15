@@ -508,6 +508,9 @@ def set_random_seed(seed=None, deterministic=False):
     np.random.seed(seed)
     import torch
     torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
     import random
     random.seed(seed)
     import cv2
