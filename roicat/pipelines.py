@@ -281,7 +281,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
             method_out = 'hdbscan'.upper() if n_sessions >= n_sessions_switch else 'sequential_hungarian'.upper()
         else:
             method_out = method.upper()
-        assert method_out.upper() in ['hdbscan'.upper(), 'sequential_hungarian'.upper()]
+        assert method_out.upper() in ['hdbscan'.upper(), 'dbscan'.upper(), 'sequential_hungarian'.upper()]
         return method_out
     method_clustering = choose_clustering_method(
         method=params['clustering']['cluster_method']['method'],
@@ -294,6 +294,12 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
             d_conj=clusterer.dConj_pruned,  ## Input distance matrix
             session_bool=data.session_bool,  ## Boolean array of which ROIs belong to which sessions
             **params['clustering']['hdbscan'],
+        )
+    elif method_clustering == 'dbscan'.upper():
+        labels = clusterer.fit_DBSCAN(
+            d_conj=clusterer.dConj_pruned,  ## Input distance matrix
+            session_bool=data.session_bool,  ## Boolean array of which ROIs belong to which sessions
+            **params['clustering']['dbscan'],
         )
     elif method_clustering == 'sequential_hungarian'.upper():
         labels = clusterer.fit_sequentialHungarian(

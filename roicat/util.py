@@ -255,7 +255,7 @@ def get_default_parameters(
                     'convert_to_probability': False,  ## Whether or not to convert the similarity matrix and distance matrix to a probability matrix
                 },
                 'cluster_method': {
-                    'method': 'automatic',  ## 'automatic', 'hdbscan', or 'sequential_hungarian'. 'automatic': selects which clustering algorithm to use (generally if n_sessions >=8 then hdbscan, else sequential_hungarian)
+                    'method': 'automatic',  ## 'automatic', 'hdbscan', 'dbscan', or 'sequential_hungarian'. 'automatic': selects which clustering algorithm to use (generally if n_sessions >=8 then hdbscan, else sequential_hungarian)
                     'n_sessions_switch': 6, ## Number of sessions to switch from sequential_hungarian to hdbscan
                 },
                 'hdbscan': {
@@ -267,6 +267,13 @@ def get_default_parameters(
                     'alpha': 0.999,  ## (advanced) Scalar applied to distance matrix in HDBSCAN (see hdbscan documentation)
                     'discard_failed_pruning': True,  ## (advanced) Whether or not to set all ROIs that could be separated from clusters with ROIs from the same sessions to label=-1
                     'n_steps_clusterSplit': 100,  ## (advanced) How finely to step through distances to remove violations
+                },
+                'dbscan': {
+                    'eps': None,  ## DBSCAN epsilon. None for auto-estimation from distance distribution.
+                    'min_samples': 2,  ## Minimum samples to form a core point
+                    'split_intraSession_clusters': True,  ## Whether to split clusters with ROIs from the same session
+                    'discard_failed_pruning': True,  ## Whether to set ROIs that could not be separated to label=-1
+                    'n_steps_clusterSplit': 100,  ## How finely to step through distances to remove violations
                 },
                 'sequential_hungarian': {
                     'thresh_cost': 0.6, ## Threshold for the cost matrix. Lower numbers result in more clusters.
