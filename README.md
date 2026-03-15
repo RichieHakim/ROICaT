@@ -176,7 +176,7 @@ sudo docker run -it -p 7860:7860 --platform=linux/amd64 --shm-size=10g registry.
 - [x] Make image aligner based on image similarity + RANSAC of centroids or s_SF
 - [ ] Better post-hoc curation metrics and visualizations
 - [ ] Discount the non-rigid warp masks towards the edges to be more like the rigid warp map in order improve border performance
-- [ ] Make non-rigid image registration optional
+- [x] Make non-rigid image registration optional
 #### code improvements:
 - [ ] **Finish ROIextractors integration**
 - [ ] Update automatic regression module (make new repo for it)
@@ -189,10 +189,10 @@ sudo docker run -it -p 7860:7860 --platform=linux/amd64 --shm-size=10g registry.
 - ~~[ ] Make a Docker container~~
 - ~~Make colab demo notebook not require user data~~
 - [x] Make a better CLI
-- [ ] Switch to pyproject.toml
+- [x] Switch to pyproject.toml
 - [ ] Improve params.json / default params system
 - [ ] Spruce up training code
-- [ ] Switch off pickling optuna save file
+- [x] Switch off pickling optuna save file
 - [ ] Try training on cellpose datasets
 - [ ] Python 3.13
 #### other:
