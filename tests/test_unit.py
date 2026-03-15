@@ -110,6 +110,92 @@ def test_match_arrays_with_ucids_return_indices_handles_duplicate_ucids():
     )
 
 
+class Test_RichFile_ROICaT:
+    """Tests for RichFile_ROICaT save/load with different backends."""
+
+    def test_zip_roundtrip(self, tmp_path):
+        """Save and load with zip backend should preserve all types."""
+        test_data = {
+            'array': np.random.randn(10, 5).astype(np.float32),
+            'sparse': scipy.sparse.random(50, 50, density=0.1, format='csr', dtype=np.float32),
+            'scalar': 3.14,
+            'nested': {'a': np.array([1, 2, 3]), 'b': 'hello'},
+        }
+        path = str(tmp_path / 'test.richfile.zip')
+        util.RichFile_ROICaT(path=path, backend='zip').save(obj=test_data, overwrite=True)
+        loaded = util.RichFile_ROICaT(path=path).load()
+
+        assert np.allclose(loaded['array'], test_data['array'])
+        assert np.allclose(loaded['sparse'].toarray(), test_data['sparse'].toarray())
+        assert loaded['scalar'] == test_data['scalar']
+        assert np.array_equal(loaded['nested']['a'], test_data['nested']['a'])
+        assert loaded['nested']['b'] == test_data['nested']['b']
+
+    def test_directory_roundtrip(self, tmp_path):
+        """Save and load with directory backend should preserve all types."""
+        test_data = {
+            'array': np.array([1.0, 2.0, 3.0]),
+            'string': 'test',
+        }
+        path = str(tmp_path / 'test.richfile')
+        util.RichFile_ROICaT(path=path, backend='directory').save(obj=test_data, overwrite=True)
+        loaded = util.RichFile_ROICaT(path=path).load()
+
+        assert np.array_equal(loaded['array'], test_data['array'])
+        assert loaded['string'] == test_data['string']
+
+    def test_auto_detect_zip(self, tmp_path):
+        """Auto-detect should identify zip files correctly."""
+        test_data = {'x': np.array([1, 2, 3])}
+        path = str(tmp_path / 'test.richfile.zip')
+        util.RichFile_ROICaT(path=path, backend='zip').save(obj=test_data, overwrite=True)
+
+        ## Load without specifying backend
+        rf = util.RichFile_ROICaT(path=path)
+        assert rf._resolve_backend_name() == 'zip'
+        loaded = rf.load()
+        assert np.array_equal(loaded['x'], test_data['x'])
+
+    def test_auto_detect_directory(self, tmp_path):
+        """Auto-detect should identify directory richfiles correctly."""
+        test_data = {'x': np.array([4, 5, 6])}
+        path = str(tmp_path / 'test.richfile')
+        util.RichFile_ROICaT(path=path, backend='directory').save(obj=test_data, overwrite=True)
+
+        rf = util.RichFile_ROICaT(path=path)
+        assert rf._resolve_backend_name() == 'directory'
+        loaded = rf.load()
+        assert np.array_equal(loaded['x'], test_data['x'])
+
+    def test_load_existing_test_data(self, dir_data_test):
+        """Should load the existing directory-format test data."""
+        path = str(Path(dir_data_test) / 'pipeline_tracking' / 'run_data.richfile')
+        rf = util.RichFile_ROICaT(path=path)
+        sim = rf['sim'].load()
+        assert isinstance(sim, dict)
+        assert 'params' in sim
+
+    def test_subscript_access_zip(self, tmp_path):
+        """Subscript access (rf['key']) should work with zip backend."""
+        test_data = {'alpha': np.array([1, 2]), 'beta': np.array([3, 4])}
+        path = str(tmp_path / 'test.richfile.zip')
+        util.RichFile_ROICaT(path=path, backend='zip').save(obj=test_data, overwrite=True)
+
+        rf = util.RichFile_ROICaT(path=path)
+        alpha = rf['alpha'].load()
+        assert np.array_equal(alpha, test_data['alpha'])
+
+    def test_scipy_sparse_roundtrip_zip(self, tmp_path):
+        """Scipy sparse matrices should survive zip roundtrip."""
+        mat = scipy.sparse.random(100, 100, density=0.05, format='csr', dtype=np.float64)
+        test_data = {'sparse_mat': mat}
+        path = str(tmp_path / 'sparse_test.richfile.zip')
+        util.RichFile_ROICaT(path=path, backend='zip').save(obj=test_data, overwrite=True)
+        loaded = util.RichFile_ROICaT(path=path).load()
+        assert scipy.sparse.issparse(loaded['sparse_mat'])
+        assert np.allclose(loaded['sparse_mat'].toarray(), mat.toarray())
+
+
 ######################################################################################################################################
 ############################################################ HELPERS #################################################################
 ######################################################################################################################################
