@@ -938,9 +938,60 @@ class RichFile_ROICaT(rf.RichFile):
             with open(path, 'r') as f:
                 return f.read()
 
-        import hdbscan
+        try:
+            from fast_hdbscan import HDBSCAN as _FastHDBSCAN
+            _hdbscan_class = _FastHDBSCAN
+        except ImportError:
+            try:
+                import hdbscan
+                _hdbscan_class = hdbscan.HDBSCAN
+            except ImportError:
+                _hdbscan_class = None
 
-        
+
+        ## SCIPY OPTIMIZE RESULT
+        import scipy.optimize
+
+        def save_optimize_result(
+            obj: scipy.optimize.OptimizeResult,
+            path: Union[str, Path],
+            **kwargs,
+        ) -> None:
+            """
+            Saves a scipy.optimize.OptimizeResult as JSON.
+            Extracts standard fields into a JSON-serializable dict.
+            """
+            d = {}
+            for key in ('x', 'fun', 'nfev', 'nit', 'success', 'message'):
+                if key in obj:
+                    val = obj[key]
+                    if isinstance(val, np.ndarray):
+                        d[key] = val.tolist()
+                    elif isinstance(val, (np.integer,)):
+                        d[key] = int(val)
+                    elif isinstance(val, (np.floating,)):
+                        d[key] = float(val)
+                    elif isinstance(val, np.bool_):
+                        d[key] = bool(val)
+                    else:
+                        d[key] = val
+            with open(path, 'w') as f:
+                json.dump(d, f)
+
+        def load_optimize_result(
+            path: Union[str, Path],
+            **kwargs,
+        ) -> scipy.optimize.OptimizeResult:
+            """
+            Loads a scipy.optimize.OptimizeResult from JSON.
+            """
+            with open(path, 'r') as f:
+                d = json.load(f)
+            if 'x' in d and isinstance(d['x'], list):
+                d['x'] = np.array(d['x'])
+            return scipy.optimize.OptimizeResult(**d)
+
+
         ## PANDAS DATAFRAME
         import pandas as pd
         
@@ -1099,15 +1150,15 @@ class RichFile_ROICaT(rf.RichFile):
                 "library":            "torch",
                 "versions_supported": [],
             },
-            {
+            *([{
                 "type_name":          "hdbscan",
                 "function_load":      load_repr,
                 "function_save":      save_repr,
-                "object_class":       hdbscan.HDBSCAN,
+                "object_class":       _hdbscan_class,
                 "suffix":             "hdbscan",
                 "library":            "torch",
                 "versions_supported": [],
-            },
+            }] if _hdbscan_class is not None else []),
             {
                 "type_name":          "pandas_dataframe",
                 "function_load":      load_pandas_dataframe,
@@ -1115,6 +1166,15 @@ class RichFile_ROICaT(rf.RichFile):
                 "object_class":       pd.DataFrame,
                 "suffix":             "csv",
                 "library":            "pandas",
+                "versions_supported": [],
+            },
+            {
+                "type_name":          "scipy_optimize_result",
+                "function_load":      load_optimize_result,
+                "function_save":      save_optimize_result,
+                "object_class":       scipy.optimize.OptimizeResult,
+                "suffix":             "json",
+                "library":            "scipy",
                 "versions_supported": [],
             },
         ] + [t.get_property_dict() for t in roicat_module_tds]
