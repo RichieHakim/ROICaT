@@ -1200,3 +1200,35 @@ class Test_edge_cases:
         assert np.all(dConj.data <= 1)
 
 
+######################################################################################################################################
+######################################################## VISUALIZATION ###############################################################
+######################################################################################################################################
+
+
+def test_plot_centroid_trajectories():
+    """plot_centroid_trajectories should produce a figure."""
+    import matplotlib.pyplot as plt
+    from roicat.visualization import plot_centroid_trajectories
+
+    np.random.seed(42)
+    H, W = 50, 50
+    n_pix = H * W
+
+    ## Create 2 sessions, 5 ROIs each
+    sfs = []
+    for _ in range(2):
+        session_sfs = scipy.sparse.random(5, n_pix, density=0.02, format='csr')
+        sfs.append(session_sfs)
+
+    labels = np.array([0, 1, 2, 0, 1, 0, 1, 2, -1, -1])
+    labels_bySession = [np.array([0, 1, 2, 0, 1]), np.array([0, 1, 2, -1, -1])]
+
+    fig = plot_centroid_trajectories(
+        labels=labels,
+        labels_bySession=labels_bySession,
+        spatialFootprints=sfs,
+        frame_height=H,
+        frame_width=W,
+    )
+    assert fig is not None
+    plt.close(fig)

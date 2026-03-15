@@ -783,3 +783,135 @@ def plot_confusion_matrix(
 
     plt.ylabel('True label',      fontdict={'size': figsize[0]*2})
     plt.xlabel('Predicted label', fontdict={'size': figsize[0]*2})
+
+
+def plot_centroid_trajectories(
+    labels: np.ndarray,
+    labels_bySession: list,
+    spatialFootprints: list,
+    frame_height: int,
+    frame_width: int,
+    max_clusters: int = 50,
+    min_sessions: int = 2,
+    figsize: tuple = (10, 10),
+    cmap: str = 'tab20',
+) -> plt.Figure:
+    """
+    Plot centroid trajectories of tracked ROIs across sessions.
+
+    For each cluster, draws lines connecting the centroid positions
+    across sessions. Helps verify alignment quality and identify
+    problematic regions where ROIs drift.
+    RH 2024
+
+    Args:
+        labels (np.ndarray):
+            Flat array of cluster labels. Shape *(n_roi_total,)*.
+        labels_bySession (list):
+            List of per-session label arrays.
+        spatialFootprints (list):
+            List of sparse spatial footprint matrices per session.
+            Each has shape *(n_roi, frame_height * frame_width)*.
+        frame_height (int):
+            Height of the FOV in pixels.
+        frame_width (int):
+            Width of the FOV in pixels.
+        max_clusters (int):
+            Maximum number of clusters to plot. (Default is *50*)
+        min_sessions (int):
+            Only plot clusters present in at least this many sessions.
+            (Default is *2*)
+        figsize (tuple):
+            Figure size. (Default is *(10, 10)*)
+        cmap (str):
+            Colormap for cluster colors. (Default is ``'tab20'``)
+
+    Returns:
+        (matplotlib.figure.Figure):
+            fig (matplotlib.figure.Figure):
+                The figure.
+    """
+    labels_arr = np.array(labels)
+    ucids = np.unique(labels_arr[labels_arr >= 0])
+
+    ## Compute centroids for all ROIs
+    centroids = []  ## list of (row, col) per ROI
+    for sf_session in spatialFootprints:
+        if scipy.sparse.issparse(sf_session):
+            for i in range(sf_session.shape[0]):
+                row_data = sf_session[i]
+                if scipy.sparse.issparse(row_data):
+                    row_dense = row_data.toarray().ravel()
+                else:
+                    row_dense = np.asarray(row_data).ravel()
+                if row_dense.sum() > 0:
+                    im = row_dense.reshape(frame_height, frame_width)
+                    total = im.sum()
+                    rows_grid, cols_grid = np.mgrid[:frame_height, :frame_width]
+                    centroid_r = (rows_grid * im).sum() / total
+                    centroid_c = (cols_grid * im).sum() / total
+                    centroids.append((centroid_r, centroid_c))
+                else:
+                    centroids.append((np.nan, np.nan))
+        else:
+            ## Handle list of sparse matrices
+            for sf in sf_session:
+                if scipy.sparse.issparse(sf):
+                    sf_dense = sf.toarray().ravel()
+                else:
+                    sf_dense = np.asarray(sf).ravel()
+                if sf_dense.sum() > 0:
+                    im = sf_dense.reshape(frame_height, frame_width)
+                    total = im.sum()
+                    rows_grid, cols_grid = np.mgrid[:frame_height, :frame_width]
+                    centroid_r = (rows_grid * im).sum() / total
+                    centroid_c = (cols_grid * im).sum() / total
+                    centroids.append((centroid_r, centroid_c))
+                else:
+                    centroids.append((np.nan, np.nan))
+
+    centroids = np.array(centroids)
+
+    ## Build session assignment for each ROI
+    session_ids = []
+    for i, sess_labels in enumerate(labels_bySession):
+        session_ids.extend([i] * len(sess_labels))
+    session_ids = np.array(session_ids)
+
+    ## Filter clusters by session coverage
+    ucids_filtered = []
+    for ucid in ucids:
+        mask = labels_arr == ucid
+        n_sessions_present = len(np.unique(session_ids[mask]))
+        if n_sessions_present >= min_sessions:
+            ucids_filtered.append(ucid)
+    ucids_filtered = ucids_filtered[:max_clusters]
+
+    ## Plot
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
+    colors = plt.colormaps.get_cmap(cmap)(np.linspace(0, 1, max(len(ucids_filtered), 1)))
+
+    for i_ucid, ucid in enumerate(ucids_filtered):
+        mask = labels_arr == ucid
+        roi_centroids = centroids[mask]
+        roi_sessions = session_ids[mask]
+
+        ## Sort by session
+        order = np.argsort(roi_sessions)
+        roi_centroids = roi_centroids[order]
+
+        ## Plot trajectory
+        valid = ~np.isnan(roi_centroids[:, 0])
+        if valid.sum() >= 2:
+            ax.plot(roi_centroids[valid, 1], roi_centroids[valid, 0],
+                    '-o', color=colors[i_ucid % len(colors)],
+                    markersize=3, linewidth=0.5, alpha=0.7)
+
+    ax.set_xlim(0, frame_width)
+    ax.set_ylim(frame_height, 0)  ## flip y for image coords
+    ax.set_xlabel('x (pixels)')
+    ax.set_ylabel('y (pixels)')
+    ax.set_title(f'Centroid Trajectories ({len(ucids_filtered)} clusters)')
+    ax.set_aspect('equal')
+
+    return fig
