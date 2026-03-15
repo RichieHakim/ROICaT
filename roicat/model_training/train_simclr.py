@@ -5,11 +5,7 @@ import os
 import numpy as np
 import torch
 import torchvision
-from PIL import Image
-import matplotlib.pyplot as plt
 import json
-import pandas as pd
-import argparse
 import scipy.sparse
 from pathlib import Path
 
@@ -67,11 +63,6 @@ directory_data = args.directory_data
 filepath_params = args.path_params
 directory_save = args.directory_save
 test_option = args.test_option
-
-# directory_data = '/media/rich/bigSSD/analysis_data/ROICaT/ROIs_for_training/'
-# filepath_params = 'roicat/model_training/simclr_params_base.json'
-# directory_save = '/media/rich/bigSSD/analysis_data/ROICaT/training/'
-# test_option = True
 
 filepath_logger = str(Path(directory_save) / 'logger.txt')
 filepath_losses = str(Path(directory_save) / 'losses.npy')
@@ -167,11 +158,3 @@ trainer = sth.Simclr_Trainer(
 # Otherwise, save the network as an onnx file.
 trainer.train()
 
-if test_option:
-    pass
-    # trainer.test(torch.ones((1, 3, 224, 224)))
-
-    # trainer.train_pca(torch.rand((260, 3, 224, 224)))
-    # trainer.test_pca(torch.ones((1, 3, 224, 224)))
-
-    # trainer.train_pca(torch.cat([torch.cat(x[0], dim=0) for x in trainer.dataloader], axis=0), check_pca_layer_valid=True)

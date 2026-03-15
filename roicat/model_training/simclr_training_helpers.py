@@ -1,15 +1,8 @@
 # Imports
 import numpy as np
 import torch
-from PIL import Image
-import matplotlib.pyplot as plt
 import tqdm
 
-import torch
-import torch.cuda
-from torch.autograd import Variable
-
-from sklearn.metrics import accuracy_score
 from sklearn.decomposition import PCA
 
 from functools import partial
@@ -113,7 +106,7 @@ class Simclr_Trainer():
         """
         Trains the model using the saved attributes.
         """
-        self.model_container.model.train();
+        self.model_container.model.train()
         self.model_container.model.to(self.device_train)
         self.model_container.model.prep_contrast()
 
@@ -127,19 +120,6 @@ class Simclr_Trainer():
                                                         gamma=self.gamma,
                                                         )
         
-        self.dataloader
-        self.model_container
-        self.n_epochs
-        self.device_train
-        self.inner_batch_size
-        self.learning_rate
-        self.penalty_orthogonality
-        self.weight_decay
-        self.gamma
-        self.temperature
-        self.l2_alpha
-        self.path_saveLog
-
         log_function = partial(log_fn, log_file=self.path_saveLog) if self.path_saveLog is not None else lambda x: None
 
         losses_train, losses_val = [], [np.nan]
@@ -362,9 +342,6 @@ def epoch_step( dataloader,
             inner_batch_size=inner_batch_size,
             ) # Needs to take in weights
         loss_rolling_train.append(loss)
-        # if False and do_validation:
-        #     loss = validation_Object.get_predictions()
-        #     loss_rolling_val.append(loss)
         if verbose>0:
             if i_batch%verbose_update_period == 0:
                 print_info( batch=i_batch,
@@ -443,15 +420,11 @@ def info_nce_loss(features, batch_size, n_views=2, temperature=0.5, DEVICE='cpu'
 
     # compute (double) covariance matrix
     similarity_matrix = torch.matmul(features, features.T)
-    # assert similarity_matrix.shape == (
-    #     self.args.n_views * self.args.batch_size, self.args.n_views * self.args.batch_size)
-    # assert similarity_matrix.shape == labels.shape
 
     # discard the main diagonal from both: labels and similarities matrix
     mask = torch.eye(labels.shape[0], dtype=torch.bool).to(DEVICE)
     labels = labels[~mask].view(labels.shape[0], -1)
     similarity_matrix = similarity_matrix[~mask].view(similarity_matrix.shape[0], -1)
-    # assert similarity_matrix.shape == labels.shape
 
     # select and combine multiple positives
     positives = similarity_matrix[labels.bool()].view(labels.shape[0], -1)
@@ -604,8 +577,6 @@ class Simclr_PCA_Trainer():
             center: bool = True,
             scale: bool = False,
             path_saveLog: Optional[str] = None,
-
-            # use_iterated_learning: bool = False,
             ):
         """
         Training module to train a SimCLR model from scratch using the provided parameters.
@@ -641,8 +612,6 @@ class Simclr_PCA_Trainer():
                 Whether to check that the pca layer is valid after training.
         """
 
-        # x = torch.cat([torch.cat(data_subset[0], dim=0) for data_subset in self.dataloader], axis=0)
-        # output_head = self.model_container.model(x)
         output_head = torch.cat([self.model_container.model(torch.cat(data_subset[0], dim=0)) for data_subset in self.dataloader], dim=0)
         pca_size = output_head.shape[1]
 
@@ -673,21 +642,18 @@ class Simclr_PCA_Trainer():
         pca_sklearn.mean_ = np.zeros(pca_size, dtype=np.float32)
 
         pca_layer[1].weight = torch.nn.Parameter(torch.tensor(pca_sklearn.components_, dtype=torch.float32))
-        # pca_layer[1].bias = torch.nn.Parameter(torch.tensor(np.zeros(pca_size,),dtype=torch.float32))
 
         if check_pca_layer_valid:
             pca_output = pca_layer(output_head)
             pca_sklearn_tensor = torch.tensor(pca_sklearn.transform(np_output_head_centered))
-            print(np.max(np.abs(pca_output.detach().numpy() - pca_sklearn_tensor.detach().numpy())))
             assert torch.allclose(pca_output,
                             pca_sklearn_tensor,
                             atol=1e-5
                             ), 'pca layer not working'
-        
-        print('save')
 
         ## save model
         class ModelPCATackOn(torch.nn.Module):
+            """Wraps a pre-trained model with a PCA projection layer."""
             def __init__(self, model_pre, pca_layer):
                 super().__init__()
                 self.model = torch.nn.Sequential(
@@ -702,5 +668,3 @@ class Simclr_PCA_Trainer():
         self.model_container.model = ModelPCATackOn(self.model_container.model, pca_layer)
 
         self.model_container.save_onnx(check_load_onnx_valid=True, revert_train=False)
-
-        print('pca layer trained and saved to model_container')

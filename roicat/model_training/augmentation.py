@@ -1,11 +1,11 @@
 import torch
 from torch.nn import Module
 import torchvision.transforms
-import time
 
 
 RandomHorizontalFlip = torchvision.transforms.RandomHorizontalFlip
 def RandomAffine(**kwargs):
+    """Wrapper around torchvision RandomAffine that converts interpolation strings to enum values."""
     if 'interpolation' in kwargs:
         kwargs['interpolation'] = torchvision.transforms.InterpolationMode(kwargs['interpolation'])
     return torchvision.transforms.RandomAffine(**kwargs)
@@ -83,9 +83,6 @@ class AddPoissonNoise(Module):
         self.scaling = scaling
 
     def forward(self, tensor):
-        check = tensor.min()
-        if check < 0:
-            print(f'RH: check= {check}')
         if torch.rand(1) <= self.prob:
             if self.scaling == 'linear':
                 scaler = torch.rand(1, device=tensor.device) * self.range + self.bounds[0]
@@ -235,8 +232,6 @@ class WarpPoints(Module):
         self.dx_range = dx[1] - dx[0]
         self.dy_range = dy[1] - dy[0]
         
-        #### , indexing='ij' within torch.meshgrid call to remove warning
-        
         self.meshgrid_in =  torch.tile(torch.stack(torch.meshgrid(torch.linspace(-1, 1, self.img_size_in[0]),  torch.linspace(-1, 1, self.img_size_in[1]), indexing='ij'), dim=0)[...,None], (1,1,1, n_warps))
         self.meshgrid_out = torch.tile(torch.stack(torch.meshgrid(torch.linspace(-1, 1, self.img_size_out[0]), torch.linspace(-1, 1, self.img_size_out[1]), indexing='ij'), dim=0)[...,None], (1,1,1, n_warps))
         
@@ -277,11 +272,10 @@ class WarpPoints(Module):
         if flag_batched:
             ## repmat for batch dimension
             im_newPos = torch.tile(im_newPos, (tensor.shape[0], 1, 1, 1))
-        ret = torch.nn.functional.grid_sample( tensor, 
-                                                im_newPos, 
+        ret = torch.nn.functional.grid_sample( tensor,
+                                                im_newPos,
                                                 mode='bicubic',
-                                                # mode='bicubic', 
-                                                padding_mode='zeros', 
+                                                padding_mode='zeros',
                                                 align_corners=True)
         ret = ret[0] if not flag_batched else ret
         return ret
@@ -318,8 +312,6 @@ class Horizontal_stripe_scale(Module):
         self.prob = prob
 
     def forward(self, tensor):
-#         assert tensor.ndim==3, "RH ERROR: Number of dimensions of input tensor should be 3: (n_images, height, width)"
-        
         if torch.rand(1) < self.prob:
             n_ims = tensor.shape[0]
             alphas_odd  = (torch.rand(n_ims)*self.alpha_range) + self.alpha_min
@@ -361,14 +353,11 @@ class Horizontal_stripe_shift(Module):
         self.prob = prob
         
     def forward(self, tensor):
-#         assert tensor.ndim==3, "RH ERROR: Number of dimensions of input tensor should be 3: (n_images, height, width)"
-        
         if torch.rand(1) < self.prob:
             n_ims = tensor.shape[0]
             shape_im = (tensor.shape[1], tensor.shape[2])
 
             alpha = torch.randint(low=self.alpha_min, high=self.alpha_max, size=[n_ims]) * (torch.randint(low=0, high=2, size=[n_ims])*2 - 1)
-#             alpha = (torch.randint(high=self.alpha_max-self.alpha_min, size=[n_ims]) + self.alpha_min) * (torch.randint(high=2, size=[n_ims])*2 - 1)
             alpha_half = alpha/2
             alphas_odd  =  torch.ceil(alpha_half).to(dtype=torch.int64)
             alphas_even = -torch.floor(alpha_half).to(dtype=torch.int64)
@@ -427,9 +416,10 @@ class Check_NaN(Module):
         
 
     def forward(self, tensor):
+        import warnings
         if tensor.isnan().any():
-            print('FOUND NaN')
-            
+            warnings.warn('Check_NaN: found NaN values in tensor')
+
         return tensor
 
 
@@ -458,9 +448,8 @@ class Random_occlusion(Module):
 
         self.rotator = torchvision.transforms.RandomRotation(
             (-180,180),
-            # interpolation='nearest', 
-            expand=False, 
-            center=None, 
+            expand=False,
+            center=None,
             fill=0,
         )
         
