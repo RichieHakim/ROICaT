@@ -106,7 +106,7 @@ class Data_roicat(util.ROICaT_Module):
         super().__init__()
 
         self._verbose = verbose
-    
+
     #########################################################
     ################# CLASSIFICATION ########################
     #########################################################
@@ -898,20 +898,15 @@ class Data_roicat(util.ROICaT_Module):
         return data_new
                    
     def __repr__(self):
-        ## Check which attributes are set
-        attr_to_print = {key: val for key,val in self.__dict__.items() if key in [
-            'n_sessions', 
-            'n_classes', 
-            'n_class_labels', 
-            'n_class_labels_total', 
-            'unique_class_labels',
-            'n_roi',
-            'n_roi_total',
-            'FOV_height',
-            'FOV_width',
-            'um_per_pixel', 
-        ]}
-        return f"Data_roicat object: {attr_to_print}."
+        n_sessions = len(self.spatialFootprints) if hasattr(self, 'spatialFootprints') and self.spatialFootprints is not None else 0
+        n_roi = self.n_roi if hasattr(self, 'n_roi') and self.n_roi is not None else []
+        total_roi = sum(n_roi) if n_roi else 0
+        return (
+            f"{self.__class__.__name__}("
+            f"n_sessions={n_sessions}, "
+            f"n_roi_total={total_roi}, "
+            f"n_roi_per_session={n_roi})"
+        )
 
     def import_from_dict(
         self,

@@ -485,6 +485,15 @@ class ROInet_embedder(util.ROICaT_Module):
         self.net = self.net.to(self._device)
         print(f'Loaded network onto device {self._device}') if self._verbose else None
 
+    def __repr__(self):
+        device = self._device if hasattr(self, '_device') else '?'
+        has_latents = hasattr(self, 'latents')
+        n_latents = self.latents.shape[0] if has_latents else 0
+        return (
+            f"ROInet_embedder(device='{device}', "
+            f"n_latents={n_latents if has_latents else 'not generated'})"
+        )
+
     def generate_dataloader(
         self,
         ROI_images: List[np.ndarray],

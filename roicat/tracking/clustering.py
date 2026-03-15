@@ -140,6 +140,16 @@ class Clusterer(util.ROICaT_Module):
 
         self._session_bool = session_bool
 
+    def __repr__(self):
+        n_roi = self.s_sf.shape[0] if hasattr(self, 's_sf') and self.s_sf is not None else 0
+        nnz = self.s_sf.nnz if hasattr(self, 's_sf') and self.s_sf is not None else 0
+        has_labels = hasattr(self, 'labels') and self.labels is not None
+        n_clusters = len(set(self.labels) - {-1}) if has_labels else 0
+        return (
+            f"Clusterer(n_roi={n_roi}, nnz={nnz}, "
+            f"n_clusters={n_clusters if has_labels else 'not fitted'})"
+        )
+
     def find_optimal_parameters_for_pruning(
         self,
         bounds_findParameters: Dict[str, List[float]] = {

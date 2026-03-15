@@ -117,6 +117,12 @@ class ROI_graph(util.ROICaT_Module):
             idx_tmp = np.where(idx_tmp.reshape(-1))[0]
             self.idxPixels_block.append(idx_tmp)
 
+    def __repr__(self):
+        has_sf = hasattr(self, 's_sf') and self.s_sf is not None
+        nnz = self.s_sf.nnz if has_sf else 0
+        n_roi = self.s_sf.shape[0] if has_sf else 0
+        return f"ROI_graph(n_roi={n_roi}, nnz={nnz})"
+
     def compute_similarity_blockwise(
         self,
         spatialFootprints: scipy.sparse.csr_matrix,
