@@ -131,6 +131,13 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
     assert data.n_sessions > 1, f"Data object must have more than one session to track (n_sessions={data.n_sessions})."
     tocs.append(('data_loading', time.time() - tic_start))
 
+    ## Validate data
+    if VERBOSE:
+        validation = util.validate_data_for_tracking(data, verbose=VERBOSE)
+        n_fail = sum(1 for v in validation.values() if not v[0])
+        if n_fail > 0:
+            print(f"WARNING: {n_fail} data validation check(s) failed.")
+
 
     ## Alignment
     aligner = tracking.alignment.Aligner(

@@ -1200,3 +1200,15 @@ class Test_edge_cases:
         assert np.all(dConj.data <= 1)
 
 
+def test_validate_data_for_tracking():
+    """validate_data_for_tracking should catch common issues."""
+    from roicat.util import validate_data_for_tracking
+    from roicat.data_importing import Data_roicat
+
+    data = Data_roicat()
+    ## Empty data should fail most checks
+    checks = validate_data_for_tracking(data, verbose=False)
+    assert not checks['spatial_footprints_exist'][0]
+    assert not checks['fov_images_exist'][0]
+
+
