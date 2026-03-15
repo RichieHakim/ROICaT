@@ -1200,3 +1200,67 @@ class Test_edge_cases:
         assert np.all(dConj.data <= 1)
 
 
+######################################################################################################################################
+################################################## VALIDATE_PARAMS ###################################################################
+######################################################################################################################################
+
+
+class Test_validate_params:
+    def test_valid_params_no_errors(self):
+        """Valid params should produce no errors."""
+        from roicat.helpers import validate_params
+        params = {'general': {'use_GPU': False, 'verbose': True}}
+        metadata = {'general': {'use_GPU': {'type': bool}, 'verbose': {'type': bool}}}
+        errors = validate_params(params, metadata, verbose=False)
+        assert len(errors) == 0
+
+    def test_wrong_type_detected(self):
+        """Wrong type should be caught."""
+        from roicat.helpers import validate_params
+        params = {'general': {'use_GPU': 'True'}}  ## string instead of bool
+        metadata = {'general': {'use_GPU': {'type': bool}}}
+        errors = validate_params(params, metadata, verbose=False)
+        assert len(errors) == 1
+        assert 'use_GPU' in errors[0]
+
+    def test_invalid_choice_detected(self):
+        """Invalid enum value should be caught."""
+        from roicat.helpers import validate_params
+        params = {'data_loading': {'data_kind': 'invalid'}}
+        metadata = {'data_loading': {'data_kind': {'type': str, 'choices': ['suite2p', 'roicat']}}}
+        errors = validate_params(params, metadata, verbose=False)
+        assert len(errors) == 1
+        assert 'data_kind' in errors[0]
+
+    def test_min_value_violation(self):
+        """Value below minimum should be caught."""
+        from roicat.helpers import validate_params
+        params = {'blurring': {'kernel_halfWidth': -1.0}}
+        metadata = {'blurring': {'kernel_halfWidth': {'type': (int, float), 'min': 0}}}
+        errors = validate_params(params, metadata, verbose=False)
+        assert len(errors) == 1
+
+    def test_nested_validation(self):
+        """Nested params should be validated."""
+        from roicat.helpers import validate_params
+        params = {'alignment': {'initialization': {'radius_in': -5}}}
+        metadata = {'alignment': {'initialization': {'radius_in': {'type': (int, float), 'min': 0}}}}
+        errors = validate_params(params, metadata, verbose=False)
+        assert len(errors) == 1
+        assert 'radius_in' in errors[0]
+
+    def test_missing_key_skipped(self):
+        """Params not in metadata should be silently skipped."""
+        from roicat.helpers import validate_params
+        params = {'unknown_section': {'foo': 'bar'}}
+        metadata = {'general': {'use_GPU': {'type': bool}}}
+        errors = validate_params(params, metadata, verbose=False)
+        assert len(errors) == 0
+
+    def test_none_type_allowed(self):
+        """None should be allowed when type includes NoneType."""
+        from roicat.helpers import validate_params
+        params = {'general': {'random_seed': None}}
+        metadata = {'general': {'random_seed': {'type': (int, type(None))}}}
+        errors = validate_params(params, metadata, verbose=False)
+        assert len(errors) == 0
