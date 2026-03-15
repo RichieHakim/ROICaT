@@ -170,6 +170,12 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
             **params['alignment']['transform_ROIs'],
         );
     tocs.append(('alignment', time.time() - tic_start))
+
+    ## Compute alignment quality
+    if VERBOSE:
+        alignment_quality = aligner.compute_alignment_quality()
+        print(f"  {alignment_quality['summary']}")
+
     helpers.clear_gpu_cache()
 
 

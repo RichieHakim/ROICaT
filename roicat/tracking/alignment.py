@@ -1262,6 +1262,77 @@ class Aligner(util.ROICaT_Module):
         plt.tight_layout()
         return fig
 
+    def compute_alignment_quality(self) -> dict:
+        """
+        Compute per-session-pair alignment quality metrics.
+
+        Computes normalized cross-correlation (NCC) between the template and
+        each aligned image to quantify registration quality.
+
+        Must be called after ``fit_geometric`` (and optionally
+        ``fit_nonrigid``).
+
+        Returns:
+            (dict):
+                quality (dict):
+                    Dictionary containing:
+
+                    - ``'ncc_geometric'``: list of NCC values for geometric
+                      alignment
+                    - ``'ncc_nonrigid'``: list of NCC values for non-rigid
+                      alignment (if available)
+                    - ``'summary'``: human-readable summary string
+        """
+        assert hasattr(self, 'ims_registered_geo') and self.ims_registered_geo is not None, \
+            "Must call fit_geometric first"
+
+        ims = self.ims_registered_geo
+        n_sessions = len(ims)
+
+        ## Use middle session as template
+        template_idx = n_sessions // 2
+        template = ims[template_idx].astype(np.float64)
+        template_norm = (template - template.mean()) / max(template.std(), 1e-10)
+
+        ## Compute NCC for geometric alignment
+        ncc_geo = []
+        for i, im in enumerate(ims):
+            im_f = im.astype(np.float64)
+            im_norm = (im_f - im_f.mean()) / max(im_f.std(), 1e-10)
+            ncc = float(np.mean(template_norm * im_norm))
+            ncc_geo.append(round(ncc, 4))
+
+        result = {
+            'ncc_geometric': ncc_geo,
+            'template_idx': template_idx,
+        }
+
+        ## Compute NCC for non-rigid alignment if available
+        if hasattr(self, 'ims_registered_nonrigid') and self.ims_registered_nonrigid is not None:
+            ncc_nr = []
+            for i, im in enumerate(self.ims_registered_nonrigid):
+                im_f = im.astype(np.float64)
+                im_norm = (im_f - im_f.mean()) / max(im_f.std(), 1e-10)
+                ncc = float(np.mean(template_norm * im_norm))
+                ncc_nr.append(round(ncc, 4))
+            result['ncc_nonrigid'] = ncc_nr
+
+        ## Summary
+        mean_ncc = np.mean(ncc_geo)
+        min_ncc = np.min(ncc_geo)
+        min_idx = int(np.argmin(ncc_geo))
+        summary = (
+            f"Alignment Quality: mean NCC={mean_ncc:.3f}, "
+            f"worst session={min_idx} (NCC={min_ncc:.3f})"
+        )
+        if 'ncc_nonrigid' in result:
+            mean_ncc_nr = np.mean(result['ncc_nonrigid'])
+            summary += f", after non-rigid: mean NCC={mean_ncc_nr:.3f}"
+        result['summary'] = summary
+
+        self.alignment_quality = result
+        return result
+
 
 def clahe(
     im: np.ndarray, 
