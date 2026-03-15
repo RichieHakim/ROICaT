@@ -636,8 +636,8 @@ class Clusterer(util.ROICaT_Module):
                     return existing_cb(xk, convergence)  ## propagate stop signal
             de_kwargs_use['callback'] = _combined_callback
 
-        ## Ensure seed is an int so DE is reproducible even when caller passes None
-        de_seed = int(seed) if seed is not None else 0
+        ## Coerce seed to int for scipy DE; leave None for random behavior
+        de_seed = int(seed) if seed is not None else None
 
         self._de_result = scipy.optimize.differential_evolution(
             func=objective_scalar,
@@ -2251,8 +2251,8 @@ class Clusterer(util.ROICaT_Module):
             return loss
 
         print('Optimizing NB combination weights with differential evolution...') if self._verbose else None
-        ## Ensure seed is an int so DE is reproducible even when caller passes None
-        de_seed = int(seed) if seed is not None else 0
+        ## Coerce seed to int for scipy DE; leave None for random behavior
+        de_seed = int(seed) if seed is not None else None
         nb_de_result = scipy.optimize.differential_evolution(
             func=objective, bounds=scipy_bounds, seed=de_seed, **de_kwargs_use,
         )
