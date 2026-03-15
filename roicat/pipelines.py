@@ -133,6 +133,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
 
 
     ## Alignment
+    print(f"\n{'='*50}\nStep: Alignment\n{'='*50}") if VERBOSE else None
     aligner = tracking.alignment.Aligner(
         um_per_pixel=data.um_per_pixel[0],  ## Single value for um_per_pixel. data.um_per_pixel is typically a list of floats, so index out just one value.
         verbose=VERBOSE,  ## Whether to print updates
@@ -174,6 +175,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
 
 
     ## Blur ROIs
+    print(f"\n{'='*50}\nStep: Blurring\n{'='*50}") if VERBOSE else None
     blurrer = tracking.blurring.ROI_Blurrer(
         frame_shape=(data.FOV_height, data.FOV_width),  ## FOV height and width
         plot_kernel=False,  ## Whether to visualize the 2D gaussian
@@ -186,6 +188,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
 
 
     ## ROInet embedding
+    print(f"\n{'='*50}\nStep: ROInet Embedding\n{'='*50}") if VERBOSE else None
 
     dir_temp = tempfile.gettempdir()
 
@@ -207,6 +210,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
 
 
     ## Scattering wavelet embedding
+    print(f"\n{'='*50}\nStep: Scattering Wavelet Transform\n{'='*50}") if VERBOSE else None
     swt = tracking.scatteringWaveletTransformer.SWT(
         image_shape=data.ROI_images[0].shape[1:3],  ## size of a cropped ROI image
         device=DEVICE,  ## PyTorch device
@@ -221,6 +225,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
 
 
     ## Compute similarities
+    print(f"\n{'='*50}\nStep: Similarity Graph\n{'='*50}") if VERBOSE else None
     sim = tracking.similarity_graph.ROI_graph(
         frame_height=data.FOV_height,
         frame_width=data.FOV_width,
@@ -249,6 +254,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
 
 
     ## Clustering
+    print(f"\n{'='*50}\nStep: Clustering\n{'='*50}") if VERBOSE else None
     clusterer = tracking.clustering.Clusterer(
         s_sf=sim.s_sf,
         s_NN_z=sim.s_NN_z,
@@ -515,7 +521,19 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
 
 
 
-    ## End timer
-    print(f"Elapsed time: {time.time() - tic_start:.2f} seconds")
-    
+    ## Print timing summary
+    tocs.append(('total', time.time() - tic_start))
+    if VERBOSE:
+        print("\n" + "=" * 50)
+        print("Pipeline Timing Summary")
+        print("=" * 50)
+        prev_time = 0
+        for name, cumulative_time in tocs:
+            if name == 'start_time_absolute':
+                continue
+            step_time = cumulative_time - prev_time
+            print(f"  {name:30s} {step_time:8.1f}s  ({cumulative_time:8.1f}s cumulative)")
+            prev_time = cumulative_time
+        print("=" * 50)
+
     return results_all, run_data, params
