@@ -1200,3 +1200,36 @@ class Test_edge_cases:
         assert np.all(dConj.data <= 1)
 
 
+def test_export_tracking_results_to_csv(tmp_path):
+    """export_tracking_results_to_csv should create a valid CSV."""
+    from roicat.util import export_tracking_results_to_csv
+    import csv
+
+    results = {
+        'clusters': {
+            'labels': [0, 0, 1, 1, -1, 0],
+            'labels_bySession': [[0, 0, 1], [1, -1, 0]],
+            'labels_dict': {0: [0, 1, 5], 1: [2, 3]},
+            'quality_metrics': {
+                'sample_silhouette': [0.8, 0.7, 0.9, 0.6, -0.1, 0.75],
+                'cluster_silhouette': [0.85, 0.7],
+                'cluster_intra_means': [0.9, 0.8],
+            },
+        },
+    }
+
+    path = str(tmp_path / 'test_export.csv')
+    result_path = export_tracking_results_to_csv(results, path)
+
+    assert Path(result_path).exists()
+
+    with open(result_path) as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+
+    assert len(rows) == 6
+    assert rows[0]['session'] == '0'
+    assert rows[0]['cluster_id'] == '0'
+    assert rows[3]['session'] == '1'
+
+

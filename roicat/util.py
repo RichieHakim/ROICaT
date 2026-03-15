@@ -1733,3 +1733,92 @@ def invert_ucids(
         ucids_inverse = ucids_inverse.astype(np.int64)
         
     return ucids_inverse
+
+
+def export_tracking_results_to_csv(
+    results: dict,
+    path_save: str,
+    include_quality_metrics: bool = True,
+) -> str:
+    """
+    Export tracking results to a CSV file.
+
+    Creates a CSV with one row per ROI containing:
+
+    - ``roi_index``: global ROI index
+    - ``session``: session number
+    - ``roi_in_session``: ROI index within session
+    - ``cluster_id``: assigned cluster ID (-1 for noise)
+    - quality metrics (if available): silhouette, etc.
+
+    Args:
+        results (dict):
+            Results dictionary from ``pipeline_tracking``.
+        path_save (str):
+            Path to save the CSV file.
+        include_quality_metrics (bool):
+            If True, include per-ROI quality metrics columns.
+
+    Returns:
+        (str):
+            path_save (str):
+                Path to the saved CSV file.
+    """
+    import csv
+    from pathlib import Path
+
+    labels = results['clusters']['labels']
+    labels_bySession = results['clusters']['labels_bySession']
+    quality_metrics = results['clusters'].get('quality_metrics', {})
+
+    ## Build per-ROI data
+    rows = []
+    roi_idx = 0
+    for session_idx, session_labels in enumerate(labels_bySession):
+        for roi_in_session, label in enumerate(session_labels):
+            row = {
+                'roi_index': roi_idx,
+                'session': session_idx,
+                'roi_in_session': roi_in_session,
+                'cluster_id': int(label),
+            }
+            rows.append(row)
+            roi_idx += 1
+
+    ## Add per-ROI quality metrics
+    if include_quality_metrics and 'sample_silhouette' in quality_metrics:
+        sample_sil = quality_metrics['sample_silhouette']
+        for i, row in enumerate(rows):
+            row['sample_silhouette'] = float(sample_sil[i]) if i < len(sample_sil) else None
+
+    ## Add per-cluster quality metrics (mapped to each ROI)
+    if include_quality_metrics:
+        ## Build cluster_id -> metrics mapping
+        labels_dict = results['clusters'].get('labels_dict', {})
+        cluster_metrics_to_include = ['cluster_silhouette', 'cluster_intra_means']
+
+        ## Only include metrics that exist and are per-cluster
+        for metric_name in cluster_metrics_to_include:
+            if metric_name in quality_metrics:
+                metric_values = quality_metrics[metric_name]
+                ## Map cluster_id to metric value
+                ## labels_dict maps cluster_id -> list of roi indices
+                cluster_id_to_metric = {}
+                for cluster_idx, (cluster_id, roi_indices) in enumerate(labels_dict.items()):
+                    if cluster_idx < len(metric_values):
+                        cluster_id_to_metric[cluster_id] = metric_values[cluster_idx]
+
+                for row in rows:
+                    cid = row['cluster_id']
+                    row[metric_name] = cluster_id_to_metric.get(cid, None)
+
+    ## Write CSV
+    Path(path_save).parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = list(rows[0].keys()) if rows else []
+    with open(path_save, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    print(f"Exported {len(rows)} ROIs to {path_save}")
+    return path_save
