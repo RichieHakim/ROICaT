@@ -89,6 +89,11 @@ class ROI_Blurrer(util.ROICaT_Module):
             plt.figure()
             plt.imshow(self.kernel)
 
+    def __repr__(self):
+        width = self._width if hasattr(self, '_width') else '?'
+        has_blurred = hasattr(self, 'ROIs_blurred') and self.ROIs_blurred is not None
+        return f"ROI_Blurrer(kernel_halfWidth={width}, blurred={has_blurred})"
+
     def blur_ROIs(
         self,
         spatialFootprints: List[object],
