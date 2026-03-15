@@ -1200,3 +1200,9 @@ class Test_edge_cases:
         assert np.all(dConj.data <= 1)
 
 
+def test_get_memory_usage():
+    """get_memory_usage should return CPU RSS."""
+    from roicat.helpers import get_memory_usage
+    mem = get_memory_usage()
+    assert 'cpu_rss_gb' in mem
+    assert mem['cpu_rss_gb'] > 0

@@ -130,6 +130,9 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
     assert data.check_completeness(verbose=False)['tracking'], f"Data object is missing attributes necessary for tracking."
     assert data.n_sessions > 1, f"Data object must have more than one session to track (n_sessions={data.n_sessions})."
     tocs.append(('data_loading', time.time() - tic_start))
+    if VERBOSE:
+        mem = helpers.get_memory_usage()
+        print(f"  Memory after data_loading: CPU {mem['cpu_rss_gb']:.1f} GB" + (f", GPU alloc {mem.get('gpu_allocated_gb', 'N/A')} GB" if 'gpu_allocated_gb' in mem else ""))
 
 
     ## Alignment
@@ -171,6 +174,9 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         );
     tocs.append(('alignment', time.time() - tic_start))
     helpers.clear_gpu_cache()
+    if VERBOSE:
+        mem = helpers.get_memory_usage()
+        print(f"  Memory after alignment: CPU {mem['cpu_rss_gb']:.1f} GB" + (f", GPU alloc {mem.get('gpu_allocated_gb', 'N/A')} GB" if 'gpu_allocated_gb' in mem else ""))
 
 
     ## Blur ROIs
@@ -183,6 +189,9 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         spatialFootprints=aligner.ROIs_aligned[:],
     )
     tocs.append(('blurring', time.time() - tic_start))
+    if VERBOSE:
+        mem = helpers.get_memory_usage()
+        print(f"  Memory after blurring: CPU {mem['cpu_rss_gb']:.1f} GB" + (f", GPU alloc {mem.get('gpu_allocated_gb', 'N/A')} GB" if 'gpu_allocated_gb' in mem else ""))
 
 
     ## ROInet embedding
@@ -204,6 +213,9 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
     roinet.generate_latents();
     tocs.append(('ROInet', time.time() - tic_start))
     helpers.clear_gpu_cache()
+    if VERBOSE:
+        mem = helpers.get_memory_usage()
+        print(f"  Memory after ROInet: CPU {mem['cpu_rss_gb']:.1f} GB" + (f", GPU alloc {mem.get('gpu_allocated_gb', 'N/A')} GB" if 'gpu_allocated_gb' in mem else ""))
 
 
     ## Scattering wavelet embedding
@@ -218,6 +230,9 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
     );
     tocs.append(('SWT', time.time() - tic_start))
     helpers.clear_gpu_cache()
+    if VERBOSE:
+        mem = helpers.get_memory_usage()
+        print(f"  Memory after SWT: CPU {mem['cpu_rss_gb']:.1f} GB" + (f", GPU alloc {mem.get('gpu_allocated_gb', 'N/A')} GB" if 'gpu_allocated_gb' in mem else ""))
 
 
     ## Compute similarities
@@ -246,6 +261,9 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
     )
     tocs.append(('similarity_graph', time.time() - tic_start))
     helpers.clear_gpu_cache()
+    if VERBOSE:
+        mem = helpers.get_memory_usage()
+        print(f"  Memory after similarity_graph: CPU {mem['cpu_rss_gb']:.1f} GB" + (f", GPU alloc {mem.get('gpu_allocated_gb', 'N/A')} GB" if 'gpu_allocated_gb' in mem else ""))
 
 
     ## Clustering
@@ -304,7 +322,9 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
     else:
         raise ValueError('Clustering method not recognized. This should never happen.')
     tocs.append(('clustering', time.time() - tic_start))
-
+    if VERBOSE:
+        mem = helpers.get_memory_usage()
+        print(f"  Memory after clustering: CPU {mem['cpu_rss_gb']:.1f} GB" + (f", GPU alloc {mem.get('gpu_allocated_gb', 'N/A')} GB" if 'gpu_allocated_gb' in mem else ""))
 
 
     quality_metrics = clusterer.compute_quality_metrics();
