@@ -468,6 +468,125 @@ class ROI_graph(util.ROICaT_Module):
             self.s_SWT_z.data[np.isnan(self.s_SWT_z.data)] = 0
 
 
+    def compute_jaccard_similarity(
+        self,
+        spatialFootprints: List[scipy.sparse.csr_matrix],
+        session_bool: np.ndarray = None,
+    ) -> scipy.sparse.csr_matrix:
+        """
+        Compute Jaccard index (intersection-over-union) between spatial
+        footprints of ROIs from different sessions.
+
+        The Jaccard index measures spatial overlap as
+        ``|A & B| / |A | B|`` using binarized footprints.
+
+        Args:
+            spatialFootprints (List[scipy.sparse.csr_matrix]):
+                Spatial footprints for each session. Each is a sparse
+                matrix of shape *(n_roi, n_pixels)*.
+            session_bool (np.ndarray):
+                Boolean matrix indicating which session each ROI belongs to.
+                Shape *(n_roi_total, n_sessions)*.
+
+        Returns:
+            (scipy.sparse.csr_matrix):
+                s_jaccard (scipy.sparse.csr_matrix):
+                    Sparse Jaccard similarity matrix of shape
+                    *(n_roi_total, n_roi_total)*.
+        """
+        ## Stack all footprints
+        sf_all = scipy.sparse.vstack(spatialFootprints)
+
+        ## Binarize
+        sf_binary = (sf_all > 0).astype(np.float32)
+
+        ## Compute intersection: A @ B.T gives element-wise AND for binary matrices
+        intersection = sf_binary @ sf_binary.T
+
+        ## Compute areas for union: |A | B| = |A| + |B| - |A & B|
+        areas = np.array(sf_binary.sum(axis=1)).ravel()
+        area_sum = areas[:, None] + areas[None, :]  ## broadcast pairwise
+
+        ## Only compute where intersection is nonzero
+        intersection_coo = intersection.tocoo()
+        union_values = area_sum[intersection_coo.row, intersection_coo.col] - intersection_coo.data
+        union_values = np.maximum(union_values, 1e-10)  ## avoid div by zero
+        jaccard_values = intersection_coo.data / union_values
+
+        s_jaccard = scipy.sparse.csr_matrix(
+            (jaccard_values, (intersection_coo.row, intersection_coo.col)),
+            shape=intersection.shape,
+        )
+
+        ## Zero out same-session comparisons if session_bool provided
+        if session_bool is not None:
+            same_session = session_bool @ session_bool.T
+            if scipy.sparse.issparse(same_session):
+                same_session = same_session.toarray()
+            mask = scipy.sparse.csr_matrix(1 - same_session)
+            s_jaccard = s_jaccard.multiply(mask)
+
+        self.s_jaccard = s_jaccard
+        return s_jaccard
+
+    def compute_size_similarity(
+        self,
+        spatialFootprints: List[scipy.sparse.csr_matrix],
+        session_bool: np.ndarray = None,
+    ) -> scipy.sparse.csr_matrix:
+        """
+        Compute size similarity between ROI spatial footprints.
+
+        Size similarity is defined as
+        ``1 - |area_a - area_b| / max(area_a, area_b)`` for each pair.
+        Only computed where spatial footprints have nonzero overlap
+        (using the existing s_sf sparsity pattern if available).
+
+        Args:
+            spatialFootprints (List[scipy.sparse.csr_matrix]):
+                Spatial footprints for each session.
+            session_bool (np.ndarray):
+                Boolean session membership matrix.
+
+        Returns:
+            (scipy.sparse.csr_matrix):
+                s_size (scipy.sparse.csr_matrix):
+                    Sparse size similarity matrix.
+        """
+        sf_all = scipy.sparse.vstack(spatialFootprints)
+        areas = np.array((sf_all > 0).sum(axis=1)).ravel().astype(np.float64)
+
+        ## Use sparsity pattern from s_sf if available, else from intersection
+        if hasattr(self, 's_sf') and self.s_sf is not None:
+            template = self.s_sf.tocoo()
+        else:
+            sf_binary = (sf_all > 0).astype(np.float32)
+            template = (sf_binary @ sf_binary.T).tocoo()
+
+        rows, cols = template.row, template.col
+        area_a = areas[rows]
+        area_b = areas[cols]
+        max_area = np.maximum(area_a, area_b)
+        max_area = np.maximum(max_area, 1e-10)
+        size_sim = 1.0 - np.abs(area_a - area_b) / max_area
+
+        s_size = scipy.sparse.csr_matrix(
+            (size_sim, (rows, cols)),
+            shape=(len(areas), len(areas)),
+        )
+
+        ## Zero out same-session
+        if session_bool is not None:
+            same_session = session_bool @ session_bool.T
+            if scipy.sparse.issparse(same_session):
+                same_session = same_session.toarray()
+            mask = scipy.sparse.csr_matrix(1 - same_session)
+            s_size = s_size.multiply(mask)
+
+        self.s_size = s_size
+        return s_size
+
+
 ###########################
 ####### block stuff #######
 ###########################

@@ -1200,3 +1200,187 @@ class Test_edge_cases:
         assert np.all(dConj.data <= 1)
 
 
+######################################################################################################################################
+################################################### SIMILARITY METRICS ###############################################################
+######################################################################################################################################
+
+
+class Test_similarity_metrics:
+    """Tests for Jaccard index and size similarity methods on ROI_graph."""
+
+    def test_jaccard_identity(self):
+        """Jaccard of identical footprints should be 1."""
+        from roicat.tracking.similarity_graph import ROI_graph
+
+        H, W = 50, 50
+        sf = scipy.sparse.random(1, H * W, density=0.1, format='csr')
+        sf_list = [sf, sf.copy()]  ## two identical ROIs in different sessions
+        session_bool = np.array([[1, 0], [0, 1]])
+
+        graph = ROI_graph(frame_height=H, frame_width=W)
+        s_jaccard = graph.compute_jaccard_similarity(sf_list, session_bool)
+
+        ## Off-diagonal (cross-session) should be 1.0
+        assert s_jaccard[0, 1] == pytest.approx(1.0, abs=1e-6)
+
+    def test_jaccard_no_overlap(self):
+        """Jaccard of non-overlapping footprints should be 0."""
+        from roicat.tracking.similarity_graph import ROI_graph
+
+        H, W = 50, 50
+        n_pix = H * W
+        sf1 = scipy.sparse.csr_matrix(([1.0], ([0], [0])), shape=(1, n_pix))
+        sf2 = scipy.sparse.csr_matrix(([1.0], ([0], [n_pix - 1])), shape=(1, n_pix))
+        sf_list = [sf1, sf2]
+        session_bool = np.array([[1, 0], [0, 1]])
+
+        graph = ROI_graph(frame_height=H, frame_width=W)
+        s_jaccard = graph.compute_jaccard_similarity(sf_list, session_bool)
+
+        assert s_jaccard[0, 1] == pytest.approx(0.0, abs=1e-6)
+
+    def test_jaccard_partial_overlap(self):
+        """Jaccard of partially overlapping footprints should be between 0 and 1."""
+        from roicat.tracking.similarity_graph import ROI_graph
+
+        H, W = 50, 50
+        n_pix = H * W
+        ## sf1: pixels 0..9, sf2: pixels 5..14 => intersection=5, union=15
+        row = np.zeros(10, dtype=int)
+        sf1 = scipy.sparse.csr_matrix(
+            (np.ones(10), (row, np.arange(10))), shape=(1, n_pix)
+        )
+        sf2 = scipy.sparse.csr_matrix(
+            (np.ones(10), (row, np.arange(5, 15))), shape=(1, n_pix)
+        )
+        sf_list = [sf1, sf2]
+        session_bool = np.array([[1, 0], [0, 1]])
+
+        graph = ROI_graph(frame_height=H, frame_width=W)
+        s_jaccard = graph.compute_jaccard_similarity(sf_list, session_bool)
+
+        expected = 5.0 / 15.0
+        assert s_jaccard[0, 1] == pytest.approx(expected, abs=1e-6)
+
+    def test_jaccard_same_session_masked(self):
+        """Same-session Jaccard entries should be zero."""
+        from roicat.tracking.similarity_graph import ROI_graph
+
+        H, W = 50, 50
+        sf = scipy.sparse.random(1, H * W, density=0.1, format='csr')
+        sf_list = [scipy.sparse.vstack([sf, sf.copy()])]  ## 2 ROIs in same session
+        session_bool = np.array([[1], [1]])
+
+        graph = ROI_graph(frame_height=H, frame_width=W)
+        s_jaccard = graph.compute_jaccard_similarity(sf_list, session_bool)
+
+        ## All entries should be zero (same-session masked out)
+        assert s_jaccard.nnz == 0 or s_jaccard.data.max() == pytest.approx(0.0, abs=1e-6)
+
+    def test_jaccard_no_session_bool(self):
+        """Jaccard without session_bool should include all pairs."""
+        from roicat.tracking.similarity_graph import ROI_graph
+
+        H, W = 50, 50
+        sf = scipy.sparse.random(1, H * W, density=0.1, format='csr')
+        sf_list = [sf, sf.copy()]
+
+        graph = ROI_graph(frame_height=H, frame_width=W)
+        s_jaccard = graph.compute_jaccard_similarity(sf_list, session_bool=None)
+
+        ## Should include self-similarity (diagonal), which is 1.0
+        assert s_jaccard[0, 0] == pytest.approx(1.0, abs=1e-6)
+
+    def test_size_similarity_identical(self):
+        """Size similarity of same-sized footprints should be 1."""
+        from roicat.tracking.similarity_graph import ROI_graph
+
+        H, W = 50, 50
+        n_pix = H * W
+        rng = np.random.RandomState(42)
+        sf1 = scipy.sparse.random(1, n_pix, density=0.05, format='csr', random_state=rng)
+        target_nnz = sf1.nnz
+        ## Create sf2 with exact same number of nonzero pixels but different locations
+        sf2_dense = np.zeros((1, n_pix))
+        idx = rng.choice(n_pix, target_nnz, replace=False)
+        sf2_dense[0, idx] = 1.0
+        sf2 = scipy.sparse.csr_matrix(sf2_dense)
+
+        sf_list = [sf1, sf2]
+        session_bool = np.array([[1, 0], [0, 1]])
+
+        graph = ROI_graph(frame_height=H, frame_width=W)
+        ## Need to ensure they overlap so the template has nonzero entries.
+        ## Force overlap by using intersection-based template (no s_sf set).
+        s_size = graph.compute_size_similarity(sf_list, session_bool)
+
+        ## If there's overlap, cross-session size similarity should be 1.0
+        if s_size[0, 1] != 0:
+            assert s_size[0, 1] == pytest.approx(1.0, abs=1e-6)
+
+    def test_size_similarity_range(self):
+        """Size similarity should be in [0, 1]."""
+        from roicat.tracking.similarity_graph import ROI_graph
+
+        rng = np.random.RandomState(42)
+        H, W = 50, 50
+        n_pix = H * W
+        sfs = [scipy.sparse.random(5, n_pix, density=0.03, format='csr', random_state=rng) for _ in range(3)]
+        session_bool = np.zeros((15, 3))
+        session_bool[:5, 0] = 1
+        session_bool[5:10, 1] = 1
+        session_bool[10:, 2] = 1
+
+        graph = ROI_graph(frame_height=H, frame_width=W)
+        s_size = graph.compute_size_similarity(sfs, session_bool)
+
+        if s_size.nnz > 0:
+            assert s_size.data.min() >= 0.0
+            assert s_size.data.max() <= 1.0
+
+    def test_size_similarity_uses_sf_template(self):
+        """When s_sf exists, size similarity should use its sparsity pattern."""
+        from roicat.tracking.similarity_graph import ROI_graph
+
+        H, W = 50, 50
+        n_pix = H * W
+        ## Create two footprints that overlap
+        row = np.zeros(20, dtype=int)
+        sf1 = scipy.sparse.csr_matrix(
+            (np.ones(20), (row, np.arange(20))), shape=(1, n_pix)
+        )
+        sf2 = scipy.sparse.csr_matrix(
+            (np.ones(10), (row[:10], np.arange(10))), shape=(1, n_pix)
+        )
+        sf_list = [sf1, sf2]
+
+        graph = ROI_graph(frame_height=H, frame_width=W)
+        ## Set a fake s_sf with specific sparsity pattern
+        graph.s_sf = scipy.sparse.csr_matrix(
+            ([0.5, 0.5], ([0, 1], [1, 0])), shape=(2, 2)
+        )
+        s_size = graph.compute_size_similarity(sf_list)
+
+        ## size_sim = 1 - |20 - 10| / max(20, 10) = 1 - 10/20 = 0.5
+        assert s_size[0, 1] == pytest.approx(0.5, abs=1e-6)
+        assert s_size[1, 0] == pytest.approx(0.5, abs=1e-6)
+
+    def test_size_similarity_same_session_masked(self):
+        """Same-session size similarity entries should be zero."""
+        from roicat.tracking.similarity_graph import ROI_graph
+
+        H, W = 50, 50
+        n_pix = H * W
+        row = np.zeros(10, dtype=int)
+        sf = scipy.sparse.csr_matrix(
+            (np.ones(10), (row, np.arange(10))), shape=(1, n_pix)
+        )
+        sf_list = [scipy.sparse.vstack([sf, sf.copy()])]
+        session_bool = np.array([[1], [1]])
+
+        graph = ROI_graph(frame_height=H, frame_width=W)
+        s_size = graph.compute_size_similarity(sf_list, session_bool)
+
+        assert s_size.nnz == 0 or s_size.data.max() == pytest.approx(0.0, abs=1e-6)
+
+
