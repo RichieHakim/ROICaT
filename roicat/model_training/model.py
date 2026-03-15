@@ -1,18 +1,8 @@
 # Imports
-import sys
-import os
 import numpy as np
 import torch
 import torchvision
-from PIL import Image
-import matplotlib.pyplot as plt
-import pandas as pd
-from sklearn.decomposition import PCA
-from functools import partial
 from typing import Optional, List, Tuple, Union, Dict, Any
-
-from torch.nn import CrossEntropyLoss
-from torch.optim import Adam
 
 from .. import helpers
 
@@ -72,7 +62,6 @@ class ModelTackOn(torch.nn.Module):
 
         self.init_prehead(pre_head_fc_sizes)
         self.init_posthead(pre_head_fc_sizes[-1], post_head_fc_sizes)
-        # self.init_pca_layer(pre_head_fc_sizes[-1])
     
     def init_prehead(self, pre_head_fc_sizes):
         """
@@ -118,25 +107,6 @@ class ModelTackOn(torch.nn.Module):
             self.add_module(f'PostHead_{i}_NonLinearity', non_linearity)
             self.pre_head_fc_lst.append(non_linearity)
     
-    # def init_pca_layer(self, pca_size):
-    #     """
-    #     Initialize the PCA layer with identity weights and biases
-
-    #     Args:
-    #         pca_size (int):
-    #             Size of the PCA to be used to create the latent space
-    #     """
-    #     self.pca_layer = torch.nn.Sequential(
-    #         torch.nn.Linear(pca_size, pca_size),
-    #         torch.nn.Linear(pca_size, pca_size, bias=False)
-    #     )
-    #     self.pca_layer[0].weight = torch.nn.Parameter(torch.tensor(np.eye(pca_size,),dtype=torch.float32))
-    #     self.pca_layer[0].bias = torch.nn.Parameter(torch.tensor(np.zeros(pca_size,),dtype=torch.float32))
-    #     self.pca_layer[1].weight = torch.nn.Parameter(torch.tensor(np.eye(pca_size,),dtype=torch.float32))
-    #     self.pca_layer[1].bias = torch.nn.Parameter(torch.tensor(np.zeros(pca_size,),dtype=torch.float32))
-
-    #     self.add_module(f'PCA_Layer', self.pca_layer)
-    
     def forward_latent(self, X):
         """
         Run the model forward to get the latent representation of the data
@@ -170,24 +140,6 @@ class ModelTackOn(torch.nn.Module):
         interim = self.base_model(X)
         head = self.get_head(interim)
         return head
-
-    # def forward_head_pca(self, X):
-    #     """
-    #     Run the model forward to get the head output of the model, passed through a pre-fit PCA layer
-    #     (used for classification)
-
-    #     Args:
-    #         X (torch.Tensor):
-    #             Input data to be run through the model
-
-    #     Returns:
-    #         head_pca (torch.Tensor):
-    #             Head output of the model, passed through a pre-fit PCA layer
-    #     """
-    #     interim = self.base_model(X)
-    #     head = self.get_head(interim)
-    #     head_pca = self.pca_layer(head)[...,:self.non_singular_pca_size] if self.non_singular_pca_size is not None else self.pca_layer(head)
-    #     return head_pca
 
     def get_head(self, base_out):
         """
@@ -227,17 +179,6 @@ class ModelTackOn(torch.nn.Module):
         latent = interim
         return latent
 
-    # def set_pca_head_grad(self, requires_grad=False):
-    #     """
-    #     Set the gradient requirements for the PCA output head layers built on the head
-
-    #     Args:
-    #         requires_grad (bool):
-    #             Whether or not to require gradients for the FC layers
-    #     """
-    #     for param in self.pca_layer.parameters():
-    #         param.requires_grad = requires_grad
-    
     def set_pre_head_grad(self, requires_grad=True):
         """
         Set the gradient requirements for the FC layers between the base model
@@ -276,7 +217,6 @@ class ModelTackOn(torch.nn.Module):
         """
         self.set_pre_head_grad(requires_grad=True)
         self.set_post_head_grad(requires_grad=True)
-        # self.set_pca_head_grad(requires_grad=False)
 
     @property
     def device(self):
@@ -446,7 +386,6 @@ class Simclr_Model():
                 elif mnp_nums[ii] >= block_to_freeze_nums:
                     param.requires_grad = True
 
-        # self.model.forward = self.model.forward_latent if forward_version == 'forward_latent' else self.model.forward_head_pca
         self.model.forward = self.model.forward_latent if forward_version == 'forward_latent' else self.model.forward_head
     
     def save_onnx(
@@ -467,7 +406,6 @@ class Simclr_Model():
 
         batch_size = 1 # Arbitrary batch_size for saving the onnx model. Can be anything after load.
 
-        import datetime
         try:
             import onnx
         except ImportError as e:
@@ -518,8 +456,6 @@ class Simclr_Model():
     
         print('Checking ONNX model...')
         import onnxruntime as ort
-        # Create example data
-        # x = torch.ones((batch_size, 3, 224, 224))
         if hasattr(self.model, 'prep_contrast'):
             self.model.prep_contrast()
         self.model.eval()
@@ -533,7 +469,6 @@ class Simclr_Model():
         out_torch_loaded = model_loaded(x.cpu()).cpu().detach().numpy()
 
         # Check the Onnx output against PyTorch
-        print(np.max(np.abs(out_torch_original - out_torch_loaded)))
         assert np.allclose(out_torch_original, out_torch_loaded, atol=1.e-5), "The outputs from the saved and loaded models are different."
         print('Saved ONNX model is valid.')
 
