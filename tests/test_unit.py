@@ -1200,3 +1200,22 @@ class Test_edge_cases:
         assert np.all(dConj.data <= 1)
 
 
+def test_alignment_quality_report():
+    """compute_alignment_quality should return NCC values."""
+    from roicat.tracking.alignment import Aligner
+
+    ## Create synthetic aligned images (identical = perfect alignment)
+    np.random.seed(42)
+    ims = [np.random.rand(100, 100) for _ in range(3)]
+
+    aligner = Aligner()
+    aligner.ims_registered_geo = ims
+
+    quality = aligner.compute_alignment_quality()
+    assert 'ncc_geometric' in quality
+    assert len(quality['ncc_geometric']) == 3
+    ## Template compared to itself should be ~1.0
+    assert quality['ncc_geometric'][quality['template_idx']] == pytest.approx(1.0, abs=1e-3)
+    assert 'summary' in quality
+
+
