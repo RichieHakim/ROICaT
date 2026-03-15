@@ -1200,3 +1200,110 @@ class Test_edge_cases:
         assert np.all(dConj.data <= 1)
 
 
+class Test_suggest_cluster_merges:
+    """Tests for Clusterer.suggest_cluster_merges."""
+
+    @pytest.fixture()
+    def clusterer_with_labels(self):
+        """Create a minimal Clusterer with sConj and labels set directly."""
+        from roicat import tracking
+
+        rng = np.random.RandomState(99)
+        n = 30
+        ## Build a sparse similarity matrix with some structure:
+        ## ROIs 0-9 = cluster 0, 10-19 = cluster 1, 20-29 = cluster 2
+        ## Make clusters 0 and 1 have high inter-cluster similarity
+        rows, cols, vals = [], [], []
+        for i in range(n):
+            for j in range(i + 1, n):
+                ci, cj = i // 10, j // 10
+                if ci == cj:
+                    sim = rng.uniform(0.7, 1.0)
+                elif {ci, cj} == {0, 1}:
+                    ## Clusters 0 and 1 are close — merge candidates
+                    sim = rng.uniform(0.4, 0.7)
+                else:
+                    sim = rng.uniform(0.0, 0.15)
+                rows.extend([i, j])
+                cols.extend([j, i])
+                vals.extend([sim, sim])
+
+        sConj = scipy.sparse.csr_matrix(
+            (np.array(vals, dtype=np.float64), (rows, cols)), shape=(n, n),
+        )
+
+        ## Build a minimal Clusterer (no real matrices needed, we set sConj/labels directly)
+        s_dummy = scipy.sparse.csr_matrix((n, n))
+        c = tracking.clustering.Clusterer(
+            s_sf=s_dummy, s_NN_z=s_dummy, s_SWT_z=s_dummy,
+            s_sesh=s_dummy, verbose=False,
+        )
+        c.sConj = sConj
+        c.labels = np.array([i // 10 for i in range(n)])
+        return c
+
+    def test_no_merges_high_threshold(self, clusterer_with_labels):
+        """High threshold should produce few/no merge suggestions."""
+        suggestions = clusterer_with_labels.suggest_cluster_merges(similarity_threshold=0.99)
+        assert isinstance(suggestions, list)
+        assert all(s['mean_similarity'] >= 0.99 for s in suggestions)
+
+    def test_finds_close_clusters(self, clusterer_with_labels):
+        """Should identify the pair of close clusters (0 and 1)."""
+        suggestions = clusterer_with_labels.suggest_cluster_merges(similarity_threshold=0.3)
+        assert len(suggestions) > 0
+        top = suggestions[0]
+        assert {top['cluster_a'], top['cluster_b']} == {0, 1}
+
+    def test_returns_sorted(self, clusterer_with_labels):
+        """Suggestions should be sorted by similarity descending."""
+        suggestions = clusterer_with_labels.suggest_cluster_merges(similarity_threshold=0.0)
+        if len(suggestions) >= 2:
+            for k in range(len(suggestions) - 1):
+                assert suggestions[k]['mean_similarity'] >= suggestions[k + 1]['mean_similarity']
+
+    def test_max_suggestions_respected(self, clusterer_with_labels):
+        """Should not return more than max_suggestions."""
+        suggestions = clusterer_with_labels.suggest_cluster_merges(
+            similarity_threshold=0.0, max_suggestions=2,
+        )
+        assert len(suggestions) <= 2
+
+    def test_dict_keys(self, clusterer_with_labels):
+        """Each suggestion dict should have the expected keys."""
+        suggestions = clusterer_with_labels.suggest_cluster_merges(similarity_threshold=0.0)
+        expected_keys = {'cluster_a', 'cluster_b', 'mean_similarity', 'n_pairs'}
+        for s in suggestions:
+            assert set(s.keys()) == expected_keys
+            assert isinstance(s['cluster_a'], int)
+            assert isinstance(s['cluster_b'], int)
+            assert isinstance(s['mean_similarity'], float)
+            assert isinstance(s['n_pairs'], int)
+
+    def test_missing_sConj_raises(self):
+        """Should raise AssertionError if sConj is not set."""
+        from roicat import tracking
+
+        n = 6
+        s_dummy = scipy.sparse.eye(n, format='csr')
+        c = tracking.clustering.Clusterer(
+            s_sf=s_dummy, s_NN_z=s_dummy, s_SWT_z=s_dummy,
+            s_sesh=s_dummy, verbose=False,
+        )
+        c.labels = np.array([0, 0, 1, 1, 2, 2])
+        with pytest.raises(AssertionError, match="make_conjunctive_distance_matrix"):
+            c.suggest_cluster_merges()
+
+    def test_missing_labels_raises(self):
+        """Should raise AssertionError if labels is not set."""
+        from roicat import tracking
+
+        n = 6
+        s_dummy = scipy.sparse.eye(n, format='csr')
+        c = tracking.clustering.Clusterer(
+            s_sf=s_dummy, s_NN_z=s_dummy, s_SWT_z=s_dummy,
+            s_sesh=s_dummy, verbose=False,
+        )
+        c.sConj = scipy.sparse.csr_matrix((n, n))
+        with pytest.raises(AssertionError, match="fit"):
+            c.suggest_cluster_merges()

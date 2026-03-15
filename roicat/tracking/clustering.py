@@ -2007,6 +2007,75 @@ class Clusterer(util.ROICaT_Module):
         })
         return self.quality_metrics
 
+    def suggest_cluster_merges(
+        self,
+        similarity_threshold: float = 0.5,
+        max_suggestions: int = 20,
+    ) -> list:
+        """
+        Identify pairs of clusters that may be oversplit and should be merged.
+
+        Computes mean inter-cluster similarity for all cluster pairs and
+        returns those exceeding the threshold, sorted by similarity.
+
+        Must be called after ``fit()`` and ``make_conjunctive_distance_matrix()``.
+
+        Args:
+            similarity_threshold (float):
+                Minimum mean similarity between clusters to suggest merging.
+            max_suggestions (int):
+                Maximum number of suggestions to return.
+
+        Returns:
+            (list):
+                suggestions (list):
+                    List of dicts, each containing:
+
+                    - ``'cluster_a'``: first cluster ID
+                    - ``'cluster_b'``: second cluster ID
+                    - ``'mean_similarity'``: mean pairwise similarity
+                    - ``'n_pairs'``: number of ROI pairs compared
+        """
+        assert hasattr(self, 'sConj') and self.sConj is not None, \
+            "Must call make_conjunctive_distance_matrix first"
+        assert hasattr(self, 'labels') and self.labels is not None, \
+            "Must call fit first"
+
+        labels = np.array(self.labels)
+        ucids = np.array(sorted(set(labels[labels >= 0])))
+        sConj = self.sConj
+
+        suggestions = []
+        for i in range(len(ucids)):
+            for j in range(i + 1, len(ucids)):
+                cid_a, cid_b = ucids[i], ucids[j]
+                idx_a = np.where(labels == cid_a)[0]
+                idx_b = np.where(labels == cid_b)[0]
+
+                ## Extract submatrix for efficient sparse indexing
+                sub = sConj[idx_a][:, idx_b]
+                if sub.nnz > 0:
+                    mean_sim = sub.data.mean()
+                    if mean_sim >= similarity_threshold:
+                        suggestions.append({
+                            'cluster_a': int(cid_a),
+                            'cluster_b': int(cid_b),
+                            'mean_similarity': round(float(mean_sim), 4),
+                            'n_pairs': int(sub.nnz),
+                        })
+
+        ## Sort by similarity descending
+        suggestions.sort(key=lambda x: x['mean_similarity'], reverse=True)
+        suggestions = suggestions[:max_suggestions]
+
+        if self._verbose and suggestions:
+            print(f"Cluster Merge Suggestions ({len(suggestions)} pairs above threshold {similarity_threshold}):")
+            for s in suggestions[:5]:
+                print(f"  Clusters {s['cluster_a']} + {s['cluster_b']}: "
+                      f"mean_sim={s['mean_similarity']:.3f} ({s['n_pairs']} pairs)")
+
+        return suggestions
+
     ####################################################################
     ####################################################################
     ##
