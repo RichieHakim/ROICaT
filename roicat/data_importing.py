@@ -512,6 +512,160 @@ class Data_roicat(util.ROICaT_Module):
 
         print(f"Completed: Set FOV_height and FOV_width successfully.") if self._verbose else None
 
+    #########################################################
+    #################### TRACES #############################
+    #########################################################
+
+    def set_traces(
+        self,
+        traces: List[np.ndarray],
+        trace_type: str = 'dFoF',
+    ) -> None:
+        """
+        Set fluorescence traces for each session.
+
+        Args:
+            traces (List[np.ndarray]):
+                A list of 2D numpy arrays, one per session. Each array has
+                shape *(n_roi, n_frames)* containing fluorescence traces.
+            trace_type (str):
+                Label for the type of trace being set. Common values:
+                ``'F'``, ``'Fneu'``, ``'dFoF'``.
+        """
+        ## Store parameter (but not data) args as attributes
+        self.params['set_traces'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'trace_type',
+            ],
+        )
+
+        print(f"Starting: Setting traces (type='{trace_type}')") if self._verbose else None
+
+        assert isinstance(traces, list), f"traces must be a list, got {type(traces)}"
+        for i, t in enumerate(traces):
+            assert isinstance(t, np.ndarray), f"traces[{i}] must be np.ndarray, got {type(t)}"
+            assert t.ndim == 2, f"traces[{i}] must be 2D (n_roi, n_frames), got shape {t.shape}"
+
+        ## Validate n_roi matches spatial data if available
+        if hasattr(self, 'n_roi') and self.n_roi is not None:
+            for i, t in enumerate(traces):
+                assert t.shape[0] == self.n_roi[i], (
+                    f"traces[{i}] has {t.shape[0]} ROIs but spatial data has {self.n_roi[i]}"
+                )
+
+        ## Validate n_sessions matches if already set
+        n_sessions = len(traces)
+        if hasattr(self, 'n_sessions'):
+            assert self.n_sessions == n_sessions, (
+                f"n_sessions is already set to {self.n_sessions} but traces has {n_sessions} sessions"
+            )
+
+        ## Set attributes
+        self.traces = traces
+        self.trace_type = trace_type
+        self.n_frames = [t.shape[1] for t in traces]
+
+        print(f"Completed: Set traces for {n_sessions} sessions. n_frames per session: {self.n_frames}") if self._verbose else None
+
+    @staticmethod
+    def compute_dFoF(
+        F: np.ndarray,
+        Fneu: np.ndarray,
+        neuropil_coeff: float = 0.7,
+        baseline_percentile: float = 10.0,
+        baseline_window: int = 300,
+    ) -> np.ndarray:
+        """
+        Compute delta-F-over-F with neuropil subtraction.
+
+        Applies neuropil correction: ``Fc = F - neuropil_coeff * Fneu``,
+        then computes ``dFoF = (Fc - F0) / F0`` where ``F0`` is the
+        rolling baseline estimated as the ``baseline_percentile``-th
+        percentile within a sliding window.
+
+        Args:
+            F (np.ndarray):
+                Fluorescence traces. Shape *(n_roi, n_frames)*.
+            Fneu (np.ndarray):
+                Neuropil fluorescence. Shape *(n_roi, n_frames)*.
+            neuropil_coeff (float):
+                Neuropil subtraction coefficient. Standard value is 0.7.
+            baseline_percentile (float):
+                Percentile for baseline estimation. Lower values give a
+                more conservative baseline.
+            baseline_window (int):
+                Window size in frames for rolling baseline estimation.
+                If larger than n_frames, uses full trace.
+
+        Returns:
+            (np.ndarray):
+                dFoF (np.ndarray):
+                    Delta-F-over-F traces. Shape *(n_roi, n_frames)*.
+        """
+        assert F.shape == Fneu.shape, f"F and Fneu must have same shape, got {F.shape} vs {Fneu.shape}"
+
+        ## Neuropil subtraction
+        Fc = F - neuropil_coeff * Fneu
+
+        ## Baseline estimation using rolling percentile
+        n_roi, n_frames = Fc.shape
+        if baseline_window >= n_frames:
+            ## Use global baseline
+            F0 = np.percentile(Fc, baseline_percentile, axis=1, keepdims=True)
+        else:
+            ## Rolling baseline: approximate with min filter + smooth
+            from scipy.ndimage import minimum_filter1d, uniform_filter1d
+            F0 = minimum_filter1d(Fc, size=baseline_window, axis=1)
+            F0 = uniform_filter1d(F0, size=baseline_window, axis=1)
+
+        ## Avoid division by zero
+        F0 = np.maximum(F0, 1e-6)
+
+        dFoF = (Fc - F0) / F0
+        return dFoF
+
+    @staticmethod
+    def compute_trace_quality_metrics(
+        traces: np.ndarray,
+    ) -> dict:
+        """
+        Compute quality metrics for fluorescence traces.
+
+        Args:
+            traces (np.ndarray):
+                Traces array. Shape *(n_roi, n_frames)*.
+
+        Returns:
+            (dict):
+                metrics (dict):
+                    Dictionary containing per-ROI quality metrics:
+
+                    - ``'snr'``: Signal-to-noise ratio (peak / noise_std).
+                    - ``'skewness'``: Skewness of trace distribution.
+                      Positive skewness indicates calcium transients.
+                    - ``'variance'``: Variance of each trace.
+        """
+        from scipy.stats import skew
+
+        metrics = {}
+
+        ## SNR: peak amplitude / noise floor (std of below-median portion)
+        baseline_mask = traces < np.median(traces, axis=1, keepdims=True)
+        noise = np.where(baseline_mask, traces, np.nan)
+        noise_std = np.nanstd(noise, axis=1)
+        noise_std = np.maximum(noise_std, 1e-10)  ## avoid div by zero
+        peak = np.max(traces, axis=1) - np.median(traces, axis=1)
+        metrics['snr'] = (peak / noise_std).tolist()
+
+        ## Skewness
+        metrics['skewness'] = skew(traces, axis=1).tolist()
+
+        ## Variance
+        metrics['variance'] = np.var(traces, axis=1).tolist()
+
+        return metrics
+
     def get_maxIntensityProjection_spatialFootprints(
         self, 
         sf: Optional[List[scipy.sparse.csr_matrix]] = None,
@@ -1205,7 +1359,86 @@ class Data_suite2p(Data_roicat):
             print(f"Imported {len(spatialFootprints)} sessions of spatial footprints into sparse arrays.")
 
         return spatialFootprints
-    
+
+    def import_traces(
+        self,
+        paths_F: Optional[List[Union[str, pathlib.Path]]] = None,
+        paths_Fneu: Optional[List[Union[str, pathlib.Path]]] = None,
+        compute_dFoF: bool = True,
+        neuropil_coeff: float = 0.7,
+    ) -> None:
+        """
+        Load fluorescence traces (F, Fneu) from Suite2p output files.
+
+        If paths are not provided, auto-detects ``F.npy`` and ``Fneu.npy``
+        from the same directories as the stat files. Optionally computes
+        dFoF and sets it via :meth:`set_traces`.
+
+        Args:
+            paths_F (Optional[List[Union[str, pathlib.Path]]]):
+                Paths to F.npy files, one per session. If ``None``,
+                auto-detects from stat file paths.
+            paths_Fneu (Optional[List[Union[str, pathlib.Path]]]):
+                Paths to Fneu.npy files, one per session. If ``None``,
+                auto-detects from stat file paths.
+            compute_dFoF (bool):
+                If ``True``, computes dFoF from F and Fneu and calls
+                :meth:`set_traces` with ``trace_type='dFoF'``.
+            neuropil_coeff (float):
+                Neuropil subtraction coefficient for dFoF computation.
+        """
+        ## Store parameter (but not data) args as attributes
+        self.params['import_traces'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'paths_F',
+                'paths_Fneu',
+                'compute_dFoF',
+                'neuropil_coeff',
+            ],
+        )
+
+        print(f"Starting: Importing fluorescence traces") if self._verbose else None
+
+        ## Auto-detect paths if not provided
+        if paths_F is None:
+            paths_F = [str(Path(p).parent / 'F.npy') for p in self.paths_stat]
+        if paths_Fneu is None:
+            paths_Fneu = [str(Path(p).parent / 'Fneu.npy') for p in self.paths_stat]
+
+        ## Load F
+        F_list = []
+        for p in paths_F:
+            assert Path(p).exists(), f"F file not found: {p}"
+            F_list.append(np.load(p))
+        self.F = F_list
+
+        ## Load Fneu
+        Fneu_list = []
+        for p in paths_Fneu:
+            assert Path(p).exists(), f"Fneu file not found: {p}"
+            Fneu_list.append(np.load(p))
+        self.Fneu = Fneu_list
+
+        ## Validate shapes match between F and Fneu, and against spatial data
+        for i, (f, fn) in enumerate(zip(self.F, self.Fneu)):
+            assert f.shape == fn.shape, (
+                f"Session {i}: F shape {f.shape} != Fneu shape {fn.shape}"
+            )
+            if hasattr(self, 'n_roi') and self.n_roi is not None:
+                assert f.shape[0] == self.n_roi[i], (
+                    f"Session {i}: F has {f.shape[0]} ROIs but spatial data has {self.n_roi[i]}"
+                )
+
+        print(f"Completed: Loaded F and Fneu for {len(self.F)} sessions.") if self._verbose else None
+
+        ## Compute dFoF
+        if compute_dFoF:
+            self.dFoF = [
+                self.compute_dFoF(f, fn, neuropil_coeff=neuropil_coeff)
+                for f, fn in zip(self.F, self.Fneu)
+            ]
+            self.set_traces(self.dFoF, trace_type='dFoF')
 
     def import_neuropil_masks(
         self,

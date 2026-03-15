@@ -1200,3 +1200,88 @@ class Test_edge_cases:
         assert np.all(dConj.data <= 1)
 
 
+######################################################################################################################################
+######################################################### TRACES ####################################################################
+######################################################################################################################################
+
+
+class Test_trace_support:
+    def test_set_traces_basic(self):
+        """set_traces should accept valid trace arrays."""
+        from roicat.data_importing import Data_roicat
+        data = Data_roicat(verbose=False)
+        traces = [np.random.rand(10, 1000).astype(np.float32) for _ in range(3)]
+        data.set_traces(traces, trace_type='dFoF')
+        assert len(data.traces) == 3
+        assert data.trace_type == 'dFoF'
+        assert data.n_frames == [1000, 1000, 1000]
+
+    def test_set_traces_validates_n_roi(self):
+        """set_traces should reject traces whose n_roi mismatches spatial data."""
+        from roicat.data_importing import Data_roicat
+        data = Data_roicat(verbose=False)
+        ## Set n_roi via spatialFootprints-like path
+        data.n_roi = [10, 10]
+        data.n_sessions = 2
+        ## Mismatched n_roi (5 != 10)
+        traces = [np.random.rand(5, 100).astype(np.float32) for _ in range(2)]
+        with pytest.raises(AssertionError, match="ROIs"):
+            data.set_traces(traces, trace_type='F')
+
+    def test_compute_dFoF_shape(self):
+        """dFoF output should match input shape."""
+        from roicat.data_importing import Data_roicat
+        F = np.random.rand(10, 500).astype(np.float32) + 100
+        Fneu = np.random.rand(10, 500).astype(np.float32) + 50
+        dFoF = Data_roicat.compute_dFoF(F, Fneu)
+        assert dFoF.shape == F.shape
+
+    def test_compute_dFoF_global_baseline(self):
+        """dFoF should use global baseline when window >= n_frames."""
+        from roicat.data_importing import Data_roicat
+        F = np.random.rand(5, 100) + 100
+        Fneu = np.random.rand(5, 100) + 50
+        dFoF = Data_roicat.compute_dFoF(F, Fneu, baseline_window=200)
+        assert dFoF.shape == F.shape
+        assert np.all(np.isfinite(dFoF))
+
+    def test_compute_dFoF_neuropil_correction(self):
+        """dFoF with neuropil correction should differ from without."""
+        from roicat.data_importing import Data_roicat
+        F = np.random.rand(5, 200) + 100
+        Fneu = np.random.rand(5, 200) + 50
+        dFoF_with = Data_roicat.compute_dFoF(F, Fneu, neuropil_coeff=0.7)
+        dFoF_without = Data_roicat.compute_dFoF(F, Fneu, neuropil_coeff=0.0)
+        assert not np.allclose(dFoF_with, dFoF_without)
+
+    def test_compute_dFoF_shape_mismatch_raises(self):
+        """compute_dFoF should raise when F and Fneu shapes differ."""
+        from roicat.data_importing import Data_roicat
+        F = np.random.rand(10, 500)
+        Fneu = np.random.rand(10, 400)
+        with pytest.raises(AssertionError, match="same shape"):
+            Data_roicat.compute_dFoF(F, Fneu)
+
+    def test_trace_quality_metrics(self):
+        """Quality metrics should return expected keys with correct lengths."""
+        from roicat.data_importing import Data_roicat
+        np.random.seed(42)
+        traces = np.random.rand(10, 500)
+        metrics = Data_roicat.compute_trace_quality_metrics(traces)
+        assert 'snr' in metrics
+        assert 'skewness' in metrics
+        assert 'variance' in metrics
+        assert len(metrics['snr']) == 10
+        assert len(metrics['skewness']) == 10
+        assert len(metrics['variance']) == 10
+
+    def test_trace_quality_metrics_positive_skew(self):
+        """Traces with transients should have positive skewness."""
+        from roicat.data_importing import Data_roicat
+        np.random.seed(0)
+        ## Create a trace with clear positive transients
+        traces = np.random.rand(1, 1000) * 0.1
+        traces[0, 100:105] = 5.0  ## big positive transient
+        traces[0, 300:305] = 5.0
+        metrics = Data_roicat.compute_trace_quality_metrics(traces)
+        assert metrics['skewness'][0] > 0, "Trace with positive transients should have positive skewness"
