@@ -1929,29 +1929,39 @@ class Clusterer(util.ROICaT_Module):
         sim_mat: Optional[object] = None,
         dist_mat: Optional[object] = None,
         labels: Optional[np.ndarray] = None,
+        session_bool: Optional[np.ndarray] = None,
     ) -> Dict:
         """
         Computes quality metrics of the dataset.
         RH 2023
 
         Args:
-            sim_mat (Optional[object]): 
-                Similarity matrix of shape *(n_samples, n_samples)*. 
+            sim_mat (Optional[object]):
+                Similarity matrix of shape *(n_samples, n_samples)*.
                 If ``None`` then self.sConj must exist. (Default is ``None``)
-            dist_mat (Optional[object]): 
-                Distance matrix of shape *(n_samples, n_samples)*. 
+            dist_mat (Optional[object]):
+                Distance matrix of shape *(n_samples, n_samples)*.
                 If ``None`` then self.dConj must exist. (Default is ``None``)
-            labels (Optional[np.ndarray]): 
-                Cluster labels of shape *(n_samples,)*. 
+            labels (Optional[np.ndarray]):
+                Cluster labels of shape *(n_samples,)*.
                 If ``None``, then self.labels must exist. (Default is ``None``)
+            session_bool (Optional[np.ndarray]):
+                Boolean array indicating which ROIs belong to which session.
+                Shape: *(n_rois, n_sessions)*. If ``None``, falls back to
+                ``self._session_bool``. Session coverage and tracking
+                confidence metrics are only computed when session information
+                is available. (Default is ``None``)
 
         Returns:
-            (Dict): 
-                quality_metrics (Dict): 
+            (Dict):
+                quality_metrics (Dict):
                     Quality metrics dictionary that includes:
                     'cluster_intra_means', 'cluster_intra_mins',
                     'cluster_intra_maxs', 'cluster_silhouette',
                     'sample_silhouette', and other metrics if available.
+                    When session information is provided, also includes:
+                    'cluster_n_sessions', 'cluster_size',
+                    'cluster_session_coverage', 'cluster_tracking_confidence'.
         """
         if sim_mat is None:
             assert hasattr(self, 'sConj'), "self.sConj does not exist. Run self.find_optimal_parameters_for_pruning() first or specify sim_mat."
@@ -2005,6 +2015,36 @@ class Clusterer(util.ROICaT_Module):
                 'performance_accuracy': float(self.seqHung_performance['accuracy']),
             } if hasattr(self, 'seqHung_performance') else None,
         })
+
+        ## Session coverage and composite tracking confidence
+        sb = session_bool if session_bool is not None else self._session_bool
+        if sb is not None:
+            labels_arr = np.array(labels)
+            ## Use the same label ordering as the existing per-cluster metrics
+            ucids = np.array([int(u) for u in self.quality_metrics['cluster_labels_unique']])
+            n_sessions = sb.shape[1]
+
+            ## Count how many sessions each cluster appears in and its size
+            cluster_n_sessions = np.zeros(len(ucids), dtype=int)
+            cluster_size = np.zeros(len(ucids), dtype=int)
+            for i_ucid, ucid in enumerate(ucids):
+                mask = labels_arr == ucid
+                cluster_size[i_ucid] = int(mask.sum())
+                ## Determine which sessions this cluster appears in
+                cluster_n_sessions[i_ucid] = int(sb[mask].any(axis=0).sum())
+
+            ## Composite tracking confidence score
+            ## Combines silhouette, intra-cluster similarity, and session coverage
+            silhouette_norm = (np.array(self.quality_metrics['cluster_silhouette']) + 1) / 2  ## [-1,1] -> [0,1]
+            intra_means = np.array(self.quality_metrics['cluster_intra_means'])
+            session_coverage = cluster_n_sessions / n_sessions  ## [0, 1]
+            cluster_tracking_confidence = silhouette_norm * intra_means * session_coverage
+
+            self.quality_metrics['cluster_n_sessions'] = cluster_n_sessions.tolist()
+            self.quality_metrics['cluster_size'] = cluster_size.tolist()
+            self.quality_metrics['cluster_session_coverage'] = session_coverage.tolist()
+            self.quality_metrics['cluster_tracking_confidence'] = cluster_tracking_confidence.tolist()
+
         return self.quality_metrics
 
     ####################################################################
