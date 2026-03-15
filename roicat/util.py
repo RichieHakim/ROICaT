@@ -1733,3 +1733,92 @@ def invert_ucids(
         ucids_inverse = ucids_inverse.astype(np.int64)
         
     return ucids_inverse
+
+
+def validate_data_for_tracking(
+    data,
+    verbose: bool = True,
+) -> dict:
+    """
+    Run pre-flight validation checks on a data object before tracking.
+
+    Checks spatial footprints, FOV images, ROI images, and metadata
+    for common issues that would cause pipeline failures.
+
+    Args:
+        data:
+            A ``Data_roicat`` or ``Data_suite2p`` object.
+        verbose (bool):
+            If True, print validation results.
+
+    Returns:
+        (dict):
+            results (dict):
+                Dictionary with check names as keys and
+                ``(passed: bool, message: str)`` tuples as values.
+    """
+    checks = {}
+
+    ## Check spatial footprints exist
+    has_sf = hasattr(data, 'spatialFootprints') and data.spatialFootprints is not None
+    checks['spatial_footprints_exist'] = (has_sf, 'Spatial footprints present' if has_sf else 'Missing spatial footprints')
+
+    ## Check FOV images exist
+    has_fov = hasattr(data, 'FOV_images') and data.FOV_images is not None
+    checks['fov_images_exist'] = (has_fov, 'FOV images present' if has_fov else 'Missing FOV images')
+
+    ## Check ROI images exist
+    has_roi = hasattr(data, 'ROI_images') and data.ROI_images is not None
+    checks['roi_images_exist'] = (has_roi, 'ROI images present' if has_roi else 'Missing ROI images')
+
+    ## Check session count consistency
+    if has_sf and has_fov:
+        n_sf = len(data.spatialFootprints)
+        n_fov = len(data.FOV_images)
+        match = n_sf == n_fov
+        checks['session_count_match'] = (match, f'Session counts match ({n_sf})' if match else f'Mismatch: {n_sf} spatial footprint sessions vs {n_fov} FOV images')
+
+    ## Check FOV dimensions
+    if has_fov:
+        heights = [img.shape[0] for img in data.FOV_images]
+        widths = [img.shape[1] for img in data.FOV_images]
+        uniform_h = len(set(heights)) == 1
+        uniform_w = len(set(widths)) == 1
+        checks['uniform_fov_dimensions'] = (
+            uniform_h and uniform_w,
+            f'Uniform FOV dimensions ({heights[0]}x{widths[0]})' if (uniform_h and uniform_w) else f'Non-uniform FOV: heights={set(heights)}, widths={set(widths)}'
+        )
+
+    ## Check ROI counts per session
+    if has_sf:
+        roi_counts = [sf.shape[0] for sf in data.spatialFootprints]
+        checks['roi_counts'] = (
+            all(c > 0 for c in roi_counts),
+            f'ROI counts per session: {roi_counts}' if all(c > 0 for c in roi_counts) else f'Empty sessions detected: {roi_counts}'
+        )
+
+    ## Check um_per_pixel
+    has_um = hasattr(data, 'um_per_pixel') and data.um_per_pixel is not None
+    checks['um_per_pixel_set'] = (has_um, f'um_per_pixel set' if has_um else 'Missing um_per_pixel')
+
+    ## Check for NaN/Inf in FOV images
+    if has_fov:
+        has_nan = any(np.any(np.isnan(img)) for img in data.FOV_images)
+        has_inf = any(np.any(np.isinf(img)) for img in data.FOV_images)
+        checks['fov_no_nan_inf'] = (
+            not has_nan and not has_inf,
+            'FOV images clean' if (not has_nan and not has_inf) else f'FOV images contain {"NaN" if has_nan else ""} {"Inf" if has_inf else ""}'
+        )
+
+    ## Print summary
+    if verbose:
+        n_pass = sum(1 for v in checks.values() if v[0])
+        n_fail = sum(1 for v in checks.values() if not v[0])
+        print(f"\nData Validation: {n_pass} passed, {n_fail} failed")
+        for name, (passed, msg) in checks.items():
+            status = 'PASS' if passed else 'FAIL'
+            print(f"  [{status}] {msg}")
+        if n_fail > 0:
+            print(f"\nWARNING: {n_fail} check(s) failed. Pipeline may not complete successfully.")
+
+    return checks
