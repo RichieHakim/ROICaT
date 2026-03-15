@@ -13,7 +13,7 @@ import torch
 from tqdm.auto import tqdm
 # import optuna
 
-from fast_hdbscan import HDBSCAN as FastHDBSCAN
+import fast_hdbscan
 
 from .. import helpers, util
 
@@ -1177,6 +1177,7 @@ class Clusterer(util.ROICaT_Module):
         discard_failed_pruning: bool = True,
         n_steps_clusterSplit: int = 100,
         backend: str = 'fast_hdbscan',
+        algorithm: str = 'kruskal',
     ) -> np.ndarray:
         """
         Fits clustering using HDBSCAN with same-session constraint enforcement.
@@ -1236,6 +1237,14 @@ class Clusterer(util.ROICaT_Module):
                 * ``'legacy'``: Use legacy hdbscan with iterative violation
                   correction. \n
                 (Default is ``'fast_hdbscan'``)
+            algorithm (str):
+                Algorithm for fast_hdbscan MST construction. Only used with
+                ``backend='fast_hdbscan'``: \n
+                * ``'kruskal'``: Kruskal DSU on full CSR edge list. Supports
+                  cannot-link with any metric.
+                * ``'boruvka'``: Boruvka parallel MST. Supports cannot-link
+                  only with ``metric='precomputed'``. \n
+                (Default is ``'kruskal'``)
 
         Returns:
             (np.ndarray):
@@ -1255,6 +1264,7 @@ class Clusterer(util.ROICaT_Module):
                 'discard_failed_pruning',
                 'n_steps_clusterSplit',
                 'backend',
+                'algorithm',
             ],
         )
 
@@ -1265,6 +1275,7 @@ class Clusterer(util.ROICaT_Module):
                 min_cluster_size=min_cluster_size,
                 cluster_selection_method=cluster_selection_method,
                 d_clusterMerge=d_clusterMerge,
+                algorithm=algorithm,
             )
         elif backend == 'legacy':
             return self._fit_legacy_hdbscan(
@@ -1291,6 +1302,7 @@ class Clusterer(util.ROICaT_Module):
         min_cluster_size: int = 2,
         cluster_selection_method: str = 'leaf',
         d_clusterMerge: Optional[float] = None,
+        algorithm: str = 'kruskal',
     ) -> np.ndarray:
         """
         Fit clustering using fast_hdbscan with native cannot-link constraints.
@@ -1316,6 +1328,9 @@ class Clusterer(util.ROICaT_Module):
             d_clusterMerge (Optional[float]):
                 Distance threshold for merging clusters. If ``None``, computed
                 as mean + 1*std of the distance data. (Default is ``None``)
+            algorithm (str):
+                MST construction algorithm. ``'kruskal'`` or ``'boruvka'``.
+                (Default is ``'kruskal'``)
 
         Returns:
             (np.ndarray):
@@ -1346,12 +1361,12 @@ class Clusterer(util.ROICaT_Module):
         print('Fitting with fast_hdbscan (cannot-link constraints)') if self._verbose else None
 
         ## Run fast_hdbscan with cannot-link constraints
-        self.hdbs = FastHDBSCAN(
+        self.hdbs = fast_hdbscan.HDBSCAN(
             min_cluster_size=min_cluster_size,
             cluster_selection_epsilon=d_clusterMerge,
             max_cluster_size=n_sessions,
             metric='precomputed',
-            algorithm='kruskal',
+            algorithm=algorithm,
             cannot_link=cannot_link,
             validate_cannot_link=False,
             cluster_selection_method=cluster_selection_method,

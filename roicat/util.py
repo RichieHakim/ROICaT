@@ -938,15 +938,8 @@ class RichFile_ROICaT(rf.RichFile):
             with open(path, 'r') as f:
                 return f.read()
 
-        try:
-            from fast_hdbscan import HDBSCAN as _FastHDBSCAN
-            _hdbscan_class = _FastHDBSCAN
-        except ImportError:
-            try:
-                import hdbscan
-                _hdbscan_class = hdbscan.HDBSCAN
-            except ImportError:
-                _hdbscan_class = None
+        import fast_hdbscan
+        _hdbscan_class = fast_hdbscan.HDBSCAN
 
 
         ## SCIPY OPTIMIZE RESULT
