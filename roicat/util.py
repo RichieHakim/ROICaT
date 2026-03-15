@@ -938,7 +938,15 @@ class RichFile_ROICaT(rf.RichFile):
             with open(path, 'r') as f:
                 return f.read()
 
-        import hdbscan
+        try:
+            from fast_hdbscan import HDBSCAN as _FastHDBSCAN
+            _hdbscan_class = _FastHDBSCAN
+        except ImportError:
+            try:
+                import hdbscan
+                _hdbscan_class = hdbscan.HDBSCAN
+            except ImportError:
+                _hdbscan_class = None
 
 
         ## SCIPY OPTIMIZE RESULT
@@ -1142,15 +1150,15 @@ class RichFile_ROICaT(rf.RichFile):
                 "library":            "torch",
                 "versions_supported": [],
             },
-            {
+            *([{
                 "type_name":          "hdbscan",
                 "function_load":      load_repr,
                 "function_save":      save_repr,
-                "object_class":       hdbscan.HDBSCAN,
+                "object_class":       _hdbscan_class,
                 "suffix":             "hdbscan",
                 "library":            "torch",
                 "versions_supported": [],
-            },
+            }] if _hdbscan_class is not None else []),
             {
                 "type_name":          "pandas_dataframe",
                 "function_load":      load_pandas_dataframe,

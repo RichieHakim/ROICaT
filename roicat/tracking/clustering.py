@@ -13,6 +13,12 @@ import torch
 from tqdm.auto import tqdm
 # import optuna
 
+try:
+    from fast_hdbscan import HDBSCAN as FastHDBSCAN
+    _HAS_FAST_HDBSCAN = True
+except ImportError:
+    _HAS_FAST_HDBSCAN = False
+
 from .. import helpers, util
 
 class Clusterer(util.ROICaT_Module):
@@ -1174,60 +1180,73 @@ class Clusterer(util.ROICaT_Module):
         split_intraSession_clusters: bool = True,
         discard_failed_pruning: bool = True,
         n_steps_clusterSplit: int = 100,
+        backend: str = 'auto',
     ) -> np.ndarray:
         """
-        Fits clustering using a modified HDBSCAN clustering algorithm.
-        The approach is to use HDBSCAN but avoid having clusters with multiple ROIs from 
-        the same session. This is achieved by repeating three steps: \n
-        1. Fit HDBSCAN to the data. 
-        2. Identify clusters that have multiple ROIs from the same session
-           and walk back down the dendrogram until those clusters are split up
-           into non-violating clusters. 
-        3. Disconnect graph edges between ROIs within each new cluster and all
-           other ROIs outside the cluster that are from the same session. \n
+        Fits clustering using HDBSCAN with same-session constraint enforcement.
+
+        When ``backend='fast_hdbscan'`` (or ``'auto'`` with fast_hdbscan
+        installed), uses ``fast_hdbscan.HDBSCAN`` with native cannot-link
+        constraints. The cannot-link matrix is built from ``self.s_sesh_inv``
+        (True where two ROIs are from the SAME session), which prevents
+        same-session ROIs from ever being placed in the same cluster during
+        MST construction. This eliminates the need for iterative violation
+        correction.
+
+        When ``backend='legacy'`` (or ``'auto'`` without fast_hdbscan),
+        falls back to the original ``hdbscan.HDBSCAN`` with iterative
+        violation correction via dendrogram walk-back.
+
+        RH 2023 / 2025
 
         Args:
-            d_conj (scipy.sparse.csr_matrix): 
+            d_conj (scipy.sparse.csr_matrix):
                 Conjunctive distance matrix.
-            session_bool (np.ndarray): 
+            session_bool (np.ndarray):
                 Boolean array indicating which ROIs belong to which session.
                 Shape: *(n_rois, n_sessions)*
-            min_cluster_size (int): 
+            min_cluster_size (int):
                 Minimum cluster size to be considered a cluster. Can be 'all'.
                 (Default is *2*)
-            n_iter_violationCorrection (int): 
+            n_iter_violationCorrection (int):
                 Number of iterations to correct for clusters with multiple ROIs
-                per session. This is done to overcome the issues with
-                single-linkage clustering finding clusters with multiple ROIs
-                per session. (Default is *5*)
-            cluster_selection_method (str): 
+                per session. Only used with ``backend='legacy'``.
+                (Default is *5*)
+            cluster_selection_method (str):
                 Cluster selection method. Either ``'leaf'`` or ``'eom'``. 'leaf'
                 leans towards smaller clusters, 'eom' towards larger clusters.
                 (Default is ``'leaf'``)
-            d_clusterMerge (Optional[float]): 
+            d_clusterMerge (Optional[float]):
                 Distance threshold for merging clusters. All clusters with ROIs
                 closer than this distance will be merged. If ``None``, the
                 distance is calculated as the mean + 1*std of the conjunctive
                 distances. (Default is ``None``)
-            alpha (float): 
-                Alpha value. Smaller values result in more clusters. (Default is
+            alpha (float):
+                Alpha value. Only used with ``backend='legacy'``. (Default is
                 *0.999*)
-            split_intraSession_clusters (bool): 
+            split_intraSession_clusters (bool):
                 If ``True``, clusters containing ROIs from multiple sessions
-                will be split. Only set to ``False`` if you want clusters
-                containing multiple ROIs from the same session. (Default is
+                will be split. Only used with ``backend='legacy'``. (Default is
                 ``True``)
-            discard_failed_pruning (bool): 
-                If ``True``, clusters failing to prune are set to -1. (Default
-                is ``True``)
-            n_steps_clusterSplit (int): 
+            discard_failed_pruning (bool):
+                If ``True``, clusters failing to prune are set to -1. Only used
+                with ``backend='legacy'``. (Default is ``True``)
+            n_steps_clusterSplit (int):
                 Number of steps for splitting clusters with multiple ROIs from
-                the same session. Lower values are faster but less accurate.
-                (Default is *100*)
+                the same session. Only used with ``backend='legacy'``. (Default
+                is *100*)
+            backend (str):
+                Which HDBSCAN implementation to use. One of: \n
+                * ``'auto'``: Use fast_hdbscan if available, else legacy.
+                * ``'fast_hdbscan'``: Use fast_hdbscan (raises if not
+                  installed).
+                * ``'legacy'``: Use legacy hdbscan with iterative violation
+                  correction. \n
+                (Default is ``'auto'``)
 
         Returns:
-            (np.ndarray): 
-                labels (np.ndarray): 
+            (np.ndarray):
+                labels (np.ndarray):
                     Cluster labels for each ROI, shape: *(n_rois_total)*
         """
         ## Store parameter (but not data) args as attributes
@@ -1242,9 +1261,212 @@ class Clusterer(util.ROICaT_Module):
                 'split_intraSession_clusters',
                 'discard_failed_pruning',
                 'n_steps_clusterSplit',
+                'backend',
             ],
         )
 
+        ## Resolve backend
+        if backend == 'auto':
+            use_fast = _HAS_FAST_HDBSCAN
+        elif backend == 'fast_hdbscan':
+            assert _HAS_FAST_HDBSCAN, (
+                "fast_hdbscan is not installed. Install with: "
+                "pip install git+https://github.com/TutteInstitute/fast_hdbscan.git"
+            )
+            use_fast = True
+        elif backend == 'legacy':
+            use_fast = False
+        else:
+            raise ValueError(
+                f"backend must be 'auto', 'fast_hdbscan', or 'legacy'. Got: {backend!r}"
+            )
+
+        if use_fast:
+            return self._fit_fast_hdbscan(
+                d_conj=d_conj,
+                session_bool=session_bool,
+                min_cluster_size=min_cluster_size,
+                cluster_selection_method=cluster_selection_method,
+                d_clusterMerge=d_clusterMerge,
+            )
+        else:
+            return self._fit_legacy_hdbscan(
+                d_conj=d_conj,
+                session_bool=session_bool,
+                min_cluster_size=min_cluster_size,
+                n_iter_violationCorrection=n_iter_violationCorrection,
+                cluster_selection_method=cluster_selection_method,
+                d_clusterMerge=d_clusterMerge,
+                alpha=alpha,
+                split_intraSession_clusters=split_intraSession_clusters,
+                discard_failed_pruning=discard_failed_pruning,
+                n_steps_clusterSplit=n_steps_clusterSplit,
+            )
+
+    def _fit_fast_hdbscan(
+        self,
+        d_conj: scipy.sparse.csr_matrix,
+        session_bool: np.ndarray,
+        min_cluster_size: int = 2,
+        cluster_selection_method: str = 'leaf',
+        d_clusterMerge: Optional[float] = None,
+    ) -> np.ndarray:
+        """
+        Fit clustering using fast_hdbscan with native cannot-link constraints.
+
+        Cannot-link constraints enforce that ROIs from the same session
+        never end up in the same cluster. The constraints are enforced during
+        MST construction (Kruskal's algorithm skips edges between cannot-link
+        pairs that are already connected), eliminating the need for the
+        iterative violation-correction loop used by the legacy backend.
+
+        RH 2025
+
+        Args:
+            d_conj (scipy.sparse.csr_matrix):
+                Conjunctive distance matrix. Shape: *(n_rois, n_rois)*.
+            session_bool (np.ndarray):
+                Boolean array indicating which ROIs belong to which session.
+                Shape: *(n_rois, n_sessions)*.
+            min_cluster_size (int):
+                Minimum cluster size. (Default is *2*)
+            cluster_selection_method (str):
+                ``'leaf'`` or ``'eom'``. (Default is ``'leaf'``)
+            d_clusterMerge (Optional[float]):
+                Distance threshold for merging clusters. If ``None``, computed
+                as mean + 1*std of the distance data. (Default is ``None``)
+
+        Returns:
+            (np.ndarray):
+                labels (np.ndarray):
+                    Cluster labels for each ROI, shape: *(n_rois_total)*.
+        """
+        ## Mask to inter-session pairs only (same as legacy)
+        d = d_conj.copy().multiply(self.s_sesh)
+
+        if d.nnz == 0:
+            print('No edges in graph. Returning all -1 labels.') if self._verbose else None
+            self.labels = np.ones(d.shape[0], dtype=int) * -1
+            return self.labels
+
+        n_sessions = session_bool.shape[1]
+        if min_cluster_size == 'all':
+            min_cluster_size = n_sessions
+            print(f'Setting min_cluster_size to {min_cluster_size} (all ROIs in a session)') if self._verbose else None
+
+        ## Auto-estimate d_clusterMerge
+        d_clusterMerge = float(np.mean(d.data) + 1 * np.std(d.data)) if d_clusterMerge is None else float(d_clusterMerge)
+
+        ## Build cannot-link matrix from s_sesh_inv
+        ## s_sesh_inv is True where ROIs are from the SAME session — these
+        ## pairs must never appear in the same cluster.
+        cannot_link = self.s_sesh_inv.astype(bool).tocsr()
+
+        print('Fitting with fast_hdbscan (cannot-link constraints)') if self._verbose else None
+
+        ## Run fast_hdbscan with cannot-link constraints
+        self.hdbs = FastHDBSCAN(
+            min_cluster_size=min_cluster_size,
+            cluster_selection_epsilon=d_clusterMerge,
+            max_cluster_size=n_sessions,
+            metric='precomputed',
+            algorithm='kruskal',
+            cannot_link=cannot_link,
+            validate_cannot_link=False,
+            cluster_selection_method=cluster_selection_method,
+        )
+        self.hdbs.fit(d)
+        labels = self.hdbs.labels_.copy()
+        self._fit_used_fully_connected_node = False
+
+        ## Report violations (should be zero with cannot-link)
+        violations_labels = np.unique(labels)[np.array([
+            (session_bool[labels == u].sum(0) > 1).sum().item()
+            for u in np.unique(labels)
+        ]) > 0]
+        violations_labels = violations_labels[violations_labels > -1]
+        self.violations_labels = violations_labels
+        if self._verbose:
+            n_violations = len(violations_labels)
+            print(f'Session violations after fast_hdbscan: {n_violations} clusters, d_clusterMerge={d_clusterMerge:.2f}')
+
+        ## Post-processing: squeeze labels, remove singletons
+        labels = helpers.squeeze_integers(labels)
+
+        ## Set clusters with too few ROIs to -1
+        u, c = np.unique(labels, return_counts=True)
+        labels[np.isin(labels, u[c < 2])] = -1
+        labels = helpers.squeeze_integers(labels)
+
+        self.labels = labels
+        return self.labels
+
+    def _fit_legacy_hdbscan(
+        self,
+        d_conj: scipy.sparse.csr_matrix,
+        session_bool: np.ndarray,
+        min_cluster_size: int = 2,
+        n_iter_violationCorrection: int = 5,
+        cluster_selection_method: str = 'leaf',
+        d_clusterMerge: Optional[float] = None,
+        alpha: float = 0.999,
+        split_intraSession_clusters: bool = True,
+        discard_failed_pruning: bool = True,
+        n_steps_clusterSplit: int = 100,
+    ) -> np.ndarray:
+        """
+        Legacy clustering using hdbscan==0.8.41 with iterative violation
+        correction. Preserved for backward compatibility.
+
+        Fits clustering using a modified HDBSCAN clustering algorithm.
+        The approach is to use HDBSCAN but avoid having clusters with multiple
+        ROIs from the same session. This is achieved by repeating three
+        steps: \n
+        1. Fit HDBSCAN to the data.
+        2. Identify clusters that have multiple ROIs from the same session
+           and walk back down the dendrogram until those clusters are split up
+           into non-violating clusters.
+        3. Disconnect graph edges between ROIs within each new cluster and all
+           other ROIs outside the cluster that are from the same session. \n
+
+        RH 2023
+
+        Args:
+            d_conj (scipy.sparse.csr_matrix):
+                Conjunctive distance matrix.
+            session_bool (np.ndarray):
+                Boolean array indicating which ROIs belong to which session.
+                Shape: *(n_rois, n_sessions)*
+            min_cluster_size (int):
+                Minimum cluster size to be considered a cluster. Can be 'all'.
+                (Default is *2*)
+            n_iter_violationCorrection (int):
+                Number of iterations to correct for clusters with multiple ROIs
+                per session. (Default is *5*)
+            cluster_selection_method (str):
+                Cluster selection method. Either ``'leaf'`` or ``'eom'``.
+                (Default is ``'leaf'``)
+            d_clusterMerge (Optional[float]):
+                Distance threshold for merging clusters. If ``None``, the
+                distance is calculated as the mean + 1*std of the conjunctive
+                distances. (Default is ``None``)
+            alpha (float):
+                Alpha value. Smaller values result in more clusters. (Default is
+                *0.999*)
+            split_intraSession_clusters (bool):
+                If ``True``, clusters containing ROIs from multiple sessions
+                will be split. (Default is ``True``)
+            discard_failed_pruning (bool):
+                If ``True``, clusters failing to prune are set to -1. (Default
+                is ``True``)
+            n_steps_clusterSplit (int):
+                Number of steps for splitting clusters. (Default is *100*)
+
+        Returns:
+            (np.ndarray):
+                labels (np.ndarray):
+                    Cluster labels for each ROI, shape: *(n_rois_total)*
+        """
         import hdbscan
         d = d_conj.copy().multiply(self.s_sesh)
 
@@ -1252,7 +1474,7 @@ class Clusterer(util.ROICaT_Module):
             print('No edges in graph. Returning all -1 labels.') if self._verbose else None
             self.labels = np.ones(d.shape[0], dtype=int) * -1
             return self.labels
-            
+
         n_sessions = session_bool.shape[1]
         if min_cluster_size == 'all':
             min_cluster_size = n_sessions
@@ -1278,19 +1500,20 @@ class Clusterer(util.ROICaT_Module):
             )
 
             self.hdbs.fit(attach_fully_connected_node(
-                d, 
+                d,
                 dist_fullyConnectedNode=max_dist,
                 n_nodes=1,
             ))
             labels = self.hdbs.labels_[:-1]
             self.labels = labels
+            self._fit_used_fully_connected_node = True
 
             print(f'Initial number of violating clusters: {len(np.unique(labels)[np.array([(session_bool[labels==u].sum(0)>1).sum().item() for u in np.unique(labels)]) > 0])}, d_clusterMerge={d_clusterMerge:.2f}') if self._verbose else None
 
             ## Split up labels with multiple ROIs per session
             ## The below code is a bit of a mess, but it works.
             ##  It works by iteratively reducing the cutoff distance
-            ##  and splitting up violating clusters until there are 
+            ##  and splitting up violating clusters until there are
             ##  no more violations.
             if split_intraSession_clusters:
                 labels = labels.copy()
@@ -1308,7 +1531,7 @@ class Clusterer(util.ROICaT_Module):
 
                     if len(violations_labels) == 0:
                         break
-                    
+
                     for l in violations_labels:
                         idx = np.where(labels==l)[0]
                         if d[idx][:,idx].nnz == 0:
@@ -1318,11 +1541,11 @@ class Clusterer(util.ROICaT_Module):
                         cut_distance=d_cut,
                         min_cluster_size=min_cluster_size,
                     )[:-1]
-                    
+
                     idx_toUpdate = np.isin(labels, violations_labels)
                     labels[idx_toUpdate] = labels_new[idx_toUpdate] + labels.max() + 5
                     labels[(labels_new == -1) * idx_toUpdate] = -1
-                
+
                 if discard_failed_pruning:
                     labels[idx_toUpdate] = -1
 
@@ -1335,7 +1558,7 @@ class Clusterer(util.ROICaT_Module):
                     if l == -1:
                         continue
                     idx = np.where(labels==l)[0]
-                    
+
                     d_sub = d[idx][:,idx]
                     idx_grid = np.meshgrid(idx, idx)
                     ## set distances of ROIs from same session to 0
@@ -1348,7 +1571,7 @@ class Clusterer(util.ROICaT_Module):
 
 
         labels = helpers.squeeze_integers(labels)
-        
+
         violations_labels = np.unique(labels)[np.array([(session_bool[labels==u].sum(0)>1).sum().item() for u in np.unique(labels)]) > 0]
         violations_labels = violations_labels[violations_labels > -1]
         self.violations_labels = violations_labels
@@ -1937,6 +2160,44 @@ class Clusterer(util.ROICaT_Module):
 
         return dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover
 
+    def _extract_hdbscan_quality_metrics(self) -> Dict:
+        """
+        Extract HDBSCAN quality metrics, handling differences between legacy
+        hdbscan and fast_hdbscan backends.
+
+        Legacy hdbscan (with attach_fully_connected_node) stores an extra
+        trailing element for the fully connected node that must be stripped.
+        fast_hdbscan does not add extra nodes.
+
+        Returns:
+            (Dict):
+                Dictionary with 'sample_outlierScores' and
+                'sample_probabilities' keys.
+        """
+        def to_list_of_floats(x):
+            return [float(i) for i in x]
+
+        used_fcn = getattr(self, '_fit_used_fully_connected_node', True)
+
+        ## Probabilities
+        probs = self.hdbs.probabilities_
+        if used_fcn:
+            probs = probs[:-1]
+        result = {
+            'sample_probabilities': to_list_of_floats(probs),
+        }
+
+        ## Outlier scores (only available in legacy hdbscan, not fast_hdbscan)
+        if hasattr(self.hdbs, 'outlier_scores_'):
+            scores = self.hdbs.outlier_scores_
+            if used_fcn:
+                scores = scores[:-1]
+            result['sample_outlierScores'] = to_list_of_floats(scores)
+        else:
+            result['sample_outlierScores'] = None
+
+        return result
+
     def compute_quality_metrics(
         self,
         sim_mat: Optional[object] = None,
@@ -2007,10 +2268,7 @@ class Clusterer(util.ROICaT_Module):
             'cluster_intra_maxs': to_list_of_floats(cs_intra_maxs),
             'cluster_silhouette': to_list_of_floats(cs_sil),
             'sample_silhouette': to_list_of_floats(rs_sil),
-            'hdbscan': {
-                'sample_outlierScores': to_list_of_floats(self.hdbs.outlier_scores_[:-1]),  ## Remove last element which is the outlier score for the new fully connected node
-                'sample_probabilities': to_list_of_floats(self.hdbs.probabilities_[:-1]),  ## Remove last element which is the outlier score for the new fully connected node
-            }  if hasattr(self, 'hdbs') else None,
+            'hdbscan': self._extract_hdbscan_quality_metrics() if hasattr(self, 'hdbs') else None,
             'sequentialHungarian': {
                 'performance_recall': float(self.seqHung_performance['recall']),
                 'performance_precision': float(self.seqHung_performance['precision']),
