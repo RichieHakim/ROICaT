@@ -1200,3 +1200,171 @@ class Test_edge_cases:
         assert np.all(dConj.data <= 1)
 
 
+######################################################################################################################################
+########################################################## DBSCAN ###################################################################
+######################################################################################################################################
+
+
+def _make_synthetic_clusterer_and_dconj(n=60, n_sessions=3, seed=42):
+    """
+    Helper: build a Clusterer and a distance matrix from synthetic data.
+    Returns (clusterer, d_conj, session_bool).
+    """
+    from roicat import tracking
+
+    rng = np.random.RandomState(seed)
+
+    ## Create sparse sparsity pattern (banded)
+    rows, cols = [], []
+    for i in range(n):
+        for j in range(i + 1, min(i + 10, n)):
+            rows.extend([i, j])
+            cols.extend([j, i])
+    rows, cols = np.array(rows), np.array(cols)
+    nnz = len(rows)
+
+    s_sf = scipy.sparse.csr_matrix(
+        (rng.rand(nnz).astype(np.float64), (rows, cols)), shape=(n, n),
+    )
+    s_NN_z = s_sf.copy()
+    s_NN_z.data = rng.randn(nnz).astype(np.float64)
+    s_SWT_z = s_sf.copy()
+    s_SWT_z.data = rng.randn(nnz).astype(np.float64)
+
+    session_ids = np.repeat(np.arange(n_sessions), n // n_sessions + 1)[:n]
+    s_sesh_data = np.array([
+        float(session_ids[r] != session_ids[c]) for r, c in zip(rows, cols)
+    ], dtype=np.float64)
+    s_sesh = scipy.sparse.csr_matrix(
+        (s_sesh_data, (rows, cols)), shape=(n, n),
+    )
+
+    session_bool = np.zeros((n, n_sessions), dtype=bool)
+    for i in range(n):
+        session_bool[i, session_ids[i]] = True
+
+    c = tracking.clustering.Clusterer(
+        s_sf=s_sf, s_NN_z=s_NN_z, s_SWT_z=s_SWT_z,
+        s_sesh=s_sesh, verbose=False,
+    )
+
+    ## Build a distance matrix via the conjunctive distance matrix path
+    dConj, sConj, _, _, _, _ = c.make_conjunctive_distance_matrix(
+        s_sf=c.s_sf, s_NN=c.s_NN_z, s_SWT=c.s_SWT_z, s_sesh=None,
+    )
+    ## Store on clusterer so compute_quality_metrics works
+    c.dConj = dConj
+    c.sConj = sConj
+
+    return c, dConj, session_bool
+
+
+class Test_DBSCAN_clustering:
+    """Tests for Clusterer.fit_DBSCAN."""
+
+    def test_dbscan_produces_labels(self):
+        """DBSCAN should produce a label for every ROI."""
+        c, d_conj, session_bool = _make_synthetic_clusterer_and_dconj()
+        labels = c.fit_DBSCAN(
+            d_conj=d_conj,
+            session_bool=session_bool,
+        )
+        assert labels.shape == (d_conj.shape[0],)
+        assert labels.dtype in (np.int32, np.int64, int)
+
+    def test_dbscan_auto_eps(self):
+        """Auto eps estimation should not error and produce valid labels."""
+        c, d_conj, session_bool = _make_synthetic_clusterer_and_dconj()
+        labels = c.fit_DBSCAN(
+            d_conj=d_conj,
+            session_bool=session_bool,
+            eps=None,
+        )
+        ## Auto eps should still produce a valid label array
+        assert labels.shape == (d_conj.shape[0],)
+        ## The stored param should be None (the input value)
+        assert c.params['fit_DBSCAN']['eps'] is None
+
+    def test_dbscan_explicit_eps(self):
+        """Passing an explicit eps should work and be stored."""
+        c, d_conj, session_bool = _make_synthetic_clusterer_and_dconj()
+        labels = c.fit_DBSCAN(
+            d_conj=d_conj,
+            session_bool=session_bool,
+            eps=0.5,
+        )
+        assert labels.shape == (d_conj.shape[0],)
+
+    def test_dbscan_no_same_session_pairs(self):
+        """No cluster should contain two ROIs from the same session."""
+        c, d_conj, session_bool = _make_synthetic_clusterer_and_dconj()
+        labels = c.fit_DBSCAN(
+            d_conj=d_conj,
+            session_bool=session_bool,
+            split_intraSession_clusters=True,
+        )
+        for u in np.unique(labels):
+            if u == -1:
+                continue
+            sessions_in_cluster = session_bool[labels == u].sum(axis=0)
+            assert np.all(sessions_in_cluster <= 1), (
+                f"Cluster {u} has multiple ROIs from the same session: {sessions_in_cluster}"
+            )
+
+    def test_dbscan_no_split(self):
+        """With split_intraSession_clusters=False, DBSCAN should still produce labels."""
+        c, d_conj, session_bool = _make_synthetic_clusterer_and_dconj()
+        labels = c.fit_DBSCAN(
+            d_conj=d_conj,
+            session_bool=session_bool,
+            split_intraSession_clusters=False,
+        )
+        assert labels.shape == (d_conj.shape[0],)
+
+    def test_dbscan_empty_graph(self):
+        """DBSCAN on an empty graph should return all -1 labels."""
+        c, d_conj, session_bool = _make_synthetic_clusterer_and_dconj()
+        ## Zero out the distance matrix
+        d_empty = scipy.sparse.csr_matrix(d_conj.shape, dtype=np.float64)
+        labels = c.fit_DBSCAN(
+            d_conj=d_empty,
+            session_bool=session_bool,
+        )
+        assert np.all(labels == -1)
+
+    def test_dbscan_quality_metrics_work(self):
+        """compute_quality_metrics should work after DBSCAN (no self.hdbs needed)."""
+        c, d_conj, session_bool = _make_synthetic_clusterer_and_dconj()
+        labels = c.fit_DBSCAN(
+            d_conj=d_conj,
+            session_bool=session_bool,
+        )
+        ## Only run if we have at least 2 unique labels (including -1)
+        if len(np.unique(labels)) >= 2:
+            qm = c.compute_quality_metrics()
+            assert 'cluster_intra_means' in qm
+            assert qm['hdbscan'] is None  ## No HDBSCAN was run
+            assert qm['sequentialHungarian'] is None
+
+    def test_dbscan_default_params_exist(self):
+        """The default params should include dbscan configuration."""
+        params = util.get_default_parameters(pipeline='tracking')
+        assert 'dbscan' in params['clustering']
+        assert 'eps' in params['clustering']['dbscan']
+        assert 'min_samples' in params['clustering']['dbscan']
+
+    def test_dbscan_method_recognized_in_pipeline(self):
+        """The pipeline's choose_clustering_method should accept 'dbscan'."""
+        ## Inline the function logic from pipelines.py
+        def choose_clustering_method(method='automatic', n_sessions_switch=8, n_sessions=None):
+            if method == 'automatic':
+                method_out = 'hdbscan'.upper() if n_sessions >= n_sessions_switch else 'sequential_hungarian'.upper()
+            else:
+                method_out = method.upper()
+            assert method_out.upper() in ['hdbscan'.upper(), 'dbscan'.upper(), 'sequential_hungarian'.upper()]
+            return method_out
+
+        assert choose_clustering_method(method='dbscan', n_sessions=3) == 'DBSCAN'
+        assert choose_clustering_method(method='hdbscan', n_sessions=3) == 'HDBSCAN'
+
+

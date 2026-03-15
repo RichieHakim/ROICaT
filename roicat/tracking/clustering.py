@@ -1348,6 +1348,175 @@ class Clusterer(util.ROICaT_Module):
         self.labels = labels
         return self.labels
 
+    def fit_DBSCAN(
+        self,
+        d_conj: scipy.sparse.csr_matrix,
+        session_bool: np.ndarray,
+        eps: Optional[float] = None,
+        min_samples: int = 2,
+        split_intraSession_clusters: bool = True,
+        discard_failed_pruning: bool = True,
+        n_steps_clusterSplit: int = 100,
+    ) -> np.ndarray:
+        """
+        Fit DBSCAN clustering on the precomputed distance matrix.
+
+        Follows the same session-constraint pattern as :meth:`fit` (HDBSCAN):
+        first masks out same-session edges, then runs clustering, then
+        iteratively splits clusters that contain multiple ROIs from the same
+        session.
+
+        If ``eps`` is ``None``, it is automatically estimated as the mean +
+        1 standard deviation of the non-zero distances (analogous to the
+        HDBSCAN ``d_clusterMerge`` heuristic).
+
+        RH 2025
+
+        Args:
+            d_conj (scipy.sparse.csr_matrix):
+                Precomputed distance matrix. Shape *(n_roi_total, n_roi_total)*.
+            session_bool (np.ndarray):
+                Boolean matrix indicating session membership.
+                Shape *(n_roi_total, n_sessions)*.
+            eps (Optional[float]):
+                DBSCAN epsilon parameter. Maximum distance for neighborhood.
+                If ``None``, auto-estimated from the distance distribution.
+            min_samples (int):
+                Minimum samples to form a core point. (Default is *2*)
+            split_intraSession_clusters (bool):
+                If ``True``, clusters containing ROIs from the same session
+                will be split. (Default is ``True``)
+            discard_failed_pruning (bool):
+                If ``True``, clusters failing to split are set to -1. (Default
+                is ``True``)
+            n_steps_clusterSplit (int):
+                Number of steps for splitting clusters with multiple ROIs from
+                the same session. (Default is *100*)
+
+        Returns:
+            (np.ndarray):
+                labels (np.ndarray):
+                    Cluster labels. Shape *(n_roi_total,)*. Noise = -1.
+        """
+        from sklearn.cluster import DBSCAN
+
+        ## Store parameter (but not data) args as attributes
+        self.params['fit_DBSCAN'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'eps',
+                'min_samples',
+                'split_intraSession_clusters',
+                'discard_failed_pruning',
+                'n_steps_clusterSplit',
+            ],
+        )
+
+        ## Mask out same-session edges (same as HDBSCAN path)
+        d = d_conj.copy().multiply(self.s_sesh)
+
+        if d.nnz == 0:
+            print('No edges in graph. Returning all -1 labels.') if self._verbose else None
+            self.labels = np.ones(d.shape[0], dtype=int) * -1
+            return self.labels
+
+        ## Auto-estimate eps if not provided
+        if eps is None:
+            eps = float(np.mean(d.data) + np.std(d.data))
+            print(f'DBSCAN auto-estimated eps={eps:.4f} from distance distribution') if self._verbose else None
+
+        ## Convert sparse distance to dense for DBSCAN with metric='precomputed'.
+        ## Zeros in the sparse matrix represent missing edges; DBSCAN interprets 0
+        ## as distance zero (very close). Fill missing entries with a large distance
+        ## so they are outside any eps-neighborhood.
+        d_dense = d.toarray()
+        ## Set zero entries (no edge) to a value larger than eps so they are unreachable
+        missing_mask = (d_dense == 0)
+        np.fill_diagonal(missing_mask, False)  ## diagonal should stay 0
+        d_dense[missing_mask] = eps * 10.0
+
+        ## Run DBSCAN
+        print('Fitting with DBSCAN...') if self._verbose else None
+        dbscan = DBSCAN(
+            eps=eps,
+            min_samples=min_samples,
+            metric='precomputed',
+        )
+        labels = dbscan.fit_predict(d_dense)
+
+        if self._verbose:
+            n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+            n_noise = int(np.sum(labels == -1))
+            print(f'DBSCAN: {n_clusters} clusters, {n_noise} noise points')
+
+        ## Split clusters with multiple ROIs from the same session
+        ## (same logic as HDBSCAN path but using distance-threshold re-clustering)
+        if split_intraSession_clusters:
+            sb_t = torch.as_tensor(session_bool, dtype=torch.float32)
+            n = len(d_conj.data)
+            dcd = np.sort(d_conj.data)
+            cuts_all = np.sort(np.unique(
+                [dcd[0] / 2] +
+                [dcd[int(n * ii)] for ii in np.linspace(0., 1., num=n_steps_clusterSplit, endpoint=False)[::-1]] +
+                [dcd[-1]]
+            ))[::-1]
+
+            for d_cut in cuts_all:
+                labels_t = torch.as_tensor(labels, dtype=torch.int64)
+                lab_u_t, lab_u_idx_t = torch.unique(labels_t, return_inverse=True)
+                lab_oneHot_t = helpers.idx_to_oneHot(lab_u_idx_t, dtype=torch.float32)
+                violations_labels = lab_u_t[((sb_t.T @ lab_oneHot_t) > 1.5).sum(0) > 0]
+                violations_labels = violations_labels[violations_labels > -1]
+
+                if len(violations_labels) == 0:
+                    break
+
+                ## For each violating cluster, re-cluster its members using a
+                ## tighter eps (d_cut) to attempt to resolve the violation.
+                for l in violations_labels.numpy():
+                    idx = np.where(labels == l)[0]
+                    if len(idx) < 2:
+                        continue
+                    d_sub = d_dense[np.ix_(idx, idx)]
+                    sub_dbscan = DBSCAN(
+                        eps=d_cut,
+                        min_samples=min_samples,
+                        metric='precomputed',
+                    )
+                    sub_labels = sub_dbscan.fit_predict(d_sub)
+                    ## Remap sub-labels to global label space
+                    new_base = labels.max() + 5
+                    for si, sl in enumerate(sub_labels):
+                        if sl == -1:
+                            labels[idx[si]] = -1
+                        else:
+                            labels[idx[si]] = new_base + sl
+
+            ## Discard any remaining violations
+            if discard_failed_pruning:
+                labels_t = torch.as_tensor(labels, dtype=torch.int64)
+                lab_u_t, lab_u_idx_t = torch.unique(labels_t, return_inverse=True)
+                lab_oneHot_t = helpers.idx_to_oneHot(lab_u_idx_t, dtype=torch.float32)
+                violations_labels = lab_u_t[((sb_t.T @ lab_oneHot_t) > 1.5).sum(0) > 0]
+                violations_labels = violations_labels[violations_labels > -1]
+                for l in violations_labels.numpy():
+                    labels[labels == l] = -1
+
+        labels = helpers.squeeze_integers(labels)
+
+        ## Set clusters with too few ROIs to -1
+        u, c = np.unique(labels, return_counts=True)
+        labels[np.isin(labels, u[c < 2])] = -1
+        labels = helpers.squeeze_integers(labels)
+
+        if self._verbose:
+            n_clusters_final = len(set(labels)) - (1 if -1 in labels else 0)
+            n_noise_final = int(np.sum(labels == -1))
+            print(f'DBSCAN final: {n_clusters_final} clusters, {n_noise_final} noise points')
+
+        self.labels = labels
+        return self.labels
+
     def fit_sequentialHungarian(
         self,
         d_conj: scipy.sparse.csr_matrix,
