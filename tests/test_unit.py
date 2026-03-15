@@ -1200,3 +1200,276 @@ class Test_edge_cases:
         assert np.all(dConj.data <= 1)
 
 
+class Test_custom_similarities:
+    """Tests for the pluggable custom_similarities parameter in Clusterer."""
+
+    def test_custom_similarity_accepted(self, clusterer_with_data):
+        """Clusterer should accept custom similarity matrices."""
+        from roicat.tracking.clustering import Clusterer
+
+        ## Create a custom similarity matrix with same sparsity as s_sf
+        s_custom = clusterer_with_data.s_sf.copy()
+        s_custom.data = np.random.rand(s_custom.nnz).astype(np.float64)
+
+        ## Create new Clusterer with custom similarity
+        clusterer = Clusterer(
+            s_sf=clusterer_with_data.s_sf,
+            s_NN_z=clusterer_with_data.s_NN_z,
+            s_SWT_z=clusterer_with_data.s_SWT_z,
+            s_sesh=clusterer_with_data.s_sesh,
+            custom_similarities={'test_metric': s_custom},
+            verbose=False,
+        )
+        assert 'test_metric' in clusterer.custom_similarities
+        assert clusterer.custom_similarities['test_metric'].nnz == clusterer.s_sf.nnz
+
+    def test_custom_similarity_in_mixing(self, clusterer_with_data):
+        """Custom similarities should be included in distance matrix computation."""
+        from roicat.tracking.clustering import Clusterer
+
+        s_custom = clusterer_with_data.s_sf.copy()
+        s_custom.data = np.random.rand(s_custom.nnz).astype(np.float64)
+
+        clusterer = Clusterer(
+            s_sf=clusterer_with_data.s_sf,
+            s_NN_z=clusterer_with_data.s_NN_z,
+            s_SWT_z=clusterer_with_data.s_SWT_z,
+            s_sesh=clusterer_with_data.s_sesh,
+            custom_similarities={'test_metric': s_custom},
+            verbose=False,
+        )
+
+        ## Make distance matrix with custom power and sigmoid
+        dConj, sConj, sSF_data, sNN_data, sSWT_data, sConj_data = clusterer.make_conjunctive_distance_matrix(
+            s_sf=clusterer.s_sf,
+            s_NN=clusterer.s_NN_z,
+            s_SWT=clusterer.s_SWT_z,
+            s_sesh=clusterer.s_sesh,
+            custom_powers={'test_metric': 1.0},
+            custom_sig_kwargs={'test_metric': {'mu': 0.5, 'b': 1.0}},
+        )
+        assert dConj.nnz > 0
+        assert np.all(np.isfinite(dConj.data))
+        ## Custom activated data should be stored
+        assert 'test_metric' in clusterer._custom_activated
+
+    def test_custom_changes_distance(self, clusterer_with_data):
+        """Adding a custom similarity should change the output distance matrix."""
+        from roicat.tracking.clustering import Clusterer
+
+        ## Without custom
+        dConj_base, *_ = clusterer_with_data.make_conjunctive_distance_matrix(
+            s_sf=clusterer_with_data.s_sf,
+            s_NN=clusterer_with_data.s_NN_z,
+            s_SWT=clusterer_with_data.s_SWT_z,
+            s_sesh=clusterer_with_data.s_sesh,
+        )
+
+        ## With custom — a different metric should change the output
+        s_custom = clusterer_with_data.s_sf.copy()
+        rng = np.random.RandomState(42)
+        s_custom.data = rng.rand(s_custom.nnz).astype(np.float64)
+
+        clusterer = Clusterer(
+            s_sf=clusterer_with_data.s_sf,
+            s_NN_z=clusterer_with_data.s_NN_z,
+            s_SWT_z=clusterer_with_data.s_SWT_z,
+            s_sesh=clusterer_with_data.s_sesh,
+            custom_similarities={'extra': s_custom},
+            verbose=False,
+        )
+        dConj_custom, *_ = clusterer.make_conjunctive_distance_matrix(
+            s_sf=clusterer.s_sf,
+            s_NN=clusterer.s_NN_z,
+            s_SWT=clusterer.s_SWT_z,
+            s_sesh=clusterer.s_sesh,
+            custom_powers={'extra': 1.0},
+            custom_sig_kwargs={'extra': {'mu': 0.5, 'b': 1.0}},
+        )
+        ## They should differ since we added an extra metric in the p-norm
+        assert not np.allclose(dConj_base.data, dConj_custom.data), (
+            "Adding a custom similarity should change the conjunctive distance"
+        )
+
+    def test_custom_similarity_wrong_nnz_rejected(self):
+        """Custom matrix with different nnz should be rejected."""
+        from roicat.tracking.clustering import Clusterer
+
+        rng = np.random.RandomState(42)
+        n = 10
+        ## Create sparse matrices with known nnz
+        rows, cols = [], []
+        for i in range(n):
+            for j in range(i + 1, min(i + 5, n)):
+                rows.extend([i, j])
+                cols.extend([j, i])
+        rows, cols = np.array(rows), np.array(cols)
+        nnz = len(rows)
+
+        s_sf = scipy.sparse.csr_matrix(
+            (rng.rand(nnz).astype(np.float64), (rows, cols)), shape=(n, n),
+        )
+        s_NN_z = s_sf.copy()
+        s_NN_z.data = rng.randn(nnz).astype(np.float64)
+        s_SWT_z = s_sf.copy()
+        s_SWT_z.data = rng.randn(nnz).astype(np.float64)
+
+        session_ids = np.repeat(np.arange(3), n // 3 + 1)[:n]
+        s_sesh_data = np.array([
+            float(session_ids[r] != session_ids[c]) for r, c in zip(rows, cols)
+        ], dtype=np.float64)
+        s_sesh = scipy.sparse.csr_matrix(
+            (s_sesh_data, (rows, cols)), shape=(n, n),
+        )
+
+        ## Create a custom matrix with DIFFERENT sparsity pattern (different nnz)
+        s_wrong = scipy.sparse.random(n, n, density=0.1, format='csr')
+
+        with pytest.raises(AssertionError, match="nonzeros"):
+            Clusterer(
+                s_sf=s_sf, s_NN_z=s_NN_z, s_SWT_z=s_SWT_z, s_sesh=s_sesh,
+                custom_similarities={'bad': s_wrong},
+                verbose=False,
+            )
+
+    def test_no_custom_backward_compatible(self, clusterer_with_data):
+        """Without custom similarities, behavior should be identical to before."""
+        clusterer = clusterer_with_data
+        assert clusterer.custom_similarities == {}
+        assert not hasattr(clusterer, '_custom_activated') or clusterer._custom_activated == {}
+
+    def test_multiple_custom_similarities(self, clusterer_with_data):
+        """Multiple custom similarities should all be included in mixing."""
+        from roicat.tracking.clustering import Clusterer
+
+        rng = np.random.RandomState(42)
+        s_custom_a = clusterer_with_data.s_sf.copy()
+        s_custom_a.data = rng.rand(s_custom_a.nnz).astype(np.float64)
+        s_custom_b = clusterer_with_data.s_sf.copy()
+        s_custom_b.data = rng.rand(s_custom_b.nnz).astype(np.float64)
+
+        clusterer = Clusterer(
+            s_sf=clusterer_with_data.s_sf,
+            s_NN_z=clusterer_with_data.s_NN_z,
+            s_SWT_z=clusterer_with_data.s_SWT_z,
+            s_sesh=clusterer_with_data.s_sesh,
+            custom_similarities={'temporal': s_custom_a, 'size': s_custom_b},
+            verbose=False,
+        )
+        assert len(clusterer.custom_similarities) == 2
+
+        dConj, sConj, *_ = clusterer.make_conjunctive_distance_matrix(
+            s_sf=clusterer.s_sf,
+            s_NN=clusterer.s_NN_z,
+            s_SWT=clusterer.s_SWT_z,
+            s_sesh=clusterer.s_sesh,
+            custom_powers={'temporal': 0.5, 'size': 1.5},
+        )
+        assert dConj.nnz > 0
+        assert 'temporal' in clusterer._custom_activated
+        assert 'size' in clusterer._custom_activated
+
+    def test_custom_in_de_optimizer(self):
+        """DE optimizer should extend bounds for custom metric powers."""
+        from roicat.tracking.clustering import Clusterer
+
+        rng = np.random.RandomState(42)
+        n = 60
+        n_sessions = 3
+
+        rows, cols = [], []
+        for i in range(n):
+            for j in range(i + 1, min(i + 10, n)):
+                rows.extend([i, j])
+                cols.extend([j, i])
+        rows, cols = np.array(rows), np.array(cols)
+        nnz = len(rows)
+
+        s_sf = scipy.sparse.csr_matrix(
+            (rng.rand(nnz).astype(np.float64) * 0.5, (rows, cols)), shape=(n, n),
+        )
+        s_NN_z = s_sf.copy()
+        s_NN_z.data = rng.randn(nnz).astype(np.float64)
+        s_SWT_z = s_sf.copy()
+        s_SWT_z.data = rng.randn(nnz).astype(np.float64)
+
+        session_ids = np.repeat(np.arange(n_sessions), n // n_sessions + 1)[:n]
+        s_sesh_data = np.array([
+            float(session_ids[r] != session_ids[c]) for r, c in zip(rows, cols)
+        ], dtype=np.float64)
+        s_sesh = scipy.sparse.csr_matrix(
+            (s_sesh_data, (rows, cols)), shape=(n, n),
+        )
+
+        ## Custom metric with same sparsity
+        s_custom = s_sf.copy()
+        s_custom.data = rng.rand(nnz).astype(np.float64)
+
+        c = Clusterer(
+            s_sf=s_sf, s_NN_z=s_NN_z, s_SWT_z=s_SWT_z,
+            s_sesh=s_sesh,
+            custom_similarities={'temporal': s_custom},
+            verbose=False,
+        )
+
+        result = c._find_optimal_parameters_DE(
+            seed=42,
+            de_kwargs={
+                'maxiter': 5, 'tol': 1e-4, 'popsize': 5, 'polish': False,
+            },
+        )
+
+        ## Result should include custom powers
+        assert 'custom_powers' in c.best_params
+        assert 'temporal' in c.best_params['custom_powers']
+        assert np.isfinite(c.best_params['custom_powers']['temporal'])
+        assert np.isfinite(c._de_result.fun)
+
+    def test_custom_in_nb_calibration(self):
+        """NB calibration should include custom metrics."""
+        from roicat.tracking.clustering import Clusterer
+
+        rng = np.random.RandomState(42)
+        n = 60
+        n_sessions = 3
+
+        rows, cols = [], []
+        for i in range(n):
+            for j in range(i + 1, min(i + 10, n)):
+                rows.extend([i, j])
+                cols.extend([j, i])
+        rows, cols = np.array(rows), np.array(cols)
+        nnz = len(rows)
+
+        s_sf = scipy.sparse.csr_matrix(
+            (rng.rand(nnz).astype(np.float64), (rows, cols)), shape=(n, n),
+        )
+        s_NN_z = s_sf.copy()
+        s_NN_z.data = rng.randn(nnz).astype(np.float64)
+        s_SWT_z = s_sf.copy()
+        s_SWT_z.data = rng.randn(nnz).astype(np.float64)
+
+        session_ids = np.repeat(np.arange(n_sessions), n // n_sessions + 1)[:n]
+        s_sesh_data = np.array([
+            float(session_ids[r] != session_ids[c]) for r, c in zip(rows, cols)
+        ], dtype=np.float64)
+        s_sesh = scipy.sparse.csr_matrix(
+            (s_sesh_data, (rows, cols)), shape=(n, n),
+        )
+
+        s_custom = s_sf.copy()
+        s_custom.data = rng.rand(nnz).astype(np.float64)
+
+        c = Clusterer(
+            s_sf=s_sf, s_NN_z=s_NN_z, s_SWT_z=s_SWT_z,
+            s_sesh=s_sesh,
+            custom_similarities={'temporal': s_custom},
+            verbose=False,
+        )
+
+        dConj, sConj, cal = c.make_naive_bayes_distance_matrix()
+        ## Custom feature should appear in calibrations
+        assert 'temporal' in cal['features']
+        assert 'p_same_per_pair' in cal['features']['temporal']
+        assert dConj.shape == (n, n)
+        assert np.all(np.isfinite(dConj.data))

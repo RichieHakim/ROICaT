@@ -47,7 +47,14 @@ class Clusterer(util.ROICaT_Module):
             The similarity matrix for session similarity. Shape: *(n_rois,
             n_rois)*. Boolean, with 1s where the two ROIs are from different
             sessions.
-        n_bins (int): 
+        custom_similarities (Optional[Dict[str, scipy.sparse.csr_matrix]]):
+            Optional dict mapping metric names to user-supplied sparse
+            similarity matrices. All matrices must have the same sparsity
+            pattern (same ``nnz``) as ``s_sf``. These are integrated into
+            the mixing pipeline via sigmoid -> power -> p-norm, just like
+            the built-in metrics. Example: ``{'temporal': s_temporal,
+            'size': s_size}``. (Default is ``None``)
+        n_bins (int):
             Number of bins to use for the pairwise similarity distribution. If
             using automatic parameter finding, then using a large number of bins
             makes finding the separation point more noisy, and only slightly
@@ -96,6 +103,7 @@ class Clusterer(util.ROICaT_Module):
         s_NN_z: Optional[scipy.sparse.csr_matrix] = None,
         s_SWT_z: Optional[scipy.sparse.csr_matrix] = None,
         s_sesh: Optional[scipy.sparse.csr_matrix] = None,
+        custom_similarities: Optional[Dict[str, scipy.sparse.csr_matrix]] = None,
         n_bins: Optional[int] = None,
         smoothing_window_bins: Optional[int] = None,
         session_bool: Optional[np.ndarray] = None,
@@ -124,6 +132,17 @@ class Clusterer(util.ROICaT_Module):
 
         ## assert that all feature similarity matrices have the same nnz
         assert self.s_sf.nnz == self.s_NN_z.nnz == self.s_SWT_z.nnz
+
+        ## Store and validate custom similarity matrices
+        self.custom_similarities = custom_similarities or {}
+        for name, s_custom in self.custom_similarities.items():
+            assert scipy.sparse.issparse(s_custom), (
+                f"custom_similarities['{name}'] must be a sparse matrix"
+            )
+            assert s_custom.nnz == self.s_sf.nnz, (
+                f"custom_similarities['{name}'] has {s_custom.nnz} nonzeros, "
+                f"expected {self.s_sf.nnz} (same as s_sf)"
+            )
 
         self.s_sesh_inv = (self.s_sf != 0).astype(bool)
         self.s_sesh_inv[self.s_sesh.astype(bool)] = False
@@ -469,6 +488,16 @@ class Clusterer(util.ROICaT_Module):
                 'sig_NN_kwargs_mu', 'sig_NN_kwargs_b',
                 'sig_SWT_kwargs_mu', 'sig_SWT_kwargs_b',
             ]
+
+        ## Add custom metric power parameters (sorted for determinism)
+        _custom_names_sorted = sorted(self.custom_similarities.keys())
+        for name in _custom_names_sorted:
+            key = f'power_{name}'
+            param_keys.append(key)
+            ## Use user-supplied bounds if available, else default [0.0, 2.0]
+            if key not in bounds_findParameters:
+                bounds_findParameters[key] = [0.0, 2.0]
+
         scipy_bounds = [tuple(bounds_findParameters[k]) for k in param_keys]
 
         ################################################################
@@ -485,6 +514,14 @@ class Clusterer(util.ROICaT_Module):
             np.ascontiguousarray(self.s_SWT_z.data), dtype=torch.float32,
         ).clone()  ## shape (nnz,)
 
+        ## Precompute custom similarity tensors
+        custom_t_full = {}
+        for name in _custom_names_sorted:
+            custom_t_full[name] = torch.as_tensor(
+                np.ascontiguousarray(self.custom_similarities[name].data),
+                dtype=torch.float32,
+            ).clone()  ## shape (nnz,)
+
         ## Boolean mask for intra-session (known-different) pairs
         if not hasattr(self, '_intra_mask') or self._intra_mask is None:
             self._precompute_intra_mask()
@@ -494,7 +531,7 @@ class Clusterer(util.ROICaT_Module):
         ## Helper: build working tensors (with optional subsampling)
         ################################################################
         def _build_working_tensors(resample_seed: Optional[int]):
-            """Return (sf_t, nn_t, swt_t, intra_mask) after optional subsampling."""
+            """Return (sf_t, nn_t, swt_t, custom_t_dict, intra_mask) after optional subsampling."""
             nnz_full = sf_t_full.shape[0]
             if subsample_pairs is not None and subsample_pairs < nnz_full:
                 sidx = self._subsample_pairs(
@@ -509,12 +546,13 @@ class Clusterer(util.ROICaT_Module):
                 n_si = min(max(int(n_intra_full * frac), 100), n_intra_full)
                 im = torch.zeros(sidx.shape[0], dtype=torch.bool)
                 im[:n_si] = True
-                return sf_t_full[sidx], nn_t_full[sidx], swt_t_full[sidx], im
+                custom_sub = {name: custom_t_full[name][sidx] for name in _custom_names_sorted}
+                return sf_t_full[sidx], nn_t_full[sidx], swt_t_full[sidx], custom_sub, im
             else:
-                return sf_t_full, nn_t_full, swt_t_full, intra_mask_full
+                return sf_t_full, nn_t_full, swt_t_full, {name: custom_t_full[name] for name in _custom_names_sorted}, intra_mask_full
 
         ## Initial working set
-        sf_t, nn_t, swt_t, intra_mask = _build_working_tensors(
+        sf_t, nn_t, swt_t, custom_t, intra_mask = _build_working_tensors(
             resample_seed=(seed + 77777) if seed is not None else 77777,
         )
 
@@ -543,6 +581,7 @@ class Clusterer(util.ROICaT_Module):
             'sf_t': sf_t,
             'nn_t': nn_t,
             'swt_t': swt_t,
+            'custom_t': custom_t,
             'intra_mask': intra_mask,
             'generation': 0,
         }
@@ -562,10 +601,11 @@ class Clusterer(util.ROICaT_Module):
             gen = _generation_counter[0]
             _generation_counter[0] += 1
             new_seed = (seed + gen * 1000 + 99999) if seed is not None else (gen * 1000 + 99999)
-            sf_new, nn_new, swt_new, im_new = _build_working_tensors(resample_seed=new_seed)
+            sf_new, nn_new, swt_new, custom_new, im_new = _build_working_tensors(resample_seed=new_seed)
             _state['sf_t'] = sf_new
             _state['nn_t'] = nn_new
             _state['swt_t'] = swt_new
+            _state['custom_t'] = custom_new
             _state['intra_mask'] = im_new
             _state['intra_indices'] = torch.where(im_new)[0]
             _state['sf_clamped'] = torch.clamp(sf_new, min=1e-8)
@@ -576,6 +616,20 @@ class Clusterer(util.ROICaT_Module):
         ################################################################
         ## Scalar objective — evaluates one parameter vector at a time
         ################################################################
+        ## Precompute the index offset where custom power params start
+        ## in the parameter vector: after the 3 (frozen) or 7 (full) base params.
+        _n_base_params = 3 if freeze_sigmoid else 7
+
+        ## Frozen sigmoid params for custom metrics: use NB-estimated
+        ## params when available (freeze_sigmoid=True triggers NB calibration
+        ## which now includes custom metrics), else default (mu=0.5, b=1.0).
+        _frozen_custom_sig = {}
+        for name in _custom_names_sorted:
+            if _frozen_sig is not None and name in sig_params:
+                _frozen_custom_sig[name] = sig_params[name]
+            else:
+                _frozen_custom_sig[name] = {'mu': 0.5, 'b': 1.0}
+
         def objective_scalar(x):
             sf_w = _state['sf_t']
             nn_w = _state['nn_t']
@@ -605,7 +659,20 @@ class Clusterer(util.ROICaT_Module):
 
             ## p-norm mixing: distance = 1 - (mean(s_k^p))^(1/p)
             sf_p = torch.pow(_state['sf_clamped'], p)
-            dist = 1.0 - ((sf_p + torch.pow(nn_act, p) + torch.pow(swt_act, p)) / 3.0).pow(1.0 / p)
+            sum_sp = sf_p + torch.pow(nn_act, p) + torch.pow(swt_act, p)
+            n_metrics = 3
+
+            ## Include custom metrics in p-norm
+            for i_custom, name in enumerate(_custom_names_sorted):
+                custom_w = _state['custom_t'][name]
+                power_custom = float(x[_n_base_params + i_custom])
+                sig_kw = _frozen_custom_sig[name]
+                custom_act = torch.sigmoid(sig_kw['b'] * (custom_w - sig_kw['mu']))
+                custom_act = custom_act.clamp(min=1e-8).pow(power_custom)
+                sum_sp = sum_sp + torch.pow(custom_act, p)
+                n_metrics += 1
+
+            dist = 1.0 - (sum_sp / n_metrics).pow(1.0 / p)
 
             ## Histogram overlap loss via shared helper
             loss, _, _ = self._compute_histogram_overlap(
@@ -667,6 +734,16 @@ class Clusterer(util.ROICaT_Module):
                 'sig_NN_kwargs': {'mu': float(x_best[3]), 'b': float(x_best[4])},
                 'sig_SWT_kwargs': {'mu': float(x_best[5]), 'b': float(x_best[6])},
             }
+
+        ## Extract custom metric powers from the parameter vector
+        custom_powers_best = {}
+        custom_sig_kwargs_best = {}
+        for i_custom, name in enumerate(_custom_names_sorted):
+            custom_powers_best[name] = float(x_best[_n_base_params + i_custom])
+            custom_sig_kwargs_best[name] = _frozen_custom_sig[name]
+        if custom_powers_best:
+            self.best_params['custom_powers'] = custom_powers_best
+            self.best_params['custom_sig_kwargs'] = custom_sig_kwargs_best
 
         self.kwargs_makeConjunctiveDistanceMatrix_best = {
             'power_SF': None,
@@ -866,6 +943,11 @@ class Clusterer(util.ROICaT_Module):
             'NN': torch.as_tensor(self.s_NN_z.data, dtype=torch.float32),
             'SWT': torch.as_tensor(self.s_SWT_z.data, dtype=torch.float32),
         }
+        ## Include custom similarity matrices in NB calibration
+        for name in sorted(self.custom_similarities.keys()):
+            features_raw[name] = torch.as_tensor(
+                self.custom_similarities[name].data, dtype=torch.float32,
+            )
 
         calibrations = {'features': {}}
         nnz = self.s_sf.nnz
@@ -972,7 +1054,12 @@ class Clusterer(util.ROICaT_Module):
         )
 
         result = {}
-        for name in ['NN', 'SWT']:
+        ## Estimate sigmoid params for built-in features and any custom
+        ## similarities that were included in the NB calibration.
+        feature_names = ['NN', 'SWT'] + sorted(self.custom_similarities.keys())
+        for name in feature_names:
+            if name not in self.calibrations_naive_bayes['features']:
+                continue
             cal = self.calibrations_naive_bayes['features'][name]
             ## cal values are numpy arrays (stored that way for serialization)
             edges = np.asarray(cal['edges'])
@@ -1484,6 +1571,8 @@ class Clusterer(util.ROICaT_Module):
         sig_SF_kwargs: Dict[str, float] = {'mu':0.5, 'b':0.5},
         sig_NN_kwargs: Dict[str, float] = {'mu':0.5, 'b':0.5},
         sig_SWT_kwargs: Dict[str, float] = {'mu':0.5, 'b':0.5},
+        custom_powers: Optional[Dict[str, float]] = None,
+        custom_sig_kwargs: Optional[Dict[str, Dict[str, float]]] = None,
     ) -> Tuple[scipy.sparse.csr_matrix, scipy.sparse.csr_matrix, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Makes a distance matrix from the three similarity matrices.
@@ -1527,6 +1616,14 @@ class Clusterer(util.ROICaT_Module):
                 scattering wavelet transform similarity matrix. See
                 helpers.generalised_logistic_function for details. (Default is
                 {'mu':0.5, 'b':0.5})
+            custom_powers (Optional[Dict[str, float]]):
+                Per-metric power exponents for custom similarity matrices.
+                Keys must match ``self.custom_similarities``. Missing keys
+                default to ``1.0``. (Default is ``None``)
+            custom_sig_kwargs (Optional[Dict[str, Dict[str, float]]]):
+                Per-metric sigmoid parameters for custom similarity matrices.
+                Keys must match ``self.custom_similarities``. Missing keys
+                default to ``{'mu': 0.5, 'b': 1.0}``. (Default is ``None``)
 
         Returns:
             (Tuple): Tuple containing:
@@ -1557,6 +1654,8 @@ class Clusterer(util.ROICaT_Module):
                 'sig_SF_kwargs',
                 'sig_NN_kwargs',
                 'sig_SWT_kwargs',
+                'custom_powers',
+                'custom_sig_kwargs',
             ],
         )
 
@@ -1568,6 +1667,19 @@ class Clusterer(util.ROICaT_Module):
         sSWT_data = self._activation_function(s_SWT.data, sig_SWT_kwargs, power_SWT) if s_SWT is not None else None
 
         s_list = [s for s in [sSF_data, sNN_data, sSWT_data] if s is not None]
+
+        ## Handle custom similarities: apply sigmoid → power activation and
+        ## include in the p-norm combination alongside built-in metrics.
+        custom_powers = custom_powers or {}
+        custom_sig_kwargs = custom_sig_kwargs or {}
+        self._custom_activated = {}
+        for name in sorted(self.custom_similarities.keys()):
+            s_custom = self.custom_similarities[name]
+            power = custom_powers.get(name, 1.0)
+            sig_kw = custom_sig_kwargs.get(name, {'mu': 0.5, 'b': 1.0})
+            activated = self._activation_function(s_custom.data, sig_kw, power)
+            self._custom_activated[name] = activated
+            s_list.append(activated)
 
         sConj_data = self._pNorm(
             s_list=s_list,
