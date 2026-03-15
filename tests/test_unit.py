@@ -59,6 +59,18 @@ def test_set_random_seed_returns_seed():
     assert isinstance(seed_auto, int)
 
 
+def test_set_random_seed_cuda_determinism():
+    """CUDA seeds should be set when CUDA is available."""
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+    from roicat.util import set_random_seed
+    set_random_seed(seed=42, deterministic=True)
+    a = torch.randn(10, device='cuda')
+    set_random_seed(seed=42, deterministic=True)
+    b = torch.randn(10, device='cuda')
+    assert torch.allclose(a, b)
+
+
 def test_match_arrays_with_ucids_return_indices_handles_duplicate_ucids():
     """Ensure match_arrays_with_ucids can recover indices when sessions
     contain more ROIs than there are UCIDs."""
