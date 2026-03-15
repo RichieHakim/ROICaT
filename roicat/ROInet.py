@@ -336,14 +336,14 @@ class ROInet_embedder(util.ROICaT_Module):
           transformations.
         * Link: https://osf.io/c8m3b/download
         * Hash (MD5 hex): 357a8d9b630ec79f3e015d0056a4c2d5
-    
+
     Args:
-        dir_networkFiles (str): 
+        dir_networkFiles (str):
             Directory to find an existing ROInet.zip file or download and
             extract a new one into.
-        device (str): 
+        device (str):
             Device to use for the model and data. (Default is ``'cpu'``)
-        download_method (str): 
+        download_method (str):
             Approach to downloading the network files. Options are: \n
             * ``'check_local_first'``: Check if the network files are already in
               dir_networkFiles, if so, use them.
@@ -353,15 +353,15 @@ class ROInet_embedder(util.ROICaT_Module):
               file, if they don't exist, raise an error. Hash checking is done
               and download_hash must be specified. \n
             (Default is ``'check_local_first'``)
-        download_url (str): 
+        download_url (str):
             URL to download the ROInet.zip file from.
             (Default is https://osf.io/x3fd2/download)
-        download_hash (dict): 
+        download_hash (dict):
             MD5 hash of the ROInet.zip file. This can be obtained from
             ROICaT documentation. If you don't have one, use
             download_method='force_download' and determine the hash using
             helpers.hash_file(). (Default is ``None``)
-        names_networkFiles (dict): 
+        names_networkFiles (dict):
             Names of the files in the ROInet.zip file. If uncertain, leave
             as None. The dictionary should have the form: \n
             ``{'params': 'params.json', 'model': 'model.py', 'state_dict':
@@ -370,13 +370,18 @@ class ROInet_embedder(util.ROICaT_Module):
             (usually a .json file), 'model' is the model definition (usually
             a .py file), and 'state_dict' are the weights of the network
             (usually a .pth file). (Default is ``None``)
-        forward_pass_version (str): 
+        forward_pass_version (str):
             Version of the forward pass to use. Options are 'latent' (return
             the post-head output latents, use this for tracking), 'head'
             (return the output of the head layers, use this for
             classification), and 'base' (return the output of the base
             model). (Default is ``'latent'``)
-        verbose (bool): 
+        use_onnx (bool):
+            If ``True``, export the PyTorch model to ONNX format and use
+            ``onnxruntime`` for inference instead of PyTorch. The ONNX model
+            is cached on disk so subsequent runs skip the export step.
+            Faster on CPU. (Default is ``False``)
+        verbose (bool):
             If True, print out extra information. (Default is ``True``)
     """
     def __init__(
@@ -388,6 +393,7 @@ class ROInet_embedder(util.ROICaT_Module):
         download_hash: dict = None,
         names_networkFiles: dict = None,
         forward_pass_version: str = 'latent',
+        use_onnx: bool = False,
         verbose: bool = True,
     ):
         ## Imports
@@ -404,12 +410,14 @@ class ROInet_embedder(util.ROICaT_Module):
                 'download_hash',
                 'names_networkFiles',
                 'forward_pass_version',
+                'use_onnx',
                 'verbose',
             ],
         )
 
         self._device = device
         self._verbose = verbose
+        self._use_onnx = False
         self._dir_networkFiles = dir_networkFiles
         self._download_url = download_url
 
@@ -476,7 +484,7 @@ class ROInet_embedder(util.ROICaT_Module):
         self.net.eval()
 
         self.net.load_state_dict(torch.load(
-            f=paths_networkFiles['state_dict'], 
+            f=paths_networkFiles['state_dict'],
             map_location=torch.device(self._device),
             weights_only=True,
         ))
@@ -484,6 +492,60 @@ class ROInet_embedder(util.ROICaT_Module):
 
         self.net = self.net.to(self._device)
         print(f'Loaded network onto device {self._device}') if self._verbose else None
+
+        ## Optionally set up ONNX inference
+        if use_onnx:
+            self._setup_onnx_inference(forward_pass_version=forward_pass_version)
+
+    def _setup_onnx_inference(self, forward_pass_version: str):
+        """
+        Export the loaded PyTorch model to ONNX format and create an
+        onnxruntime inference session.
+
+        The ONNX model is cached on disk so subsequent runs skip the
+        export step.
+
+        Args:
+            forward_pass_version (str):
+                Used to differentiate cached ONNX files for different
+                forward pass modes ('latent', 'head').
+        """
+        import onnxruntime as ort
+
+        path_onnx = str(Path(self._dir_networkFiles).resolve() / f'ROInet_{forward_pass_version}.onnx')
+
+        if not Path(path_onnx).exists():
+            print(f'Exporting PyTorch model to ONNX format...') if self._verbose else None
+            device_prev = self._device
+            self.net.to('cpu')
+            self.net.eval()
+            dummy_input = torch.ones(1, 3, 224, 224)
+            torch.onnx.export(
+                self.net,
+                (dummy_input,),
+                path_onnx,
+                input_names=["x"],
+                output_names=["latents"],
+                dynamic_axes={
+                    "x": {0: "batch_size"},
+                    "latents": [0],
+                },
+                opset_version=17,
+            )
+            self.net.to(device_prev)
+            print(f'ONNX model saved to {path_onnx}') if self._verbose else None
+        else:
+            print(f'Using cached ONNX model from {path_onnx}') if self._verbose else None
+
+        ## Select providers based on device
+        if 'cuda' in str(self._device):
+            providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+        else:
+            providers = ['CPUExecutionProvider']
+
+        self._ort_session = ort.InferenceSession(path_onnx, providers=providers)
+        self._use_onnx = True
+        print(f'ONNX inference session created with providers: {self._ort_session.get_providers()}') if self._verbose else None
 
     def generate_dataloader(
         self,
@@ -631,15 +693,22 @@ class ROInet_embedder(util.ROICaT_Module):
 
     def generate_latents(self) -> torch.Tensor:
         """
-        Passes the data in the dataloader through the network and generates latents.
+        Passes the data in the dataloader through the network and generates
+        latents.
+
+        Uses ONNX runtime if ``use_onnx=True`` was set during initialization,
+        otherwise uses PyTorch.
 
         Returns:
-            (torch.Tensor): 
-                latents (torch.Tensor): 
+            (torch.Tensor):
+                latents (torch.Tensor):
                     Latents for each ROI (Region of Interest).
         """
         if hasattr(self, 'dataloader') == False:
             raise Exception('dataloader not defined. Call generate_dataloader() first.')
+
+        if getattr(self, '_use_onnx', False):
+            return self._generate_latents_onnx()
 
         print(f'starting: running data through network')
         self.latents = torch.cat([self.net(data[0][0].to(self._device)).detach() for data in tqdm(self.dataloader, mininterval=5)], dim=0).cpu()
@@ -649,7 +718,26 @@ class ROInet_embedder(util.ROICaT_Module):
         torch.cuda.empty_cache()
         gc.collect()
         torch.cuda.empty_cache()
-        
+
+        return self.latents
+
+    def _generate_latents_onnx(self) -> torch.Tensor:
+        """
+        Generate latents using ONNX runtime inference.
+
+        Returns:
+            (torch.Tensor):
+                latents (torch.Tensor):
+                    Latents for each ROI.
+        """
+        print(f'starting: running data through network (ONNX)')
+        all_latents = []
+        for data in tqdm(self.dataloader, mininterval=5):
+            batch_np = data[0][0].numpy().astype(np.float32)
+            result = self._ort_session.run(None, {"x": batch_np})
+            all_latents.append(result[0])
+        self.latents = torch.as_tensor(np.concatenate(all_latents, axis=0))
+        print(f'completed: running data through network (ONNX)')
         return self.latents
 
 

@@ -187,6 +187,7 @@ def get_default_parameters(
                     'download_url': 'https://osf.io/x3fd2/download',  ## URL of the model
                     'download_hash': '7a5fb8ad94b110037785a46b9463ea94',  ## Hash of the model file
                     'forward_pass_version': 'latent',  ## How the data is passed through the network
+                    'use_onnx': False,  ## If True, use ONNX runtime for inference instead of PyTorch. Faster on CPU.
                 },
                 'dataloader': {
                     'jit_script_transforms': False,  ## (advanced) Whether or not to use torch.jit.script to speed things up
@@ -316,6 +317,7 @@ def get_default_parameters(
             'download_url': 'https://osf.io/x3fd2/download',  ## URL of the model
             'download_hash': '7a5fb8ad94b110037785a46b9463ea94',  ## Hash of the model file
             'forward_pass_version': 'latent',  ## How the data is passed through the network
+            'use_onnx': False,  ## If True, use ONNX runtime for inference instead of PyTorch. Faster on CPU.
         }
     elif pipeline == 'classification_inference':
         out = copy.deepcopy({key: defaults[key] for key in keys_pipeline[pipeline]})
@@ -324,6 +326,7 @@ def get_default_parameters(
             'download_url': 'https://osf.io/c8m3b/download',  ## URL of the model
             'download_hash': '357a8d9b630ec79f3e015d0056a4c2d5',  ## Hash of the model file
             'forward_pass_version': 'head',  ## How the data is passed through the network
+            'use_onnx': False,  ## If True, use ONNX runtime for inference instead of PyTorch. Faster on CPU.
         }
     elif pipeline == 'classification_training':
         out = copy.deepcopy({key: defaults[key] for key in keys_pipeline[pipeline]})
@@ -332,6 +335,7 @@ def get_default_parameters(
             'download_url': 'https://osf.io/c8m3b/download',  ## URL of the model
             'download_hash': '357a8d9b630ec79f3e015d0056a4c2d5',  ## Hash of the model file
             'forward_pass_version': 'head',  ## How the data is passed through the network
+            'use_onnx': False,  ## If True, use ONNX runtime for inference instead of PyTorch. Faster on CPU.
         }
     else:
         raise NotImplementedError(f'pipeline={pipeline}, which is not implemented or not recognized. Should be one of: {list(keys_pipeline.keys())}')
