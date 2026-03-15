@@ -6512,3 +6512,84 @@ def reshape_coo_manual(coo, new_shape):
     
     # Create a new COO matrix with the new indices.
     return scipy.sparse.coo_matrix((coo.data, (new_row, new_col)), shape=new_shape)
+
+
+def check_roi_sizes(
+    spatialFootprints: list,
+    frame_height: int,
+    frame_width: int,
+    min_pixels: int = 5,
+    max_fraction: float = 0.1,
+    verbose: bool = True,
+) -> dict:
+    """
+    Check ROI spatial footprints for abnormally sized ROIs.
+
+    Flags ROIs that are too small (likely noise) or too large (likely
+    artifacts or neuropil contamination). Does not modify the data.
+
+    Args:
+        spatialFootprints (list):
+            List of sparse spatial footprint matrices per session.
+        frame_height (int):
+            FOV height in pixels.
+        frame_width (int):
+            FOV width in pixels.
+        min_pixels (int):
+            Minimum nonzero pixels for a valid ROI.
+        max_fraction (float):
+            Maximum fraction of FOV area an ROI can occupy (0-1).
+        verbose (bool):
+            If True, print warnings for flagged ROIs.
+
+    Returns:
+        (dict):
+            results (dict):
+                Dictionary with:
+
+                - ``'n_too_small'``: count of ROIs below min_pixels
+                - ``'n_too_large'``: count of ROIs above max_fraction
+                - ``'sizes_by_session'``: list of arrays with ROI sizes per session
+                - ``'flagged_small'``: list of (session, roi_idx) tuples
+                - ``'flagged_large'``: list of (session, roi_idx) tuples
+    """
+    n_pixels_total = frame_height * frame_width
+    max_pixels = int(n_pixels_total * max_fraction)
+
+    flagged_small = []
+    flagged_large = []
+    sizes_by_session = []
+
+    for sess_idx, sf_session in enumerate(spatialFootprints):
+        if scipy.sparse.issparse(sf_session):
+            ## Each row is an ROI
+            sizes = np.array((sf_session != 0).sum(axis=1)).ravel()
+        else:
+            sizes = np.array([np.count_nonzero(sf) for sf in sf_session])
+
+        sizes_by_session.append(sizes)
+
+        for roi_idx, size in enumerate(sizes):
+            if size < min_pixels:
+                flagged_small.append((sess_idx, roi_idx))
+            if size > max_pixels:
+                flagged_large.append((sess_idx, roi_idx))
+
+    results = {
+        'n_too_small': len(flagged_small),
+        'n_too_large': len(flagged_large),
+        'sizes_by_session': sizes_by_session,
+        'flagged_small': flagged_small,
+        'flagged_large': flagged_large,
+    }
+
+    if verbose:
+        total_rois = sum(len(s) for s in sizes_by_session)
+        if flagged_small or flagged_large:
+            print(f"ROI Size Check: {len(flagged_small)} too small (<{min_pixels}px), "
+                  f"{len(flagged_large)} too large (>{max_fraction*100:.0f}% FOV) "
+                  f"out of {total_rois} total ROIs")
+        else:
+            print(f"ROI Size Check: all {total_rois} ROIs within normal range")
+
+    return results
