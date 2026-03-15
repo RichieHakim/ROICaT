@@ -257,7 +257,11 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         session_bool=data.session_bool,
         verbose=VERBOSE,
     )
-    if params['clustering'].get('mixing_method', 'automatic') == 'manual':
+    mixing_method = params['clustering'].get('mixing_method', 'automatic')
+    assert mixing_method in ('automatic', 'manual'), (
+        f"clustering.mixing_method must be 'automatic' or 'manual', got '{mixing_method}'"
+    )
+    if mixing_method == 'manual':
         kwargs_makeConjunctiveDistanceMatrix_best = params['clustering']['parameters_manual_mixing']
     else:
         ## Default: NB calibration → freeze-sigmoid → 3-param DE

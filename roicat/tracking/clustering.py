@@ -502,8 +502,11 @@ class Clusterer(util.ROICaT_Module):
                     intra_mask=intra_mask_full,
                     seed=resample_seed if resample_seed is not None else 77777,
                 )
+                ## Intra pairs come first in sidx. Compute actual intra count
+                ## using the same logic as _subsample_pairs to stay in sync.
+                n_intra_full = int(intra_mask_full.sum().item())
                 frac = subsample_pairs / nnz_full
-                n_si = max(int(int(intra_mask_full.sum().item()) * frac), 100)
+                n_si = min(max(int(n_intra_full * frac), 100), n_intra_full)
                 im = torch.zeros(sidx.shape[0], dtype=torch.bool)
                 im[:n_si] = True
                 return sf_t_full[sidx], nn_t_full[sidx], swt_t_full[sidx], im
@@ -630,7 +633,7 @@ class Clusterer(util.ROICaT_Module):
             def _combined_callback(xk, convergence=None):
                 _resample_callback(xk, convergence)
                 if existing_cb is not None:
-                    existing_cb(xk, convergence)
+                    return existing_cb(xk, convergence)  ## propagate stop signal
             de_kwargs_use['callback'] = _combined_callback
 
         self._de_result = scipy.optimize.differential_evolution(
