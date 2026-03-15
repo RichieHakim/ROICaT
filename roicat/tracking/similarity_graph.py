@@ -466,7 +466,7 @@ class ROI_graph(util.ROICaT_Module):
             self.s_SWT_z.data = ((self.s_SWT_z.data - mus_SWT_diff[self.s_SWT_z.row]) / stds_SWT_diff[self.s_SWT_z.row])
             self.s_SWT_z = self.s_SWT_z.tocsr()
             self.s_SWT_z.data[np.isnan(self.s_SWT_z.data)] = 0
-            
+
 
 ###########################
 ####### block stuff #######
