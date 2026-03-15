@@ -1200,3 +1200,17 @@ class Test_edge_cases:
         assert np.all(dConj.data <= 1)
 
 
+def test_estimate_similarity_memory():
+    """estimate_similarity_memory should return reasonable estimates."""
+    from roicat.util import estimate_similarity_memory
+
+    estimates = estimate_similarity_memory(
+        n_roi_per_session=[100, 100, 100],
+        frame_height=512,
+        frame_width=512,
+        verbose=False,
+    )
+    assert estimates['n_roi_total'] == 300
+    assert estimates['n_sessions'] == 3
+    assert estimates['estimated_nnz'] > 0
+    assert estimates['estimated_memory_gb'] >= 0

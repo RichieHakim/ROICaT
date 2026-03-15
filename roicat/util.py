@@ -1731,5 +1731,94 @@ def invert_ucids(
         ucids_inverse = ucids_inverse.tolist()
     else:
         ucids_inverse = ucids_inverse.astype(np.int64)
-        
+
     return ucids_inverse
+
+
+def estimate_similarity_memory(
+    n_roi_per_session: list,
+    frame_height: int,
+    frame_width: int,
+    block_height: int = 100,
+    block_width: int = 100,
+    n_features: int = 3,
+    verbose: bool = True,
+) -> dict:
+    """
+    Estimate memory requirements for similarity matrix computation.
+
+    Provides rough estimates of the number of nonzero entries and
+    memory needed for the sparse similarity matrices, based on ROI
+    counts, FOV dimensions, and block sizes.
+
+    Args:
+        n_roi_per_session (list):
+            Number of ROIs in each session.
+        frame_height (int):
+            FOV height in pixels.
+        frame_width (int):
+            FOV width in pixels.
+        block_height (int):
+            Height of spatial blocks for block-wise computation.
+        block_width (int):
+            Width of spatial blocks.
+        n_features (int):
+            Number of similarity features (default 3: SF, NN, SWT).
+        verbose (bool):
+            If True, print the estimates.
+
+    Returns:
+        (dict):
+            estimates (dict):
+                Dictionary with memory estimates:
+
+                - ``'n_roi_total'``: total number of ROIs
+                - ``'n_blocks'``: number of spatial blocks
+                - ``'estimated_nnz'``: estimated nonzero entries per matrix
+                - ``'estimated_memory_gb'``: estimated total memory in GB
+    """
+    n_roi_total = sum(n_roi_per_session)
+    n_sessions = len(n_roi_per_session)
+
+    ## Number of blocks
+    n_blocks_h = int(np.ceil(frame_height / block_height))
+    n_blocks_w = int(np.ceil(frame_width / block_width))
+    n_blocks = n_blocks_h * n_blocks_w
+
+    ## Rough estimate: average ROIs per block
+    avg_roi_per_block = n_roi_total / max(n_blocks, 1)
+
+    ## Estimated nnz: each ROI connects to ROIs in neighboring blocks
+    ## (typically ~9 blocks for 3x3 neighborhood)
+    neighbor_blocks = min(9, n_blocks)
+    estimated_connections_per_roi = min(avg_roi_per_block * neighbor_blocks, n_roi_total)
+    estimated_nnz = int(n_roi_total * estimated_connections_per_roi)
+
+    ## Memory: each matrix stores (data, indices, indptr)
+    ## data: float32 (4 bytes), indices: int32 (4 bytes)
+    bytes_per_entry = 8  ## data + column index
+    bytes_indptr = n_roi_total * 4  ## row pointers
+
+    ## Total for n_features similarity matrices + session matrix
+    n_matrices = n_features + 1  ## +1 for s_sesh
+    estimated_bytes = (estimated_nnz * bytes_per_entry + bytes_indptr) * n_matrices
+    estimated_gb = estimated_bytes / (1024 ** 3)
+
+    estimates = {
+        'n_roi_total': n_roi_total,
+        'n_sessions': n_sessions,
+        'n_blocks': n_blocks,
+        'estimated_nnz': estimated_nnz,
+        'estimated_memory_gb': round(estimated_gb, 2),
+    }
+
+    if verbose:
+        print(f"\nSimilarity Matrix Memory Estimate:")
+        print(f"  ROIs: {n_roi_total} across {n_sessions} sessions")
+        print(f"  Blocks: {n_blocks} ({n_blocks_h}x{n_blocks_w})")
+        print(f"  Estimated nnz per matrix: {estimated_nnz:,}")
+        print(f"  Estimated total memory: {estimated_gb:.2f} GB")
+        if estimated_gb > 10:
+            print(f"  WARNING: This may exceed available memory. Consider reducing block_size or n_ROIs.")
+
+    return estimates
