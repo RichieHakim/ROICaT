@@ -339,6 +339,54 @@ def get_default_parameters(
     return out
 
 
+PARAM_VALIDATION_METADATA = {
+    'general': {
+        'use_GPU': {'type': bool},
+        'verbose': {'type': bool},
+        'random_seed': {'type': (int, type(None))},
+    },
+    'data_loading': {
+        'data_kind': {'type': str, 'choices': ['suite2p', 'data_suite2p', 'roicat', 'data_roicat']},
+        'dir_outer': {'type': (str, type(None))},
+    },
+    'alignment': {
+        'initialization': {
+            'radius_in': {'type': (int, float), 'min': 0},
+            'radius_out': {'type': (int, float), 'min': 0},
+            'z_threshold': {'type': (int, float), 'min': 0},
+        },
+        'fit_geometric': {
+            'method': {'type': str, 'choices': ['RoMa', 'LoFTR', 'DISK_LightGlue', 'ECC_cv2', 'SIFT', 'ORB', 'PhaseCorrelation', 'NullRegistration']},
+            'constraint': {'type': str, 'choices': ['rigid', 'euclidean', 'similarity', 'affine', 'homography']},
+        },
+        'fit_nonrigid': {
+            'method': {'type': (str, type(None)), 'choices': ['DeepFlow', 'RoMa', 'OpticalFlowFarneback', 'NullRegistration', None]},
+        },
+    },
+    'blurring': {
+        'kernel_halfWidth': {'type': (int, float), 'min': 0},
+    },
+    'ROInet': {
+        'network': {
+            'forward_pass_version': {'type': str, 'choices': ['latent', 'head']},
+        },
+        'dataloader': {
+            'batchSize_dataloader': {'type': int, 'min': 1},
+        },
+    },
+    'clustering': {
+        'mixing_method': {'type': str, 'choices': ['automatic', 'manual']},
+    },
+}
+"""
+dict:
+    Validation metadata for the tracking pipeline parameters.
+    Used by :func:`roicat.helpers.validate_params` to check parameter
+    values at pipeline start. Each leaf specifies constraints such as
+    ``'type'``, ``'choices'``, ``'min'``, ``'max'``, or ``'range'``.
+"""
+
+
 def system_info(verbose: bool = False,) -> Dict:
     """
     Checks and prints the versions of various important software packages.

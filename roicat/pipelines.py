@@ -46,6 +46,19 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
     ## Prepare params
     defaults = util.get_default_parameters(pipeline='tracking')
     params = helpers.prepare_params(params, defaults, verbose=True)
+
+    ## Validate params
+    validation_errors = helpers.validate_params(
+        params,
+        metadata=util.PARAM_VALIDATION_METADATA,
+        verbose=params.get('general', {}).get('verbose', True),
+    )
+    if validation_errors:
+        raise ValueError(
+            f"Parameter validation failed with {len(validation_errors)} error(s). "
+            "Check messages above for details."
+        )
+
     display(params)
 
     ## Prepare state variables

@@ -372,6 +372,90 @@ def prepare_params(params, defaults, verbose=True):
     return params_out
 
 
+def validate_params(
+    params: dict,
+    metadata: dict,
+    verbose: bool = True,
+) -> list:
+    """
+    Validate parameter values against type, range, and choice constraints.
+
+    Checks are defined in the metadata dict, which mirrors the structure
+    of the params dict. Each leaf can specify:
+
+    - ``'type'``: expected type or tuple of types
+    - ``'choices'``: list of valid values
+    - ``'min'``: minimum numeric value
+    - ``'max'``: maximum numeric value
+    - ``'range'``: ``[min, max]`` inclusive range
+
+    Keys in params that have no corresponding metadata entry are silently
+    skipped, allowing incremental adoption.
+
+    Args:
+        params (dict):
+            The parameter dictionary to validate.
+        metadata (dict):
+            Validation metadata, same structure as params. Each leaf is
+            a dict with constraint keys (``'type'``, ``'choices'``, etc.).
+        verbose (bool):
+            If True, prints validation errors.
+
+    Returns:
+        (list):
+            errors (list):
+                List of error message strings. Empty if all valid.
+    """
+    errors = []
+
+    def _validate_recursive(params_dict, metadata_dict, path):
+        for key, meta_or_sub in metadata_dict.items():
+            if key not in params_dict:
+                continue
+            value = params_dict[key]
+            current_path = '.'.join(path + [key])
+
+            ## If the metadata value is a dict with constraint keys, validate
+            constraint_keys = {'type', 'choices', 'min', 'max', 'range'}
+            if isinstance(meta_or_sub, dict) and constraint_keys & set(meta_or_sub.keys()):
+                meta = meta_or_sub
+
+                ## Type check
+                if 'type' in meta:
+                    expected = meta['type'] if isinstance(meta['type'], tuple) else (meta['type'],)
+                    if not isinstance(value, expected):
+                        type_names = ', '.join(t.__name__ for t in expected)
+                        errors.append(f"{current_path}: expected type ({type_names}), got {type(value).__name__}")
+                        continue
+
+                ## Choices check
+                if 'choices' in meta and value not in meta['choices']:
+                    errors.append(f"{current_path}: must be one of {meta['choices']}, got '{value}'")
+
+                ## Range checks
+                if 'min' in meta and isinstance(value, (int, float)) and value < meta['min']:
+                    errors.append(f"{current_path}: must be >= {meta['min']}, got {value}")
+                if 'max' in meta and isinstance(value, (int, float)) and value > meta['max']:
+                    errors.append(f"{current_path}: must be <= {meta['max']}, got {value}")
+                if 'range' in meta and isinstance(value, (int, float)):
+                    lo, hi = meta['range']
+                    if not (lo <= value <= hi):
+                        errors.append(f"{current_path}: must be in [{lo}, {hi}], got {value}")
+
+            ## Recurse into nested dicts
+            elif isinstance(meta_or_sub, dict) and isinstance(value, dict):
+                _validate_recursive(value, meta_or_sub, path + [key])
+
+    _validate_recursive(params, metadata, [])
+
+    if verbose and errors:
+        print(f"Parameter validation found {len(errors)} error(s):")
+        for err in errors:
+            print(f"  - {err}")
+
+    return errors
+
+
 ######################################################################################################################################
 ####################################################### MATH FUNCTIONS ###############################################################
 ######################################################################################################################################
