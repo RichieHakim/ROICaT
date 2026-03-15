@@ -129,6 +129,44 @@ def clear_gpu_cache(gc_collect: bool = True):
         gc.collect()
 
 
+def get_memory_usage() -> dict:
+    """
+    Get current memory usage across CPU and GPU.
+
+    Returns:
+        (dict):
+            memory_info (dict):
+                Dictionary with keys:
+
+                - ``'cpu_rss_gb'``: CPU resident set size in GB.
+                - ``'gpu_allocated_gb'``: GPU memory allocated (CUDA) in GB,
+                  or None if unavailable.
+                - ``'gpu_reserved_gb'``: GPU memory reserved (CUDA) in GB,
+                  or None if unavailable.
+    """
+    import psutil
+    import os
+
+    process = psutil.Process(os.getpid())
+    cpu_rss = process.memory_info().rss / (1024 ** 3)  ## GB
+
+    result = {'cpu_rss_gb': round(cpu_rss, 2)}
+
+    try:
+        import torch
+        if torch.cuda.is_available():
+            result['gpu_allocated_gb'] = round(torch.cuda.memory_allocated() / (1024 ** 3), 2)
+            result['gpu_reserved_gb'] = round(torch.cuda.memory_reserved() / (1024 ** 3), 2)
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            ## MPS doesn't expose memory stats easily, but we can report CPU RSS
+            ## which includes MPS shared memory on macOS
+            result['gpu_info'] = 'MPS (memory shared with CPU RSS)'
+    except ImportError:
+        pass
+
+    return result
+
+
 def list_available_devices() -> dict:
     """
     Lists all available PyTorch devices on the system.
