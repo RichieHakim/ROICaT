@@ -938,7 +938,70 @@ class RichFile_ROICaT(rf.RichFile):
             with open(path, 'r') as f:
                 return f.read()
 
-        import hdbscan
+        ## HDBSCAN OBJECT (fast_hdbscan or legacy)
+        import fast_hdbscan
+        _hdbscan_class = fast_hdbscan.HDBSCAN
+
+        def save_hdbscan(
+            obj,
+            path: Union[str, Path],
+            **kwargs,
+        ) -> None:
+            """
+            Save a fast_hdbscan.HDBSCAN object by extracting serializable
+            attributes into a dict of numpy arrays and JSON scalars.
+            """
+            import json
+            attrs = {}
+            for attr in sorted(dir(obj)):
+                if attr.startswith('__') or callable(getattr(obj, attr, None)):
+                    continue
+                val = getattr(obj, attr, None)
+                if val is None:
+                    attrs[attr] = None
+                elif isinstance(val, np.ndarray):
+                    attrs[attr] = {'_type': 'ndarray', 'data': val.tolist(), 'dtype': str(val.dtype)}
+                elif scipy.sparse.issparse(val):
+                    csr = val.tocsr()
+                    attrs[attr] = {
+                        '_type': 'sparse',
+                        'data': csr.data.tolist(),
+                        'indices': csr.indices.tolist(),
+                        'indptr': csr.indptr.tolist(),
+                        'shape': list(csr.shape),
+                    }
+                elif isinstance(val, (int, float, str, bool)):
+                    attrs[attr] = val
+                elif isinstance(val, np.integer):
+                    attrs[attr] = int(val)
+                elif isinstance(val, np.floating):
+                    attrs[attr] = float(val)
+                ## Skip non-serializable objects (CondensedTree, SingleLinkageTree)
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            with open(path, 'w') as f:
+                json.dump(attrs, f)
+
+        def load_hdbscan(
+            path: Union[str, Path],
+            **kwargs,
+        ) -> object:
+            """
+            Load a fast_hdbscan.HDBSCAN-like dict from JSON.
+            Returns a dict of the stored attributes (not a live HDBSCAN object).
+            """
+            import json
+            with open(path, 'r') as f:
+                attrs = json.load(f)
+            ## Reconstruct numpy arrays and sparse matrices
+            for key, val in attrs.items():
+                if isinstance(val, dict) and val.get('_type') == 'ndarray':
+                    attrs[key] = np.array(val['data'], dtype=val['dtype'])
+                elif isinstance(val, dict) and val.get('_type') == 'sparse':
+                    attrs[key] = scipy.sparse.csr_matrix(
+                        (np.array(val['data']), np.array(val['indices']), np.array(val['indptr'])),
+                        shape=tuple(val['shape']),
+                    )
+            return attrs
 
 
         ## SCIPY OPTIMIZE RESULT
@@ -1142,15 +1205,15 @@ class RichFile_ROICaT(rf.RichFile):
                 "library":            "torch",
                 "versions_supported": [],
             },
-            {
+            *([{
                 "type_name":          "hdbscan",
-                "function_load":      load_repr,
-                "function_save":      save_repr,
-                "object_class":       hdbscan.HDBSCAN,
-                "suffix":             "hdbscan",
-                "library":            "torch",
+                "function_load":      load_hdbscan,
+                "function_save":      save_hdbscan,
+                "object_class":       _hdbscan_class,
+                "suffix":             "json",
+                "library":            "fast_hdbscan",
                 "versions_supported": [],
-            },
+            }] if _hdbscan_class is not None else []),
             {
                 "type_name":          "pandas_dataframe",
                 "function_load":      load_pandas_dataframe,

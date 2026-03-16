@@ -1,2 +1,1 @@
 pip install --user roicat[all]
-pip install git+https://github.com/RichieHakim/roiextractors

@@ -112,7 +112,6 @@ you want to use ROICaT.
 ### 2. Install ROICaT
 ```
 pip install roicat[all]
-pip install git+https://github.com/RichieHakim/roiextractors
 ```
 **Note on zsh:** if you are using a zsh terminal, change command to: `pip3
 install --user 'roicat[all]'` <br>
@@ -190,7 +189,7 @@ sudo docker run -it -p 7860:7860 --platform=linux/amd64 --shm-size=10g registry.
 # TODO:
 #### algorithmic improvements:
 - [ ] Add in method to use more similarity metrics for tracking
-- [ ] Coordinate descent on each similarity metric
+- ~~[ ] Coordinate descent on each similarity metric~~
 - [ ] Add F and Fneu to data_roicat, dFoF and trace quality metric functions
 - [ ] Add in notebook for demonstrating using temporal similarity metrics (SWT on dFoF)
 - [ ] Make a standard classifier
@@ -207,9 +206,9 @@ sudo docker run -it -p 7860:7860 --platform=linux/amd64 --shm-size=10g registry.
 - [ ] Figure out RNG / OS differences issues for tests
 - [ ] Add more documentation / tutorials
 - [x] Make a GUI
-- [ ] Add settings to the GUI
-- ~~[ ] Make a Docker container~~
-- ~~Make colab demo notebook not require user data~~
+- [ ] Add settings to the webapp GUI
+- [ ] Make a Docker container
+- [ ] Make colab demo notebook have demo data
 - [x] Make a better CLI
 - [x] Switch to pyproject.toml
 - [ ] Improve params.json / default params system
@@ -221,7 +220,7 @@ sudo docker run -it -p 7860:7860 --platform=linux/amd64 --shm-size=10g registry.
 - [ ] Write the paper
 - [ ] Make tweet about it
 - [ ] Make a video or two on how to use it
-- [ ] Maybe use lightthetorch for torch installation
+- ~~[ ] Maybe use lightthetorch for torch installation~~
 - [ ] Better Readme
 - [ ] More documentation
 - [ ] Make a regression model for in-plane-ness

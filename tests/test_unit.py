@@ -1201,6 +1201,340 @@ class Test_edge_cases:
 
 
 ######################################################################################################################################
+######################################### FAST HDBSCAN INTEGRATION ###################################################################
+######################################################################################################################################
+
+
+def _make_synthetic_clusterer(n_sessions=4, n_rois_per_session=20, n_neighbors=10, seed=42):
+    """
+    Build a synthetic Clusterer with known cluster structure for testing.
+
+    Creates ``n_sessions`` sessions each with ``n_rois_per_session`` ROIs.
+    ROIs with the same index across sessions are "matched" (low distance),
+    all others get high distance.  Returns the Clusterer and session_bool.
+    """
+    from roicat import tracking, util
+
+    rng = np.random.RandomState(seed)
+    n_total = n_sessions * n_rois_per_session
+
+    ## Build session_bool: (n_total, n_sessions) binary matrix
+    session_bool = np.zeros((n_total, n_sessions), dtype=np.float64)
+    for s in range(n_sessions):
+        session_bool[s * n_rois_per_session : (s + 1) * n_rois_per_session, s] = 1.0
+
+    ## Build s_sesh: True where ROIs are from DIFFERENT sessions
+    sb_sparse = scipy.sparse.csr_matrix(session_bool)
+    s_sesh_full = (sb_sparse @ sb_sparse.T).toarray()
+    np.fill_diagonal(s_sesh_full, 0)
+    ## s_sesh_full[i, j] > 0 means same session. We want different-session.
+    diff_session = (s_sesh_full == 0).astype(np.float64)
+    np.fill_diagonal(diff_session, 0)
+
+    ## Build similarity matrices with known structure.
+    ## For matched ROIs (same index mod n_rois_per_session, different session),
+    ## set high similarity. For unmatched ROIs, set low similarity.
+    ## Only populate edges between different sessions within a k-nearest-neighbor radius.
+    rows, cols, sf_data, nn_data, swt_data, sesh_data = [], [], [], [], [], []
+
+    for i in range(n_total):
+        s_i = i // n_rois_per_session
+        idx_i = i % n_rois_per_session
+        for j in range(i + 1, n_total):
+            s_j = j // n_rois_per_session
+            idx_j = j % n_rois_per_session
+            if s_i == s_j:
+                ## Same session -- include in sparsity pattern but mark as same-session
+                if abs(idx_i - idx_j) <= 2:
+                    rows.extend([i, j])
+                    cols.extend([j, i])
+                    sim = 0.1 + rng.rand() * 0.1
+                    sf_data.extend([sim, sim])
+                    nn_data.extend([sim, sim])
+                    swt_data.extend([sim, sim])
+                    sesh_data.extend([0.0, 0.0])  ## same session
+            else:
+                ## Different session
+                if idx_i == idx_j:
+                    ## Matched ROI pair -- high similarity
+                    sim = 0.8 + rng.rand() * 0.15
+                    rows.extend([i, j])
+                    cols.extend([j, i])
+                    sf_data.extend([sim, sim])
+                    nn_data.extend([sim, sim])
+                    swt_data.extend([sim, sim])
+                    sesh_data.extend([1.0, 1.0])  ## different session
+                elif abs(idx_i - idx_j) <= 2:
+                    ## Nearby ROI from different session -- low similarity
+                    sim = 0.1 + rng.rand() * 0.2
+                    rows.extend([i, j])
+                    cols.extend([j, i])
+                    sf_data.extend([sim, sim])
+                    nn_data.extend([sim, sim])
+                    swt_data.extend([sim, sim])
+                    sesh_data.extend([1.0, 1.0])  ## different session
+
+    shape = (n_total, n_total)
+    s_sf = scipy.sparse.csr_matrix((np.array(sf_data), (rows, cols)), shape=shape)
+    s_NN_z = scipy.sparse.csr_matrix((np.array(nn_data), (rows, cols)), shape=shape)
+    s_SWT_z = scipy.sparse.csr_matrix((np.array(swt_data), (rows, cols)), shape=shape)
+    s_sesh = scipy.sparse.csr_matrix((np.array(sesh_data), (rows, cols)), shape=shape)
+
+    clusterer = tracking.clustering.Clusterer(
+        s_sf=s_sf,
+        s_NN_z=s_NN_z,
+        s_SWT_z=s_SWT_z,
+        s_sesh=s_sesh,
+        session_bool=session_bool,
+        verbose=False,
+    )
+
+    ## Build a simple distance matrix: d = 1 - similarity, masked to inter-session
+    d_conj = s_sf.copy()
+    d_conj.data = 1.0 - d_conj.data
+
+    return clusterer, d_conj, session_bool
+
+
+class TestFastHDBSCAN:
+    """Tests for fast_hdbscan integration via Clusterer.fit()."""
+
+    @pytest.fixture(scope='class')
+    def synthetic_setup(self):
+        """Create a synthetic clusterer for fast_hdbscan tests."""
+        return _make_synthetic_clusterer(n_sessions=4, n_rois_per_session=20, seed=42)
+
+    def test_fast_hdbscan_produces_labels(self, synthetic_setup):
+        """fast_hdbscan backend should produce integer labels."""
+        clusterer, d_conj, session_bool = synthetic_setup
+        labels = clusterer.fit(
+            d_conj=d_conj,
+            session_bool=session_bool,
+        )
+        assert isinstance(labels, np.ndarray)
+        assert labels.shape == (session_bool.shape[0],)
+        assert labels.dtype in (np.int32, np.int64)
+
+    def test_fast_hdbscan_no_session_violations(self, synthetic_setup):
+        """No cluster should contain two ROIs from the same session."""
+        clusterer, d_conj, session_bool = synthetic_setup
+        labels = clusterer.fit(
+            d_conj=d_conj,
+            session_bool=session_bool,
+        )
+        for ucid in np.unique(labels):
+            if ucid == -1:
+                continue
+            mask = labels == ucid
+            sessions_in_cluster = session_bool[mask]
+            session_counts = sessions_in_cluster.sum(axis=0)
+            assert np.all(session_counts <= 1), (
+                f"Cluster {ucid} has same-session violations: "
+                f"session_counts={session_counts[session_counts > 1]}"
+            )
+
+    def test_fast_hdbscan_no_violations_across_seeds(self):
+        """Cannot-link constraints should hold across different random seeds."""
+        for seed in [0, 7, 42, 99, 123]:
+            clusterer, d_conj, session_bool = _make_synthetic_clusterer(
+                n_sessions=5, n_rois_per_session=15, seed=seed,
+            )
+            labels = clusterer.fit(
+                d_conj=d_conj,
+                session_bool=session_bool,
+            )
+            for ucid in np.unique(labels):
+                if ucid == -1:
+                    continue
+                mask = labels == ucid
+                session_counts = session_bool[mask].sum(axis=0)
+                assert np.all(session_counts <= 1), (
+                    f"seed={seed}, cluster {ucid}: same-session violation "
+                    f"session_counts={session_counts[session_counts > 1]}"
+                )
+
+    def test_fast_hdbscan_violations_attribute(self, synthetic_setup):
+        """violations_labels should be empty with cannot-link constraints."""
+        clusterer, d_conj, session_bool = synthetic_setup
+        clusterer.fit(
+            d_conj=d_conj,
+            session_bool=session_bool,
+        )
+        assert hasattr(clusterer, 'violations_labels')
+        assert len(clusterer.violations_labels) == 0
+
+    def test_fast_hdbscan_some_clusters_found(self, synthetic_setup):
+        """At least some non-noise clusters should be found."""
+        clusterer, d_conj, session_bool = synthetic_setup
+        labels = clusterer.fit(
+            d_conj=d_conj,
+            session_bool=session_bool,
+        )
+        n_clusters = len(set(labels) - {-1})
+        assert n_clusters > 0, "Expected at least one cluster"
+
+    def test_fast_hdbscan_labels_squeezed(self, synthetic_setup):
+        """Labels should be squeezed (contiguous integers starting from -1 or 0)."""
+        clusterer, d_conj, session_bool = synthetic_setup
+        labels = clusterer.fit(
+            d_conj=d_conj,
+            session_bool=session_bool,
+        )
+        non_noise = labels[labels >= 0]
+        if len(non_noise) > 0:
+            unique_labels = np.unique(non_noise)
+            assert unique_labels[0] == 0
+            assert np.all(np.diff(unique_labels) == 1), "Labels should be contiguous"
+
+    def test_fast_hdbscan_no_singleton_clusters(self, synthetic_setup):
+        """No cluster should have exactly 1 member."""
+        clusterer, d_conj, session_bool = synthetic_setup
+        labels = clusterer.fit(
+            d_conj=d_conj,
+            session_bool=session_bool,
+        )
+        u, c = np.unique(labels[labels >= 0], return_counts=True)
+        assert np.all(c >= 2), f"Found singleton clusters: {u[c < 2]}"
+
+    def test_fast_hdbscan_empty_graph(self, synthetic_setup):
+        """Clustering an empty graph should return all -1."""
+        clusterer, d_conj, session_bool = synthetic_setup
+        empty_d = scipy.sparse.csr_matrix(d_conj.shape)
+        labels = clusterer.fit(
+            d_conj=empty_d,
+            session_bool=session_bool,
+        )
+        assert np.all(labels == -1)
+
+    def test_fast_hdbscan_stores_hdbs(self, synthetic_setup):
+        """The FastHDBSCAN object should be stored as self.hdbs."""
+        clusterer, d_conj, session_bool = synthetic_setup
+        clusterer.fit(
+            d_conj=d_conj,
+            session_bool=session_bool,
+        )
+        assert hasattr(clusterer, 'hdbs')
+        assert hasattr(clusterer.hdbs, 'labels_')
+        assert hasattr(clusterer.hdbs, 'probabilities_')
+
+    def test_fast_hdbscan_params_stored(self, synthetic_setup):
+        """Fit parameters should be stored in self.params['fit']."""
+        clusterer, d_conj, session_bool = synthetic_setup
+        clusterer.fit(
+            d_conj=d_conj,
+            session_bool=session_bool,
+        )
+        assert 'fit' in clusterer.params
+        assert clusterer.params['fit']['backend'] == 'fast_hdbscan'
+
+    def test_default_backend_is_fast_hdbscan(self, synthetic_setup):
+        """Calling fit() without backend= should use fast_hdbscan."""
+        clusterer, d_conj, session_bool = synthetic_setup
+        clusterer.fit(
+            d_conj=d_conj,
+            session_bool=session_bool,
+        )
+        ## Should have used fast_hdbscan (no fully connected node)
+        assert not getattr(clusterer, '_fit_used_fully_connected_node', True)
+        assert clusterer.params['fit']['backend'] == 'fast_hdbscan'
+
+    def test_backend_invalid_raises(self, synthetic_setup):
+        """An invalid backend string should raise ValueError."""
+        clusterer, d_conj, session_bool = synthetic_setup
+        with pytest.raises(ValueError, match="backend must be"):
+            clusterer.fit(
+                d_conj=d_conj,
+                session_bool=session_bool,
+                backend='nonexistent',
+            )
+
+    def test_fast_hdbscan_custom_d_clusterMerge(self, synthetic_setup):
+        """Custom d_clusterMerge should be respected."""
+        clusterer, d_conj, session_bool = synthetic_setup
+        labels = clusterer.fit(
+            d_conj=d_conj,
+            session_bool=session_bool,
+            d_clusterMerge=0.5,
+        )
+        assert isinstance(labels, np.ndarray)
+
+    def test_fast_hdbscan_min_cluster_size_all(self, synthetic_setup):
+        """min_cluster_size='all' should set it to n_sessions."""
+        clusterer, d_conj, session_bool = synthetic_setup
+        labels = clusterer.fit(
+            d_conj=d_conj,
+            session_bool=session_bool,
+            min_cluster_size='all',
+        )
+        ## All non-noise clusters should have exactly n_sessions members
+        n_sessions = session_bool.shape[1]
+        u, c = np.unique(labels[labels >= 0], return_counts=True)
+        if len(u) > 0:
+            assert np.all(c >= n_sessions), (
+                f"With min_cluster_size='all', expected cluster size >= {n_sessions}, "
+                f"got sizes: {c}"
+            )
+
+
+class TestFastHDBSCANQualityMetrics:
+    """Tests for quality metrics extraction with fast_hdbscan backend."""
+
+    def test_extract_hdbscan_quality_metrics_fast(self):
+        """Quality metric extraction should work without outlier_scores_."""
+        clusterer, d_conj, session_bool = _make_synthetic_clusterer(
+            n_sessions=4, n_rois_per_session=15, seed=99,
+        )
+        clusterer.fit(
+            d_conj=d_conj,
+            session_bool=session_bool,
+        )
+        metrics = clusterer._extract_hdbscan_quality_metrics()
+        assert 'sample_probabilities' in metrics
+        assert 'sample_outlierScores' in metrics
+        ## fast_hdbscan has no outlier_scores_, so it should be None
+        assert metrics['sample_outlierScores'] is None
+        ## Probabilities should be a list of floats matching n_rois
+        assert isinstance(metrics['sample_probabilities'], list)
+        assert len(metrics['sample_probabilities']) == session_bool.shape[0]
+
+    def test_core_distances_extracted(self):
+        """fast_hdbscan should expose per-point core distances."""
+        clusterer, d_conj, session_bool = _make_synthetic_clusterer(
+            n_sessions=4, n_rois_per_session=15, seed=99,
+        )
+        clusterer.fit(
+            d_conj=d_conj,
+            session_bool=session_bool,
+        )
+        metrics = clusterer._extract_hdbscan_quality_metrics()
+        assert 'sample_coreDistances' in metrics
+        assert metrics['sample_coreDistances'] is not None
+        assert isinstance(metrics['sample_coreDistances'], list)
+        assert len(metrics['sample_coreDistances']) == session_bool.shape[0]
+        assert all(isinstance(v, float) for v in metrics['sample_coreDistances'])
+
+    def test_mst_edge_weights_extracted(self):
+        """fast_hdbscan should expose sorted MST edge weights."""
+        clusterer, d_conj, session_bool = _make_synthetic_clusterer(
+            n_sessions=4, n_rois_per_session=15, seed=99,
+        )
+        clusterer.fit(
+            d_conj=d_conj,
+            session_bool=session_bool,
+        )
+        metrics = clusterer._extract_hdbscan_quality_metrics()
+        assert 'mst_edge_weights' in metrics
+        assert metrics['mst_edge_weights'] is not None
+        assert isinstance(metrics['mst_edge_weights'], list)
+        ## MST on n points has n-1 edges
+        n_rois = session_bool.shape[0]
+        assert len(metrics['mst_edge_weights']) == n_rois - 1
+        ## Weights should be sorted
+        weights = metrics['mst_edge_weights']
+        assert weights == sorted(weights)
+
+
+######################################################################################################################################
 ######################################### RICHFILE OPTIMIZE RESULT ###################################################################
 ######################################################################################################################################
 
@@ -1230,3 +1564,55 @@ def test_richfile_optimize_result_roundtrip(tmp_path):
     assert loaded['de_result'].nit == result.nit
     assert loaded['de_result'].success == result.success
     assert loaded['de_result'].message == result.message
+
+
+######################################################################################################################################
+######################################################## ROIEXTRACTORS ###############################################################
+######################################################################################################################################
+
+
+class Test_roiextractors:
+    """Tests for roiextractors integration."""
+
+    def test_import_data_roiextractors(self):
+        """Data_roiextractors class should be importable."""
+        from roicat.data_importing import Data_roiextractors
+        assert Data_roiextractors is not None
+
+    def test_import_roiextractors_package(self):
+        """roiextractors package should be importable."""
+        import roiextractors
+        assert hasattr(roiextractors, 'extractors')
+
+    def test_make_spatial_footprints_from_mock(self):
+        """Data_roiextractors._make_spatialFootprints should convert pixel masks to sparse."""
+        from roicat.data_importing import Data_roiextractors
+
+        rng = np.random.RandomState(42)
+        height, width = 50, 50
+        n_rois = 5
+
+        ## Create mock pixel masks in roiextractors format: list of (n_pixels, 3) arrays
+        ## Each array has columns [row, col, value]
+        class MockSegObj:
+            def get_roi_pixel_masks(self):
+                masks = []
+                for _ in range(n_rois):
+                    n_px = rng.randint(10, 30)
+                    rows = rng.randint(0, height, n_px)
+                    cols = rng.randint(0, width, n_px)
+                    vals = rng.rand(n_px).astype(np.float32)
+                    masks.append(np.column_stack([rows, cols, vals]))
+                return masks
+
+            def get_image_size(self):
+                return (height, width)
+
+        mock = MockSegObj()
+        ## Call the static-ish method directly (it only uses segObj methods)
+        data = Data_roiextractors.__new__(Data_roiextractors)
+        sf = data._make_spatialFootprints(mock)
+
+        assert scipy.sparse.issparse(sf)
+        assert sf.shape[0] == n_rois
+        assert sf.shape[1] == height * width
