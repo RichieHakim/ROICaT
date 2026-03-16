@@ -121,6 +121,7 @@ class Clusterer(util.ROICaT_Module):
         ## Store metric configs as serializable dicts keyed by name.
         ## Access via self._metric_configs property (reconstructs SimilarityMetric instances).
         self._metric_configs_dicts = {m.name: m.to_dict() for m in metric_configs}
+        self._metric_configs_originals = {m.name: m for m in metric_configs}
 
         ## Identify sparsity source
         sparsity_sources = [name for name, cfg in self._metric_configs.items() if cfg.is_sparsity_source]
@@ -155,12 +156,6 @@ class Clusterer(util.ROICaT_Module):
 
         self._session_bool = session_bool
 
-        ## Backward compatibility aliases — allows code that references the
-        ## old attribute names (self.s_sf, self.s_NN_z, self.s_SWT_z) to
-        ## continue working without changes.
-        self.s_sf = self.similarities.get('sf', self._s_sparsity)
-        self.s_NN_z = self.similarities.get('nn', None)
-        self.s_SWT_z = self.similarities.get('swt', None)
 
     def __repr__(self):
         has_sim = hasattr(self, 'similarities') and self.similarities is not None
@@ -180,7 +175,10 @@ class Clusterer(util.ROICaT_Module):
 
     @property
     def _metric_configs(self) -> Dict[str, SimilarityMetric]:
-        """Reconstruct SimilarityMetric instances from stored dicts."""
+        """Return SimilarityMetric instances. Uses original objects if available
+        (preserves callables), otherwise reconstructs from stored dicts."""
+        if hasattr(self, '_metric_configs_originals') and self._metric_configs_originals is not None:
+            return self._metric_configs_originals
         return {name: SimilarityMetric.from_dict(d) for name, d in self._metric_configs_dicts.items()}
 
     def find_optimal_parameters_for_pruning(
@@ -1251,13 +1249,6 @@ class Clusterer(util.ROICaT_Module):
         self.similarities_pruned = {
             name: prune(s, self.graph_pruned) for name, s in sims_copy.items()
         }
-        ## Backward compatibility aliases for pruned matrices
-        if 'sf' in self.similarities_pruned:
-            self.s_sf_pruned = self.similarities_pruned['sf']
-        if 'nn' in self.similarities_pruned:
-            self.s_NN_pruned = self.similarities_pruned['nn']
-        if 'swt' in self.similarities_pruned:
-            self.s_SWT_pruned = self.similarities_pruned['swt']
         self.s_sesh_pruned = prune(ssesh, self.graph_pruned)
         self.dConj_pruned = prune(self.dConj, self.graph_pruned)
         self.sConj_pruned = prune(self.sConj, self.graph_pruned)

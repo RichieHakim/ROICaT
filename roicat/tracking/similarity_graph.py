@@ -229,6 +229,7 @@ class ROI_graph(util.ROICaT_Module):
         ## Stored as dicts for RichFile serialization compatibility.
         ## Use self.metric_configs property to get SimilarityMetric instances.
         self._metric_configs_dicts = [m.to_dict() for m in metric_configs] if metric_configs is not None else None
+        self._metric_configs_originals = list(metric_configs) if metric_configs is not None else None
 
         self._verbose = verbose
         self._n_workers = mp.cpu_count() if n_workers == -1 else n_workers
@@ -272,7 +273,10 @@ class ROI_graph(util.ROICaT_Module):
 
     @property
     def _metric_configs(self) -> Optional[List[SimilarityMetric]]:
-        """Reconstruct SimilarityMetric instances from stored dicts."""
+        """Return SimilarityMetric instances. Uses original objects if available
+        (preserves callables), otherwise reconstructs from stored dicts."""
+        if hasattr(self, '_metric_configs_originals') and self._metric_configs_originals is not None:
+            return self._metric_configs_originals
         if not hasattr(self, '_metric_configs_dicts') or self._metric_configs_dicts is None:
             return None
         return [SimilarityMetric.from_dict(d) for d in self._metric_configs_dicts]
@@ -280,6 +284,7 @@ class ROI_graph(util.ROICaT_Module):
     @_metric_configs.setter
     def _metric_configs(self, value):
         """Convert metric configs to serializable dicts for storage.
+        Also caches originals to preserve callables during the session.
 
         Accepts:
             - ``None``: clears stored configs.
@@ -289,11 +294,14 @@ class ROI_graph(util.ROICaT_Module):
         """
         if value is None:
             self._metric_configs_dicts = None
+            self._metric_configs_originals = None
         elif isinstance(value, list) and len(value) > 0 and isinstance(value[0], SimilarityMetric):
             self._metric_configs_dicts = [m.to_dict() for m in value]
+            self._metric_configs_originals = list(value)
         else:
             ## Covers List[dict] and empty list
             self._metric_configs_dicts = value
+            self._metric_configs_originals = None
 
 
     ###########################################################################
@@ -496,15 +504,6 @@ class ROI_graph(util.ROICaT_Module):
             idxROI_block_all,
             (n_roi, n_roi),
         ).tocsr()
-
-        ## Backward compatibility: also expose as legacy attribute names
-        for m_config in resolved_configs:
-            if m_config.name == 'sf':
-                self.s_sf = self.similarities['sf']
-            elif m_config.name == 'nn':
-                self.s_NN = self.similarities['nn']
-            elif m_config.name == 'swt':
-                self.s_SWT = self.similarities['swt']
 
         return self.similarities
 
@@ -967,11 +966,6 @@ class ROI_graph(util.ROICaT_Module):
 
             self.similarities_z[m_name] = s_z
 
-        ## Backward compatibility: also expose as legacy attribute names
-        if 'nn' in self.similarities_z:
-            self.s_NN_z = self.similarities_z['nn']
-        if 'swt' in self.similarities_z:
-            self.s_SWT_z = self.similarities_z['swt']
 
     @property
     def similarities_final(self) -> Dict[str, scipy.sparse.csr_matrix]:

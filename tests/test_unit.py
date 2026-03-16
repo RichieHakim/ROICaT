@@ -832,7 +832,7 @@ class Test_naive_bayes_distance_matrix:
         assert 'p_same_combined' in calibrations
 
     def test_output_shapes_match_input(self, clusterer_with_data):
-        """dConj and sConj should have same shape/nnz as s_sf."""
+        """dConj and sConj should have same shape/nnz as _s_sparsity."""
         dConj, sConj, _ = clusterer_with_data.make_naive_bayes_distance_matrix()
         assert dConj.shape == clusterer_with_data._s_sparsity.shape
         assert sConj.shape == clusterer_with_data._s_sparsity.shape
@@ -931,7 +931,7 @@ class Test_find_optimal_nb_combination_DE:
         assert 'p_same_combined' in result_info
 
     def test_output_shapes_match_input(self, clusterer_with_data):
-        """dConj and sConj should have same shape/nnz as s_sf."""
+        """dConj and sConj should have same shape/nnz as _s_sparsity."""
         dConj, sConj, _ = self._run_hybrid(clusterer_with_data)
         assert dConj.shape == clusterer_with_data._s_sparsity.shape
         assert sConj.shape == clusterer_with_data._s_sparsity.shape
