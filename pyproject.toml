@@ -21,7 +21,7 @@ core = [
     "natsort==8.4.0",
     "numpy==2.4.3",
     "optuna==4.7.0",
-    "Pillow==12.1.0",
+    "Pillow==12.1.1",
     "pytest==9.0.2",
     "PyYAML==6.0.3",
     "scikit-learn==1.8.0",
