@@ -1251,6 +1251,13 @@ class Clusterer(util.ROICaT_Module):
         self.similarities_pruned = {
             name: prune(s, self.graph_pruned) for name, s in sims_copy.items()
         }
+        ## Backward compatibility aliases for pruned matrices
+        if 'sf' in self.similarities_pruned:
+            self.s_sf_pruned = self.similarities_pruned['sf']
+        if 'nn' in self.similarities_pruned:
+            self.s_NN_pruned = self.similarities_pruned['nn']
+        if 'swt' in self.similarities_pruned:
+            self.s_SWT_pruned = self.similarities_pruned['swt']
         self.s_sesh_pruned = prune(ssesh, self.graph_pruned)
         self.dConj_pruned = prune(self.dConj, self.graph_pruned)
         self.sConj_pruned = prune(self.sConj, self.graph_pruned)
@@ -2360,13 +2367,13 @@ class Clusterer(util.ROICaT_Module):
             'value_stop': 0.0,
         },
         bounds_findParameters: Dict[str, List[float]] = {
-            'power_NN': [0.0, 2.],
-            'power_SWT': [0.0, 2.],
+            'power_nn': [0.0, 2.],
+            'power_swt': [0.0, 2.],
             'p_norm': [-5, -0.1],
-            'sig_NN_kwargs_mu': [0., 1.0],
-            'sig_NN_kwargs_b': [0.1, 1.5],
-            'sig_SWT_kwargs_mu': [0., 1.0],
-            'sig_SWT_kwargs_b': [0.1, 1.5],
+            'sig_nn_kwargs_mu': [0., 1.0],
+            'sig_nn_kwargs_b': [0.1, 1.5],
+            'sig_swt_kwargs_mu': [0., 1.0],
+            'sig_swt_kwargs_b': [0.1, 1.5],
         },
         n_jobs_findParameters: int = -1,
         n_bins: Optional[int] = None,
@@ -2438,22 +2445,22 @@ class Clusterer(util.ROICaT_Module):
 
         self.best_params = self.study.best_params.copy()
         [self.best_params.pop(p) for p in [
-            'sig_NN_kwargs_mu', 'sig_NN_kwargs_b',
-            'sig_SWT_kwargs_mu', 'sig_SWT_kwargs_b',
+            'sig_nn_kwargs_mu', 'sig_nn_kwargs_b',
+            'sig_swt_kwargs_mu', 'sig_swt_kwargs_b',
         ] if p in self.best_params.keys()]
-        self.best_params['sig_NN_kwargs'] = {
-            'mu': self.study.best_params['sig_NN_kwargs_mu'],
-            'b': self.study.best_params['sig_NN_kwargs_b'],
+        self.best_params['sig_nn_kwargs'] = {
+            'mu': self.study.best_params['sig_nn_kwargs_mu'],
+            'b': self.study.best_params['sig_nn_kwargs_b'],
         }
-        self.best_params['sig_SWT_kwargs'] = {
-            'mu': self.study.best_params['sig_SWT_kwargs_mu'],
-            'b': self.study.best_params['sig_SWT_kwargs_b'],
+        self.best_params['sig_swt_kwargs'] = {
+            'mu': self.study.best_params['sig_swt_kwargs_mu'],
+            'b': self.study.best_params['sig_swt_kwargs_b'],
         }
 
         self.kwargs_makeConjunctiveDistanceMatrix_best = {
-            'power_SF': None, 'power_NN': None, 'power_SWT': None,
-            'p_norm': None, 'sig_SF_kwargs': None,
-            'sig_NN_kwargs': None, 'sig_SWT_kwargs': None,
+            'power_sf': None, 'power_nn': None, 'power_swt': None,
+            'p_norm': None, 'sig_sf_kwargs': None,
+            'sig_nn_kwargs': None, 'sig_swt_kwargs': None,
         }
         self.kwargs_makeConjunctiveDistanceMatrix_best.update(self.best_params)
         print(f'Completed automatic parameter search. Best value found: {self.study.best_value} with parameters {self.best_params}') if self._verbose else None
@@ -2468,16 +2475,16 @@ class Clusterer(util.ROICaT_Module):
         Used by :meth:`_find_optimal_parameters_for_pruning_optuna`.
         RH 2023
         """
-        power_NN = trial.suggest_float('power_NN', *self.bounds_findParameters['power_NN'], log=False)
-        power_SWT = trial.suggest_float('power_SWT', *self.bounds_findParameters['power_SWT'], log=False)
+        power_NN = trial.suggest_float('power_nn', *self.bounds_findParameters['power_nn'], log=False)
+        power_SWT = trial.suggest_float('power_swt', *self.bounds_findParameters['power_swt'], log=False)
         p_norm = trial.suggest_float('p_norm', *self.bounds_findParameters['p_norm'], log=False)
         sig_NN_kwargs = {
-            'mu': trial.suggest_float('sig_NN_kwargs_mu', *self.bounds_findParameters['sig_NN_kwargs_mu'], log=False),
-            'b': trial.suggest_float('sig_NN_kwargs_b', *self.bounds_findParameters['sig_NN_kwargs_b'], log=False),
+            'mu': trial.suggest_float('sig_nn_kwargs_mu', *self.bounds_findParameters['sig_nn_kwargs_mu'], log=False),
+            'b': trial.suggest_float('sig_nn_kwargs_b', *self.bounds_findParameters['sig_nn_kwargs_b'], log=False),
         }
         sig_SWT_kwargs = {
-            'mu': trial.suggest_float('sig_SWT_kwargs_mu', *self.bounds_findParameters['sig_SWT_kwargs_mu'], log=False),
-            'b': trial.suggest_float('sig_SWT_kwargs_b', *self.bounds_findParameters['sig_SWT_kwargs_b'], log=False),
+            'mu': trial.suggest_float('sig_swt_kwargs_mu', *self.bounds_findParameters['sig_swt_kwargs_mu'], log=False),
+            'b': trial.suggest_float('sig_swt_kwargs_b', *self.bounds_findParameters['sig_swt_kwargs_b'], log=False),
         }
         mixing_params = {
             'power_sf': 1.0, 'power_nn': power_NN, 'power_swt': power_SWT,
@@ -2516,13 +2523,13 @@ class Clusterer(util.ROICaT_Module):
             keys=['bounds', 'de_kwargs', 'subsample_pairs', 'seed'],
         )
         bounds_use = bounds if bounds is not None else {
-            'p_norm': [0.1, 5.0], 'w_NN': [0.0, 5.0], 'w_SWT': [0.0, 5.0],
+            'p_norm': [0.1, 5.0], 'w_nn': [0.0, 5.0], 'w_swt': [0.0, 5.0],
         }
         de_kwargs_use = de_kwargs if de_kwargs is not None else {
             'maxiter': 100, 'tol': 1e-6, 'popsize': 15,
             'mutation': (0.5, 1.5), 'recombination': 0.7, 'polish': True,
         }
-        scipy_bounds = [tuple(bounds_use['p_norm']), tuple(bounds_use['w_NN']), tuple(bounds_use['w_SWT'])]
+        scipy_bounds = [tuple(bounds_use['p_norm']), tuple(bounds_use['w_nn']), tuple(bounds_use['w_swt'])]
 
         cal = self.calibrations_naive_bayes['features']
         p_sf_t = torch.as_tensor(cal['sf']['p_same_per_pair'], dtype=torch.float32)
@@ -2602,7 +2609,7 @@ class Clusterer(util.ROICaT_Module):
         dConj.data = 1.0 - dConj.data
         self.dConj = dConj
         self.sConj = sConj
-        best_params = {'p_norm': p_val_best, 'w_NN': w_nn_best, 'w_SWT': w_swt_best}
+        best_params = {'p_norm': p_val_best, 'w_nn': w_nn_best, 'w_swt': w_swt_best}
         result_info = {
             'best_params': best_params, 'loss': float(nb_de_result.fun),
             'n_evals': int(nb_de_result.nfev), 'p_same_combined': p_same_combined_np,

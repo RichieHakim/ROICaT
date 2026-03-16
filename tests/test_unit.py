@@ -953,10 +953,10 @@ class Test_find_optimal_nb_combination_DE:
         )
 
     def test_best_params_have_expected_keys(self, clusterer_with_data):
-        """best_params should contain p_norm, w_NN, w_SWT."""
+        """best_params should contain p_norm, w_nn, w_swt."""
         _, _, result_info = self._run_hybrid(clusterer_with_data)
         params = result_info['best_params']
-        assert set(params.keys()) == {'p_norm', 'w_NN', 'w_SWT'}
+        assert set(params.keys()) == {'p_norm', 'w_nn', 'w_swt'}
         ## All should be finite
         for k, v in params.items():
             assert np.isfinite(v), f'{k}={v} is not finite'
