@@ -13,6 +13,10 @@ import sparse
 
 from .. import helpers, util
 
+## Module-level cache for original SimilarityMetric objects. Keyed by id(instance).
+## Kept outside __dict__ so RichFile serialization doesn't see them.
+_metric_configs_cache: Dict[int, Any] = {}
+
 
 @dataclass
 class SimilarityMetric:
@@ -229,7 +233,10 @@ class ROI_graph(util.ROICaT_Module):
         ## Stored as dicts for RichFile serialization compatibility.
         ## Use self.metric_configs property to get SimilarityMetric instances.
         self._metric_configs_dicts = [m.to_dict() for m in metric_configs] if metric_configs is not None else None
-        self._metric_configs_originals = list(metric_configs) if metric_configs is not None else None
+        ## Cache original SimilarityMetric objects outside __dict__ to
+        ## preserve callables without breaking RichFile serialization.
+        ## Lost on save/load (expected — callables can't be serialized).
+        _metric_configs_cache[id(self)] = list(metric_configs) if metric_configs is not None else None
 
         self._verbose = verbose
         self._n_workers = mp.cpu_count() if n_workers == -1 else n_workers
@@ -273,10 +280,11 @@ class ROI_graph(util.ROICaT_Module):
 
     @property
     def _metric_configs(self) -> Optional[List[SimilarityMetric]]:
-        """Return SimilarityMetric instances. Uses original objects if available
-        (preserves callables), otherwise reconstructs from stored dicts."""
-        if hasattr(self, '_metric_configs_originals') and self._metric_configs_originals is not None:
-            return self._metric_configs_originals
+        """Return SimilarityMetric instances. Uses cached originals if
+        available (preserves callables), otherwise reconstructs from dicts."""
+        originals = _metric_configs_cache.get(id(self))
+        if originals is not None:
+            return originals
         if not hasattr(self, '_metric_configs_dicts') or self._metric_configs_dicts is None:
             return None
         return [SimilarityMetric.from_dict(d) for d in self._metric_configs_dicts]
@@ -284,7 +292,6 @@ class ROI_graph(util.ROICaT_Module):
     @_metric_configs.setter
     def _metric_configs(self, value):
         """Convert metric configs to serializable dicts for storage.
-        Also caches originals to preserve callables during the session.
 
         Accepts:
             - ``None``: clears stored configs.
@@ -294,14 +301,14 @@ class ROI_graph(util.ROICaT_Module):
         """
         if value is None:
             self._metric_configs_dicts = None
-            self._metric_configs_originals = None
+            _metric_configs_cache.pop(id(self), None)
         elif isinstance(value, list) and len(value) > 0 and isinstance(value[0], SimilarityMetric):
             self._metric_configs_dicts = [m.to_dict() for m in value]
-            self._metric_configs_originals = list(value)
+            _metric_configs_cache[id(self)] = list(value)
         else:
             ## Covers List[dict] and empty list
             self._metric_configs_dicts = value
-            self._metric_configs_originals = None
+            _metric_configs_cache.pop(id(self), None)
 
 
     ###########################################################################

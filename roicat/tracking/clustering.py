@@ -14,6 +14,11 @@ from tqdm.auto import tqdm
 from .. import helpers, util
 from .similarity_graph import SimilarityMetric
 
+## Module-level cache for original SimilarityMetric objects (keyed by id(instance)).
+## Kept outside __dict__ so RichFile serialization doesn't see them.
+_clusterer_configs_cache: Dict[int, Any] = {}
+
+
 class Clusterer(util.ROICaT_Module):
     """
     Class for clustering algorithms. Performs:
@@ -121,7 +126,8 @@ class Clusterer(util.ROICaT_Module):
         ## Store metric configs as serializable dicts keyed by name.
         ## Access via self._metric_configs property (reconstructs SimilarityMetric instances).
         self._metric_configs_dicts = {m.name: m.to_dict() for m in metric_configs}
-        self._metric_configs_originals = {m.name: m for m in metric_configs}
+        ## Cache originals outside __dict__ (see module-level _clusterer_configs_cache)
+        _clusterer_configs_cache[id(self)] = {m.name: m for m in metric_configs}
 
         ## Identify sparsity source
         sparsity_sources = [name for name, cfg in self._metric_configs.items() if cfg.is_sparsity_source]
@@ -175,10 +181,11 @@ class Clusterer(util.ROICaT_Module):
 
     @property
     def _metric_configs(self) -> Dict[str, SimilarityMetric]:
-        """Return SimilarityMetric instances. Uses original objects if available
-        (preserves callables), otherwise reconstructs from stored dicts."""
-        if hasattr(self, '_metric_configs_originals') and self._metric_configs_originals is not None:
-            return self._metric_configs_originals
+        """Return SimilarityMetric instances. Uses cached originals if
+        available (preserves callables), otherwise reconstructs from dicts."""
+        originals = _clusterer_configs_cache.get(id(self))
+        if originals is not None:
+            return originals
         return {name: SimilarityMetric.from_dict(d) for name, d in self._metric_configs_dicts.items()}
 
     def find_optimal_parameters_for_pruning(
