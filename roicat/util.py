@@ -954,9 +954,14 @@ class RichFile_ROICaT(rf.RichFile):
             import json
             attrs = {}
             for attr in sorted(dir(obj)):
-                if attr.startswith('__') or callable(getattr(obj, attr, None)):
+                if attr.startswith('_'):
                     continue
-                val = getattr(obj, attr, None)
+                try:
+                    val = getattr(obj, attr)
+                except Exception:
+                    continue
+                if callable(val):
+                    continue
                 if val is None:
                     attrs[attr] = None
                 elif isinstance(val, np.ndarray):

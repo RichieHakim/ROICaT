@@ -32,12 +32,17 @@ def dir_data_test():
     # dir_data_test = str(Path('data_test/').resolve().absolute())
     dir_data_test = str((Path(tempfile.gettempdir()) / 'data_test').resolve().absolute())
     print(dir_data_test)
+    ## Clean stale test data from previous runs to avoid conflicts
+    ## (e.g. leftover .richfile directories alongside .richfile.zip archives)
+    import shutil
+    if Path(dir_data_test).exists():
+        shutil.rmtree(dir_data_test)
     # path_data_test_zip = download_data_test_zip(dir_data_test)
     ## Get data_test from repo folder
     path_data_test_zip = str(Path(__file__).parent / 'tests' / 'data_test.zip')
     print(f"Extracting test data from {path_data_test_zip}")
     roicat.helpers.extract_zip(
-        path_zip=path_data_test_zip, 
+        path_zip=path_data_test_zip,
         path_extract=dir_data_test,
         verbose=True,
     )

@@ -1605,7 +1605,7 @@ class Test_roiextractors:
                     masks.append(np.column_stack([rows, cols, vals]))
                 return masks
 
-            def get_image_size(self):
+            def get_frame_shape(self):
                 return (height, width)
 
         mock = MockSegObj()

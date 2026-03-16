@@ -1846,7 +1846,7 @@ class Data_roiextractors(Data_roicat):
             [
                 scipy.sparse.coo_matrix(
                     (d, (ij[:,0], ij[:,1])),
-                    shape=tuple(segObj.get_image_size())
+                    shape=tuple(segObj.get_frame_shape() if hasattr(segObj, 'get_frame_shape') else segObj.get_image_size())
                 ).reshape(1, -1) for d,ij in zip(data, ij_all)
             ]
         ).tocsr()

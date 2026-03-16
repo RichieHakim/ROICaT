@@ -54,7 +54,7 @@ tracking = [
     "kymatio==0.3.0",
     "kornia==0.8.2",
     "romatch-roicat>=0.1.2.post1",
-    "roiextractors @ git+https://github.com/RichieHakim/roiextractors.git",
+    "roiextractors==0.8.0",
 ]
 all = [
     "roicat[core,classification,tracking]",
@@ -99,7 +99,7 @@ all_latest = [
     "onnx2torch",
     "scikit-image",
     "selenium",
-    "roiextractors @ git+https://github.com/RichieHakim/roiextractors.git",
+    "roiextractors==0.8.0",
 ]
 
 [project.scripts]
