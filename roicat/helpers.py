@@ -2112,13 +2112,31 @@ def download_file(
     if url is None:
         print('No URL provided. No download attempted.') if verbose else None
         return None
-    try:
-        response = requests.get(url, stream=True)
-    except requests.exceptions.RequestException as e:
-        print(f'Error downloading file: {e}') if verbose else None
-        return False
-    # Check response
-    if response.status_code != 200:
+    ## Retry with exponential backoff for transient HTTP errors (403 rate
+    ## limits from OSF, 429, 5xx). Max ~30s total wait.
+    import time
+    max_retries = 4
+    retryable_codes = {403, 429, 500, 502, 503, 504}
+    response = None
+    for attempt in range(max_retries + 1):
+        try:
+            response = requests.get(url, stream=True)
+        except requests.exceptions.RequestException as e:
+            print(f'Error downloading file (attempt {attempt + 1}/{max_retries + 1}): {e}') if verbose else None
+            if attempt < max_retries:
+                wait = 2 ** attempt
+                print(f'Retrying in {wait}s...') if verbose else None
+                time.sleep(wait)
+                continue
+            return False
+        if response.status_code == 200:
+            break
+        if response.status_code in retryable_codes and attempt < max_retries:
+            wait = 2 ** attempt
+            print(f'Error downloading file. Response status code: {response.status_code}. Retrying in {wait}s (attempt {attempt + 1}/{max_retries + 1})...') if verbose else None
+            time.sleep(wait)
+            continue
+        ## Non-retryable error or out of retries
         print(f'Error downloading file. Response status code: {response.status_code}') if verbose else None
         return False
     # Create parent directory if it does not exist
