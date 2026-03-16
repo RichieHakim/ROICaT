@@ -226,25 +226,24 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
 
     ## Compute similarities
     print(f"\n{'='*50}\nStep: Similarity Graph\n{'='*50}") if VERBOSE else None
+    from .tracking.similarity_graph import DEFAULT_METRICS
     sim = tracking.similarity_graph.ROI_graph(
         frame_height=data.FOV_height,
         frame_width=data.FOV_width,
         verbose=VERBOSE,  ## Whether to print outputs
+        metric_configs=DEFAULT_METRICS,
         **params['similarity_graph']['sparsification']
     )
     sim.compute_similarity_blockwise(
         spatialFootprints=blurrer.ROIs_blurred,  ## Mask spatial footprints
-        features_NN=roinet.latents,  ## ROInet output latents
-        features_SWT=swt.latents,  ## Scattering wavelet transform output latents
         ROI_session_bool=data.session_bool,  ## Boolean array of which ROIs belong to which sessions
-    #     spatialFootprint_maskPower=1.0,  ##  An exponent to raise the spatial footprints to to care more or less about bright pixels
+        features={'nn': roinet.latents, 'swt': swt.latents},  ## Feature vectors per metric
         **params['similarity_graph']['compute_similarity'],
     );
     sim.make_normalized_similarities(
         centers_of_mass=data.centroids,  ## ROI centroid positions
-        features_NN=roinet.latents,  ## ROInet latents
-        features_SWT=swt.latents,  ## SWT latents
-        device=DEVICE,    
+        features={'nn': roinet.latents, 'swt': swt.latents},  ## Feature vectors for z-scoring
+        device=DEVICE,
         k_max=data.n_sessions * params['similarity_graph']['normalization']['k_max'],
         k_min=data.n_sessions * params['similarity_graph']['normalization']['k_min'],
         algo_NN=params['similarity_graph']['normalization']['algo_NN'],
@@ -256,9 +255,8 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
     ## Clustering
     print(f"\n{'='*50}\nStep: Clustering\n{'='*50}") if VERBOSE else None
     clusterer = tracking.clustering.Clusterer(
-        s_sf=sim.s_sf,
-        s_NN_z=sim.s_NN_z,
-        s_SWT_z=sim.s_SWT_z,
+        similarities=sim.similarities_final,
+        metric_configs=DEFAULT_METRICS,
         s_sesh=sim.s_sesh,
         session_bool=data.session_bool,
         verbose=VERBOSE,
@@ -277,7 +275,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         )
 
     clusterer.make_pruned_similarity_graphs(
-        kwargs_makeConjunctiveDistanceMatrix=kwargs_makeConjunctiveDistanceMatrix_best,
+        mixing_params=kwargs_makeConjunctiveDistanceMatrix_best,
         **params['clustering']['pruning'],
     )
     tocs.append(('make_conjunctive_distance', time.time() - tic_start))
@@ -433,14 +431,13 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         fig.savefig(str(Path(dir_save).resolve() / 'visualization' / 'similarity_graph' / 'blocks.png'))
         
         #### Save the similarity / distance plots for the given conjunctive distance matrix kwargs
-        fig = clusterer.plot_distSame(kwargs_makeConjunctiveDistanceMatrix=kwargs_makeConjunctiveDistanceMatrix_best)
+        fig = clusterer.plot_distSame(mixing_params=kwargs_makeConjunctiveDistanceMatrix_best)
         (Path(dir_save).resolve() / 'visualization' / 'clustering').mkdir(parents=True, exist_ok=True)
         fig.savefig(str(Path(dir_save).resolve() / 'visualization' / 'clustering' / 'dist.png'))
         fig, axs = clusterer.plot_similarity_relationships(
-            plots_to_show=[1,2,3], 
             max_samples=100000,  ## Make smaller if it is running too slow
             kwargs_scatter={'s':1, 'alpha':0.2},
-            kwargs_makeConjunctiveDistanceMatrix=kwargs_makeConjunctiveDistanceMatrix_best
+            mixing_params=kwargs_makeConjunctiveDistanceMatrix_best,
         )
         (Path(dir_save).resolve() / 'visualization' / 'clustering').mkdir(parents=True, exist_ok=True)
         fig.savefig(str(Path(dir_save).resolve() / 'visualization' / 'clustering' / 'similarity_relationships.png'))

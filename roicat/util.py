@@ -224,8 +224,8 @@ def get_default_parameters(
                     'smoothing_window_bins': None,  ## Smoothing window for distributions. None = heuristic.
                     'subsample_pairs': None,  ## Subsample this many pairs for speedup. None = use all.
                     'bounds_findParameters': {
-                        'power_NN': [0.0, 2.],  ## Bounds for the exponent applied to s_NN
-                        'power_SWT': [0.0, 2.],  ## Bounds for the exponent applied to s_SWT
+                        'power_nn': [0.0, 2.],  ## Bounds for the exponent applied to s_nn
+                        'power_swt': [0.0, 2.],  ## Bounds for the exponent applied to s_swt
                         'p_norm': [-5, -0.1],  ## Bounds for the p-norm (Minkowski) mixing parameter
                     },
                     'de_kwargs': {
@@ -238,16 +238,13 @@ def get_default_parameters(
                     },
                 },
                 'parameters_manual_mixing': {
-                    'power_SF': 1.0,   ## s_sf**power_SF   (Higher values means clustering is more sensitive to spatial overlap of ROIs)
-                    'power_NN': 0.5,   ## s_NN**power_NN   (Higher values means clustering is more sensitive to visual similarity of ROIs)
-                    'power_SWT': 0.5,  ## s_SWT**power_SWT (Higher values means clustering is more sensitive to visual similarity of ROIs)
-                    'p_norm': -1.0,    ## norm([s_sf, s_NN, s_SWT], p=p_norm) (Higher values means clustering requires all similarity metrics to be high)
-                #     'sig_SF_kwargs': {'mu':0.5, 'b':1.0},  ## Sigmoid parameters for s_sf (mu is the center, b is the slope)
-                    'sig_SF_kwargs': None,
-                    'sig_NN_kwargs': {'mu': 0.5, 'b': 1.0},  ## Sigmoid parameters for s_NN (mu is the center, b is the slope)
-                #     'sig_NN_kwargs': None,
-                    'sig_SWT_kwargs': {'mu': 0.5, 'b': 1.0},  ## Sigmoid parameters for s_SWT (mu is the center, b is the slope)
-                #     'sig_SWT_kwargs': None,
+                    'power_sf': 1.0,   ## s_sf**power_sf   (Higher values means clustering is more sensitive to spatial overlap of ROIs)
+                    'power_nn': 0.5,   ## s_nn**power_nn   (Higher values means clustering is more sensitive to visual similarity of ROIs)
+                    'power_swt': 0.5,  ## s_swt**power_swt (Higher values means clustering is more sensitive to visual similarity of ROIs)
+                    'p_norm': -1.0,    ## norm([s_sf, s_nn, s_swt], p=p_norm) (Higher values means clustering requires all similarity metrics to be high)
+                    'sig_sf_kwargs': None,  ## Sigmoid parameters for s_sf (mu is the center, b is the slope)
+                    'sig_nn_kwargs': {'mu': 0.5, 'b': 1.0},  ## Sigmoid parameters for s_nn (mu is the center, b is the slope)
+                    'sig_swt_kwargs': {'mu': 0.5, 'b': 1.0},  ## Sigmoid parameters for s_swt (mu is the center, b is the slope)
                 },
                 'pruning': {
                     'd_cutoff': None,  ## Optionally manually specify a distance cutoff
@@ -1111,6 +1108,31 @@ class RichFile_ROICaT(rf.RichFile):
         # roicat_module_tds = []
         
 
+        ## SIMILARITY METRIC (dataclass → JSON)
+        from .tracking.similarity_graph import SimilarityMetric
+
+        def save_similarity_metric(
+            obj: SimilarityMetric,
+            path: Union[str, Path],
+            **kwargs,
+        ) -> None:
+            """Saves a SimilarityMetric dataclass as JSON via to_dict()."""
+            with open(path, 'w') as f:
+                json.dump(obj.to_dict(), f)
+
+        def load_similarity_metric(
+            path: Union[str, Path],
+            **kwargs,
+        ) -> SimilarityMetric:
+            """Loads a SimilarityMetric from a JSON dict."""
+            with open(path, 'r') as f:
+                d = json.load(f)
+            ## Convert power_bounds from list back to tuple (JSON round-trip)
+            if 'power_bounds' in d and isinstance(d['power_bounds'], list):
+                d['power_bounds'] = tuple(d['power_bounds'])
+            return SimilarityMetric.from_dict(d)
+
+
         type_dicts = [
             {
                 "type_name":          "numpy_array",
@@ -1256,6 +1278,15 @@ class RichFile_ROICaT(rf.RichFile):
                 "object_class":       scipy.optimize.OptimizeResult,
                 "suffix":             "json",
                 "library":            "scipy",
+                "versions_supported": [],
+            },
+            {
+                "type_name":          "similarity_metric",
+                "function_load":      load_similarity_metric,
+                "function_save":      save_similarity_metric,
+                "object_class":       SimilarityMetric,
+                "suffix":             "json",
+                "library":            "roicat",
                 "versions_supported": [],
             },
         ] + [t.get_property_dict() for t in roicat_module_tds]
