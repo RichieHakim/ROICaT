@@ -151,26 +151,23 @@ def test_pipeline_tracking_simple(dir_data_test):
     ## the actual pass/fail criteria.
     path_run_data_true = str(Path(dir_data_test).resolve() / 'pipeline_tracking' / 'run_data.richfile.zip')
     if Path(path_run_data_true).exists():
-        try:
-            print(f"Loading reference run_data from {path_run_data_true}")
-            run_data_true = util.RichFile_ROICaT(path=path_run_data_true).load()
-            checker = helpers.Equivalence_checker(
-                kwargs_allclose={'rtol': 1e-5, 'equal_nan': True},
-                assert_mode=False,
-                verbose=True,
-            )
-            checks = checker(test=run_data, true=run_data_true)
-            flat_checks = helpers.flatten_dict(checks)
-            n_passed = sum(1 for val in flat_checks.values() if val[0] is True)
-            n_failed = sum(1 for val in flat_checks.values() if val[0] is False)
-            n_skipped = sum(1 for val in flat_checks.values() if val[0] is None)
-            n_total = len(flat_checks)
-            print(f"Equivalence check summary: {n_passed}/{n_total} passed, {n_failed} failed, {n_skipped} skipped")
-            fails = [key for key, val in flat_checks.items() if val[0] is False]
-            if len(fails) > 0:
-                warnings.warn(f"Golden reference mismatch for {len(fails)} keys: {fails}")
-        except Exception as e:
-            warnings.warn(f"Golden reference comparison failed with error: {e}")
+        print(f"Loading reference run_data from {path_run_data_true}")
+        run_data_true = util.RichFile_ROICaT(path=path_run_data_true).load()
+        checker = helpers.Equivalence_checker(
+            kwargs_allclose={'rtol': 1e-5, 'equal_nan': True},
+            assert_mode=False,
+            verbose=True,
+        )
+        checks = checker(test=run_data, true=run_data_true)
+        flat_checks = helpers.flatten_dict(checks)
+        n_passed = sum(1 for val in flat_checks.values() if val[0] is True)
+        n_failed = sum(1 for val in flat_checks.values() if val[0] is False)
+        n_skipped = sum(1 for val in flat_checks.values() if val[0] is None)
+        n_total = len(flat_checks)
+        print(f"Equivalence check summary: {n_passed}/{n_total} passed, {n_failed} failed, {n_skipped} skipped")
+        fails = [key for key, val in flat_checks.items() if val[0] is False]
+        if len(fails) > 0:
+            warnings.warn(f"Golden reference mismatch for {len(fails)} keys: {fails}")
     else:
         print(f"No reference run_data found at {path_run_data_true}, skipping equivalence check")
 

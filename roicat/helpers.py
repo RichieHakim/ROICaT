@@ -6273,8 +6273,11 @@ class Equivalence_checker():
             if path[-1].startswith('_'):
                 return (None, 'excluded from testing')
 
+        ## TYPE MISMATCH: one side is None and the other is not
+        if (test is None) != (true is None):
+            result = (False, f'type mismatch: test is {type(test).__name__}, true is {type(true).__name__}')
         ## SCIPY SPARSE MATRIX
-        if scipy.sparse.issparse(true):
+        elif scipy.sparse.issparse(true):
             if not scipy.sparse.issparse(test):
                 result = (False, f'type mismatch: test is {type(test).__name__}, true is {type(true).__name__}')
             elif true.shape != test.shape:
