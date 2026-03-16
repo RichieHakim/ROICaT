@@ -1001,7 +1001,12 @@ class RichFile_ROICaT(rf.RichFile):
             """
             import json
             with open(path, 'r') as f:
-                attrs = json.load(f)
+                content = f.read()
+            try:
+                attrs = json.loads(content)
+            except json.JSONDecodeError:
+                ## Old format: file contains repr string, not JSON
+                return content
             ## Reconstruct numpy arrays and sparse matrices
             for key, val in attrs.items():
                 if isinstance(val, dict) and val.get('_type') == 'ndarray':
