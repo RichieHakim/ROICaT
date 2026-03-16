@@ -1139,6 +1139,17 @@ class RichFile_ROICaT(rf.RichFile):
                 "library":            "scipy",
                 "versions_supported": [],
             },
+            ## scipy >= 1.14 returns csr_array instead of csr_matrix from many
+            ## operations. csr_array inherits from sparray, not spmatrix.
+            {
+                "type_name":          "scipy_sparray",
+                "function_load":      load_sparse_array,
+                "function_save":      save_sparse_array,
+                "object_class":       scipy.sparse.sparray,
+                "suffix":             "npz",
+                "library":            "scipy",
+                "versions_supported": [],
+            },
             {
                 "type_name":          "json_dict",
                 "function_load":      load_json_dict,
