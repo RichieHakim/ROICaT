@@ -953,12 +953,17 @@ class RichFile_ROICaT(rf.RichFile):
             """
             import json
             attrs = {}
-            for attr in sorted(dir(obj)):
+            ## Use vars(obj) instead of dir(obj) to avoid triggering sklearn's
+            ## __dir__ which calls hasattr on every attribute, including broken
+            ## properties like condensed_tree_ that raise NameError in fast_hdbscan.
+            ## Also include sklearn get_params() for constructor parameters.
+            all_attrs = dict(vars(obj))
+            try:
+                all_attrs.update(obj.get_params())
+            except Exception:
+                pass
+            for attr, val in sorted(all_attrs.items()):
                 if attr.startswith('_'):
-                    continue
-                try:
-                    val = getattr(obj, attr)
-                except Exception:
                     continue
                 if callable(val):
                     continue
