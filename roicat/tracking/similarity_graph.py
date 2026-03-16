@@ -13,9 +13,6 @@ import sparse
 
 from .. import helpers, util
 
-## Module-level cache for original SimilarityMetric objects. Keyed by id(instance).
-## Kept outside __dict__ so RichFile serialization doesn't see them.
-_metric_configs_cache: Dict[int, Any] = {}
 
 
 @dataclass
@@ -88,12 +85,13 @@ class SimilarityMetric:
 
     def to_dict(self) -> dict:
         """JSON-safe dict for serialization. Custom callables in
-        ``similarity_fn`` are stored as ``None`` since they cannot be
-        serialized. The original callable must be re-provided when
-        reconstructing via ``from_dict``."""
+        ``similarity_fn`` are stored as a descriptive string (e.g.
+        ``"<callable: my_func>"``). The original callable must be
+        re-provided when reconstructing via ``from_dict``."""
         d = asdict(self)
         if callable(d['similarity_fn']):
-            d['similarity_fn'] = None
+            name = getattr(d['similarity_fn'], '__qualname__', None) or getattr(d['similarity_fn'], '__name__', repr(d['similarity_fn']))
+            d['similarity_fn'] = f"<callable: {name}>"
         return d
 
     @classmethod
@@ -229,14 +227,11 @@ class ROI_graph(util.ROICaT_Module):
         self._algo_sf = algorithm_nearestNeigbors_spatialFootprints
         self._kwargs_sf = kwargs_nearestNeigbors_spatialFootprints
 
-        ## Store metric configs as serializable dicts (None means use DEFAULT_METRICS at compute time)
-        ## Stored as dicts for RichFile serialization compatibility.
-        ## Use self.metric_configs property to get SimilarityMetric instances.
-        self._metric_configs_dicts = [m.to_dict() for m in metric_configs] if metric_configs is not None else None
-        ## Cache original SimilarityMetric objects outside __dict__ to
-        ## preserve callables without breaking RichFile serialization.
-        ## Lost on save/load (expected — callables can't be serialized).
-        _metric_configs_cache[id(self)] = list(metric_configs) if metric_configs is not None else None
+        ## Store metric configs directly as SimilarityMetric objects.
+        ## RichFile_ROICaT has a registered type handler for SimilarityMetric
+        ## that serializes them as JSON via to_dict()/from_dict().
+        ## None means use DEFAULT_METRICS at compute time.
+        self._metric_configs_stored = list(metric_configs) if metric_configs is not None else None
 
         self._verbose = verbose
         self._n_workers = mp.cpu_count() if n_workers == -1 else n_workers
@@ -280,35 +275,26 @@ class ROI_graph(util.ROICaT_Module):
 
     @property
     def _metric_configs(self) -> Optional[List[SimilarityMetric]]:
-        """Return SimilarityMetric instances. Uses cached originals if
-        available (preserves callables), otherwise reconstructs from dicts."""
-        originals = _metric_configs_cache.get(id(self))
-        if originals is not None:
-            return originals
-        if not hasattr(self, '_metric_configs_dicts') or self._metric_configs_dicts is None:
+        """Return stored SimilarityMetric instances, or None if not set."""
+        stored = getattr(self, '_metric_configs_stored', None)
+        if stored is None:
             return None
-        return [SimilarityMetric.from_dict(d) for d in self._metric_configs_dicts]
+        ## After RichFile load, stored objects are already SimilarityMetric.
+        ## After legacy pickle load with dicts, reconstruct.
+        if len(stored) > 0 and isinstance(stored[0], dict):
+            return [SimilarityMetric.from_dict(d) for d in stored]
+        return stored
 
     @_metric_configs.setter
     def _metric_configs(self, value):
-        """Convert metric configs to serializable dicts for storage.
+        """Store metric configs.
 
         Accepts:
             - ``None``: clears stored configs.
-            - ``List[SimilarityMetric]``: converts each to dict via ``to_dict()``.
-            - ``List[dict]``: stores as-is (already serializable).
-            - Empty list: stores as-is.
+            - ``List[SimilarityMetric]``: stores directly.
+            - ``List[dict]``: stores as-is (reconstructed on access).
         """
-        if value is None:
-            self._metric_configs_dicts = None
-            _metric_configs_cache.pop(id(self), None)
-        elif isinstance(value, list) and len(value) > 0 and isinstance(value[0], SimilarityMetric):
-            self._metric_configs_dicts = [m.to_dict() for m in value]
-            _metric_configs_cache[id(self)] = list(value)
-        else:
-            ## Covers List[dict] and empty list
-            self._metric_configs_dicts = value
-            _metric_configs_cache.pop(id(self), None)
+        self._metric_configs_stored = value
 
 
     ###########################################################################

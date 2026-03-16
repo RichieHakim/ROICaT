@@ -195,6 +195,74 @@ class Test_RichFile_ROICaT:
         assert scipy.sparse.issparse(loaded['sparse_mat'])
         assert np.allclose(loaded['sparse_mat'].toarray(), mat.toarray())
 
+    def test_similarity_metric_roundtrip(self, tmp_path):
+        """SimilarityMetric objects should survive RichFile save/load."""
+        from roicat.tracking.similarity_graph import SimilarityMetric, DEFAULT_METRICS
+        test_data = {'metrics': DEFAULT_METRICS}
+        path = str(tmp_path / 'metric_test.richfile.zip')
+        util.RichFile_ROICaT(path=path, backend='zip').save(obj=test_data, overwrite=True)
+        loaded = util.RichFile_ROICaT(path=path).load()
+        assert len(loaded['metrics']) == 3
+        for orig, loaded_m in zip(DEFAULT_METRICS, loaded['metrics']):
+            assert isinstance(loaded_m, SimilarityMetric)
+            assert loaded_m.name == orig.name
+            assert loaded_m.is_sparsity_source == orig.is_sparsity_source
+            assert loaded_m.normalize_zscore == orig.normalize_zscore
+            assert loaded_m.optimize_power == orig.optimize_power
+            assert loaded_m.optimize_sigmoid == orig.optimize_sigmoid
+            assert loaded_m.similarity_fn == orig.similarity_fn  ## str stays str
+
+    def test_similarity_metric_callable_saved_as_string(self, tmp_path):
+        """Custom callable in similarity_fn should be saved as a descriptive string."""
+        from roicat.tracking.similarity_graph import SimilarityMetric
+        def my_custom_fn(features, **kwargs):
+            return features
+        metric = SimilarityMetric(name='custom', similarity_fn=my_custom_fn)
+        test_data = {'metric': metric}
+        path = str(tmp_path / 'callable_test.richfile.zip')
+        util.RichFile_ROICaT(path=path, backend='zip').save(obj=test_data, overwrite=True)
+        loaded = util.RichFile_ROICaT(path=path).load()
+        loaded_m = loaded['metric']
+        assert isinstance(loaded_m, SimilarityMetric)
+        assert loaded_m.name == 'custom'
+        assert isinstance(loaded_m.similarity_fn, str)
+        assert 'my_custom_fn' in loaded_m.similarity_fn
+
+    def test_similarity_metric_in_dict_keyed_by_name(self, tmp_path):
+        """Dict of SimilarityMetric (as used by Clusterer) should roundtrip."""
+        from roicat.tracking.similarity_graph import SimilarityMetric, DEFAULT_METRICS
+        metrics_dict = {m.name: m for m in DEFAULT_METRICS}
+        test_data = {'configs': metrics_dict}
+        path = str(tmp_path / 'dict_metric_test.richfile.zip')
+        util.RichFile_ROICaT(path=path, backend='zip').save(obj=test_data, overwrite=True)
+        loaded = util.RichFile_ROICaT(path=path).load()
+        assert set(loaded['configs'].keys()) == {'sf', 'nn', 'swt'}
+        for name, m in loaded['configs'].items():
+            assert isinstance(m, SimilarityMetric)
+            assert m.name == name
+
+    def test_pipeline_dict_with_similarity_metrics(self, tmp_path):
+        """Simulated pipeline __dict__ containing SimilarityMetric should save/load."""
+        from roicat.tracking.similarity_graph import SimilarityMetric, DEFAULT_METRICS
+        ## Simulate what ROI_graph.__dict__ looks like
+        sim_dict = {
+            '_metric_configs_stored': list(DEFAULT_METRICS),
+            'similarities': {
+                'sf': scipy.sparse.random(50, 50, density=0.1, format='csr'),
+                'nn': scipy.sparse.random(50, 50, density=0.1, format='csr'),
+            },
+            'params': {'__init__': {'verbose': True}},
+        }
+        test_data = {'sim': sim_dict}
+        path = str(tmp_path / 'pipeline_test.richfile.zip')
+        util.RichFile_ROICaT(path=path, backend='zip').save(obj=test_data, overwrite=True)
+        loaded = util.RichFile_ROICaT(path=path).load()
+        loaded_metrics = loaded['sim']['_metric_configs_stored']
+        assert len(loaded_metrics) == 3
+        for m in loaded_metrics:
+            assert isinstance(m, SimilarityMetric)
+        assert scipy.sparse.issparse(loaded['sim']['similarities']['sf'])
+
 
 ######################################################################################################################################
 ############################################################ HELPERS #################################################################
@@ -899,121 +967,6 @@ class Test_naive_bayes_distance_matrix:
         dConj2, _, cal2 = clusterer_with_data.make_naive_bayes_distance_matrix()
         np.testing.assert_array_equal(dConj1.data, dConj2.data)
 
-
-class Test_find_optimal_nb_combination_DE:
-    """Tests for Clusterer.find_optimal_nb_combination_DE (hybrid NB + DE)."""
-
-    def _run_hybrid(self, clusterer_with_data):
-        """Helper: run NB calibration then optimize combination."""
-        clusterer_with_data.make_naive_bayes_distance_matrix()
-        return clusterer_with_data.find_optimal_nb_combination_DE(
-            de_kwargs={
-                'maxiter': 5,
-                'tol': 1e-4,
-                'popsize': 5,
-                'mutation': (0.5, 1.5),
-                'recombination': 0.7,
-                'polish': False,
-            },
-            seed=42,
-        )
-
-    def test_returns_correct_types(self, clusterer_with_data):
-        """Should return (dConj, sConj, result_info) with correct types."""
-        import scipy.sparse
-        dConj, sConj, result_info = self._run_hybrid(clusterer_with_data)
-        assert isinstance(dConj, scipy.sparse.csr_matrix)
-        assert isinstance(sConj, scipy.sparse.csr_matrix)
-        assert isinstance(result_info, dict)
-        assert 'best_params' in result_info
-        assert 'loss' in result_info
-        assert 'n_evals' in result_info
-        assert 'p_same_combined' in result_info
-
-    def test_output_shapes_match_input(self, clusterer_with_data):
-        """dConj and sConj should have same shape/nnz as _s_sparsity."""
-        dConj, sConj, _ = self._run_hybrid(clusterer_with_data)
-        assert dConj.shape == clusterer_with_data._s_sparsity.shape
-        assert sConj.shape == clusterer_with_data._s_sparsity.shape
-        assert dConj.nnz == clusterer_with_data._s_sparsity.nnz
-
-    def test_distances_in_valid_range(self, clusterer_with_data):
-        """Distances should be in [0, 1]."""
-        dConj, sConj, _ = self._run_hybrid(clusterer_with_data)
-        assert dConj.data.min() >= 0.0 - 1e-6
-        assert dConj.data.max() <= 1.0 + 1e-6
-        assert sConj.data.min() >= 0.0 - 1e-6
-        assert sConj.data.max() <= 1.0 + 1e-6
-
-    def test_distance_plus_similarity_equals_one(self, clusterer_with_data):
-        """d + s should equal 1 for every pair."""
-        dConj, sConj, _ = self._run_hybrid(clusterer_with_data)
-        np.testing.assert_allclose(
-            dConj.data + sConj.data, 1.0, atol=1e-6,
-        )
-
-    def test_best_params_have_expected_keys(self, clusterer_with_data):
-        """best_params should contain p_norm, w_nn, w_swt."""
-        _, _, result_info = self._run_hybrid(clusterer_with_data)
-        params = result_info['best_params']
-        assert set(params.keys()) == {'p_norm', 'w_nn', 'w_swt'}
-        ## All should be finite
-        for k, v in params.items():
-            assert np.isfinite(v), f'{k}={v} is not finite'
-
-    def test_loss_is_finite(self, clusterer_with_data):
-        """The optimized loss should be finite (not 1e6 penalty)."""
-        _, _, result_info = self._run_hybrid(clusterer_with_data)
-        assert np.isfinite(result_info['loss'])
-        assert result_info['loss'] < 1e6
-
-    def test_deterministic_with_seed(self, clusterer_with_data):
-        """Two runs with same seed should produce identical results."""
-        dConj1, _, info1 = self._run_hybrid(clusterer_with_data)
-        dConj2, _, info2 = self._run_hybrid(clusterer_with_data)
-        np.testing.assert_array_equal(dConj1.data, dConj2.data)
-        assert info1['loss'] == info2['loss']
-
-    def test_compatible_with_pruning(self, clusterer_with_data):
-        """Output should work with make_pruned_similarity_graphs(precomputed)."""
-        self._run_hybrid(clusterer_with_data)
-        clusterer_with_data.make_pruned_similarity_graphs(
-            mixing_params='precomputed',
-        )
-        assert hasattr(clusterer_with_data, 'dConj_pruned')
-        assert clusterer_with_data.dConj_pruned is not None
-
-    def test_requires_nb_calibration_first(self, clusterer_with_data):
-        """Should raise AssertionError if NB calibration hasn't been done."""
-        from roicat import tracking
-        ## Create a fresh clusterer without NB calibration
-        from roicat.tracking.similarity_graph import DEFAULT_METRICS
-        fresh = tracking.clustering.Clusterer(
-            similarities=dict(clusterer_with_data.similarities),
-            metric_configs=DEFAULT_METRICS,
-            s_sesh=clusterer_with_data.s_sesh,
-            verbose=False,
-        )
-        with pytest.raises(AssertionError, match="make_naive_bayes_distance_matrix"):
-            fresh.find_optimal_nb_combination_DE(seed=42)
-
-    def test_subsample_pairs(self, clusterer_with_data):
-        """Subsampling should still produce valid outputs."""
-        clusterer_with_data.make_naive_bayes_distance_matrix()
-        dConj, sConj, result_info = clusterer_with_data.find_optimal_nb_combination_DE(
-            subsample_pairs=1000,
-            de_kwargs={
-                'maxiter': 3,
-                'tol': 1e-4,
-                'popsize': 5,
-                'polish': False,
-            },
-            seed=42,
-        )
-        assert dConj.shape == clusterer_with_data._s_sparsity.shape
-        assert dConj.data.min() >= 0.0 - 1e-6
-        assert dConj.data.max() <= 1.0 + 1e-6
-        assert np.isfinite(result_info['loss'])
 
 
 class Test_edge_cases:

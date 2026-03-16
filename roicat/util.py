@@ -1108,6 +1108,31 @@ class RichFile_ROICaT(rf.RichFile):
         # roicat_module_tds = []
         
 
+        ## SIMILARITY METRIC (dataclass → JSON)
+        from .tracking.similarity_graph import SimilarityMetric
+
+        def save_similarity_metric(
+            obj: SimilarityMetric,
+            path: Union[str, Path],
+            **kwargs,
+        ) -> None:
+            """Saves a SimilarityMetric dataclass as JSON via to_dict()."""
+            with open(path, 'w') as f:
+                json.dump(obj.to_dict(), f)
+
+        def load_similarity_metric(
+            path: Union[str, Path],
+            **kwargs,
+        ) -> SimilarityMetric:
+            """Loads a SimilarityMetric from a JSON dict."""
+            with open(path, 'r') as f:
+                d = json.load(f)
+            ## Convert power_bounds from list back to tuple (JSON round-trip)
+            if 'power_bounds' in d and isinstance(d['power_bounds'], list):
+                d['power_bounds'] = tuple(d['power_bounds'])
+            return SimilarityMetric.from_dict(d)
+
+
         type_dicts = [
             {
                 "type_name":          "numpy_array",
@@ -1253,6 +1278,15 @@ class RichFile_ROICaT(rf.RichFile):
                 "object_class":       scipy.optimize.OptimizeResult,
                 "suffix":             "json",
                 "library":            "scipy",
+                "versions_supported": [],
+            },
+            {
+                "type_name":          "similarity_metric",
+                "function_load":      load_similarity_metric,
+                "function_save":      save_similarity_metric,
+                "object_class":       SimilarityMetric,
+                "suffix":             "json",
+                "library":            "roicat",
                 "versions_supported": [],
             },
         ] + [t.get_property_dict() for t in roicat_module_tds]

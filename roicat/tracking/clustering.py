@@ -14,9 +14,6 @@ from tqdm.auto import tqdm
 from .. import helpers, util
 from .similarity_graph import SimilarityMetric
 
-## Module-level cache for original SimilarityMetric objects (keyed by id(instance)).
-## Kept outside __dict__ so RichFile serialization doesn't see them.
-_clusterer_configs_cache: Dict[int, Any] = {}
 
 
 class Clusterer(util.ROICaT_Module):
@@ -123,11 +120,10 @@ class Clusterer(util.ROICaT_Module):
 
         ## Store similarities dict and metric configs
         self.similarities = similarities
-        ## Store metric configs as serializable dicts keyed by name.
-        ## Access via self._metric_configs property (reconstructs SimilarityMetric instances).
-        self._metric_configs_dicts = {m.name: m.to_dict() for m in metric_configs}
-        ## Cache originals outside __dict__ (see module-level _clusterer_configs_cache)
-        _clusterer_configs_cache[id(self)] = {m.name: m for m in metric_configs}
+        ## Store metric configs directly as SimilarityMetric objects keyed by name.
+        ## RichFile_ROICaT has a registered type handler for SimilarityMetric
+        ## that serializes them as JSON via to_dict()/from_dict().
+        self._metric_configs_stored = {m.name: m for m in metric_configs}
 
         ## Identify sparsity source
         sparsity_sources = [name for name, cfg in self._metric_configs.items() if cfg.is_sparsity_source]
@@ -181,12 +177,12 @@ class Clusterer(util.ROICaT_Module):
 
     @property
     def _metric_configs(self) -> Dict[str, SimilarityMetric]:
-        """Return SimilarityMetric instances. Uses cached originals if
-        available (preserves callables), otherwise reconstructs from dicts."""
-        originals = _clusterer_configs_cache.get(id(self))
-        if originals is not None:
-            return originals
-        return {name: SimilarityMetric.from_dict(d) for name, d in self._metric_configs_dicts.items()}
+        """Return stored SimilarityMetric instances keyed by name."""
+        stored = self._metric_configs_stored
+        ## After legacy pickle load with dicts, reconstruct
+        if len(stored) > 0 and isinstance(next(iter(stored.values())), dict):
+            return {name: SimilarityMetric.from_dict(d) for name, d in stored.items()}
+        return stored
 
     def find_optimal_parameters_for_pruning(
         self,
@@ -2059,9 +2055,8 @@ class Clusterer(util.ROICaT_Module):
         Compute the hard histogram overlap loss between the estimated
         'same' and 'different' distance distributions.
 
-        Shared core used by :meth:`_separate_diffSame_distributions`,
-        :meth:`_find_optimal_parameters_DE` (scalar objective), and
-        :meth:`find_optimal_nb_combination_DE` (NB objective).
+        Shared core used by :meth:`_separate_diffSame_distributions` and
+        :meth:`_find_optimal_parameters_DE` (scalar objective).
 
         The 'different' distribution is estimated by scaling the intra-session
         (known-different) histogram. The 'same' distribution is the residual
@@ -2497,123 +2492,6 @@ class Clusterer(util.ROICaT_Module):
         if dens_same_crop is None:
             return 0
         return (dens_same * dens_diff).sum().item()
-
-    def find_optimal_nb_combination_DE(
-        self,
-        bounds: Optional[Dict[str, List[float]]] = None,
-        de_kwargs: Optional[Dict[str, Any]] = None,
-        subsample_pairs: Optional[int] = None,
-        seed: Optional[int] = None,
-    ) -> Tuple[scipy.sparse.csr_matrix, scipy.sparse.csr_matrix, Dict]:
-        """
-        **LEGACY** — Optimize weighted combination of per-feature NB P(same)
-        curves using DE. Superseded by
-        :meth:`find_optimal_parameters_for_pruning` (freeze-sigmoid DE)
-        which achieves ~28x better loss on the same data.
-        RH 2025
-        """
-        assert hasattr(self, 'calibrations_naive_bayes') and self.calibrations_naive_bayes is not None, (
-            "make_naive_bayes_distance_matrix() must be called before "
-            "find_optimal_nb_combination_DE()."
-        )
-        self.params['find_optimal_nb_combination_DE'] = self._locals_to_params(
-            locals_dict=locals(),
-            keys=['bounds', 'de_kwargs', 'subsample_pairs', 'seed'],
-        )
-        bounds_use = bounds if bounds is not None else {
-            'p_norm': [0.1, 5.0], 'w_nn': [0.0, 5.0], 'w_swt': [0.0, 5.0],
-        }
-        de_kwargs_use = de_kwargs if de_kwargs is not None else {
-            'maxiter': 100, 'tol': 1e-6, 'popsize': 15,
-            'mutation': (0.5, 1.5), 'recombination': 0.7, 'polish': True,
-        }
-        scipy_bounds = [tuple(bounds_use['p_norm']), tuple(bounds_use['w_nn']), tuple(bounds_use['w_swt'])]
-
-        cal = self.calibrations_naive_bayes['features']
-        p_sf_t = torch.as_tensor(cal['sf']['p_same_per_pair'], dtype=torch.float32)
-        p_nn_t = torch.as_tensor(cal['nn']['p_same_per_pair'], dtype=torch.float32)
-        p_swt_t = torch.as_tensor(cal['swt']['p_same_per_pair'], dtype=torch.float32)
-
-        if not hasattr(self, '_intra_mask') or self._intra_mask is None:
-            self._precompute_intra_mask()
-        intra_mask = torch.as_tensor(self._intra_mask)
-
-        nnz = p_sf_t.shape[0]
-        if subsample_pairs is not None and subsample_pairs < nnz:
-            sample_idx = self._subsample_pairs(
-                n_subsample=subsample_pairs, intra_mask=intra_mask,
-                seed=(seed + 77777) if seed is not None else 77777,
-            )
-            frac = subsample_pairs / nnz
-            n_sample_intra = max(int(int(intra_mask.sum().item()) * frac), 100)
-            p_sf_t, p_nn_t, p_swt_t = p_sf_t[sample_idx], p_nn_t[sample_idx], p_swt_t[sample_idx]
-            intra_mask_use = torch.zeros(sample_idx.shape[0], dtype=torch.bool)
-            intra_mask_use[:n_sample_intra] = True
-        else:
-            intra_mask_use = intra_mask
-
-        n_bins_val = self.n_bins
-        edges = torch.linspace(0.0, 1.0, n_bins_val + 1, dtype=torch.float32)
-        smooth_window = helpers.make_odd(n_bins_val // 10, mode='up')
-        smoother = helpers.Convolver_1d(
-            kernel=torch.ones(smooth_window), length_x=n_bins_val,
-            pad_mode='same', correct_edge_effects=True, device='cpu',
-        )
-        n_all = p_sf_t.shape[0]
-        n_intra = int(intra_mask_use.sum().item())
-        scale_factor = n_all / max(n_intra, 1)
-        intra_indices = torch.where(intra_mask_use)[0]
-        p_sf_c = torch.clamp(p_sf_t, min=1e-6, max=1.0 - 1e-6)
-        p_nn_c = torch.clamp(p_nn_t, min=1e-6, max=1.0 - 1e-6)
-        p_swt_c = torch.clamp(p_swt_t, min=1e-6, max=1.0 - 1e-6)
-        w_sf_fixed = 1.0
-
-        def objective(x):
-            p_val, w_nn_val, w_swt_val = float(x[0]), float(x[1]), float(x[2])
-            p = p_val if abs(p_val) > 1e-9 else 1e-9
-            w_total = w_sf_fixed + w_nn_val + w_swt_val + 1e-10
-            p_combined = (
-                (w_sf_fixed * torch.pow(p_sf_c, p) + w_nn_val * torch.pow(p_nn_c, p)
-                 + w_swt_val * torch.pow(p_swt_c, p)) / w_total
-            ).pow(1.0 / p)
-            d_combined = 1.0 - p_combined
-            loss, _, _ = self._compute_histogram_overlap(
-                distances=d_combined, intra_indices=intra_indices,
-                edges=edges, smoother=smoother, scale_factor=scale_factor,
-            )
-            return loss
-
-        print('Optimizing NB combination weights with differential evolution...') if self._verbose else None
-        ## Coerce seed to int for scipy DE; leave None for random behavior
-        de_seed = int(seed) if seed is not None else None
-        nb_de_result = scipy.optimize.differential_evolution(
-            func=objective, bounds=scipy_bounds, seed=de_seed, **de_kwargs_use,
-        )
-
-        p_val_best, w_nn_best, w_swt_best = float(nb_de_result.x[0]), float(nb_de_result.x[1]), float(nb_de_result.x[2])
-        p_best = p_val_best if abs(p_val_best) > 1e-9 else 1e-9
-        w_total_best = w_sf_fixed + w_nn_best + w_swt_best + 1e-10
-        p_sf_full = torch.clamp(torch.as_tensor(cal['sf']['p_same_per_pair'], dtype=torch.float32), min=1e-6, max=1.0 - 1e-6)
-        p_nn_full = torch.clamp(torch.as_tensor(cal['nn']['p_same_per_pair'], dtype=torch.float32), min=1e-6, max=1.0 - 1e-6)
-        p_swt_full = torch.clamp(torch.as_tensor(cal['swt']['p_same_per_pair'], dtype=torch.float32), min=1e-6, max=1.0 - 1e-6)
-        p_same_combined_np = (
-            (w_sf_fixed * torch.pow(p_sf_full, p_best) + w_nn_best * torch.pow(p_nn_full, p_best)
-             + w_swt_best * torch.pow(p_swt_full, p_best)) / w_total_best
-        ).pow(1.0 / p_best).numpy()
-
-        sConj = self._s_sparsity.copy()
-        sConj.data = p_same_combined_np.astype(np.float64)
-        dConj = sConj.copy()
-        dConj.data = 1.0 - dConj.data
-        self.dConj = dConj
-        self.sConj = sConj
-        best_params = {'p_norm': p_val_best, 'w_nn': w_nn_best, 'w_swt': w_swt_best}
-        result_info = {
-            'best_params': best_params, 'loss': float(nb_de_result.fun),
-            'n_evals': int(nb_de_result.nfev), 'p_same_combined': p_same_combined_np,
-        }
-        print(f'Completed NB combination DE. Best loss: {nb_de_result.fun:.2f}, params: {best_params}') if self._verbose else None
-        return dConj, sConj, result_info
 
 
 
