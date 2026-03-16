@@ -12,6 +12,7 @@ import torch
 from tqdm.auto import tqdm
 
 from .. import helpers, util
+from .similarity_graph import SimilarityMetric
 
 class Clusterer(util.ROICaT_Module):
     """
@@ -26,61 +27,44 @@ class Clusterer(util.ROICaT_Module):
         * Quality control:
             * self.compute_cluster_quality_metrics()
 
-    Initialization ingests and stores similarity matrices. RH 2023
+    Initialization ingests and stores similarity matrices. RH 2023 / 2025
 
     Args:
-        s_sf (Optional[scipy.sparse.csr_matrix]):
-            The similarity matrix for spatial footprints. Shape: *(n_rois,
-            n_rois)*. Expecting input to be manhattan distance of spatial
-            footprints normalized between 0 and 1.
-        s_NN_z (Optional[scipy.sparse.csr_matrix]):
-            The z-scored similarity matrix for neural network output
-            similarities. Shape: *(n_rois, n_rois)*. Expecting input to be the
-            cosine similarity matrix, z-scored row-wise.
-        s_SWT_z (Optional[scipy.sparse.csr_matrix]):
-            The z-scored similarity matrix for scattering transform output
-            similarities. Shape: *(n_rois, n_rois)*. Expecting input to be the
-            cosine similarity matrix, z-scored row-wise.
-        s_sesh (Optional[scipy.sparse.csr_matrix]):
-            The similarity matrix for session similarity. Shape: *(n_rois,
-            n_rois)*. Boolean, with 1s where the two ROIs are from different
-            sessions.
-        n_bins (int): 
+        similarities (Dict[str, scipy.sparse.csr_matrix]):
+            Dict mapping metric name to sparse similarity matrix. All
+            matrices must share the same nonzero pattern (same nnz).
+            Example: ``{'sf': csr_matrix, 'nn': csr_matrix, 'swt': csr_matrix}``.
+        metric_configs (List[SimilarityMetric]):
+            List of ``SimilarityMetric`` dataclass instances describing each
+            metric's optimization behavior (sparsity source, sigmoid, power).
+        s_sesh (scipy.sparse.csr_matrix):
+            Inter-session mask. Shape: *(n_rois, n_rois)*. Boolean, with 1s
+            where the two ROIs are from different sessions.
+        n_bins (Optional[int]):
             Number of bins to use for the pairwise similarity distribution. If
-            using automatic parameter finding, then using a large number of bins
-            makes finding the separation point more noisy, and only slightly
-            more accurate. If ``None``, then a heuristic is used to estimate the
-            value based on the number of ROIs. (Default is ``50``)
-        smoothing_window_bins (int): 
-            Number of bins to use when smoothing the distribution. Using a small
-            number of bins makes finding the separation point more noisy, and
-            only slightly more accurate. Aim for 5-10% of the number of bins. If
-            ``None``, then a heuristic is used. (Default is ``5``)
+            ``None``, then a heuristic is used to estimate the value based on
+            the number of nonzero pairs. (Default is ``None``)
+        smoothing_window_bins (Optional[int]):
+            Number of bins to use when smoothing the distribution. If
+            ``None``, then a heuristic is used. (Default is ``None``)
+        session_bool (Optional[np.ndarray]):
+            Boolean array indicating which ROIs belong to which session.
+            Shape: *(n_rois, n_sessions)*. (Default is ``None``)
         verbose (bool):
             Specifies whether to print out information about the clustering
             process. (Default is ``True``)
 
     Attributes:
-        s_sf (scipy.sparse.csr_matrix):
-            The similarity matrix for spatial footprints. It is symmetric and
-            has a shape of *(n_rois, n_rois)*.
-        s_NN_z (scipy.sparse.csr_matrix):
-            The z-scored similarity matrix for neural network output
-            similarities. It is non-symmetric and has a shape of *(n_rois,
-            n_rois)*. 
-        s_SWT_z (scipy.sparse.csr_matrix):
-            The z-scored similarity matrix for scattering transform output
-            similarities. It is non-symmetric and has a shape of *(n_rois,
-            n_rois)*.
+        similarities (Dict[str, scipy.sparse.csr_matrix]):
+            Dict of similarity matrices keyed by metric name.
         s_sesh (scipy.sparse.csr_matrix):
-            The similarity matrix for session similarity. It is symmetric and
-            has a shape of *(n_rois, n_rois)*.
+            The inter-session similarity matrix. Shape: *(n_rois, n_rois)*.
         s_sesh_inv (scipy.sparse.csr_matrix):
-            The inverse of the session similarity matrix. It is symmetric and
-            has a shape of *(n_rois, n_rois)*.
-        n_bins Optional[int]:
+            Intra-session mask (True where ROIs are from the SAME session).
+            Shape: *(n_rois, n_rois)*.
+        n_bins (Optional[int]):
             Number of bins to use for the pairwise similarity distribution.
-        smoothing_window_bins Optional[int]:
+        smooth_window (Optional[int]):
             Number of bins to use when smoothing the distribution.
         verbose (bool):
             Specifies how much information to print out: \n
@@ -90,71 +74,118 @@ class Clusterer(util.ROICaT_Module):
     """
     def __init__(
         self,
-        s_sf: Optional[scipy.sparse.csr_matrix] = None,
-        s_NN_z: Optional[scipy.sparse.csr_matrix] = None,
-        s_SWT_z: Optional[scipy.sparse.csr_matrix] = None,
-        s_sesh: Optional[scipy.sparse.csr_matrix] = None,
+        similarities: Dict[str, scipy.sparse.csr_matrix],
+        metric_configs: List[SimilarityMetric],
+        s_sesh: scipy.sparse.csr_matrix,
         n_bins: Optional[int] = None,
         smoothing_window_bins: Optional[int] = None,
         session_bool: Optional[np.ndarray] = None,
         verbose: bool = True,
     ):
         """
-        Initializes the Clusterer with the given similarity matrices and verbosity setting.
+        Initializes the Clusterer with similarity matrices and metric configs.
+
+        Args:
+            similarities (Dict[str, scipy.sparse.csr_matrix]):
+                Dict mapping metric name to similarity matrix. All matrices
+                must share the same nonzero pattern (same nnz). Example:
+                ``{'sf': csr_matrix, 'nn': csr_matrix, 'swt': csr_matrix}``.
+            metric_configs (List[SimilarityMetric]):
+                List of metric configurations describing each metric's
+                role in optimization (sparsity source, sigmoid, power, etc.).
+            s_sesh (scipy.sparse.csr_matrix):
+                Inter-session mask. Shape: *(n_rois, n_rois)*. Boolean,
+                with 1s where two ROIs are from different sessions.
+            n_bins (Optional[int]):
+                Number of bins for pairwise similarity distributions.
+                If ``None``, heuristic based on nnz. (Default is ``None``)
+            smoothing_window_bins (Optional[int]):
+                Smoothing window for distributions. If ``None``, heuristic.
+                (Default is ``None``)
+            session_bool (Optional[np.ndarray]):
+                Boolean array indicating which ROIs belong to which session.
+                Shape: *(n_rois, n_sessions)*. (Default is ``None``)
+            verbose (bool):
+                Verbosity level. (Default is ``True``)
         """
-        ## Imports
         super().__init__()
 
         ## Store parameter (but not data) args as attributes
         self.params['__init__'] = self._locals_to_params(
             locals_dict=locals(),
-            keys=[
-                'n_bins',
-                'smoothing_window_bins',
-                'verbose',
-            ],
+            keys=['n_bins', 'smoothing_window_bins', 'verbose'],
         )
 
-        self.s_sf = s_sf
-        self.s_NN_z = s_NN_z
-        self.s_SWT_z = s_SWT_z
-        self.s_sesh = s_sesh
+        ## Store similarities dict and metric configs
+        self.similarities = similarities
+        ## Store metric configs as serializable dicts keyed by name.
+        ## Access via self._metric_configs property (reconstructs SimilarityMetric instances).
+        self._metric_configs_dicts = {m.name: m.to_dict() for m in metric_configs}
 
-        ## assert that all feature similarity matrices have the same nnz
-        assert self.s_sf.nnz == self.s_NN_z.nnz == self.s_SWT_z.nnz
+        ## Identify sparsity source
+        sparsity_sources = [name for name, cfg in self._metric_configs.items() if cfg.is_sparsity_source]
+        assert len(sparsity_sources) > 0, "At least one metric must have is_sparsity_source=True"
+        self._sparsity_name = sparsity_sources[0]
+        self._s_sparsity = self.similarities[self._sparsity_name]
 
-        self.s_sesh_inv = (self.s_sf != 0).astype(bool)
-        self.s_sesh_inv[self.s_sesh.astype(bool)] = False
+        ## Validate all similarities have same nnz
+        nnz_values = {name: s.nnz for name, s in self.similarities.items()}
+        first_nnz = next(iter(nnz_values.values()))
+        assert all(v == first_nnz for v in nnz_values.values()), (
+            f"All similarity matrices must have same nnz. Got: {nnz_values}"
+        )
+
+        ## Build session masks. s_sesh marks inter-session pairs (different
+        ## sessions). s_sesh_inv marks intra-session pairs (same session)
+        ## within the sparsity pattern — used by _precompute_intra_mask.
+        self.s_sesh = s_sesh  ## shape: (n_rois, n_rois), sparse bool
+        self.s_sesh_inv = (self._s_sparsity != 0).astype(bool)  ## all nonzero pairs
+        self.s_sesh_inv[self.s_sesh.astype(bool)] = False  ## remove inter-session → leaves intra only
         self.s_sesh_inv.eliminate_zeros()
 
+        ## Zero out diagonal of s_sesh (self-pairs are neither inter nor intra)
         self.s_sesh = self.s_sesh.tolil()
         self.s_sesh[range(self.s_sesh.shape[0]), range(self.s_sesh.shape[1])] = 0
         self.s_sesh = self.s_sesh.tocsr()
 
         self._verbose = verbose
 
-        self.n_bins = max(min(self.s_sf.nnz // 10000, 200), 20) if n_bins is None else n_bins
+        self.n_bins = max(min(first_nnz // 10000, 200), 20) if n_bins is None else n_bins
         self.smooth_window = helpers.make_odd(self.n_bins // 10, mode='up') if smoothing_window_bins is None else smoothing_window_bins
 
         self._session_bool = session_bool
 
+        ## Backward compatibility aliases — allows code that references the
+        ## old attribute names (self.s_sf, self.s_NN_z, self.s_SWT_z) to
+        ## continue working without changes.
+        self.s_sf = self.similarities.get('sf', self._s_sparsity)
+        self.s_NN_z = self.similarities.get('nn', None)
+        self.s_SWT_z = self.similarities.get('swt', None)
+
     def __repr__(self):
-        n_roi = self.s_sf.shape[0] if hasattr(self, 's_sf') and self.s_sf is not None else 0
-        nnz = self.s_sf.nnz if hasattr(self, 's_sf') and self.s_sf is not None else 0
+        has_sim = hasattr(self, 'similarities') and self.similarities is not None
+        if has_sim:
+            first_mat = next(iter(self.similarities.values()))
+            n_roi = first_mat.shape[0]
+            nnz = first_mat.nnz
+        else:
+            n_roi, nnz = 0, 0
         has_labels = hasattr(self, 'labels') and self.labels is not None
         n_clusters = len(set(self.labels) - {-1}) if has_labels else 0
         return (
             f"Clusterer(n_roi={n_roi}, nnz={nnz}, "
+            f"metrics={list(self.similarities.keys()) if has_sim else []}, "
             f"n_clusters={n_clusters if has_labels else 'not fitted'})"
         )
 
+    @property
+    def _metric_configs(self) -> Dict[str, SimilarityMetric]:
+        """Reconstruct SimilarityMetric instances from stored dicts."""
+        return {name: SimilarityMetric.from_dict(d) for name, d in self._metric_configs_dicts.items()}
+
     def find_optimal_parameters_for_pruning(
         self,
-        bounds_findParameters: Dict[str, List[float]] = {
-            'power_NN': [0.0, 2.],
-            'power_SWT': [0.0, 2.],
-            'p_norm': [-5, -0.1],
-        },
+        bounds_findParameters: Optional[Dict[str, List[float]]] = None,
         de_kwargs: Dict[str, Any] = {
             'maxiter': 100,
             'tol': 1e-6,
@@ -173,14 +204,15 @@ class Clusterer(util.ROICaT_Module):
 
         Two-stage approach:
 
-        1. **Naive Bayes calibration**: For each similarity feature (SF, NN,
-           SWT), estimates ``P(same | s_k)`` from histogram subtraction. The
-           resulting per-feature calibration curves are used to analytically
-           estimate optimal sigmoid parameters ``(mu, b)`` via Fisher's linear
+        1. **Naive Bayes calibration**: For each similarity feature, estimates
+           ``P(same | s_k)`` from histogram subtraction. The resulting
+           per-feature calibration curves are used to analytically estimate
+           optimal sigmoid parameters ``(mu, b)`` via Fisher's linear
            discriminant.
         2. **Differential evolution**: With sigmoid parameters frozen from
-           stage 1, optimizes the remaining 3 parameters (``power_NN``,
-           ``power_SWT``, ``p_norm``) by minimizing the histogram overlap loss.
+           stage 1, optimizes the remaining parameters (one ``power_<name>``
+           per metric with ``optimize_power=True``, plus ``p_norm``) by
+           minimizing the histogram overlap loss.
 
         This method replaces the original Optuna TPE search (see
         :meth:`_find_optimal_parameters_for_pruning_optuna` in the legacy
@@ -190,8 +222,10 @@ class Clusterer(util.ROICaT_Module):
 
         Args:
             bounds_findParameters (Dict[str, List[float]]):
-                Bounds for the 3 optimized parameters: ``power_NN``,
-                ``power_SWT``, ``p_norm``.
+                Bounds for the optimized parameters. Keys are
+                ``power_<name>`` for each metric with ``optimize_power=True``,
+                plus ``p_norm``. Auto-constructed from metric configs if
+                ``None``.
             de_kwargs (Dict[str, Any]):
                 Keyword arguments for
                 ``scipy.optimize.differential_evolution``: \n
@@ -232,7 +266,15 @@ class Clusterer(util.ROICaT_Module):
             ],
         )
 
-        ## NB calibration → Fisher sigmoid estimation → 3-param DE.
+        ## Auto-construct bounds from metric configs if not provided
+        if bounds_findParameters is None:
+            bounds_findParameters = {}
+            for name, cfg in self._metric_configs.items():
+                if cfg.optimize_power:
+                    bounds_findParameters[f'power_{name}'] = list(cfg.power_bounds)
+            bounds_findParameters['p_norm'] = [-5, -0.1]
+
+        ## NB calibration → Fisher sigmoid estimation → N-param DE.
         return self._find_optimal_parameters_DE(
             bounds_findParameters=bounds_findParameters,
             de_kwargs=de_kwargs,
@@ -250,8 +292,8 @@ class Clusterer(util.ROICaT_Module):
     def _precompute_intra_mask(self) -> np.ndarray:
         """
         Build a boolean mask of shape ``(nnz,)`` indicating which nonzero
-        entries in ``self.s_sf`` correspond to intra-session (known-different)
-        ROI pairs.
+        entries in the sparsity source matrix correspond to intra-session
+        (known-different) ROI pairs.
 
         Uses an index-mapping trick: assigns each nonzero entry a unique 1-based
         index, multiplies by the inverse session matrix to isolate intra-session
@@ -265,11 +307,11 @@ class Clusterer(util.ROICaT_Module):
         Returns:
             (np.ndarray):
                 intra_mask (np.ndarray):
-                    Boolean numpy array, shape ``(self.s_sf.nnz,)``.
+                    Boolean numpy array, shape ``(self._s_sparsity.nnz,)``.
         """
         ## Map each nonzero entry to a unique 1-based index
-        idx_mat = self.s_sf.copy().astype(np.float64)
-        idx_mat.data = np.arange(1, self.s_sf.nnz + 1, dtype=np.float64)
+        idx_mat = self._s_sparsity.copy().astype(np.float64)
+        idx_mat.data = np.arange(1, self._s_sparsity.nnz + 1, dtype=np.float64)
 
         ## Elementwise multiply with s_sesh_inv to keep only intra-session entries
         masked = idx_mat.multiply(self.s_sesh_inv.astype(np.float64))
@@ -277,7 +319,7 @@ class Clusterer(util.ROICaT_Module):
 
         ## Convert back to 0-based indices and build boolean mask
         intra_indices = (masked.data - 1).astype(np.int64)
-        mask = np.zeros(self.s_sf.nnz, dtype=bool)
+        mask = np.zeros(self._s_sparsity.nnz, dtype=bool)
         mask[intra_indices] = True
 
         ## Store as a numpy bool array; callers convert with torch.as_tensor()
@@ -339,15 +381,7 @@ class Clusterer(util.ROICaT_Module):
 
     def _find_optimal_parameters_DE(
         self,
-        bounds_findParameters: Dict[str, List[float]] = {
-            'power_NN': [0.0, 2.],
-            'power_SWT': [0.0, 2.],
-            'p_norm': [-5, -0.1],
-            'sig_NN_kwargs_mu': [0., 1.0],
-            'sig_NN_kwargs_b': [0.1, 1.5],
-            'sig_SWT_kwargs_mu': [0., 1.0],
-            'sig_SWT_kwargs_b': [0.1, 1.5],
-        },
+        bounds_findParameters: Optional[Dict[str, List[float]]] = None,
         de_kwargs: Dict[str, Any] = {
             'maxiter': 100,
             'tol': 1e-6,
@@ -365,11 +399,11 @@ class Clusterer(util.ROICaT_Module):
         """
         Find optimal mixing parameters using scipy differential evolution.
 
-        When ``freeze_sigmoid=True`` (default), sigmoid parameters (mu, b)
-        for NN and SWT are estimated from NB calibration curves via Fisher's
-        linear discriminant and held fixed, reducing the search to 3
-        parameters (``power_NN``, ``power_SWT``, ``p_norm``). When
-        ``False``, all 7 parameters are optimized jointly.
+        When ``freeze_sigmoid=True`` (default), sigmoid parameters ``(mu, b)``
+        are estimated from NB calibration curves via Fisher's linear
+        discriminant and held fixed. The search is then over
+        ``power_<name>`` for each metric with ``optimize_power=True``, plus
+        ``p_norm``. When ``False``, sigmoid params are also optimized.
 
         The inner loop operates entirely on precomputed torch tensors — no
         scipy sparse operations per evaluation. When subsampling is active,
@@ -379,8 +413,8 @@ class Clusterer(util.ROICaT_Module):
 
         Args:
             bounds_findParameters (Dict[str, List[float]]):
-                Bounds for each parameter. When ``freeze_sigmoid=True``,
-                only ``power_NN``, ``power_SWT``, ``p_norm`` are used.
+                Bounds for each parameter, keyed by ``power_<name>`` and
+                ``p_norm``. Auto-constructed from metric configs if ``None``.
                 When ``False``, all 7 keys are needed.
             de_kwargs (Dict[str, Any]):
                 Keyword arguments for
@@ -430,6 +464,20 @@ class Clusterer(util.ROICaT_Module):
 
         self.n_bins = self.n_bins if n_bins is None else n_bins
         self.smooth_window = self.smooth_window if smoothing_window_bins is None else smoothing_window_bins
+
+        ## Auto-construct bounds from metric configs if not provided
+        if bounds_findParameters is None:
+            bounds_findParameters = {}
+            for name, cfg in self._metric_configs.items():
+                if cfg.optimize_power:
+                    bounds_findParameters[f'power_{name}'] = list(cfg.power_bounds)
+            bounds_findParameters['p_norm'] = [-5, -0.1]
+            ## Add sigmoid bounds for unfrozen case
+            for name, cfg in self._metric_configs.items():
+                if cfg.optimize_sigmoid:
+                    bounds_findParameters[f'sig_{name}_kwargs_mu'] = [0., 1.0]
+                    bounds_findParameters[f'sig_{name}_kwargs_b'] = [0.1, 1.5]
+
         self.bounds_findParameters = bounds_findParameters
         self._seed = seed
 
@@ -440,7 +488,7 @@ class Clusterer(util.ROICaT_Module):
             self._precompute_intra_mask()
         if subsample_pairs is None:
             n_intra = int(self._intra_mask.sum())
-            n_inter = self.s_sf.nnz - n_intra
+            n_inter = self._s_sparsity.nnz - n_intra
             ## Subsample only if we have enough pairs to meet minimums
             min_intra = 100_000
             min_inter = 1_000_000
@@ -456,42 +504,59 @@ class Clusterer(util.ROICaT_Module):
             if not hasattr(self, 'calibrations_naive_bayes') or self.calibrations_naive_bayes is None:
                 self.make_naive_bayes_distance_matrix()
             sig_params = self._estimate_sigmoid_params()
-            _frozen_sig = {
-                'mu_NN': sig_params['NN']['mu'],
-                'b_NN': sig_params['NN']['b'],
-                'mu_SWT': sig_params['SWT']['mu'],
-                'b_SWT': sig_params['SWT']['b'],
-            }
-            print(
-                f'  Freezing sigmoid: NN(mu={_frozen_sig["mu_NN"]:.3f}, '
-                f'b={_frozen_sig["b_NN"]:.1f}), '
-                f'SWT(mu={_frozen_sig["mu_SWT"]:.3f}, '
-                f'b={_frozen_sig["b_SWT"]:.1f})'
-            ) if self._verbose else None
+            _frozen_sig = sig_params  ## Dict[metric_name, {'mu': float, 'b': float}]
+            if self._verbose:
+                parts = [f'{n}(mu={p["mu"]:.3f}, b={p["b"]:.1f})' for n, p in _frozen_sig.items()]
+                print(f'  Freezing sigmoid: {", ".join(parts)}')
 
-        if freeze_sigmoid:
-            param_keys = ['power_NN', 'power_SWT', 'p_norm']
-        else:
-            param_keys = [
-                'power_NN', 'power_SWT', 'p_norm',
-                'sig_NN_kwargs_mu', 'sig_NN_kwargs_b',
-                'sig_SWT_kwargs_mu', 'sig_SWT_kwargs_b',
-            ]
-        scipy_bounds = [tuple(bounds_findParameters[k]) for k in param_keys]
+        ## Cache metric configs once. The property reconstructs SimilarityMetric
+        ## objects from dicts on every access; caching avoids that overhead
+        ## inside the objective function which runs thousands of times.
+        _cached_configs = self._metric_configs  ## Dict[str, SimilarityMetric]
+
+        ## Build parameter layout: [power_<m1>, power_<m2>, ..., p_norm]
+        ## This list is immutable and referenced by both bounds and objective
+        self._de_param_layout = []
+        for name, cfg in _cached_configs.items():
+            if cfg.optimize_power:
+                self._de_param_layout.append(('power', name))
+        self._de_param_layout.append(('p_norm', None))
+
+        ## If not freezing sigmoid, add sigmoid params too
+        if not freeze_sigmoid:
+            for name, cfg in _cached_configs.items():
+                if cfg.optimize_sigmoid:
+                    self._de_param_layout.append(('sig_mu', name))
+                    self._de_param_layout.append(('sig_b', name))
+
+        param_keys = []
+        for ptype, pname in self._de_param_layout:
+            if ptype == 'power':
+                param_keys.append(f'power_{pname}')
+            elif ptype == 'p_norm':
+                param_keys.append('p_norm')
+            elif ptype == 'sig_mu':
+                param_keys.append(f'sig_{pname}_kwargs_mu')
+            elif ptype == 'sig_b':
+                param_keys.append(f'sig_{pname}_kwargs_b')
+
+        scipy_bounds = [
+            tuple(bounds_findParameters[k])
+            for k in param_keys if k in bounds_findParameters
+        ]  ## list of (lo, hi) tuples, one per DE dimension
 
         ################################################################
         ## Precompute tensors — eliminates all sparse operations from
         ## the inner loop.
         ################################################################
-        sf_t_full = torch.as_tensor(
-            np.ascontiguousarray(self.s_sf.data), dtype=torch.float32,
-        ).clone()  ## shape (nnz,)
-        nn_t_full = torch.as_tensor(
-            np.ascontiguousarray(self.s_NN_z.data), dtype=torch.float32,
-        ).clone()  ## shape (nnz,)
-        swt_t_full = torch.as_tensor(
-            np.ascontiguousarray(self.s_SWT_z.data), dtype=torch.float32,
-        ).clone()  ## shape (nnz,)
+        ## Extract .data arrays from sparse matrices into contiguous tensors.
+        ## Each tensor has shape (nnz,) — one value per nonzero pair.
+        tensors_full = {
+            name: torch.as_tensor(
+                np.ascontiguousarray(sim.data), dtype=torch.float32,
+            ).clone()
+            for name, sim in self.similarities.items()
+        }  ## Dict[str, Tensor(nnz,)]
 
         ## Boolean mask for intra-session (known-different) pairs
         if not hasattr(self, '_intra_mask') or self._intra_mask is None:
@@ -502,8 +567,8 @@ class Clusterer(util.ROICaT_Module):
         ## Helper: build working tensors (with optional subsampling)
         ################################################################
         def _build_working_tensors(resample_seed: Optional[int]):
-            """Return (sf_t, nn_t, swt_t, intra_mask) after optional subsampling."""
-            nnz_full = sf_t_full.shape[0]
+            """Return (tensors_dict, intra_mask) after optional subsampling."""
+            nnz_full = next(iter(tensors_full.values())).shape[0]
             if subsample_pairs is not None and subsample_pairs < nnz_full:
                 sidx = self._subsample_pairs(
                     n_subsample=subsample_pairs,
@@ -511,25 +576,25 @@ class Clusterer(util.ROICaT_Module):
                     seed=resample_seed if resample_seed is not None else 77777,
                 )
                 ## Intra pairs come first in sidx. Compute actual intra count
-                ## using the same logic as _subsample_pairs to stay in sync.
                 n_intra_full = int(intra_mask_full.sum().item())
                 frac = subsample_pairs / nnz_full
                 n_si = min(max(int(n_intra_full * frac), 100), n_intra_full)
                 im = torch.zeros(sidx.shape[0], dtype=torch.bool)
                 im[:n_si] = True
-                return sf_t_full[sidx], nn_t_full[sidx], swt_t_full[sidx], im
+                return {name: t[sidx] for name, t in tensors_full.items()}, im
             else:
-                return sf_t_full, nn_t_full, swt_t_full, intra_mask_full
+                return dict(tensors_full), intra_mask_full
 
         ## Initial working set
-        sf_t, nn_t, swt_t, intra_mask = _build_working_tensors(
+        working_tensors, intra_mask = _build_working_tensors(
             resample_seed=(seed + 77777) if seed is not None else 77777,
         )
 
+        first_t = next(iter(working_tensors.values()))
         print(
-            f'  Working set: {sf_t.shape[0]} pairs '
+            f'  Working set: {first_t.shape[0]} pairs '
             f'({int(intra_mask.sum().item())} intra, '
-            f'{sf_t.shape[0] - int(intra_mask.sum().item())} inter)'
+            f'{first_t.shape[0] - int(intra_mask.sum().item())} inter)'
         ) if self._verbose and subsample_pairs is not None else None
 
         ################################################################
@@ -548,15 +613,12 @@ class Clusterer(util.ROICaT_Module):
 
         ## Mutable containers so resample callback can update them in-place
         _state = {
-            'sf_t': sf_t,
-            'nn_t': nn_t,
-            'swt_t': swt_t,
+            'tensors': working_tensors,
             'intra_mask': intra_mask,
             'generation': 0,
         }
         _state['intra_indices'] = torch.where(_state['intra_mask'])[0]
-        _state['sf_clamped'] = torch.clamp(_state['sf_t'], min=1e-8)
-        _state['n_all'] = _state['sf_t'].shape[0]
+        _state['n_all'] = first_t.shape[0]
         _state['n_intra'] = int(_state['intra_mask'].sum().item())
         _state['scale_factor'] = _state['n_all'] / max(_state['n_intra'], 1)
 
@@ -570,14 +632,12 @@ class Clusterer(util.ROICaT_Module):
             gen = _generation_counter[0]
             _generation_counter[0] += 1
             new_seed = (seed + gen * 1000 + 99999) if seed is not None else (gen * 1000 + 99999)
-            sf_new, nn_new, swt_new, im_new = _build_working_tensors(resample_seed=new_seed)
-            _state['sf_t'] = sf_new
-            _state['nn_t'] = nn_new
-            _state['swt_t'] = swt_new
+            new_tensors, im_new = _build_working_tensors(resample_seed=new_seed)
+            _state['tensors'] = new_tensors
             _state['intra_mask'] = im_new
             _state['intra_indices'] = torch.where(im_new)[0]
-            _state['sf_clamped'] = torch.clamp(sf_new, min=1e-8)
-            _state['n_all'] = sf_new.shape[0]
+            first_new = next(iter(new_tensors.values()))
+            _state['n_all'] = first_new.shape[0]
             _state['n_intra'] = int(im_new.sum().item())
             _state['scale_factor'] = _state['n_all'] / max(_state['n_intra'], 1)
 
@@ -585,35 +645,67 @@ class Clusterer(util.ROICaT_Module):
         ## Scalar objective — evaluates one parameter vector at a time
         ################################################################
         def objective_scalar(x):
-            sf_w = _state['sf_t']
-            nn_w = _state['nn_t']
-            swt_w = _state['swt_t']
             ii = _state['intra_indices']
             sc = _state['scale_factor']
 
-            ## Unpack parameter vector
-            power_NN, power_SWT, p_norm_val = float(x[0]), float(x[1]), float(x[2])
-            if _frozen_sig is not None:
-                mu_NN = _frozen_sig['mu_NN']
-                b_NN = _frozen_sig['b_NN']
-                mu_SWT = _frozen_sig['mu_SWT']
-                b_SWT = _frozen_sig['b_SWT']
-            else:
-                mu_NN, b_NN = float(x[3]), float(x[4])
-                mu_SWT, b_SWT = float(x[5]), float(x[6])
-            p = p_norm_val if abs(p_norm_val) > 1e-9 else 1e-9
+            ## Unpack parameter vector using the frozen layout
+            param_idx = 0
+            sig_params_live = {}  ## for unfrozen sigmoid params
 
-            ## Compute NN activation
-            nn_act = torch.sigmoid(b_NN * (nn_w - mu_NN))
-            nn_act.clamp_(min=1e-8).pow_(power_NN)
+            ## Parse sigmoid params from x. Must advance param_idx for
+            ## every entry in the layout (power and p_norm included) so
+            ## that sigmoid entries read from the correct positions.
+            for ptype, pname in self._de_param_layout:
+                if ptype in ('power', 'p_norm'):
+                    param_idx += 1  ## skip; handled in the loop below
+                elif ptype == 'sig_mu':
+                    if pname not in sig_params_live:
+                        sig_params_live[pname] = {}
+                    sig_params_live[pname]['mu'] = float(x[param_idx])
+                    param_idx += 1
+                elif ptype == 'sig_b':
+                    sig_params_live[pname]['b'] = float(x[param_idx])
+                    param_idx += 1
 
-            ## SWT activation
-            swt_act = torch.sigmoid(b_SWT * (swt_w - mu_SWT))
-            swt_act.clamp_(min=1e-8).pow_(power_SWT)
+            ## Build activated list for all metrics
+            activated = []
+            param_idx = 0
+            for name, cfg in _cached_configs.items():
+                s_w = _state['tensors'][name]
+
+                ## Apply sigmoid if configured
+                if cfg.optimize_sigmoid:
+                    if _frozen_sig is not None and name in _frozen_sig:
+                        mu = _frozen_sig[name]['mu']
+                        b = _frozen_sig[name]['b']
+                    elif name in sig_params_live:
+                        mu = sig_params_live[name]['mu']
+                        b = sig_params_live[name]['b']
+                    else:
+                        mu, b = 0.0, 1.0
+                    s_w = torch.sigmoid(b * (s_w - mu))
+
+                ## Apply power if optimized
+                if cfg.optimize_power:
+                    power = float(x[param_idx])
+                    param_idx += 1
+                    s_w = torch.clamp(s_w, min=1e-8).pow(power)
+                else:
+                    s_w = torch.clamp(s_w, min=1e-8)
+
+                activated.append(s_w)
+
+            ## p-norm is the parameter after all power params
+            p_idx = sum(1 for pt, _ in self._de_param_layout if pt == 'power')
+            p = float(x[p_idx])
+            p = p if abs(p) > 1e-9 else 1e-9
 
             ## p-norm mixing: distance = 1 - (mean(s_k^p))^(1/p)
-            sf_p = torch.pow(_state['sf_clamped'], p)
-            dist = 1.0 - ((sf_p + torch.pow(nn_act, p) + torch.pow(swt_act, p)) / 3.0).pow(1.0 / p)
+            N = len(activated)
+            running_sum = torch.zeros_like(activated[0])
+            for a in activated:
+                running_sum += a.pow(p)
+            dist = 1.0 - (running_sum / N).pow(1.0 / p)
 
             ## Histogram overlap loss via shared helper
             loss, _, _ = self._compute_histogram_overlap(
@@ -633,7 +725,7 @@ class Clusterer(util.ROICaT_Module):
 
         de_kwargs_use = dict(de_kwargs)
 
-        nnz_full = sf_t_full.shape[0]
+        nnz_full = next(iter(tensors_full.values())).shape[0]
 
         ## Always resample each generation when subsampling
         if subsample_pairs is not None and subsample_pairs < nnz_full:
@@ -654,41 +746,41 @@ class Clusterer(util.ROICaT_Module):
             **de_kwargs_use,
         )
 
-        ## Extract best parameters
+        ## Extract best parameters from DE result
         x_best = self._de_result.x
-        if _frozen_sig is not None:
-            self.best_params = {
-                'power_NN': float(x_best[0]),
-                'power_SWT': float(x_best[1]),
-                'p_norm': float(x_best[2]),
-                'sig_NN_kwargs': {
-                    'mu': _frozen_sig['mu_NN'],
-                    'b': _frozen_sig['b_NN'],
-                },
-                'sig_SWT_kwargs': {
-                    'mu': _frozen_sig['mu_SWT'],
-                    'b': _frozen_sig['b_SWT'],
-                },
-            }
-        else:
-            self.best_params = {
-                'power_NN': float(x_best[0]),
-                'power_SWT': float(x_best[1]),
-                'p_norm': float(x_best[2]),
-                'sig_NN_kwargs': {'mu': float(x_best[3]), 'b': float(x_best[4])},
-                'sig_SWT_kwargs': {'mu': float(x_best[5]), 'b': float(x_best[6])},
-            }
+        self.best_params = {}
+        param_idx = 0
+        for name, cfg in _cached_configs.items():
+            if cfg.optimize_power:
+                self.best_params[f'power_{name}'] = float(x_best[param_idx])
+                param_idx += 1
+            else:
+                ## Non-optimized metrics get identity power (no transform)
+                self.best_params[f'power_{name}'] = None
+        ## p_norm is after all power params
+        p_idx = sum(1 for pt, _ in self._de_param_layout if pt == 'power')
+        self.best_params['p_norm'] = float(x_best[p_idx])
+        ## Sigmoid params (frozen or from DE)
+        sig_param_idx = p_idx + 1  ## sigmoid params start after p_norm
+        for name, cfg in _cached_configs.items():
+            if cfg.optimize_sigmoid:
+                if _frozen_sig is not None and name in _frozen_sig:
+                    self.best_params[f'sig_{name}_kwargs'] = {
+                        'mu': _frozen_sig[name]['mu'],
+                        'b': _frozen_sig[name]['b'],
+                    }
+                else:
+                    ## Extract unfrozen sigmoid params from DE result
+                    self.best_params[f'sig_{name}_kwargs'] = {
+                        'mu': float(x_best[sig_param_idx]),
+                        'b': float(x_best[sig_param_idx + 1]),
+                    }
+                    sig_param_idx += 2
+            else:
+                ## Non-sigmoid metrics get None (no sigmoid applied)
+                self.best_params[f'sig_{name}_kwargs'] = None
 
-        self.kwargs_makeConjunctiveDistanceMatrix_best = {
-            'power_SF': None,
-            'power_NN': None,
-            'power_SWT': None,
-            'p_norm': None,
-            'sig_SF_kwargs': None,
-            'sig_NN_kwargs': None,
-            'sig_SWT_kwargs': None,
-        }
-        self.kwargs_makeConjunctiveDistanceMatrix_best.update(self.best_params)
+        self.kwargs_makeConjunctiveDistanceMatrix_best = dict(self.best_params)
 
         print(
             f'Completed DE parameter search. '
@@ -871,15 +963,14 @@ class Clusterer(util.ROICaT_Module):
             device='cpu',
         )
 
-        ## Features to calibrate: (name, raw similarity data)
+        ## Features to calibrate: iterate over all similarity metrics
         features_raw = {
-            'SF': torch.as_tensor(self.s_sf.data, dtype=torch.float32),
-            'NN': torch.as_tensor(self.s_NN_z.data, dtype=torch.float32),
-            'SWT': torch.as_tensor(self.s_SWT_z.data, dtype=torch.float32),
+            name: torch.as_tensor(sim.data, dtype=torch.float32)
+            for name, sim in self.similarities.items()
         }
 
         calibrations = {'features': {}}
-        nnz = self.s_sf.nnz
+        nnz = self._s_sparsity.nnz
         logit_sum = torch.zeros(nnz, dtype=torch.float32)
 
         ## Calibrate each feature independently
@@ -938,7 +1029,7 @@ class Clusterer(util.ROICaT_Module):
         calibrations['p_same_combined'] = p_same_combined
 
         ## Build sparse similarity and distance matrices
-        sConj = self.s_sf.copy()
+        sConj = self._s_sparsity.copy()
         sConj.data = p_same_combined.astype(np.float64)
 
         dConj = sConj.copy()
@@ -983,7 +1074,9 @@ class Clusterer(util.ROICaT_Module):
         )
 
         result = {}
-        for name in ['NN', 'SWT']:
+        for name, cfg in self._metric_configs.items():
+            if not cfg.optimize_sigmoid:
+                continue
             cal = self.calibrations_naive_bayes['features'][name]
             ## cal values are numpy arrays (stored that way for serialization)
             edges = np.asarray(cal['edges'])
@@ -1039,7 +1132,7 @@ class Clusterer(util.ROICaT_Module):
         self,
         convert_to_probability: bool = False,
         stringency: float = 1.0,
-        kwargs_makeConjunctiveDistanceMatrix: Optional[Dict] = None,
+        mixing_params: Optional[Dict] = None,
         d_cutoff: Optional[float] = None,
     ) -> None:
         """
@@ -1056,11 +1149,12 @@ class Clusterer(util.ROICaT_Module):
                 value results in less pruning, a lower value leads to more
                 pruning. This value is multiplied by the inferred threshold to
                 generate a new one. (Default is *1.0*)
-            kwargs_makeConjunctiveDistanceMatrix (Optional[Dict]): 
-                Keyword arguments for the
-                ``self.make_conjunctive_distance_matrix`` function. If ``None``,
+            mixing_params (Optional[Dict]):
+                Mixing parameters for
+                ``self.make_conjunctive_distance_matrix``. If ``None``,
                 the best parameters found using ``self.find_optimal_parameters``
-                are used. (Default is ``None``)
+                are used. Use ``'precomputed'`` to use a previously stored
+                ``self.dConj``. (Default is ``None``)
             d_cutoff (Optional[float]): 
                 The cutoff distance for pruning the distance matrix. If
                 ``None``, then the optimal cutoff distance is inferred. (Default
@@ -1072,40 +1166,32 @@ class Clusterer(util.ROICaT_Module):
             keys=[
                 'convert_to_probability',
                 'stringency',
-                'kwargs_makeConjunctiveDistanceMatrix',
+                'mixing_params',
             ],
         )
 
         ## If 'precomputed', use self.dConj/sConj set by a prior call
         ## (e.g. make_naive_bayes_distance_matrix). Otherwise, compute
         ## the conjunctive distance matrix from mixing parameters.
-        if kwargs_makeConjunctiveDistanceMatrix == 'precomputed':
+        if mixing_params == 'precomputed':
             assert hasattr(self, 'dConj') and self.dConj is not None, (
-                "kwargs_makeConjunctiveDistanceMatrix='precomputed' requires "
-                "self.dConj to be set (call make_naive_bayes_distance_matrix first)."
+                "mixing_params='precomputed' requires self.dConj to be set "
+                "(call make_naive_bayes_distance_matrix first)."
             )
-        elif kwargs_makeConjunctiveDistanceMatrix is None:
+        elif mixing_params is None:
             if hasattr(self, 'kwargs_makeConjunctiveDistanceMatrix_best'):
-                kwargs_makeConjunctiveDistanceMatrix = self.kwargs_makeConjunctiveDistanceMatrix_best
+                mixing_params = self.kwargs_makeConjunctiveDistanceMatrix_best
             else:
-                kwargs_makeConjunctiveDistanceMatrix = {
-                    'power_SF': 0.5,
-                    'power_NN': 1.0,
-                    'power_SWT': 0.1,
-                    'p_norm': -4.0,
-                    'sig_SF_kwargs': {'mu':0.5, 'b':0.5},
-                    'sig_NN_kwargs': {'mu':0.5, 'b':0.5},
-                    'sig_SWT_kwargs': {'mu':0.5, 'b':0.5},
-                }
-                warnings.warn(f'No kwargs_makeConjunctiveDistanceMatrix provided. Using default parameters: {kwargs_makeConjunctiveDistanceMatrix}')
+                mixing_params = {'p_norm': -4.0}
+                for name in self.similarities:
+                    mixing_params[f'power_{name}'] = 1.0  ## identity (no transform)
+                    mixing_params[f'sig_{name}_kwargs'] = {'mu': 0.5, 'b': 0.5}
+                warnings.warn(f'No mixing_params provided. Using defaults: {mixing_params}')
 
-        if kwargs_makeConjunctiveDistanceMatrix != 'precomputed':
-            self.dConj, self.sConj, sSF_data, sNN_data, sSWT_data, sConj_data = self.make_conjunctive_distance_matrix(
-                s_sf=self.s_sf,
-                s_NN=self.s_NN_z,
-                s_SWT=self.s_SWT_z,
-                s_sesh=None,
-                **kwargs_makeConjunctiveDistanceMatrix
+        if mixing_params != 'precomputed':
+            self.dConj, self.sConj, self._activated_data = self.make_conjunctive_distance_matrix(
+                similarities=self.similarities,
+                mixing_params=mixing_params,
             )
         dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(self.dConj)
 
@@ -1127,7 +1213,7 @@ class Clusterer(util.ROICaT_Module):
             d_crossover = 1 - fn_interp(d_crossover)
 
         self.distributions_mixing = {
-            'kwargs_makeConjunctiveDistanceMatrix': kwargs_makeConjunctiveDistanceMatrix,
+            'mixing_params': mixing_params,
             'dens_same_crop': dens_same_crop,
             'dens_same': dens_same,
             'dens_diff': dens_diff,
@@ -1136,7 +1222,9 @@ class Clusterer(util.ROICaT_Module):
             'd_crossover': d_crossover,
         }
 
-        ssf, snn, sswt, ssesh = self.s_sf.copy(), self.s_NN_z.copy(), self.s_SWT_z.copy(), self.s_sesh.copy()
+        ## Copy all similarity matrices for pruning
+        sims_copy = {name: s.copy() for name, s in self.similarities.items()}
+        ssesh = self.s_sesh.copy()
 
         min_d = np.nanmin(self.dConj.data)
         if d_cutoff is None:
@@ -1159,8 +1247,13 @@ class Clusterer(util.ROICaT_Module):
             s_pruned = s_pruned.tocsr()
             return s_pruned
 
-        self.s_sf_pruned, self.s_NN_pruned, self.s_SWT_pruned, self.s_sesh_pruned = tuple([prune(s, self.graph_pruned) for s in [ssf, snn, sswt, ssesh]])
-        self.dConj_pruned, self.sConj_pruned = prune(self.dConj, self.graph_pruned), prune(self.sConj, self.graph_pruned)
+        ## Prune all similarity matrices
+        self.similarities_pruned = {
+            name: prune(s, self.graph_pruned) for name, s in sims_copy.items()
+        }
+        self.s_sesh_pruned = prune(ssesh, self.graph_pruned)
+        self.dConj_pruned = prune(self.dConj, self.graph_pruned)
+        self.sConj_pruned = prune(self.sConj, self.graph_pruned)
 
     def fit(
         self,
@@ -1707,117 +1800,71 @@ class Clusterer(util.ROICaT_Module):
             
     def make_conjunctive_distance_matrix(
         self,
-        s_sf: Optional[scipy.sparse.csr_matrix] = None,
-        s_NN: Optional[scipy.sparse.csr_matrix] = None,
-        s_SWT: Optional[scipy.sparse.csr_matrix] = None,
-        s_sesh: Optional[scipy.sparse.csr_matrix] = None,
-        power_SF: float = 1,
-        power_NN: float = 1,
-        power_SWT: float = 1,
-        p_norm: float = 1,
-        sig_SF_kwargs: Dict[str, float] = {'mu':0.5, 'b':0.5},
-        sig_NN_kwargs: Dict[str, float] = {'mu':0.5, 'b':0.5},
-        sig_SWT_kwargs: Dict[str, float] = {'mu':0.5, 'b':0.5},
-    ) -> Tuple[scipy.sparse.csr_matrix, scipy.sparse.csr_matrix, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        similarities: Dict[str, scipy.sparse.csr_matrix],
+        mixing_params: Dict[str, Any],
+    ) -> Tuple[scipy.sparse.csr_matrix, scipy.sparse.csr_matrix, Dict[str, torch.Tensor]]:
         """
-        Makes a distance matrix from the three similarity matrices.
-        RH 2023
+        Makes a conjunctive distance matrix from the similarity matrices
+        using the given mixing parameters.
+        RH 2023 / 2025
 
         Args:
-            s_sf (Optional[scipy.sparse.csr_matrix]):
-                Similarity matrix for spatial footprints. (Default is ``None``)
-            s_NN (Optional[scipy.sparse.csr_matrix]):
-                Similarity matrix for neural network features. (Default is
-                ``None``)
-            s_SWT (Optional[scipy.sparse.csr_matrix]):
-                Similarity matrix for scattering wavelet transform features.
-                (Default is ``None``)
-            s_sesh (Optional[scipy.sparse.csr_matrix]):
-                The session similarity matrix. (Default is ``None``)
-            power_SF (float):
-                Power to which to raise the spatial footprint similarity.
-                (Default is *1*)
-            power_NN (float):
-                Power to which to raise the neural network similarity. (Default
-                is *1*)
-            power_SWT (float):
-                Power to which to raise the scattering wavelet transform
-                similarity. (Default is *1*)
-            p_norm (float):
-                p-norm to use for the conjunction of the similarity matrices.
-                (Default is *1*)
-            sig_SF_kwargs (Dict[str, float]):
-                Keyword arguments for the sigmoid function applied to the
-                spatial footprint overlap similarity matrix. See
-                helpers.generalised_logistic_function for details. (Default is
-                {'mu':0.5, 'b':0.5})
-            sig_NN_kwargs (Dict[str, float]):
-                Keyword arguments for the sigmoid function applied to the neural
-                network similarity matrix. See
-                helpers.generalised_logistic_function for details. (Default is
-                {'mu':0.5, 'b':0.5})
-            sig_SWT_kwargs (Dict[str, float]):
-                Keyword arguments for the sigmoid function applied to the
-                scattering wavelet transform similarity matrix. See
-                helpers.generalised_logistic_function for details. (Default is
-                {'mu':0.5, 'b':0.5})
+            similarities (Dict[str, scipy.sparse.csr_matrix]):
+                Dict mapping metric name to sparse similarity matrix.
+            mixing_params (Dict[str, Any]):
+                Mixing parameters dict. Expected keys: \n
+                * ``power_<name>`` (float): Power for each metric.
+                  Defaults to 1.0 if not present.
+                * ``sig_<name>_kwargs`` (Dict[str, float]): Sigmoid
+                  parameters ``{'mu': float, 'b': float}`` per metric.
+                  ``None`` or absent means no sigmoid.
+                * ``p_norm`` (float): p-norm exponent for combining
+                  activated similarities.
 
         Returns:
             (Tuple): Tuple containing:
                 dConj (scipy.sparse.csr_matrix):
-                    Conjunction of the three similarity matrices.
+                    Conjunctive distance matrix (1 - sConj).
                 sConj (scipy.sparse.csr_matrix):
-                    The session similarity matrix.
-                sSF_data (np.ndarray):
-                    Activated spatial footprint similarity matrix.
-                sNN_data (np.ndarray):
-                    Activated neural network similarity matrix.
-                sSWT_data (np.ndarray):
-                    Activated scattering wavelet transform similarity matrix.
-                sConj_data (np.ndarray):
-                    Activated session similarity matrix.
+                    Conjunctive similarity matrix.
+                activated_data (Dict[str, torch.Tensor]):
+                    Per-metric activated similarity data arrays.
         """
-        assert (s_sf is not None) or (s_NN is not None) or (s_SWT is not None), \
-            'At least one of s_sf, s_NN, or s_SWT must be provided.'
+        assert len(similarities) > 0, 'At least one similarity matrix must be provided.'
 
         ## Store parameter (but not data) args as attributes
         self.params['make_conjunctive_distance_matrix'] = self._locals_to_params(
             locals_dict=locals(),
-            keys=[
-                'power_SF',
-                'power_NN',
-                'power_SWT',
-                'p_norm',
-                'sig_SF_kwargs',
-                'sig_NN_kwargs',
-                'sig_SWT_kwargs',
-            ],
+            keys=['mixing_params'],
         )
 
-        p_norm = 1e-9 if p_norm == 0 else p_norm
+        p_norm = mixing_params.get('p_norm', 1.0)  ## scalar
+        p_norm = 1e-9 if p_norm == 0 else p_norm  ## avoid division by zero
 
-        sSF_data = self._activation_function(s_sf.data, sig_SF_kwargs, power_SF) if s_sf is not None else None
-        sNN_data = self._activation_function(s_NN.data, sig_NN_kwargs, power_NN) if s_NN is not None else None
+        ## Activate each metric: sigmoid → clamp → power
+        ## Each metric's .data is a 1D array of shape (nnz,)
+        activated_data = {}  ## Dict[str, torch.Tensor(nnz,)]
+        s_list = []
+        for name, s in similarities.items():
+            power = mixing_params.get(f'power_{name}', 1.0)
+            sig_kwargs = mixing_params.get(f'sig_{name}_kwargs', None)
+            activated = self._activation_function(s.data, sig_kwargs, power)
+            activated_data[name] = activated
+            s_list.append(activated)
 
-        sSWT_data = self._activation_function(s_SWT.data, sig_SWT_kwargs, power_SWT) if s_SWT is not None else None
+        ## p-norm combination: sConj = (mean(s_k^p))^(1/p)
+        sConj_data = self._pNorm(s_list=s_list, p=p_norm)  ## shape: (nnz,)
 
-        s_list = [s for s in [sSF_data, sNN_data, sSWT_data] if s is not None]
-
-        sConj_data = self._pNorm(
-            s_list=s_list,
-            p=p_norm,
-        )
-
-        ## make sConj
-        sConj = s_sf.copy() if s_sf is not None else s_NN.copy() if s_NN is not None else s_SWT.copy()
+        ## Build sparse sConj using the first similarity's sparsity pattern
+        template = next(iter(similarities.values()))  ## csr_matrix (n_roi, n_roi)
+        sConj = template.copy()
         sConj.data = sConj_data.numpy()
-        sConj = sConj.multiply(s_sesh) if s_sesh is not None else sConj
 
-        ## make dConj
+        ## Distance = 1 - similarity
         dConj = sConj.copy()
         dConj.data = 1 - dConj.data
 
-        return dConj, sConj, sSF_data, sNN_data, sSWT_data, sConj_data
+        return dConj, sConj, activated_data
 
     def _activation_function(
         self, 
@@ -1877,97 +1924,78 @@ class Clusterer(util.ROICaT_Module):
         return (torch.mean(torch.stack(s_list_noNones, axis=0)**p, dim=0))**(1/p)
 
     def plot_similarity_relationships(
-        self, 
-        plots_to_show: List[int] = [1,2,3], 
-        max_samples: int = 1000000, 
-        kwargs_scatter: Dict[str, Union[int, float]] = {'s':1, 'alpha':0.1},
-        kwargs_makeConjunctiveDistanceMatrix: Dict[str, Union[float, Dict[str, float]]] = {
-            'power_SF': 0.5,
-            'power_NN': 1.0,
-            'power_SWT': 0.1,
-            'p_norm': -4.0,
-            'sig_SF_kwargs': {'mu':0.5, 'b':0.5},
-            'sig_NN_kwargs': {'mu':0.5, 'b':0.5},
-            'sig_SWT_kwargs': {'mu':0.5, 'b':0.5},
-        },
+        self,
+        max_samples: int = 1000000,
+        kwargs_scatter: Dict[str, Union[int, float]] = {'s': 1, 'alpha': 0.1},
+        mixing_params: Optional[Dict[str, Any]] = None,
     ) -> Tuple[plt.figure, plt.axes]:
         """
-        Plot the similarity relationships between the three similarity matrices.
+        Plot pairwise similarity relationships for all N*(N-1)/2 metric pairs.
+        Each subplot shows one pair of metrics, colored by conjunctive distance.
 
         Args:
-            plots_to_show (List[int]): 
-                Which plots to show. \n
-                * *1*: Spatial footprints vs. neural network features.
-                * *2*: Spatial footprints vs. scattering wavelet transform features.
-                * *3*: Neural network features vs. scattering wavelet. \n
-            max_samples (int): 
-                Maximum number of samples to plot. Use smaller numbers for faster plotting. 
-            kwargs_scatter (Dict[str, Union[int, float]]): 
-                Keyword arguments for the matplotlib.pyplot.scatter plot. 
-            kwargs_makeConjunctiveDistanceMatrix (Dict[str, Union[float, Dict[str, float]]]): 
-                Keyword arguments for the makeConjunctiveDistanceMatrix method. 
+            max_samples (int):
+                Maximum number of samples to plot.
+            kwargs_scatter (Dict[str, Union[int, float]]):
+                Keyword arguments for ``matplotlib.pyplot.scatter``.
+            mixing_params (Optional[Dict[str, Any]]):
+                Mixing parameters for ``make_conjunctive_distance_matrix``.
+                If ``None``, uses ``self.best_params`` if available, else
+                defaults.
 
         Returns:
-            (Tuple[matplotlib.pyplot.figure, matplotlib.pyplot.axes]): tuple containing:
-                fig (matplotlib.pyplot.figure): 
-                    Figure object.
-                axs (matplotlib.pyplot.axes): 
-                    Axes object.
+            (Tuple[matplotlib.pyplot.figure, matplotlib.pyplot.axes]):
+                fig, axs: Figure and axes objects.
         """
-        dConj, sConj, sSF_data, sNN_data, sSWT_data, sConj_data = self.make_conjunctive_distance_matrix(
-            s_sf=self.s_sf,
-            s_NN=self.s_NN_z,
-            s_SWT=self.s_SWT_z,
-            s_sesh=None,
-            **kwargs_makeConjunctiveDistanceMatrix
+        if mixing_params is None:
+            mixing_params = getattr(self, 'best_params', {'p_norm': -4.0})
+
+        dConj, sConj, activated_data = self.make_conjunctive_distance_matrix(
+            similarities=self.similarities,
+            mixing_params=mixing_params,
         )
 
-        ## subsample similarities for plotting
-        idx_rand = np.floor(np.random.rand(min(max_samples, len(dConj.data))) * len(dConj.data)).astype(int)
-        ssf_sub = sSF_data[idx_rand]
-        snn_sub = sNN_data[idx_rand]
-        sswt_sub = sSWT_data[idx_rand] if sSWT_data is not None else None
+        ## Generate all N*(N-1)/2 metric pairs
+        import itertools
+        metric_names = list(self.similarities.keys())
+        pairs = list(itertools.combinations(metric_names, 2))
+        n_pairs = max(len(pairs), 1)
+
+        ## Subsample for plotting
+        idx_rand = np.floor(
+            np.random.rand(min(max_samples, len(dConj.data))) * len(dConj.data)
+        ).astype(int)
         d_conj_sub = dConj.data[idx_rand]
 
-        fig, axs = plt.subplots(nrows=1, ncols=3, figsize=(20,4))
-        ## set figure title
+        fig, axs = plt.subplots(nrows=1, ncols=n_pairs, figsize=(7 * n_pairs, 4))
+        if n_pairs == 1:
+            axs = [axs]
         fig.suptitle('Similarity relationships', fontsize=16)
-        
-        ## plot similarity relationships
-        if 1 in plots_to_show:
-            axs[0].scatter(ssf_sub, snn_sub, c=d_conj_sub, **kwargs_scatter)
-            axs[0].set_xlabel('sim Spatial Footprint')
-            axs[0].set_ylabel('sim Neural Network')
-        if sSWT_data is not None:
-            if 2 in plots_to_show:
-                axs[1].scatter(ssf_sub, sswt_sub, c=d_conj_sub, **kwargs_scatter)
-                axs[1].set_xlabel('sim Spatial Footprint')
-                axs[1].set_ylabel('sim Scattering Wavelet Transform')
-            if 3 in plots_to_show:
-                axs[2].scatter(snn_sub, sswt_sub, c=d_conj_sub, **kwargs_scatter)
-                axs[2].set_xlabel('sim Neural Network')
-                axs[2].set_ylabel('sim Scattering Wavelet Transform')
-        
+
+        for i, (name_x, name_y) in enumerate(pairs):
+            x_data = activated_data[name_x][idx_rand]
+            y_data = activated_data[name_y][idx_rand]
+            axs[i].scatter(x_data, y_data, c=d_conj_sub, **kwargs_scatter)
+            axs[i].set_xlabel(f'sim {name_x}')
+            axs[i].set_ylabel(f'sim {name_y}')
+
         return fig, axs
 
-    def plot_distSame(self, kwargs_makeConjunctiveDistanceMatrix: Optional[dict] = None) -> None:
+    def plot_distSame(self, mixing_params: Optional[dict] = None) -> None:
         """
         Plot the estimated distribution of the pairwise similarities between
         matched ROI pairs of ROIs.
 
         Args:
-            kwargs_makeConjunctiveDistanceMatrix (Optional[dict]): 
-                Keyword arguments for the makeConjunctiveDistanceMatrix method.
+            mixing_params (Optional[dict]):
+                Mixing parameters for ``make_conjunctive_distance_matrix``.
                 If ``None``, the function uses the object's best parameters.
                 (Default is ``None``)
         """
-        kwargs = kwargs_makeConjunctiveDistanceMatrix if kwargs_makeConjunctiveDistanceMatrix is not None else self.best_params
-        dConj, sConj, sSF_data, sNN_data, sSWT_data, sConj_data = self.make_conjunctive_distance_matrix(
-            s_sf=self.s_sf,
-            s_NN=self.s_NN_z,
-            s_SWT=self.s_SWT_z,
-            s_sesh=None,
-            **kwargs
+        params = mixing_params if mixing_params is not None else self.best_params
+        dConj, sConj, activated_data = self.make_conjunctive_distance_matrix(
+            similarities=self.similarities,
+            mixing_params=params,
         )
         dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(dConj)
         if edges is None:
@@ -2440,11 +2468,9 @@ class Clusterer(util.ROICaT_Module):
         Used by :meth:`_find_optimal_parameters_for_pruning_optuna`.
         RH 2023
         """
-        power_SF = 1
         power_NN = trial.suggest_float('power_NN', *self.bounds_findParameters['power_NN'], log=False)
         power_SWT = trial.suggest_float('power_SWT', *self.bounds_findParameters['power_SWT'], log=False)
         p_norm = trial.suggest_float('p_norm', *self.bounds_findParameters['p_norm'], log=False)
-        sig_SF_kwargs = None
         sig_NN_kwargs = {
             'mu': trial.suggest_float('sig_NN_kwargs_mu', *self.bounds_findParameters['sig_NN_kwargs_mu'], log=False),
             'b': trial.suggest_float('sig_NN_kwargs_b', *self.bounds_findParameters['sig_NN_kwargs_b'], log=False),
@@ -2453,10 +2479,14 @@ class Clusterer(util.ROICaT_Module):
             'mu': trial.suggest_float('sig_SWT_kwargs_mu', *self.bounds_findParameters['sig_SWT_kwargs_mu'], log=False),
             'b': trial.suggest_float('sig_SWT_kwargs_b', *self.bounds_findParameters['sig_SWT_kwargs_b'], log=False),
         }
-        dConj, sConj, sSF_data, sNN_data, sSWT_data, sConj_data = self.make_conjunctive_distance_matrix(
-            s_sf=self.s_sf, s_NN=self.s_NN_z, s_SWT=self.s_SWT_z, s_sesh=None,
-            power_SF=power_SF, power_NN=power_NN, power_SWT=power_SWT, p_norm=p_norm,
-            sig_SF_kwargs=sig_SF_kwargs, sig_NN_kwargs=sig_NN_kwargs, sig_SWT_kwargs=sig_SWT_kwargs,
+        mixing_params = {
+            'power_sf': 1.0, 'power_nn': power_NN, 'power_swt': power_SWT,
+            'p_norm': p_norm,
+            'sig_nn_kwargs': sig_NN_kwargs, 'sig_swt_kwargs': sig_SWT_kwargs,
+        }
+        dConj, sConj, activated_data = self.make_conjunctive_distance_matrix(
+            similarities=self.similarities,
+            mixing_params=mixing_params,
         )
         dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(dConj)
         if dens_same_crop is None:
@@ -2495,9 +2525,9 @@ class Clusterer(util.ROICaT_Module):
         scipy_bounds = [tuple(bounds_use['p_norm']), tuple(bounds_use['w_NN']), tuple(bounds_use['w_SWT'])]
 
         cal = self.calibrations_naive_bayes['features']
-        p_sf_t = torch.as_tensor(cal['SF']['p_same_per_pair'], dtype=torch.float32)
-        p_nn_t = torch.as_tensor(cal['NN']['p_same_per_pair'], dtype=torch.float32)
-        p_swt_t = torch.as_tensor(cal['SWT']['p_same_per_pair'], dtype=torch.float32)
+        p_sf_t = torch.as_tensor(cal['sf']['p_same_per_pair'], dtype=torch.float32)
+        p_nn_t = torch.as_tensor(cal['nn']['p_same_per_pair'], dtype=torch.float32)
+        p_swt_t = torch.as_tensor(cal['swt']['p_same_per_pair'], dtype=torch.float32)
 
         if not hasattr(self, '_intra_mask') or self._intra_mask is None:
             self._precompute_intra_mask()
@@ -2558,15 +2588,15 @@ class Clusterer(util.ROICaT_Module):
         p_val_best, w_nn_best, w_swt_best = float(nb_de_result.x[0]), float(nb_de_result.x[1]), float(nb_de_result.x[2])
         p_best = p_val_best if abs(p_val_best) > 1e-9 else 1e-9
         w_total_best = w_sf_fixed + w_nn_best + w_swt_best + 1e-10
-        p_sf_full = torch.clamp(torch.as_tensor(cal['SF']['p_same_per_pair'], dtype=torch.float32), min=1e-6, max=1.0 - 1e-6)
-        p_nn_full = torch.clamp(torch.as_tensor(cal['NN']['p_same_per_pair'], dtype=torch.float32), min=1e-6, max=1.0 - 1e-6)
-        p_swt_full = torch.clamp(torch.as_tensor(cal['SWT']['p_same_per_pair'], dtype=torch.float32), min=1e-6, max=1.0 - 1e-6)
+        p_sf_full = torch.clamp(torch.as_tensor(cal['sf']['p_same_per_pair'], dtype=torch.float32), min=1e-6, max=1.0 - 1e-6)
+        p_nn_full = torch.clamp(torch.as_tensor(cal['nn']['p_same_per_pair'], dtype=torch.float32), min=1e-6, max=1.0 - 1e-6)
+        p_swt_full = torch.clamp(torch.as_tensor(cal['swt']['p_same_per_pair'], dtype=torch.float32), min=1e-6, max=1.0 - 1e-6)
         p_same_combined_np = (
             (w_sf_fixed * torch.pow(p_sf_full, p_best) + w_nn_best * torch.pow(p_nn_full, p_best)
              + w_swt_best * torch.pow(p_swt_full, p_best)) / w_total_best
         ).pow(1.0 / p_best).numpy()
 
-        sConj = self.s_sf.copy()
+        sConj = self._s_sparsity.copy()
         sConj.data = p_same_combined_np.astype(np.float64)
         dConj = sConj.copy()
         dConj.data = 1.0 - dConj.data

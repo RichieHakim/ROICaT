@@ -667,10 +667,10 @@ def clusterer_with_data(dir_data_test):
     path_run_data = str(Path(dir_data_test) / 'pipeline_tracking' / 'run_data.richfile.zip')
     sim = util.RichFile_ROICaT(path=path_run_data)['sim'].load()
 
+    from roicat.tracking.similarity_graph import DEFAULT_METRICS
     clusterer = tracking.clustering.Clusterer(
-        s_sf=sim['s_sf'],
-        s_NN_z=sim['s_NN_z'],
-        s_SWT_z=sim['s_SWT_z'],
+        similarities={'sf': sim['s_sf'], 'nn': sim['s_NN_z'], 'swt': sim['s_SWT_z']},
+        metric_configs=DEFAULT_METRICS,
         s_sesh=sim['s_sesh'],
         verbose=False,
     )
@@ -683,21 +683,24 @@ class Test__find_optimal_parameters_DE:
     def test_returns_valid_dict(self, clusterer_with_data):
         """DE should return a dict with all expected keys."""
         result = clusterer_with_data._find_optimal_parameters_DE(seed=42)
-        expected_keys = {
-            'power_SF', 'power_NN', 'power_SWT', 'p_norm',
-            'sig_SF_kwargs', 'sig_NN_kwargs', 'sig_SWT_kwargs',
-        }
+        ## All metrics get entries in best_params. Non-optimized metrics
+        ## get identity values (power=None, sig=None).
+        expected_keys = {'power_sf', 'power_nn', 'power_swt', 'p_norm',
+                         'sig_sf_kwargs', 'sig_nn_kwargs', 'sig_swt_kwargs'}
         assert set(result.keys()) == expected_keys
-        ## sig_NN_kwargs and sig_SWT_kwargs should be dicts with 'mu' and 'b'
-        assert set(result['sig_NN_kwargs'].keys()) == {'mu', 'b'}
-        assert set(result['sig_SWT_kwargs'].keys()) == {'mu', 'b'}
+        ## Non-optimized metrics have None values
+        assert result['power_sf'] is None
+        assert result['sig_sf_kwargs'] is None
+        ## Optimized metrics have real values
+        assert set(result['sig_nn_kwargs'].keys()) == {'mu', 'b'}
+        assert set(result['sig_swt_kwargs'].keys()) == {'mu', 'b'}
 
     def test_params_within_bounds(self, clusterer_with_data):
         """All optimized parameters should be within their declared bounds."""
         result = clusterer_with_data._find_optimal_parameters_DE(seed=42)
         bounds = {
-            'power_NN': [0.0, 2.0],
-            'power_SWT': [0.0, 2.0],
+            'power_nn': [0.0, 2.0],
+            'power_swt': [0.0, 2.0],
             'p_norm': [-5.0, -0.1],
         }
         for key, (lo, hi) in bounds.items():
@@ -706,7 +709,7 @@ class Test__find_optimal_parameters_DE:
                 f'{key}={val} outside bounds [{lo}, {hi}]'
             )
         ## Sigmoid params are frozen from NB calibration — just check they exist and are finite
-        for name in ['sig_NN_kwargs', 'sig_SWT_kwargs']:
+        for name in ['sig_nn_kwargs', 'sig_swt_kwargs']:
             assert np.isfinite(result[name]['mu'])
             assert np.isfinite(result[name]['b'])
             assert result[name]['b'] > 0
@@ -715,7 +718,7 @@ class Test__find_optimal_parameters_DE:
         """Same seed should produce identical results."""
         r1 = clusterer_with_data._find_optimal_parameters_DE(seed=123)
         r2 = clusterer_with_data._find_optimal_parameters_DE(seed=123)
-        for key in ['power_NN', 'power_SWT', 'p_norm']:
+        for key in ['power_nn', 'power_swt', 'p_norm']:
             assert r1[key] == r2[key], f'{key} differs between runs with same seed'
 
     def test_loss_is_finite(self, clusterer_with_data):
@@ -746,11 +749,9 @@ class Test__find_optimal_parameters_DE:
                 'polish': False,
             },
         )
-        expected_keys = {
-            'power_SF', 'power_NN', 'power_SWT', 'p_norm',
-            'sig_SF_kwargs', 'sig_NN_kwargs', 'sig_SWT_kwargs',
-        }
-        assert set(result.keys()) == expected_keys
+        assert 'power_nn' in result
+        assert 'power_swt' in result
+        assert 'p_norm' in result
         assert np.isfinite(clusterer_with_data._de_result.fun)
 
     def test_resample_with_subsampling(self, clusterer_with_data):
@@ -765,11 +766,9 @@ class Test__find_optimal_parameters_DE:
                 'polish': False,
             },
         )
-        expected_keys = {
-            'power_SF', 'power_NN', 'power_SWT', 'p_norm',
-            'sig_SF_kwargs', 'sig_NN_kwargs', 'sig_SWT_kwargs',
-        }
-        assert set(result.keys()) == expected_keys
+        assert 'power_nn' in result
+        assert 'power_swt' in result
+        assert 'p_norm' in result
         assert np.isfinite(clusterer_with_data._de_result.fun)
 
 
@@ -781,16 +780,16 @@ class Test_estimate_sigmoid_params:
         """Should return sigmoid params for NN and SWT."""
         clusterer_with_data.make_naive_bayes_distance_matrix()
         result = clusterer_with_data._estimate_sigmoid_params()
-        assert 'NN' in result
-        assert 'SWT' in result
-        assert 'mu' in result['NN'] and 'b' in result['NN']
-        assert 'mu' in result['SWT'] and 'b' in result['SWT']
+        assert 'nn' in result
+        assert 'swt' in result
+        assert 'mu' in result['nn'] and 'b' in result['nn']
+        assert 'mu' in result['swt'] and 'b' in result['swt']
 
     def test_mu_is_finite(self, clusterer_with_data):
         """Estimated mu should be finite (within data range, which can exceed [0,1] for z-scored features)."""
         clusterer_with_data.make_naive_bayes_distance_matrix()
         result = clusterer_with_data._estimate_sigmoid_params()
-        for name in ['NN', 'SWT']:
+        for name in ['nn', 'swt']:
             mu = result[name]['mu']
             assert np.isfinite(mu), f'{name} mu={mu} is not finite'
 
@@ -798,7 +797,7 @@ class Test_estimate_sigmoid_params:
         """Estimated b (steepness) should be positive."""
         clusterer_with_data.make_naive_bayes_distance_matrix()
         result = clusterer_with_data._estimate_sigmoid_params()
-        for name in ['NN', 'SWT']:
+        for name in ['nn', 'swt']:
             b = result[name]['b']
             assert b > 0, f'{name} b={b} should be positive'
 
@@ -807,10 +806,10 @@ class Test_estimate_sigmoid_params:
         from roicat import util, tracking
         path_run_data = str(Path(dir_data_test) / 'pipeline_tracking' / 'run_data.richfile.zip')
         sim = util.RichFile_ROICaT(path=path_run_data)['sim'].load()
+        from roicat.tracking.similarity_graph import DEFAULT_METRICS
         fresh = tracking.clustering.Clusterer(
-            s_sf=sim['s_sf'],
-            s_NN_z=sim['s_NN_z'],
-            s_SWT_z=sim['s_SWT_z'],
+            similarities={'sf': sim['s_sf'], 'nn': sim['s_NN_z'], 'swt': sim['s_SWT_z']},
+            metric_configs=DEFAULT_METRICS,
             s_sesh=sim['s_sesh'],
             verbose=False,
         )
@@ -835,10 +834,10 @@ class Test_naive_bayes_distance_matrix:
     def test_output_shapes_match_input(self, clusterer_with_data):
         """dConj and sConj should have same shape/nnz as s_sf."""
         dConj, sConj, _ = clusterer_with_data.make_naive_bayes_distance_matrix()
-        assert dConj.shape == clusterer_with_data.s_sf.shape
-        assert sConj.shape == clusterer_with_data.s_sf.shape
-        assert dConj.nnz == clusterer_with_data.s_sf.nnz
-        assert sConj.nnz == clusterer_with_data.s_sf.nnz
+        assert dConj.shape == clusterer_with_data._s_sparsity.shape
+        assert sConj.shape == clusterer_with_data._s_sparsity.shape
+        assert dConj.nnz == clusterer_with_data._s_sparsity.nnz
+        assert sConj.nnz == clusterer_with_data._s_sparsity.nnz
 
     def test_distances_in_valid_range(self, clusterer_with_data):
         """Distances (1 - P(same)) should be in [0, 1]."""
@@ -858,7 +857,7 @@ class Test_naive_bayes_distance_matrix:
     def test_calibration_has_all_features(self, clusterer_with_data):
         """Calibrations should contain SF, NN, and SWT."""
         _, _, calibrations = clusterer_with_data.make_naive_bayes_distance_matrix()
-        assert set(calibrations['features'].keys()) == {'SF', 'NN', 'SWT'}
+        assert set(calibrations['features'].keys()) == {'sf', 'nn', 'swt'}
         for name, cal in calibrations['features'].items():
             assert 'edges' in cal
             assert 'p_same_bins' in cal
@@ -889,7 +888,7 @@ class Test_naive_bayes_distance_matrix:
         clusterer_with_data.make_naive_bayes_distance_matrix()
         ## Should not raise
         clusterer_with_data.make_pruned_similarity_graphs(
-            kwargs_makeConjunctiveDistanceMatrix='precomputed',
+            mixing_params='precomputed',
         )
         assert hasattr(clusterer_with_data, 'dConj_pruned')
         assert clusterer_with_data.dConj_pruned is not None
@@ -934,9 +933,9 @@ class Test_find_optimal_nb_combination_DE:
     def test_output_shapes_match_input(self, clusterer_with_data):
         """dConj and sConj should have same shape/nnz as s_sf."""
         dConj, sConj, _ = self._run_hybrid(clusterer_with_data)
-        assert dConj.shape == clusterer_with_data.s_sf.shape
-        assert sConj.shape == clusterer_with_data.s_sf.shape
-        assert dConj.nnz == clusterer_with_data.s_sf.nnz
+        assert dConj.shape == clusterer_with_data._s_sparsity.shape
+        assert sConj.shape == clusterer_with_data._s_sparsity.shape
+        assert dConj.nnz == clusterer_with_data._s_sparsity.nnz
 
     def test_distances_in_valid_range(self, clusterer_with_data):
         """Distances should be in [0, 1]."""
@@ -979,7 +978,7 @@ class Test_find_optimal_nb_combination_DE:
         """Output should work with make_pruned_similarity_graphs(precomputed)."""
         self._run_hybrid(clusterer_with_data)
         clusterer_with_data.make_pruned_similarity_graphs(
-            kwargs_makeConjunctiveDistanceMatrix='precomputed',
+            mixing_params='precomputed',
         )
         assert hasattr(clusterer_with_data, 'dConj_pruned')
         assert clusterer_with_data.dConj_pruned is not None
@@ -988,10 +987,10 @@ class Test_find_optimal_nb_combination_DE:
         """Should raise AssertionError if NB calibration hasn't been done."""
         from roicat import tracking
         ## Create a fresh clusterer without NB calibration
+        from roicat.tracking.similarity_graph import DEFAULT_METRICS
         fresh = tracking.clustering.Clusterer(
-            s_sf=clusterer_with_data.s_sf,
-            s_NN_z=clusterer_with_data.s_NN_z,
-            s_SWT_z=clusterer_with_data.s_SWT_z,
+            similarities=dict(clusterer_with_data.similarities),
+            metric_configs=DEFAULT_METRICS,
             s_sesh=clusterer_with_data.s_sesh,
             verbose=False,
         )
@@ -1011,7 +1010,7 @@ class Test_find_optimal_nb_combination_DE:
             },
             seed=42,
         )
-        assert dConj.shape == clusterer_with_data.s_sf.shape
+        assert dConj.shape == clusterer_with_data._s_sparsity.shape
         assert dConj.data.min() >= 0.0 - 1e-6
         assert dConj.data.max() <= 1.0 + 1e-6
         assert np.isfinite(result_info['loss'])
@@ -1025,8 +1024,8 @@ class Test_edge_cases:
         result = clusterer_with_data._find_optimal_parameters_DE(
             seed=42,
             bounds_findParameters={
-                'power_NN': [0.0, 0.5],
-                'power_SWT': [0.0, 0.5],
+                'power_nn': [0.0, 0.5],
+                'power_swt': [0.0, 0.5],
                 'p_norm': [-0.5, -0.1],
             },
             de_kwargs={
@@ -1074,10 +1073,10 @@ class Test_edge_cases:
                 'maxiter': 3, 'tol': 1e-4, 'popsize': 5, 'polish': False,
             },
         )
-        assert result['sig_NN_kwargs']['mu'] == sig_params['NN']['mu']
-        assert result['sig_NN_kwargs']['b'] == sig_params['NN']['b']
-        assert result['sig_SWT_kwargs']['mu'] == sig_params['SWT']['mu']
-        assert result['sig_SWT_kwargs']['b'] == sig_params['SWT']['b']
+        assert result['sig_nn_kwargs']['mu'] == sig_params['nn']['mu']
+        assert result['sig_nn_kwargs']['b'] == sig_params['nn']['b']
+        assert result['sig_swt_kwargs']['mu'] == sig_params['swt']['mu']
+        assert result['sig_swt_kwargs']['b'] == sig_params['swt']['b']
 
     def test_serialization_roundtrip(self, clusterer_with_data):
         """Clusterer state after NB calibration should survive serialization."""
@@ -1138,8 +1137,10 @@ class Test_edge_cases:
             (s_sesh_data, (rows, cols)), shape=(n, n),
         )
 
+        from roicat.tracking.similarity_graph import DEFAULT_METRICS
         c = tracking.clustering.Clusterer(
-            s_sf=s_sf, s_NN_z=s_NN_z, s_SWT_z=s_SWT_z,
+            similarities={'sf': s_sf, 'nn': s_NN_z, 'swt': s_SWT_z},
+            metric_configs=DEFAULT_METRICS,
             s_sesh=s_sesh, verbose=False,
         )
 
@@ -1150,10 +1151,10 @@ class Test_edge_cases:
             },
         )
 
-        assert set(result.keys()) == {
-            'power_SF', 'power_NN', 'power_SWT', 'p_norm',
-            'sig_SF_kwargs', 'sig_NN_kwargs', 'sig_SWT_kwargs',
-        }
+        ## New API returns lowercase keys: power_nn, power_swt, p_norm, sig_nn_kwargs, sig_swt_kwargs
+        assert 'power_nn' in result
+        assert 'power_swt' in result
+        assert 'p_norm' in result
         assert np.isfinite(c._de_result.fun)
 
     def test_synthetic_data_nb(self):
@@ -1188,8 +1189,10 @@ class Test_edge_cases:
             (s_sesh_data, (rows, cols)), shape=(n, n),
         )
 
+        from roicat.tracking.similarity_graph import DEFAULT_METRICS
         c = tracking.clustering.Clusterer(
-            s_sf=s_sf, s_NN_z=s_NN_z, s_SWT_z=s_SWT_z,
+            similarities={'sf': s_sf, 'nn': s_NN_z, 'swt': s_SWT_z},
+            metric_configs=DEFAULT_METRICS,
             s_sesh=s_sesh, verbose=False,
         )
 
@@ -1280,10 +1283,10 @@ def _make_synthetic_clusterer(n_sessions=4, n_rois_per_session=20, n_neighbors=1
     s_SWT_z = scipy.sparse.csr_matrix((np.array(swt_data), (rows, cols)), shape=shape)
     s_sesh = scipy.sparse.csr_matrix((np.array(sesh_data), (rows, cols)), shape=shape)
 
+    from roicat.tracking.similarity_graph import DEFAULT_METRICS
     clusterer = tracking.clustering.Clusterer(
-        s_sf=s_sf,
-        s_NN_z=s_NN_z,
-        s_SWT_z=s_SWT_z,
+        similarities={'sf': s_sf, 'nn': s_NN_z, 'swt': s_SWT_z},
+        metric_configs=DEFAULT_METRICS,
         s_sesh=s_sesh,
         session_bool=session_bool,
         verbose=False,
