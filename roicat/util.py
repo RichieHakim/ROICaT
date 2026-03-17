@@ -1113,6 +1113,41 @@ class RichFile_ROICaT(rf.RichFile):
             ("convergence_checker_optuna", helpers.Convergence_checker_optuna),
             ("image_alignment_checker", helpers.ImageAlignmentChecker),
         ]]
+
+        ## sparse_convolution.Toeplitz_convolution2d: store as JSON dict
+        ## (its dtype attr is a type object that richfile can't serialize as-is)
+        import sparse_convolution
+        def _save_sparse_conv(obj, path, **kwargs):
+            d = {
+                'x_shape': list(obj.x_shape),
+                'k': obj.k.tolist(),
+                'mode': obj.mode,
+                'method': obj.method,
+                'dtype': np.dtype(obj.dtype).str,
+            }
+            with open(path, 'w') as f:
+                json.dump(d, f)
+
+        def _load_sparse_conv(path, **kwargs):
+            with open(path, 'r') as f:
+                d = json.load(f)
+            return sparse_convolution.Toeplitz_convolution2d(
+                x_shape=tuple(d['x_shape']),
+                k=np.array(d['k']),
+                mode=d['mode'],
+                method=d['method'],
+                dtype=np.dtype(d['dtype']),
+            )
+
+        sparse_conv_dict = {
+            'type_name': 'sparse_conv',
+            'object_class': sparse_convolution.Toeplitz_convolution2d,
+            'suffix': 'json',
+            'library': 'sparse_convolution',
+            'versions_supported': [],
+            'function_save': _save_sparse_conv,
+            'function_load': _load_sparse_conv,
+        }
         # roicat_module_tds = []
         
 
@@ -1297,7 +1332,7 @@ class RichFile_ROICaT(rf.RichFile):
                 "library":            "roicat",
                 "versions_supported": [],
             },
-        ] + [t.get_property_dict() for t in roicat_module_tds]
+        ] + [t.get_property_dict() for t in roicat_module_tds] + [sparse_conv_dict]
 
         [self.register_type_from_dict(d) for d in type_dicts]
         
