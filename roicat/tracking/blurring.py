@@ -132,7 +132,7 @@ class ROI_Blurrer(util.ROICaT_Module):
                 ims (List[object]):
                     The maximum intensity projection of the ROIs.
         """
-        ims = [(rois.multiply(rois.max(1).power(-1))).max(0).toarray().reshape(self._frame_shape[0], self._frame_shape[1]) for rois in self.ROIs_blurred]
+        ims = [rois.multiply(1.0 / np.maximum(rois.max(axis=1).toarray().reshape(-1, 1), util.SPARSE_NORMALIZATION_FLOOR)).max(axis=0).toarray().reshape(self._frame_shape[0], self._frame_shape[1]) for rois in self.ROIs_blurred]
         return ims
 
 
@@ -237,7 +237,7 @@ class ROI_Blurrer(util.ROICaT_Module):
 #         Method to blur ROIs.
 
 #         Args:
-#             spatialFootprints (list of scipy.sparse.csr_matrix):
+#             spatialFootprints (list of scipy.sparse.csr_array):
 #                 The spatialFootprints to blur.
 #                 shape of each element:
 #                  (num_ROIs, frame_shape[0] * frame_shape[1])

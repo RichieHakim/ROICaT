@@ -117,7 +117,7 @@ class Test_RichFile_ROICaT:
         """Save and load with zip backend should preserve all types."""
         test_data = {
             'array': np.random.randn(10, 5).astype(np.float32),
-            'sparse': scipy.sparse.random(50, 50, density=0.1, format='csr', dtype=np.float32),
+            'sparse': scipy.sparse.random_array((50, 50), density=0.1, format='csr', dtype=np.float32),
             'scalar': 3.14,
             'nested': {'a': np.array([1, 2, 3]), 'b': 'hello'},
         }
@@ -187,7 +187,7 @@ class Test_RichFile_ROICaT:
 
     def test_scipy_sparse_roundtrip_zip(self, tmp_path):
         """Scipy sparse matrices should survive zip roundtrip."""
-        mat = scipy.sparse.random(100, 100, density=0.05, format='csr', dtype=np.float64)
+        mat = scipy.sparse.random_array((100, 100), density=0.05, format='csr', dtype=np.float64)
         test_data = {'sparse_mat': mat}
         path = str(tmp_path / 'sparse_test.richfile.zip')
         util.RichFile_ROICaT(path=path, backend='zip').save(obj=test_data, overwrite=True)
@@ -248,8 +248,8 @@ class Test_RichFile_ROICaT:
         sim_dict = {
             '_metric_configs_stored': list(DEFAULT_METRICS),
             'similarities': {
-                'sf': scipy.sparse.random(50, 50, density=0.1, format='csr'),
-                'nn': scipy.sparse.random(50, 50, density=0.1, format='csr'),
+                'sf': scipy.sparse.random_array((50, 50), density=0.1, format='csr'),
+                'nn': scipy.sparse.random_array((50, 50), density=0.1, format='csr'),
             },
             'params': {'__init__': {'verbose': True}},
         }
@@ -326,53 +326,53 @@ class Test_Equivalence_checker:
 
     def test_sparse_identical(self):
         checker = helpers.Equivalence_checker()
-        s = scipy.sparse.random(50, 50, density=0.2, format='csr', random_state=0)
+        s = scipy.sparse.random_array((50, 50), density=0.2, format='csr', rng=0)
         assert checker(s, s)[0] == True
 
     def test_sparse_close(self):
         checker = helpers.Equivalence_checker(kwargs_allclose={'rtol': 1e-5})
-        s = scipy.sparse.random(50, 50, density=0.2, format='csr', random_state=0)
+        s = scipy.sparse.random_array((50, 50), density=0.2, format='csr', rng=0)
         s2 = s.copy()
         s2.data = s2.data * (1 + 1e-7)  ## Proportional perturbation within rtol
         assert checker(s2, s)[0] == True
 
     def test_sparse_different(self):
         checker = helpers.Equivalence_checker()
-        s1 = scipy.sparse.csr_matrix(np.eye(3))
-        s2 = scipy.sparse.csr_matrix(np.eye(3) * 2.0)
+        s1 = scipy.sparse.csr_array(np.eye(3))
+        s2 = scipy.sparse.csr_array(np.eye(3) * 2.0)
         result = checker(s1, s2)
         assert result[0] == False
         assert 'sparse allclose failed' in result[1]
 
     def test_sparse_shape_mismatch(self):
         checker = helpers.Equivalence_checker()
-        s1 = scipy.sparse.csr_matrix(np.eye(3))
-        s2 = scipy.sparse.csr_matrix(np.eye(4))
+        s1 = scipy.sparse.csr_array(np.eye(3))
+        s2 = scipy.sparse.csr_array(np.eye(4))
         result = checker(s1, s2)
         assert result[0] == False
         assert 'shape mismatch' in result[1]
 
     def test_sparse_type_mismatch(self):
         checker = helpers.Equivalence_checker()
-        s = scipy.sparse.csr_matrix(np.eye(3))
+        s = scipy.sparse.csr_array(np.eye(3))
         result = checker(s.toarray(), s)
         assert result[0] == False
         assert 'type mismatch' in result[1]
 
     def test_sparse_empty(self):
         checker = helpers.Equivalence_checker()
-        s = scipy.sparse.csr_matrix((10, 10))
+        s = scipy.sparse.csr_array((10, 10))
         assert checker(s, s)[0] == True
 
     def test_sparse_bool(self):
         checker = helpers.Equivalence_checker()
-        s = scipy.sparse.random(20, 20, density=0.3, format='csr', random_state=0)
+        s = scipy.sparse.random_array((20, 20), density=0.3, format='csr', rng=0)
         sb = (s != 0).astype(bool)
         assert checker(sb, sb)[0] == True
 
     def test_sparse_in_nested_dict(self):
         checker = helpers.Equivalence_checker()
-        s = scipy.sparse.random(10, 10, density=0.5, format='csr', random_state=0)
+        s = scipy.sparse.random_array((10, 10), density=0.5, format='csr', rng=0)
         d = {'dense': np.array([1.0]), 'sparse': s}
         result = checker(d, d)
         assert result['dense'][0] == True
@@ -481,23 +481,23 @@ class Test_scipy_sparse_to_torch_coo:
     """Tests for helpers.scipy_sparse_to_torch_coo."""
 
     def test_shape_preserved(self):
-        s = scipy.sparse.random(10, 20, density=0.3, format='csr', random_state=0)
+        s = scipy.sparse.random_array((10, 20), density=0.3, format='csr', rng=0)
         t = helpers.scipy_sparse_to_torch_coo(s)
         assert t.shape == s.shape
 
     def test_values_preserved(self):
-        s = scipy.sparse.random(10, 20, density=0.3, format='csr', random_state=0)
+        s = scipy.sparse.random_array((10, 20), density=0.3, format='csr', rng=0)
         t = helpers.scipy_sparse_to_torch_coo(s)
         np.testing.assert_allclose(t.to_dense().numpy(), s.toarray(), rtol=1e-6)
 
     def test_empty(self):
-        s = scipy.sparse.csr_matrix((5, 5))
+        s = scipy.sparse.csr_array((5, 5))
         t = helpers.scipy_sparse_to_torch_coo(s)
         assert t.shape == (5, 5)
         assert t._nnz() == 0
 
     def test_dtype_override(self):
-        s = scipy.sparse.random(5, 5, density=0.5, format='csr', random_state=0)
+        s = scipy.sparse.random_array((5, 5), density=0.5, format='csr', rng=0)
         t = helpers.scipy_sparse_to_torch_coo(s, dtype=torch.float32)
         assert t.dtype == torch.float32
 
@@ -507,8 +507,8 @@ class Test_merge_sparse_arrays:
 
     def test_basic_merge(self):
         """Two blocks placed at different positions in a larger matrix."""
-        s1 = scipy.sparse.csr_matrix(np.array([[1.0, 0.5], [0.5, 1.0]]))
-        s2 = scipy.sparse.csr_matrix(np.array([[2.0, 0.0], [0.0, 2.0]]))
+        s1 = scipy.sparse.csr_array(np.array([[1.0, 0.5], [0.5, 1.0]]))
+        s2 = scipy.sparse.csr_array(np.array([[2.0, 0.0], [0.0, 2.0]]))
         idx1 = np.array([0, 1])
         idx2 = np.array([2, 3])
         result = helpers.merge_sparse_arrays([s1, s2], [idx1, idx2], shape_full=(4, 4))
@@ -523,7 +523,7 @@ class Test_merge_sparse_arrays:
         rng = np.random.RandomState(42)
         a = rng.rand(5, 5)
         a = (a + a.T) / 2
-        s = scipy.sparse.csr_matrix(a)
+        s = scipy.sparse.csr_array(a)
         idx = np.array([2, 4, 6, 8, 10])
         result = helpers.merge_sparse_arrays([s], [idx], shape_full=(12, 12))
         dense = result.toarray()
@@ -534,7 +534,7 @@ class Test_merge_sparse_arrays:
         blocks = []
         idxs = []
         for i in range(3):
-            s = scipy.sparse.csr_matrix(np.eye(2) * (i + 1))
+            s = scipy.sparse.csr_array(np.eye(2) * (i + 1))
             blocks.append(s)
             idxs.append(np.array([i * 2, i * 2 + 1]))
         result = helpers.merge_sparse_arrays(blocks, idxs, shape_full=(6, 6))
@@ -695,7 +695,7 @@ def test_data_suite2p(dir_data_test, array_hasher):
     assert all([im.dtype == np.float32 for im in data.ROI_images]), 'ROICaT Error: data.ROI_images.dtype != list of np.ndarrays of dtype np.float32'
     assert isinstance(data.spatialFootprints, list), 'ROICaT Error: data.spatialFootprints.dtype != list'
     assert len(data.spatialFootprints) == len(paths_stat), 'ROICaT Error: len(data.spatialFootprints) != len(paths_stat)'
-    assert all([isinstance(sf, scipy.sparse.csr_matrix) for sf in data.spatialFootprints]), 'ROICaT Error: data.spatialFootprints.dtype != list of scipy.sparse.csr_matrix'
+    assert all([scipy.sparse.issparse(sf) and sf.format == 'csr' for sf in data.spatialFootprints]), 'ROICaT Error: data.spatialFootprints must be a list of sparse CSR arrays'
 
     ### Attributes specific to this dataset
     assert data.n_roi_total == 300*len(paths_stat), 'ROICaT Error: data.n_roi_total != 300*len(paths_stat). stat.npy files expected to contain 300 ROIs each.'
@@ -892,8 +892,8 @@ class Test_naive_bayes_distance_matrix:
         """Should return (dConj, sConj, calibrations) with correct types."""
         import scipy.sparse
         dConj, sConj, calibrations = clusterer_with_data.make_naive_bayes_distance_matrix()
-        assert isinstance(dConj, scipy.sparse.csr_matrix)
-        assert isinstance(sConj, scipy.sparse.csr_matrix)
+        assert scipy.sparse.issparse(dConj)
+        assert scipy.sparse.issparse(sConj)
         assert isinstance(calibrations, dict)
         assert 'features' in calibrations
         assert 'prior' in calibrations
@@ -1071,7 +1071,7 @@ class Test_edge_cases:
 
         ## Spatial footprint: higher similarity for same-cell pairs
         sf_data = rng.rand(nnz).astype(np.float64) * 0.5
-        s_sf = scipy.sparse.csr_matrix(
+        s_sf = scipy.sparse.csr_array(
             (sf_data, (rows, cols)), shape=(n, n),
         )
 
@@ -1086,7 +1086,7 @@ class Test_edge_cases:
         s_sesh_data = np.array([
             float(session_ids[r] != session_ids[c]) for r, c in zip(rows, cols)
         ], dtype=np.float64)
-        s_sesh = scipy.sparse.csr_matrix(
+        s_sesh = scipy.sparse.csr_array(
             (s_sesh_data, (rows, cols)), shape=(n, n),
         )
 
@@ -1126,7 +1126,7 @@ class Test_edge_cases:
         rows, cols = np.array(rows), np.array(cols)
         nnz = len(rows)
 
-        s_sf = scipy.sparse.csr_matrix(
+        s_sf = scipy.sparse.csr_array(
             (rng.rand(nnz).astype(np.float64), (rows, cols)), shape=(n, n),
         )
         s_NN_z = s_sf.copy()
@@ -1138,7 +1138,7 @@ class Test_edge_cases:
         s_sesh_data = np.array([
             float(session_ids[r] != session_ids[c]) for r, c in zip(rows, cols)
         ], dtype=np.float64)
-        s_sesh = scipy.sparse.csr_matrix(
+        s_sesh = scipy.sparse.csr_array(
             (s_sesh_data, (rows, cols)), shape=(n, n),
         )
 
@@ -1180,7 +1180,7 @@ def _make_synthetic_clusterer(n_sessions=4, n_rois_per_session=20, n_neighbors=1
         session_bool[s * n_rois_per_session : (s + 1) * n_rois_per_session, s] = 1.0
 
     ## Build s_sesh: True where ROIs are from DIFFERENT sessions
-    sb_sparse = scipy.sparse.csr_matrix(session_bool)
+    sb_sparse = scipy.sparse.csr_array(session_bool)
     s_sesh_full = (sb_sparse @ sb_sparse.T).toarray()
     np.fill_diagonal(s_sesh_full, 0)
     ## s_sesh_full[i, j] > 0 means same session. We want different-session.
@@ -1231,10 +1231,10 @@ def _make_synthetic_clusterer(n_sessions=4, n_rois_per_session=20, n_neighbors=1
                     sesh_data.extend([1.0, 1.0])  ## different session
 
     shape = (n_total, n_total)
-    s_sf = scipy.sparse.csr_matrix((np.array(sf_data), (rows, cols)), shape=shape)
-    s_NN_z = scipy.sparse.csr_matrix((np.array(nn_data), (rows, cols)), shape=shape)
-    s_SWT_z = scipy.sparse.csr_matrix((np.array(swt_data), (rows, cols)), shape=shape)
-    s_sesh = scipy.sparse.csr_matrix((np.array(sesh_data), (rows, cols)), shape=shape)
+    s_sf = scipy.sparse.csr_array((np.array(sf_data), (rows, cols)), shape=shape)
+    s_NN_z = scipy.sparse.csr_array((np.array(nn_data), (rows, cols)), shape=shape)
+    s_SWT_z = scipy.sparse.csr_array((np.array(swt_data), (rows, cols)), shape=shape)
+    s_sesh = scipy.sparse.csr_array((np.array(sesh_data), (rows, cols)), shape=shape)
 
     from roicat.tracking.similarity_graph import DEFAULT_METRICS
     clusterer = tracking.clustering.Clusterer(
@@ -1355,7 +1355,7 @@ class TestFastHDBSCAN:
     def test_fast_hdbscan_empty_graph(self, synthetic_setup):
         """Clustering an empty graph should return all -1."""
         clusterer, d_conj, session_bool = synthetic_setup
-        empty_d = scipy.sparse.csr_matrix(d_conj.shape)
+        empty_d = scipy.sparse.csr_array(d_conj.shape)
         labels = clusterer.fit(
             d_conj=empty_d,
             session_bool=session_bool,

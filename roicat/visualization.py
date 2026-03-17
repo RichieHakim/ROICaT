@@ -160,7 +160,7 @@ def display_toggle_image_stack(
 
 
 def compute_colored_FOV(
-    spatialFootprints: List[scipy.sparse.csr_matrix],
+    spatialFootprints: List[scipy.sparse.csr_array],
     FOV_height: int,
     FOV_width: int,
     labels: Optional[Union[List[np.ndarray], np.ndarray]] = None,
@@ -174,7 +174,7 @@ def compute_colored_FOV(
     RH 2023
 
     Args:
-        spatialFootprints (List[scipy.sparse.csr_matrix]): 
+        spatialFootprints (List[scipy.sparse.csr_array]):
             Each element is all the spatial footprints for a given session.
         FOV_height (int): 
             Height of the field of view.
@@ -209,7 +209,7 @@ def compute_colored_FOV(
     spatialFootprints = [spatialFootprints] if isinstance(spatialFootprints, np.ndarray) else spatialFootprints
 
     ## Check inputs
-    assert all([scipy.sparse.issparse(sf) for sf in spatialFootprints]), "spatialFootprints must be a list of scipy.sparse.csr_matrix"
+    assert all([scipy.sparse.issparse(sf) for sf in spatialFootprints]), "spatialFootprints must be a list of scipy.sparse.csr_array"
 
     n_roi = np.array([sf.shape[0] for sf in spatialFootprints], dtype=np.int64)
     n_roi_cumsum = np.concatenate([[0], np.cumsum(n_roi)]).astype(np.int64)
@@ -246,7 +246,7 @@ def compute_colored_FOV(
     h, w = FOV_height, FOV_width
 
     rois = scipy.sparse.vstack(spatialFootprints)
-    rois_max = rois.max(1).toarray()
+    rois_max = rois.max(axis=1).toarray().reshape(-1, 1)
     rois_max[rois_max == 0] = np.nan
     rois = rois.multiply(1.0/rois_max).power(1)
     rois.data[np.isnan(rois.data)] = 0
@@ -336,9 +336,9 @@ def display_cropped_cluster_ims(
     labels_unique = np.unique(labels[labels>-1])
 
     ROI_ims_sparse = scipy.sparse.vstack(spatialFootprints)
-    ROI_ims_sparse = ROI_ims_sparse.multiply( ROI_ims_sparse.max(1).power(-1) ).tocsr()
+    ROI_ims_sparse = ROI_ims_sparse.multiply(1.0 / np.maximum(ROI_ims_sparse.max(axis=1).toarray().reshape(-1, 1), util.SPARSE_NORMALIZATION_FLOOR)).tocsr()
 
-    labels_bool_t = scipy.sparse.vstack([scipy.sparse.csr_matrix(labels==u) for u in np.sort(np.unique(labels_unique))]).tocsr()
+    labels_bool_t = scipy.sparse.vstack([scipy.sparse.csr_array(labels==u) for u in np.sort(np.unique(labels_unique))]).tocsr()
     labels_bool_t = labels_bool_t[:n_labels_to_display]
 
     def helper_crop_cluster_ims(ii):

@@ -128,7 +128,7 @@ def test_scipy_sparse():
     import numpy as np
     import scipy.sparse
     rng = np.random.default_rng(seed=0)
-    arr1 = scipy.sparse.random(1000, 10, density=0.1, random_state=rng, format='csr')
-    arr2 = scipy.sparse.random(10, 1000, density=0.1, random_state=rng, format='csr')
+    arr1 = scipy.sparse.random_array((1000, 10), density=0.1, rng=rng, format='csr')
+    arr2 = scipy.sparse.random_array((10, 1000), density=0.1, rng=rng, format='csr')
     arr3 = (arr1 @ arr2).mean()
     assert np.allclose(arr3, 0.025, rtol=0.3), f'scipy.sparse test failed: expected ~0.025, got {arr3}'
