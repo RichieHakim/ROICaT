@@ -29,7 +29,7 @@ A simple-to-use Python package for automatically classifying images of cells and
 - **It's easy to use. You don't need to know how to code. You can use the
   interactive notebooks or online app to run the pipelines with just a few
   clicks.**
-- It's accurate. ROICaT was desgined to be better than existing tools. It is
+- It's accurate. ROICaT was designed to be better than existing tools. It is
   capable of classifying and tracking neuron ROIs at accuracies approaching
   human performance out of the box.
 - It's fast and computational requirements are low. You can run it on a laptop.
@@ -83,7 +83,7 @@ roicat --pipeline tracking --path_params /path/to/params.yaml --dir_data /folder
   [Documentation](https://roicat.readthedocs.io/en/latest/roicat.html).
 - Run the full tracking pipeline using the CLI or
   `roicat.pipelines.pipeline_tracking` with default parameters generated from
-  `roicat.util.get_default_paramaters()` saved as a yaml file.
+  `roicat.util.get_default_parameters()` saved as a yaml file.
 <!-- - Train a new ROInet model using the provided Jupyter Notebook [TODO: link]. -->
 
 
@@ -93,6 +93,7 @@ installation process, please make a [github
 issue](https://github.com/RichieHakim/ROICaT/issues) with the error.
 
 ### 0. Requirements
+- **Python 3.11 or 3.12** (3.13 is not yet supported).
 - [Anaconda](https://www.anaconda.com/distribution/) or
   [Miniconda](https://docs.conda.io/en/latest/miniconda.html).
 - If using Windows: [Microsoft C++ Build
@@ -111,7 +112,6 @@ you want to use ROICaT.
 ### 2. Install ROICaT
 ```
 pip install roicat[all]
-pip install git+https://github.com/RichieHakim/roiextractors
 ```
 **Note on zsh:** if you are using a zsh terminal, change command to: `pip3
 install --user 'roicat[all]'` <br>
@@ -127,6 +127,27 @@ the regular version is already installed, you will need to uninstall it first.
 git clone https://github.com/RichieHakim/ROICaT
 ```
 Then, navigate to the `ROICaT/notebooks/jupyter` directory to run the notebooks.
+
+
+# Quick Start
+
+After installation, you can run the tracking pipeline with just a few lines of
+Python:
+
+```python
+import roicat
+
+# Run the tracking pipeline with default parameters
+params = roicat.util.get_default_parameters(pipeline='tracking')
+params['data_loading']['dir_outer'] = '/path/to/your/data/'
+params['data_loading']['data_kind'] = 'suite2p'
+
+results, run_data, params = roicat.pipelines.pipeline_tracking(params)
+```
+
+For more detailed usage, see the [interactive
+notebooks](https://github.com/RichieHakim/ROICaT/tree/main/notebooks/tracking)
+or the [documentation](https://roicat.readthedocs.io/en/latest/).
 
 
 # Upgrading versions
@@ -168,7 +189,7 @@ sudo docker run -it -p 7860:7860 --platform=linux/amd64 --shm-size=10g registry.
 # TODO:
 #### algorithmic improvements:
 - [ ] Add in method to use more similarity metrics for tracking
-- [ ] Coordinate descent on each similarity metric
+- ~~[ ] Coordinate descent on each similarity metric~~
 - [ ] Add F and Fneu to data_roicat, dFoF and trace quality metric functions
 - [ ] Add in notebook for demonstrating using temporal similarity metrics (SWT on dFoF)
 - [ ] Make a standard classifier
@@ -176,7 +197,7 @@ sudo docker run -it -p 7860:7860 --platform=linux/amd64 --shm-size=10g registry.
 - [x] Make image aligner based on image similarity + RANSAC of centroids or s_SF
 - [ ] Better post-hoc curation metrics and visualizations
 - [ ] Discount the non-rigid warp masks towards the edges to be more like the rigid warp map in order improve border performance
-- [ ] Make non-rigid image registration optional
+- [x] Make non-rigid image registration optional
 #### code improvements:
 - [ ] **Finish ROIextractors integration**
 - [ ] Update automatic regression module (make new repo for it)
@@ -185,21 +206,21 @@ sudo docker run -it -p 7860:7860 --platform=linux/amd64 --shm-size=10g registry.
 - [ ] Figure out RNG / OS differences issues for tests
 - [ ] Add more documentation / tutorials
 - [x] Make a GUI
-- [ ] Add settings to the GUI
-- ~~[ ] Make a Docker container~~
-- ~~Make colab demo notebook not require user data~~
+- [ ] Add settings to the webapp GUI
+- [ ] Make a Docker container
+- [ ] Make colab demo notebook have demo data
 - [x] Make a better CLI
-- [ ] Switch to pyproject.toml
+- [x] Switch to pyproject.toml
 - [ ] Improve params.json / default params system
 - [ ] Spruce up training code
-- [ ] Switch off pickling optuna save file
+- [x] Switch off pickling optuna save file
 - [ ] Try training on cellpose datasets
 - [ ] Python 3.13
 #### other:
 - [ ] Write the paper
 - [ ] Make tweet about it
 - [ ] Make a video or two on how to use it
-- [ ] Maybe use lightthetorch for torch installation
+- ~~[ ] Maybe use lightthetorch for torch installation~~
 - [ ] Better Readme
 - [ ] More documentation
 - [ ] Make a regression model for in-plane-ness

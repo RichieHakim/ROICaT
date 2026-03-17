@@ -133,6 +133,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
 
 
     ## Alignment
+    print(f"\n{'='*50}\nStep: Alignment\n{'='*50}") if VERBOSE else None
     aligner = tracking.alignment.Aligner(
         um_per_pixel=data.um_per_pixel[0],  ## Single value for um_per_pixel. data.um_per_pixel is typically a list of floats, so index out just one value.
         verbose=VERBOSE,  ## Whether to print updates
@@ -174,6 +175,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
 
 
     ## Blur ROIs
+    print(f"\n{'='*50}\nStep: Blurring\n{'='*50}") if VERBOSE else None
     blurrer = tracking.blurring.ROI_Blurrer(
         frame_shape=(data.FOV_height, data.FOV_width),  ## FOV height and width
         plot_kernel=False,  ## Whether to visualize the 2D gaussian
@@ -186,6 +188,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
 
 
     ## ROInet embedding
+    print(f"\n{'='*50}\nStep: ROInet Embedding\n{'='*50}") if VERBOSE else None
 
     dir_temp = tempfile.gettempdir()
 
@@ -207,6 +210,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
 
 
     ## Scattering wavelet embedding
+    print(f"\n{'='*50}\nStep: Scattering Wavelet Transform\n{'='*50}") if VERBOSE else None
     swt = tracking.scatteringWaveletTransformer.SWT(
         image_shape=data.ROI_images[0].shape[1:3],  ## size of a cropped ROI image
         device=DEVICE,  ## PyTorch device
@@ -221,25 +225,25 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
 
 
     ## Compute similarities
+    print(f"\n{'='*50}\nStep: Similarity Graph\n{'='*50}") if VERBOSE else None
+    from .tracking.similarity_graph import DEFAULT_METRICS
     sim = tracking.similarity_graph.ROI_graph(
         frame_height=data.FOV_height,
         frame_width=data.FOV_width,
         verbose=VERBOSE,  ## Whether to print outputs
+        metric_configs=DEFAULT_METRICS,
         **params['similarity_graph']['sparsification']
     )
     sim.compute_similarity_blockwise(
         spatialFootprints=blurrer.ROIs_blurred,  ## Mask spatial footprints
-        features_NN=roinet.latents,  ## ROInet output latents
-        features_SWT=swt.latents,  ## Scattering wavelet transform output latents
         ROI_session_bool=data.session_bool,  ## Boolean array of which ROIs belong to which sessions
-    #     spatialFootprint_maskPower=1.0,  ##  An exponent to raise the spatial footprints to to care more or less about bright pixels
+        features={'nn': roinet.latents, 'swt': swt.latents},  ## Feature vectors per metric
         **params['similarity_graph']['compute_similarity'],
     );
     sim.make_normalized_similarities(
         centers_of_mass=data.centroids,  ## ROI centroid positions
-        features_NN=roinet.latents,  ## ROInet latents
-        features_SWT=swt.latents,  ## SWT latents
-        device=DEVICE,    
+        features={'nn': roinet.latents, 'swt': swt.latents},  ## Feature vectors for z-scoring
+        device=DEVICE,
         k_max=data.n_sessions * params['similarity_graph']['normalization']['k_max'],
         k_min=data.n_sessions * params['similarity_graph']['normalization']['k_min'],
         algo_NN=params['similarity_graph']['normalization']['algo_NN'],
@@ -249,10 +253,10 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
 
 
     ## Clustering
+    print(f"\n{'='*50}\nStep: Clustering\n{'='*50}") if VERBOSE else None
     clusterer = tracking.clustering.Clusterer(
-        s_sf=sim.s_sf,
-        s_NN_z=sim.s_NN_z,
-        s_SWT_z=sim.s_SWT_z,
+        similarities=sim.similarities_final,
+        metric_configs=DEFAULT_METRICS,
         s_sesh=sim.s_sesh,
         session_bool=data.session_bool,
         verbose=VERBOSE,
@@ -271,7 +275,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         )
 
     clusterer.make_pruned_similarity_graphs(
-        kwargs_makeConjunctiveDistanceMatrix=kwargs_makeConjunctiveDistanceMatrix_best,
+        mixing_params=kwargs_makeConjunctiveDistanceMatrix_best,
         **params['clustering']['pruning'],
     )
     tocs.append(('make_conjunctive_distance', time.time() - tic_start))
@@ -427,14 +431,13 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         fig.savefig(str(Path(dir_save).resolve() / 'visualization' / 'similarity_graph' / 'blocks.png'))
         
         #### Save the similarity / distance plots for the given conjunctive distance matrix kwargs
-        fig = clusterer.plot_distSame(kwargs_makeConjunctiveDistanceMatrix=kwargs_makeConjunctiveDistanceMatrix_best)
+        fig = clusterer.plot_distSame(mixing_params=kwargs_makeConjunctiveDistanceMatrix_best)
         (Path(dir_save).resolve() / 'visualization' / 'clustering').mkdir(parents=True, exist_ok=True)
         fig.savefig(str(Path(dir_save).resolve() / 'visualization' / 'clustering' / 'dist.png'))
         fig, axs = clusterer.plot_similarity_relationships(
-            plots_to_show=[1,2,3], 
             max_samples=100000,  ## Make smaller if it is running too slow
             kwargs_scatter={'s':1, 'alpha':0.2},
-            kwargs_makeConjunctiveDistanceMatrix=kwargs_makeConjunctiveDistanceMatrix_best
+            mixing_params=kwargs_makeConjunctiveDistanceMatrix_best,
         )
         (Path(dir_save).resolve() / 'visualization' / 'clustering').mkdir(parents=True, exist_ok=True)
         fig.savefig(str(Path(dir_save).resolve() / 'visualization' / 'clustering' / 'similarity_relationships.png'))
@@ -515,7 +518,19 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
 
 
 
-    ## End timer
-    print(f"Elapsed time: {time.time() - tic_start:.2f} seconds")
-    
+    ## Print timing summary
+    tocs.append(('total', time.time() - tic_start))
+    if VERBOSE:
+        print("\n" + "=" * 50)
+        print("Pipeline Timing Summary")
+        print("=" * 50)
+        prev_time = 0
+        for name, cumulative_time in tocs:
+            if name == 'start_time_absolute':
+                continue
+            step_time = cumulative_time - prev_time
+            print(f"  {name:30s} {step_time:8.1f}s  ({cumulative_time:8.1f}s cumulative)")
+            prev_time = cumulative_time
+        print("=" * 50)
+
     return results_all, run_data, params

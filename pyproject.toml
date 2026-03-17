@@ -25,7 +25,7 @@ core = [
     "pytest==9.0.2",
     "PyYAML==6.0.3",
     "scikit-learn==1.8.0",
-    "scipy==1.16.3",
+    "scipy==1.17.1",
     "seaborn==0.13.2",
     "sparse==0.17.0",
     "tqdm==4.67.3",
@@ -50,10 +50,11 @@ classification = [
 tracking = [
     "roicat[core]",
     "opencv-contrib-python-headless<=4.13.0.92",
-    "hdbscan==0.8.41",
+    "fast-hdbscan @ git+https://github.com/TutteInstitute/fast_hdbscan.git",
     "kymatio==0.3.0",
     "kornia==0.8.2",
     "romatch-roicat>=0.1.2.post1",
+    "roiextractors==0.8.0",
 ]
 all = [
     "roicat[core,classification,tracking]",
@@ -91,13 +92,14 @@ all_latest = [
     "holoviews[recommended]",
     "jupyter-bokeh",
     "opencv-contrib-python-headless",
-    "hdbscan",
+    "fast-hdbscan @ git+https://github.com/TutteInstitute/fast_hdbscan.git",
     "kymatio",
     "kornia",
     "romatch-roicat",
     "onnx2torch",
     "scikit-image",
     "selenium",
+    "roiextractors==0.8.0",
 ]
 
 [project.scripts]

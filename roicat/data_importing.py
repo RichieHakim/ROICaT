@@ -75,7 +75,7 @@ class Data_roicat(util.ROICaT_Module):
             Each element represents an imaging session and each element of the
             numpy array (first dimension) is an ROI.
         spatialFootprints (List[object]): 
-            A list of scipy.sparse.csr_matrix objects, each with shape *(n_roi,
+            A list of scipy.sparse.csr_array objects, each with shape *(n_roi,
             FOV_height \* FOV_width)*. Each element represents an imaging session.
         class_labels_raw (List[np.ndarray]): 
             A list of numpy arrays, each with shape *(n_roi,)*, where each
@@ -106,7 +106,7 @@ class Data_roicat(util.ROICaT_Module):
         super().__init__()
 
         self._verbose = verbose
-    
+
     #########################################################
     ################# CLASSIFICATION ########################
     #########################################################
@@ -348,25 +348,25 @@ class Data_roicat(util.ROICaT_Module):
 
     def set_spatialFootprints(
         self,
-        spatialFootprints: List[Union[np.ndarray, scipy.sparse.csr_matrix, Dict[str, Any]]],
+        spatialFootprints: List[Union[np.ndarray, scipy.sparse.csr_array, Dict[str, Any]]],
         um_per_pixel: Optional[Union[float, List[float]]] = None,
     ):
         """
         Sets the **spatialFootprints** attribute.
 
         Args:
-            spatialFootprints (List[Union[np.ndarray, csr_matrix, Dict[str, Any]]]): 
+            spatialFootprints (List[Union[np.ndarray, csr_array, Dict[str, Any]]]):
                 One of the following: \n
                 * List of **numpy.ndarray** objects, one for each session. Each
                   array should have shape *(n_ROIs, FOV_height, FOV_width)*.
-                * List of **scipy.sparse.csr_matrix** objects, one for each
+                * List of **scipy.sparse.csr_array** objects, one for each
                   session. Each matrix should have shape *(n_ROIs, FOV_height *
                   FOV_width)*. Reshaping should be done with 'C' indexing
                   (standard).
                 * List of dictionaries, one for each session. This dictionary
-                  should be a serialized **scipy.sparse.csr_matrix** object. It
+                  should be a serialized **scipy.sparse.csr_array** object. It
                   should contains keys: 'data', 'indices', 'indptr', 'shape'.
-                  See **scipy.sparse.csr_matrix** for more information.
+                  See **scipy.sparse.csr_array** for more information.
             um_per_pixel (Union[float, List[float]]):
                 The conversion factor from pixels to microns. This is used to scale
                 the ROI_images to a common size. Should either be a float or a list
@@ -385,19 +385,19 @@ class Data_roicat(util.ROICaT_Module):
             print(f'RH WARNING: Input spatialFootprints is not a list. Converting to list.')
             spatialFootprints = [spatialFootprints]
 
-        ## If the input are dictionaries, assume that it is a serialized scipy.sparse.csr_matrix object and convert it
+        ## If the input are dictionaries, assume that it is a serialized scipy.sparse.csr_array object and convert it
         if all([isinstance(s, dict) for s in spatialFootprints]):
-            print("RH WARNING: spatialFootprints are dictionaries, assuming that they are serialized scipy.sparse.csr_matrix objects and converting them.") if self._verbose else None
-            sf_all = [scipy.sparse.csr_matrix((sf['data'], sf['indices'], sf['indptr']), shape=sf['_shape']) for sf in spatialFootprints]
-        ## If the input are numpy.ndarray objects, convert them to scipy.sparse.csr_matrix objects
+            print("RH WARNING: spatialFootprints are dictionaries, assuming that they are serialized scipy.sparse.csr_array objects and converting them.") if self._verbose else None
+            sf_all = [scipy.sparse.csr_array((sf['data'], sf['indices'], sf['indptr']), shape=sf['_shape']) for sf in spatialFootprints]
+        ## If the input are numpy.ndarray objects, convert them to scipy.sparse.csr_array objects
         elif all([isinstance(s, np.ndarray) for s in spatialFootprints]):
-            print("RH WARNING: spatialFootprints are numpy.ndarray objects. Assuming structure is a list of arrays (1 per session) of shape (n_roi, height, width), converting them to scipy.sparse.csr_matrix objects.") if self._verbose else None
-            sf_all = [scipy.sparse.csr_matrix(sf.reshape(sf.shape[0], -1), copy=False) for sf in spatialFootprints]
+            print("RH WARNING: spatialFootprints are numpy.ndarray objects. Assuming structure is a list of arrays (1 per session) of shape (n_roi, height, width), converting them to scipy.sparse.csr_array objects.") if self._verbose else None
+            sf_all = [scipy.sparse.csr_array(sf.reshape(sf.shape[0], -1), copy=False) for sf in spatialFootprints]
             self.set_FOVHeightWidth(FOV_height=spatialFootprints[0].shape[1], FOV_width=spatialFootprints[0].shape[2])
         elif all([scipy.sparse.issparse(s) for s in spatialFootprints]):
             sf_all = [sf.tocsr() for sf in spatialFootprints]
         else:
-            raise ValueError(f"spatialFootprints should be a list of numpy.ndarray objects, scipy.sparse.csr_matrix objects, or dictionaries of csr_matrix input arguments (see documentation). Found elements of type: {type(spatialFootprints[0])}")
+            raise ValueError(f"spatialFootprints should be a list of numpy.ndarray objects, scipy.sparse.csr_array objects, or dictionaries of csr_array input arguments (see documentation). Found elements of type: {type(spatialFootprints[0])}")
 
         ## Warn if no um_per_pixel is provided
         if um_per_pixel is None:
@@ -514,14 +514,14 @@ class Data_roicat(util.ROICaT_Module):
 
     def get_maxIntensityProjection_spatialFootprints(
         self, 
-        sf: Optional[List[scipy.sparse.csr_matrix]] = None,
+        sf: Optional[List[scipy.sparse.csr_array]] = None,
         normalize: bool = True,
     ):
         """
         Returns the maximum intensity projection of the spatial footprints.
 
         Args:
-            sf (List[scipy.sparse.csr_matrix]): 
+            sf (List[scipy.sparse.csr_array]):
                 List of spatial footprints, one for each session.
             normalize (bool):
                 If True, normalizes the [min, max] range of each ROI to [0, 1]
@@ -537,14 +537,14 @@ class Data_roicat(util.ROICaT_Module):
         else:
             if isinstance(sf, list) == False:
                 sf = [sf]
-            assert all([isinstance(s, scipy.sparse.csr_matrix) for s in sf]), f"RH ERROR: All elements in sf must be scipy.sparse.csr_matrix objects."
+            assert all([scipy.sparse.issparse(s) and s.format == 'csr' for s in sf]), f"RH ERROR: All elements in sf must be scipy.sparse CSR arrays."
 
         assert hasattr(self, 'FOV_height'), f"RH ERROR: FOV_height must be set as an attribute."
         assert hasattr(self, 'FOV_width'), f"RH ERROR: FOV_width must be set as an attribute."
 
         if normalize:
-            sf = [s.multiply(s.max(axis=1).power(-1)) for s in sf]
-        mip = [(s).max(axis=0).reshape(self.FOV_height, self.FOV_width).toarray() for s in sf]
+            sf = [s.multiply(1.0 / np.maximum(s.max(axis=1).toarray().reshape(-1, 1), util.SPARSE_NORMALIZATION_FLOOR)) for s in sf]
+        mip = [s.max(axis=0).toarray().reshape(self.FOV_height, self.FOV_width) for s in sf]
         return mip
 
     def _checkValidity_spatialFootprints_and_FOVImages(
@@ -671,8 +671,8 @@ class Data_roicat(util.ROICaT_Module):
                     (y, x) coordinates.
         """
         ## Check that sf is a list of csr sparse arrays
-        assert isinstance(self.spatialFootprints, list), f"RH ERROR: spatialFootprints must be a list of scipy.sparse.csr_matrix."
-        assert all([isinstance(sf, scipy.sparse.csr_matrix) for sf in self.spatialFootprints]), f"RH ERROR: spatialFootprints must be a list of scipy.sparse.csr_matrix."
+        assert isinstance(self.spatialFootprints, list), f"RH ERROR: spatialFootprints must be a list of scipy.sparse.csr_array."
+        assert all([scipy.sparse.issparse(sf) and sf.format == 'csr' for sf in self.spatialFootprints]), f"RH ERROR: spatialFootprints must be a list of scipy.sparse CSR arrays."
         ## Check that FOV_height and FOV_width are set
         assert hasattr(self, 'FOV_height') and hasattr(self, 'FOV_width'), f"RH ERROR: FOV_height and FOV_width must be set before centroids can be calculated."
         ## Check that sf is the correct shape
@@ -898,20 +898,15 @@ class Data_roicat(util.ROICaT_Module):
         return data_new
                    
     def __repr__(self):
-        ## Check which attributes are set
-        attr_to_print = {key: val for key,val in self.__dict__.items() if key in [
-            'n_sessions', 
-            'n_classes', 
-            'n_class_labels', 
-            'n_class_labels_total', 
-            'unique_class_labels',
-            'n_roi',
-            'n_roi_total',
-            'FOV_height',
-            'FOV_width',
-            'um_per_pixel', 
-        ]}
-        return f"Data_roicat object: {attr_to_print}."
+        n_sessions = len(self.spatialFootprints) if hasattr(self, 'spatialFootprints') and self.spatialFootprints is not None else 0
+        n_roi = self.n_roi if hasattr(self, 'n_roi') and self.n_roi is not None else []
+        total_roi = sum(n_roi) if n_roi else 0
+        return (
+            f"{self.__class__.__name__}("
+            f"n_sessions={n_sessions}, "
+            f"n_roi_total={total_roi}, "
+            f"n_roi_per_session={n_roi})"
+        )
 
     def import_from_dict(
         self,
@@ -1152,7 +1147,7 @@ class Data_suite2p(Data_roicat):
         self,
         frame_height_width: Optional[Union[List[int], Tuple[int, int]]] = None,
         dtype: np.dtype = np.float32,
-    ) -> List[scipy.sparse.csr_matrix]:
+    ) -> List[scipy.sparse.csr_array]:
         """
         Imports and converts the spatial footprints of the ROIs in the stat
         files into images in sparse arrays.
@@ -1170,11 +1165,11 @@ class Data_suite2p(Data_roicat):
                 Data type of the sparse array. (Default is ``np.float32``)
 
         Returns:
-            (List[scipy.sparse.csr_matrix]): 
-                sf (List[scipy.sparse.csr_matrix]):
+            (List[scipy.sparse.csr_array]):
+                sf (List[scipy.sparse.csr_array]):
                     Spatial footprints. Length of the list is the same as
                     ``self.paths_files``. Each element is a
-                    scipy.sparse.csr_matrix of shape *(n_roi, frame_height *
+                    scipy.sparse.csr_array of shape *(n_roi, frame_height *
                     frame_width)*.
         """
         print("Importing spatial footprints from stat files.") if self._verbose else None
@@ -1210,7 +1205,7 @@ class Data_suite2p(Data_roicat):
     def import_neuropil_masks(
         self,
         frame_height_width: Optional[Union[List[int], Tuple[int, int]]] = None,
-    ) -> List[scipy.sparse.csr_matrix]:
+    ) -> List[scipy.sparse.csr_array]:
         """
         Imports and converts the neuropil masks of the ROIs in the stat files
         into images in sparse arrays.
@@ -1222,8 +1217,8 @@ class Data_suite2p(Data_roicat):
                 the FOV images. (Default is ``None``)
 
         Returns:
-            (List[scipy.sparse.csr_matrix]): 
-                neuropilMasks (List[scipy.sparse.csr_matrix]):
+            (List[scipy.sparse.csr_array]):
+                neuropilMasks (List[scipy.sparse.csr_array]):
                     List of neuropil masks. Length of the list is the same as
                     ``self.paths_stat``. Each element is a sparse array of shape
                     *(n_roi, frame_height, frame_width)*.
@@ -1297,7 +1292,7 @@ def _transform_statFile_to_spatialFootprints(
     shifts: Tuple[int, int] = (0, 0), 
     dtype: Optional[np.dtype] = None, 
     normalize_mask: bool = True,
-) -> scipy.sparse.csr_matrix:
+) -> scipy.sparse.csr_array:
     """
     Populates a sparse array with the spatial footprints from ROIs in a stat
     file.
@@ -1317,8 +1312,8 @@ def _transform_statFile_to_spatialFootprints(
             If True, normalize the mask. Default is ``True``.
 
     Returns:
-        (scipy.sparse.csr_matrix):
-            spatialFootprints (scipy.sparse.csr_matrix):
+        (scipy.sparse.csr_array):
+            spatialFootprints (scipy.sparse.csr_array):
                 Sparse array of shape *(n_roi, frame_height * frame_width)*
                 containing the spatial footprints of the ROIs.
     """
@@ -1336,7 +1331,7 @@ def _transform_statFile_to_spatialFootprints(
         ypix = np.array(roi['ypix'], dtype=np.uint64, ndmin=1) + shifts[0]
         xpix = np.array(roi['xpix'], dtype=np.uint64, ndmin=1) + shifts[1]
     
-        tmp_roi = scipy.sparse.csr_matrix((lam, (ypix, xpix)), shape=(frame_height_width[0], frame_height_width[1]), dtype=dtype)
+        tmp_roi = scipy.sparse.csr_array((lam, (ypix, xpix)), shape=(frame_height_width[0], frame_height_width[1]), dtype=dtype)
         rois_to_stack.append(tmp_roi.reshape(1,-1))
 
     return scipy.sparse.vstack(rois_to_stack).tocsr()
@@ -1345,7 +1340,7 @@ def _transform_statFile_to_neuropilMasks(
     frame_height_width: Tuple[int, int], 
     stat: np.ndarray, 
     shifts: Tuple[int, int] = (0, 0)
-) -> scipy.sparse.csr_matrix:
+) -> scipy.sparse.csr_array:
     """
     Populates a sparse array with the neuropil masks from ROIs in a stat
     file.
@@ -1360,8 +1355,8 @@ def _transform_statFile_to_neuropilMasks(
             0).
 
     Returns:
-        (scipy.sparse.csr_matrix):
-            neuropilMasks (scipy.sparse.csr_matrix):
+        (scipy.sparse.csr_array):
+            neuropilMasks (scipy.sparse.csr_array):
                 Sparse array of shape *(n_roi, frame_height * frame_width)*
                 containing the neuropil masks of the ROIs.
     """
@@ -1375,7 +1370,7 @@ def _transform_statFile_to_neuropilMasks(
         ypix = ypix + shifts[0]
         xpix = xpix + shifts[1]
     
-        tmp_roi = scipy.sparse.csr_matrix((lam, (ypix, xpix)), shape=(frame_height_width[0], frame_height_width[1]), dtype=dtype)
+        tmp_roi = scipy.sparse.csr_array((lam, (ypix, xpix)), shape=(frame_height_width[0], frame_height_width[1]), dtype=dtype)
         rois_to_stack.append(tmp_roi.reshape(1,-1))
 
     return scipy.sparse.vstack(rois_to_stack).tocsr()
@@ -1496,7 +1491,7 @@ class Data_caiman(Data_roicat):
         self, 
         path_resultsFile: Union[str, pathlib.Path], 
         include_discarded: bool = True
-    ) -> scipy.sparse.csr_matrix:
+    ) -> scipy.sparse.csr_array:
         """
         Imports the spatial footprints from the results file. Note that CaImAn's
         ``data['estimates']['A']`` is similar to ``self.spatialFootprints``, but
@@ -1506,26 +1501,26 @@ class Data_caiman(Data_roicat):
         Args:
             path_resultsFile (Union[str, pathlib.Path]):
                 Path to a single results file.
-            
+
             include_discarded (bool):
                 If ``True``, include ROIs that were discarded by CaImAn. Default
                 is ``True``.
 
         Returns:
-            (scipy.sparse.csr_matrix):
-                Spatial footprints (scipy.sparse.csr_matrix):
+            (scipy.sparse.csr_array):
+                Spatial footprints (scipy.sparse.csr_array):
                     Spatial footprints.
         """
         with helpers.h5_load(path_resultsFile, return_dict=False) as data:
             FOV_height, FOV_width = data['estimates']['dims'][()]
             
             ## initialize the estimates.A matrix, which is a 'Fortran' indexed version of sf. Note the flipped dimensions for shape.
-            sf_included = scipy.sparse.csr_matrix((data['estimates']['A']['data'][()], data['estimates']['A']['indices'], data['estimates']['A']['indptr'][()]), shape=data['estimates']['A']['shape'][()][::-1])
+            sf_included = scipy.sparse.csr_array((data['estimates']['A']['data'][()], data['estimates']['A']['indices'], data['estimates']['A']['indptr'][()]), shape=data['estimates']['A']['shape'][()][::-1])
             print('kept ROIs',sf_included.shape)
             if include_discarded:
                 try:
                     discarded = data['estimates']['discarded_components'][()]
-                    sf_discarded = scipy.sparse.csr_matrix((discarded['A']['data'], discarded['A']['indices'], discarded['A']['indptr']), shape=discarded['A']['shape'][::-1])
+                    sf_discarded = scipy.sparse.csr_array((discarded['A']['data'], discarded['A']['indices'], discarded['A']['indptr']), shape=discarded['A']['shape'][::-1])
                     print('dropped ROIs',sf_discarded.shape)
                     sf_F = scipy.sparse.vstack([sf_included, sf_discarded])
                 except:
@@ -1826,20 +1821,20 @@ class Data_roiextractors(Data_roicat):
         ## Make class labels
         self.set_class_labels(labels=class_labels) if class_labels is not None else None
 
-    def _make_spatialFootprints(self, segObj: Any) -> scipy.sparse.csr_matrix:
+    def _make_spatialFootprints(self, segObj: Any) -> scipy.sparse.csr_array:
         """
         Creates spatial footprints from the given roiextractors segmentation
         object.
 
         Args:
-            segObj (Any): 
+            segObj (Any):
                 An roiextractors segmentation object.
 
         Returns:
-            (scipy.sparse.csr.csr_matrix):
-                sf (scipy.sparse.csr.csr_matrix): 
-                    A scipy CSR (Compressed Sparse Row) matrix that represents
-                    the spatial footprints.
+            (scipy.sparse.csr_array):
+                sf (scipy.sparse.csr_array):
+                    A scipy CSR (Compressed Sparse Row) sparse array that
+                    represents the spatial footprints.
         """
 
         roi_pixel_masks = segObj.get_roi_pixel_masks()
@@ -1849,9 +1844,9 @@ class Data_roiextractors(Data_roicat):
 
         sf = scipy.sparse.vstack(
             [
-                scipy.sparse.coo_matrix(
+                scipy.sparse.coo_array(
                     (d, (ij[:,0], ij[:,1])),
-                    shape=tuple(segObj.get_image_size())
+                    shape=tuple(segObj.get_frame_shape() if hasattr(segObj, 'get_frame_shape') else segObj.get_image_size())
                 ).reshape(1, -1) for d,ij in zip(data, ij_all)
             ]
         ).tocsr()

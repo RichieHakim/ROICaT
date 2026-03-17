@@ -16,6 +16,14 @@ import richfile as rf
 from . import helpers
 
 
+## Floor value for sparse normalization denominators (row-max, row-sum, etc.).
+## Values below this threshold are treated as zero for normalization purposes,
+## preventing amplification of sub-noise-floor signal. This avoids both:
+## (1) division-by-zero producing inf, and (2) amplifying numerical artifacts
+## (e.g. 1e-15 values) to full scale during max-normalization of spatial footprints.
+SPARSE_NORMALIZATION_FLOOR = 1e-12
+
+
 def get_roicat_version() -> str:
     """
     Retrieves the version of the roicat package.
@@ -224,8 +232,8 @@ def get_default_parameters(
                     'smoothing_window_bins': None,  ## Smoothing window for distributions. None = heuristic.
                     'subsample_pairs': None,  ## Subsample this many pairs for speedup. None = use all.
                     'bounds_findParameters': {
-                        'power_NN': [0.0, 2.],  ## Bounds for the exponent applied to s_NN
-                        'power_SWT': [0.0, 2.],  ## Bounds for the exponent applied to s_SWT
+                        'power_nn': [0.0, 2.],  ## Bounds for the exponent applied to s_nn
+                        'power_swt': [0.0, 2.],  ## Bounds for the exponent applied to s_swt
                         'p_norm': [-5, -0.1],  ## Bounds for the p-norm (Minkowski) mixing parameter
                     },
                     'de_kwargs': {
@@ -238,16 +246,13 @@ def get_default_parameters(
                     },
                 },
                 'parameters_manual_mixing': {
-                    'power_SF': 1.0,   ## s_sf**power_SF   (Higher values means clustering is more sensitive to spatial overlap of ROIs)
-                    'power_NN': 0.5,   ## s_NN**power_NN   (Higher values means clustering is more sensitive to visual similarity of ROIs)
-                    'power_SWT': 0.5,  ## s_SWT**power_SWT (Higher values means clustering is more sensitive to visual similarity of ROIs)
-                    'p_norm': -1.0,    ## norm([s_sf, s_NN, s_SWT], p=p_norm) (Higher values means clustering requires all similarity metrics to be high)
-                #     'sig_SF_kwargs': {'mu':0.5, 'b':1.0},  ## Sigmoid parameters for s_sf (mu is the center, b is the slope)
-                    'sig_SF_kwargs': None,
-                    'sig_NN_kwargs': {'mu': 0.5, 'b': 1.0},  ## Sigmoid parameters for s_NN (mu is the center, b is the slope)
-                #     'sig_NN_kwargs': None,
-                    'sig_SWT_kwargs': {'mu': 0.5, 'b': 1.0},  ## Sigmoid parameters for s_SWT (mu is the center, b is the slope)
-                #     'sig_SWT_kwargs': None,
+                    'power_sf': 1.0,   ## s_sf**power_sf   (Higher values means clustering is more sensitive to spatial overlap of ROIs)
+                    'power_nn': 0.5,   ## s_nn**power_nn   (Higher values means clustering is more sensitive to visual similarity of ROIs)
+                    'power_swt': 0.5,  ## s_swt**power_swt (Higher values means clustering is more sensitive to visual similarity of ROIs)
+                    'p_norm': -1.0,    ## norm([s_sf, s_nn, s_swt], p=p_norm) (Higher values means clustering requires all similarity metrics to be high)
+                    'sig_sf_kwargs': None,  ## Sigmoid parameters for s_sf (mu is the center, b is the slope)
+                    'sig_nn_kwargs': {'mu': 0.5, 'b': 1.0},  ## Sigmoid parameters for s_nn (mu is the center, b is the slope)
+                    'sig_swt_kwargs': {'mu': 0.5, 'b': 1.0},  ## Sigmoid parameters for s_swt (mu is the center, b is the slope)
                 },
                 'pruning': {
                     'd_cutoff': None,  ## Optionally manually specify a distance cutoff
@@ -508,6 +513,9 @@ def set_random_seed(seed=None, deterministic=False):
     np.random.seed(seed)
     import torch
     torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
     import random
     random.seed(seed)
     import cv2
@@ -795,22 +803,22 @@ class RichFile_ROICaT(rf.RichFile):
         import scipy.sparse
 
         def save_sparse_array(
-            obj: scipy.sparse.spmatrix,
+            obj: Union[scipy.sparse.spmatrix, scipy.sparse.sparray],
             path: Union[str, Path],
             **kwargs,
         ) -> None:
             """
-            Saves a SciPy sparse matrix to the given path.
+            Saves a SciPy sparse matrix/array to the given path.
             """
             scipy.sparse.save_npz(path, obj, **kwargs)
 
         def load_sparse_array(
             path: Union[str, Path],
             **kwargs,
-        ) -> scipy.sparse.csr_matrix:
+        ) -> scipy.sparse.sparray:
             """
             Loads a sparse array from the given path.
-            """        
+            """
             return scipy.sparse.load_npz(path, **kwargs)
         
 
@@ -935,9 +943,130 @@ class RichFile_ROICaT(rf.RichFile):
             with open(path, 'r') as f:
                 return f.read()
 
-        import hdbscan
+        ## HDBSCAN OBJECT (fast_hdbscan or legacy)
+        import fast_hdbscan
+        _hdbscan_class = fast_hdbscan.HDBSCAN
 
-        
+        def save_hdbscan(
+            obj,
+            path: Union[str, Path],
+            **kwargs,
+        ) -> None:
+            """
+            Save a fast_hdbscan.HDBSCAN object by extracting serializable
+            attributes into a dict of numpy arrays and JSON scalars.
+            """
+            import json
+            attrs = {}
+            ## Use vars(obj) instead of dir(obj) to avoid triggering sklearn's
+            ## __dir__ which calls hasattr on every attribute, including broken
+            ## properties like condensed_tree_ that raise NameError in fast_hdbscan.
+            ## Also include sklearn get_params() for constructor parameters.
+            all_attrs = dict(vars(obj))
+            try:
+                all_attrs.update(obj.get_params())
+            except Exception:
+                pass
+            for attr, val in sorted(all_attrs.items()):
+                if attr.startswith('_'):
+                    continue
+                if callable(val):
+                    continue
+                if val is None:
+                    attrs[attr] = None
+                elif isinstance(val, np.ndarray):
+                    attrs[attr] = {'_type': 'ndarray', 'data': val.tolist(), 'dtype': str(val.dtype)}
+                elif scipy.sparse.issparse(val):
+                    csr = val.tocsr()
+                    attrs[attr] = {
+                        '_type': 'sparse',
+                        'data': csr.data.tolist(),
+                        'indices': csr.indices.tolist(),
+                        'indptr': csr.indptr.tolist(),
+                        'shape': list(csr.shape),
+                    }
+                elif isinstance(val, (int, float, str, bool)):
+                    attrs[attr] = val
+                elif isinstance(val, np.integer):
+                    attrs[attr] = int(val)
+                elif isinstance(val, np.floating):
+                    attrs[attr] = float(val)
+                ## Skip non-serializable objects (CondensedTree, SingleLinkageTree)
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            with open(path, 'w') as f:
+                json.dump(attrs, f)
+
+        def load_hdbscan(
+            path: Union[str, Path],
+            **kwargs,
+        ) -> object:
+            """
+            Load a fast_hdbscan.HDBSCAN-like dict from JSON.
+            Returns a dict of the stored attributes (not a live HDBSCAN object).
+            """
+            import json
+            with open(path, 'r') as f:
+                content = f.read()
+            try:
+                attrs = json.loads(content)
+            except json.JSONDecodeError:
+                ## Old format: file contains repr string, not JSON
+                return content
+            ## Reconstruct numpy arrays and sparse matrices
+            for key, val in attrs.items():
+                if isinstance(val, dict) and val.get('_type') == 'ndarray':
+                    attrs[key] = np.array(val['data'], dtype=val['dtype'])
+                elif isinstance(val, dict) and val.get('_type') == 'sparse':
+                    attrs[key] = scipy.sparse.csr_array(
+                        (np.array(val['data']), np.array(val['indices']), np.array(val['indptr'])),
+                        shape=tuple(val['shape']),
+                    )
+            return attrs
+
+
+        ## SCIPY OPTIMIZE RESULT
+        import scipy.optimize
+
+        def save_optimize_result(
+            obj: scipy.optimize.OptimizeResult,
+            path: Union[str, Path],
+            **kwargs,
+        ) -> None:
+            """
+            Saves a scipy.optimize.OptimizeResult as JSON.
+            Extracts standard fields into a JSON-serializable dict.
+            """
+            d = {}
+            for key in ('x', 'fun', 'nfev', 'nit', 'success', 'message'):
+                if key in obj:
+                    val = obj[key]
+                    if isinstance(val, np.ndarray):
+                        d[key] = val.tolist()
+                    elif isinstance(val, (np.integer,)):
+                        d[key] = int(val)
+                    elif isinstance(val, (np.floating,)):
+                        d[key] = float(val)
+                    elif isinstance(val, np.bool_):
+                        d[key] = bool(val)
+                    else:
+                        d[key] = val
+            with open(path, 'w') as f:
+                json.dump(d, f)
+
+        def load_optimize_result(
+            path: Union[str, Path],
+            **kwargs,
+        ) -> scipy.optimize.OptimizeResult:
+            """
+            Loads a scipy.optimize.OptimizeResult from JSON.
+            """
+            with open(path, 'r') as f:
+                d = json.load(f)
+            if 'x' in d and isinstance(d['x'], list):
+                d['x'] = np.array(d['x'])
+            return scipy.optimize.OptimizeResult(**d)
+
+
         ## PANDAS DATAFRAME
         import pandas as pd
         
@@ -987,6 +1116,31 @@ class RichFile_ROICaT(rf.RichFile):
         # roicat_module_tds = []
         
 
+        ## SIMILARITY METRIC (dataclass → JSON)
+        from .tracking.similarity_graph import SimilarityMetric
+
+        def save_similarity_metric(
+            obj: SimilarityMetric,
+            path: Union[str, Path],
+            **kwargs,
+        ) -> None:
+            """Saves a SimilarityMetric dataclass as JSON via to_dict()."""
+            with open(path, 'w') as f:
+                json.dump(obj.to_dict(), f)
+
+        def load_similarity_metric(
+            path: Union[str, Path],
+            **kwargs,
+        ) -> SimilarityMetric:
+            """Loads a SimilarityMetric from a JSON dict."""
+            with open(path, 'r') as f:
+                d = json.load(f)
+            ## Convert power_bounds from list back to tuple (JSON round-trip)
+            if 'power_bounds' in d and isinstance(d['power_bounds'], list):
+                d['power_bounds'] = tuple(d['power_bounds'])
+            return SimilarityMetric.from_dict(d)
+
+
         type_dicts = [
             {
                 "type_name":          "numpy_array",
@@ -1011,6 +1165,17 @@ class RichFile_ROICaT(rf.RichFile):
                 "function_load":      load_sparse_array,
                 "function_save":      save_sparse_array,
                 "object_class":       scipy.sparse.spmatrix,
+                "suffix":             "npz",
+                "library":            "scipy",
+                "versions_supported": [],
+            },
+            ## scipy >= 1.14 returns csr_array instead of csr_matrix from many
+            ## operations. csr_array inherits from sparray, not spmatrix.
+            {
+                "type_name":          "scipy_sparray",
+                "function_load":      load_sparse_array,
+                "function_save":      save_sparse_array,
+                "object_class":       scipy.sparse.sparray,
                 "suffix":             "npz",
                 "library":            "scipy",
                 "versions_supported": [],
@@ -1096,15 +1261,15 @@ class RichFile_ROICaT(rf.RichFile):
                 "library":            "torch",
                 "versions_supported": [],
             },
-            {
+            *([{
                 "type_name":          "hdbscan",
-                "function_load":      load_repr,
-                "function_save":      save_repr,
-                "object_class":       hdbscan.HDBSCAN,
-                "suffix":             "hdbscan",
-                "library":            "torch",
+                "function_load":      load_hdbscan,
+                "function_save":      save_hdbscan,
+                "object_class":       _hdbscan_class,
+                "suffix":             "json",
+                "library":            "fast_hdbscan",
                 "versions_supported": [],
-            },
+            }] if _hdbscan_class is not None else []),
             {
                 "type_name":          "pandas_dataframe",
                 "function_load":      load_pandas_dataframe,
@@ -1112,6 +1277,24 @@ class RichFile_ROICaT(rf.RichFile):
                 "object_class":       pd.DataFrame,
                 "suffix":             "csv",
                 "library":            "pandas",
+                "versions_supported": [],
+            },
+            {
+                "type_name":          "scipy_optimize_result",
+                "function_load":      load_optimize_result,
+                "function_save":      save_optimize_result,
+                "object_class":       scipy.optimize.OptimizeResult,
+                "suffix":             "json",
+                "library":            "scipy",
+                "versions_supported": [],
+            },
+            {
+                "type_name":          "similarity_metric",
+                "function_load":      load_similarity_metric,
+                "function_save":      save_similarity_metric,
+                "object_class":       SimilarityMetric,
+                "suffix":             "json",
+                "library":            "roicat",
                 "versions_supported": [],
             },
         ] + [t.get_property_dict() for t in roicat_module_tds]
@@ -1495,7 +1678,7 @@ def match_arrays_with_ucids(
     squeeze: bool = False,
     force_sparse: bool = False,
     prog_bar: bool = False,
-) -> List[Union[np.ndarray, scipy.sparse.lil_matrix]]:
+) -> List[Union[np.ndarray, scipy.sparse.lil_array]]:
     """
     Matches the indices of the arrays using the UCIDs. Array indices with UCIDs
     corresponding to -1 are set to ``np.nan``. This is useful for aligning
@@ -1522,8 +1705,8 @@ def match_arrays_with_ucids(
             ``False``)
 
     Returns:
-        (List[Union[np.ndarray, scipy.sparse.lil_matrix]]): 
-            arrays_out (List[Union[np.ndarray, scipy.sparse.lil_matrix]]): 
+        (List[Union[np.ndarray, scipy.sparse.lil_array]]):
+            arrays_out (List[Union[np.ndarray, scipy.sparse.lil_array]]):
                 List of arrays for each session. Array indices with UCIDs
                 corresponding to -1 are set to ``np.nan``. Each array will have
                 shape: *(n_ucids if squeeze==True OR max_ucid if squeeze==False,
@@ -1554,7 +1737,7 @@ def match_arrays_with_ucids(
     if isinstance(arrays[0], np.ndarray) and not force_sparse:
         arrays_out = [np.full((max_ucid, *a.shape[1:]), np.nan, dtype=arrays[0].dtype) for a in arrays]
     elif scipy.sparse.issparse(arrays[0]) or force_sparse:
-        arrays_out = [scipy.sparse.lil_matrix((max_ucid, *a.shape[1:]), dtype=a.dtype) for a in arrays]
+        arrays_out = [scipy.sparse.lil_array((max_ucid, *a.shape[1:]), dtype=a.dtype) for a in arrays]
     else:
         raise ValueError(f'ROICaT ERROR: arrays[0] is not a numpy array or scipy.sparse matrix.')
     ## fill in the arrays with the data
@@ -1584,7 +1767,7 @@ def match_arrays_with_ucids_inverse(
     arrays: Union[np.ndarray, List[np.ndarray]], 
     ucids: Union[List[np.ndarray], List[List[int]]],
     unsqueeze: bool = True,
-) -> List[Union[np.ndarray, scipy.sparse.lil_matrix]]:
+) -> List[Union[np.ndarray, scipy.sparse.lil_array]]:
     """
     Inverts the matching of the indices of the arrays using the UCIDs. Arrays
     should have indices that correspond to the UCID values. The return will be a
@@ -1603,8 +1786,8 @@ def match_arrays_with_ucids_inverse(
             match the argument ``squeeze`` used in match_arrays_with_ucids().
 
     Returns:
-        (List[Union[np.ndarray, scipy.sparse.lil_matrix]]): 
-            arrays_out (List[Union[np.ndarray, scipy.sparse.lil_matrix]]): 
+        (List[Union[np.ndarray, scipy.sparse.lil_array]]):
+            arrays_out (List[Union[np.ndarray, scipy.sparse.lil_array]]):
                 List of arrays with indices that correspond to the original
                 indices of the arrays / ucids. 
     """
