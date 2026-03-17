@@ -16,6 +16,14 @@ import richfile as rf
 from . import helpers
 
 
+## Floor value for sparse normalization denominators (row-max, row-sum, etc.).
+## Values below this threshold are treated as zero for normalization purposes,
+## preventing amplification of sub-noise-floor signal. This avoids both:
+## (1) division-by-zero producing inf, and (2) amplifying numerical artifacts
+## (e.g. 1e-15 values) to full scale during max-normalization of spatial footprints.
+SPARSE_NORMALIZATION_FLOOR = 1e-12
+
+
 def get_roicat_version() -> str:
     """
     Retrieves the version of the roicat package.
@@ -795,22 +803,22 @@ class RichFile_ROICaT(rf.RichFile):
         import scipy.sparse
 
         def save_sparse_array(
-            obj: scipy.sparse.spmatrix,
+            obj: Union[scipy.sparse.spmatrix, scipy.sparse.sparray],
             path: Union[str, Path],
             **kwargs,
         ) -> None:
             """
-            Saves a SciPy sparse matrix to the given path.
+            Saves a SciPy sparse matrix/array to the given path.
             """
             scipy.sparse.save_npz(path, obj, **kwargs)
 
         def load_sparse_array(
             path: Union[str, Path],
             **kwargs,
-        ) -> scipy.sparse.csr_matrix:
+        ) -> scipy.sparse.sparray:
             """
             Loads a sparse array from the given path.
-            """        
+            """
             return scipy.sparse.load_npz(path, **kwargs)
         
 
@@ -1009,7 +1017,7 @@ class RichFile_ROICaT(rf.RichFile):
                 if isinstance(val, dict) and val.get('_type') == 'ndarray':
                     attrs[key] = np.array(val['data'], dtype=val['dtype'])
                 elif isinstance(val, dict) and val.get('_type') == 'sparse':
-                    attrs[key] = scipy.sparse.csr_matrix(
+                    attrs[key] = scipy.sparse.csr_array(
                         (np.array(val['data']), np.array(val['indices']), np.array(val['indptr'])),
                         shape=tuple(val['shape']),
                     )
@@ -1670,7 +1678,7 @@ def match_arrays_with_ucids(
     squeeze: bool = False,
     force_sparse: bool = False,
     prog_bar: bool = False,
-) -> List[Union[np.ndarray, scipy.sparse.lil_matrix]]:
+) -> List[Union[np.ndarray, scipy.sparse.lil_array]]:
     """
     Matches the indices of the arrays using the UCIDs. Array indices with UCIDs
     corresponding to -1 are set to ``np.nan``. This is useful for aligning
@@ -1697,8 +1705,8 @@ def match_arrays_with_ucids(
             ``False``)
 
     Returns:
-        (List[Union[np.ndarray, scipy.sparse.lil_matrix]]): 
-            arrays_out (List[Union[np.ndarray, scipy.sparse.lil_matrix]]): 
+        (List[Union[np.ndarray, scipy.sparse.lil_array]]):
+            arrays_out (List[Union[np.ndarray, scipy.sparse.lil_array]]):
                 List of arrays for each session. Array indices with UCIDs
                 corresponding to -1 are set to ``np.nan``. Each array will have
                 shape: *(n_ucids if squeeze==True OR max_ucid if squeeze==False,
@@ -1729,7 +1737,7 @@ def match_arrays_with_ucids(
     if isinstance(arrays[0], np.ndarray) and not force_sparse:
         arrays_out = [np.full((max_ucid, *a.shape[1:]), np.nan, dtype=arrays[0].dtype) for a in arrays]
     elif scipy.sparse.issparse(arrays[0]) or force_sparse:
-        arrays_out = [scipy.sparse.lil_matrix((max_ucid, *a.shape[1:]), dtype=a.dtype) for a in arrays]
+        arrays_out = [scipy.sparse.lil_array((max_ucid, *a.shape[1:]), dtype=a.dtype) for a in arrays]
     else:
         raise ValueError(f'ROICaT ERROR: arrays[0] is not a numpy array or scipy.sparse matrix.')
     ## fill in the arrays with the data
@@ -1759,7 +1767,7 @@ def match_arrays_with_ucids_inverse(
     arrays: Union[np.ndarray, List[np.ndarray]], 
     ucids: Union[List[np.ndarray], List[List[int]]],
     unsqueeze: bool = True,
-) -> List[Union[np.ndarray, scipy.sparse.lil_matrix]]:
+) -> List[Union[np.ndarray, scipy.sparse.lil_array]]:
     """
     Inverts the matching of the indices of the arrays using the UCIDs. Arrays
     should have indices that correspond to the UCID values. The return will be a
@@ -1778,8 +1786,8 @@ def match_arrays_with_ucids_inverse(
             match the argument ``squeeze`` used in match_arrays_with_ucids().
 
     Returns:
-        (List[Union[np.ndarray, scipy.sparse.lil_matrix]]): 
-            arrays_out (List[Union[np.ndarray, scipy.sparse.lil_matrix]]): 
+        (List[Union[np.ndarray, scipy.sparse.lil_array]]):
+            arrays_out (List[Union[np.ndarray, scipy.sparse.lil_array]]):
                 List of arrays with indices that correspond to the original
                 indices of the arrays / ucids. 
     """

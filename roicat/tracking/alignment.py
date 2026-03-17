@@ -110,7 +110,7 @@ class Aligner(util.ROICaT_Module):
     def augment_FOV_images(
         self,
         FOV_images: List[np.ndarray],
-        spatialFootprints: Optional[List[scipy.sparse.csr_matrix]] = None,
+        spatialFootprints: Optional[List[scipy.sparse.csr_array]] = None,
         normalize_FOV_intensities: bool = True,
         roi_FOV_mixing_factor: float = 0.5,
         use_CLAHE: bool = True,
@@ -126,7 +126,7 @@ class Aligner(util.ROICaT_Module):
         Args:
             FOV_images (List[np.ndarray]): 
                 A list of FOV images.
-            spatialFootprints (Optional[List[scipy.sparse.csr_matrix]]):
+            spatialFootprints (Optional[List[scipy.sparse.csr_array]]):
                 A list of spatial footprints for each ROI. If ``None``, then no
                 mixing will be performed. (Default is ``None``)
             normalize_FOV_intensities (bool):
@@ -194,7 +194,7 @@ class Aligner(util.ROICaT_Module):
         ## mix ROI images into FOV images
         if spatialFootprints is not None:
             mixing_factor_final = roi_FOV_mixing_factor * np.mean(np.concatenate([im.reshape(-1) for im in FOV_images]))
-            fn_mix = lambda im, sf, f: (1 - f) * im + np.array((f) * mixing_factor_final * sf.multiply(1/sf.max(1).toarray()).sum(0).reshape(h, w))
+            fn_mix = lambda im, sf, f: (1 - f) * im + np.array((f) * mixing_factor_final * sf.multiply(1/np.maximum(sf.max(axis=1).toarray().reshape(-1, 1), util.SPARSE_NORMALIZATION_FLOOR)).sum(0).reshape(h, w))
             FOV_images = [fn_mix(f, s, roi_FOV_mixing_factor) for f, s in zip(FOV_images, sf)]
 
         return FOV_images
@@ -524,7 +524,7 @@ class Aligner(util.ROICaT_Module):
                     cost_all_to_all_and_template[np.arange(len(cost_all_to_all_and_template)), np.arange(len(cost_all_to_all_and_template))] = 0.0  ## set the diagonal to 0
                     ### Use dijkstra's algorithm to find the shortest path from every image to the template
                     distances, predecessors = scipy.sparse.csgraph.shortest_path(
-                        csgraph=scipy.sparse.csr_matrix(cost_all_to_all_and_template.astype(np.float32)),  ## 0s are disconnected, 1s are connected
+                        csgraph=scipy.sparse.csr_array(cost_all_to_all_and_template.astype(np.float32)),  ## 0s are disconnected, 1s are connected
                         method='D',  ## Dijkstra's algorithm
                         directed=True,
                         return_predecessors=True,
@@ -1045,7 +1045,7 @@ class Aligner(util.ROICaT_Module):
 
             if normalize:
                 rois_aligned.data[rois_aligned.data < 0] = 0
-                rois_aligned_sum = np.array(rois_aligned.sum(1))
+                rois_aligned_sum = np.asarray(rois_aligned.sum(1)).reshape(-1, 1)
                 ## convert 0s to NaNs to avoid division by 0
                 rois_aligned_sum[rois_aligned_sum == 0] = np.nan
                 rois_aligned = rois_aligned.multiply(1/rois_aligned_sum)
@@ -1089,7 +1089,7 @@ class Aligner(util.ROICaT_Module):
         if H is None:
             assert self._HW is not None, 'H and W must be provided if not already set.'
             H, W = self._HW
-        return [(rois.multiply(rois.max(1).power(-1)) if normalize else rois).max(0).toarray().reshape(H, W) for rois in self.ROIs_aligned]
+        return [(rois.multiply(1.0 / np.maximum(rois.max(axis=1).toarray().reshape(-1, 1), util.SPARSE_NORMALIZATION_FLOOR)) if normalize else rois).max(axis=0).toarray().reshape(H, W) for rois in self.ROIs_aligned]
     
     def get_flowFields(
         self, 

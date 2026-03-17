@@ -32,14 +32,14 @@ class Clusterer(util.ROICaT_Module):
     Initialization ingests and stores similarity matrices. RH 2023 / 2025
 
     Args:
-        similarities (Dict[str, scipy.sparse.csr_matrix]):
+        similarities (Dict[str, scipy.sparse.csr_array]):
             Dict mapping metric name to sparse similarity matrix. All
             matrices must share the same nonzero pattern (same nnz).
-            Example: ``{'sf': csr_matrix, 'nn': csr_matrix, 'swt': csr_matrix}``.
+            Example: ``{'sf': csr_array, 'nn': csr_array, 'swt': csr_array}``.
         metric_configs (List[SimilarityMetric]):
             List of ``SimilarityMetric`` dataclass instances describing each
             metric's optimization behavior (sparsity source, sigmoid, power).
-        s_sesh (scipy.sparse.csr_matrix):
+        s_sesh (scipy.sparse.csr_array):
             Inter-session mask. Shape: *(n_rois, n_rois)*. Boolean, with 1s
             where the two ROIs are from different sessions.
         n_bins (Optional[int]):
@@ -57,11 +57,11 @@ class Clusterer(util.ROICaT_Module):
             process. (Default is ``True``)
 
     Attributes:
-        similarities (Dict[str, scipy.sparse.csr_matrix]):
+        similarities (Dict[str, scipy.sparse.csr_array]):
             Dict of similarity matrices keyed by metric name.
-        s_sesh (scipy.sparse.csr_matrix):
+        s_sesh (scipy.sparse.csr_array):
             The inter-session similarity matrix. Shape: *(n_rois, n_rois)*.
-        s_sesh_inv (scipy.sparse.csr_matrix):
+        s_sesh_inv (scipy.sparse.csr_array):
             Intra-session mask (True where ROIs are from the SAME session).
             Shape: *(n_rois, n_rois)*.
         n_bins (Optional[int]):
@@ -76,9 +76,9 @@ class Clusterer(util.ROICaT_Module):
     """
     def __init__(
         self,
-        similarities: Dict[str, scipy.sparse.csr_matrix],
+        similarities: Dict[str, scipy.sparse.csr_array],
         metric_configs: List[SimilarityMetric],
-        s_sesh: scipy.sparse.csr_matrix,
+        s_sesh: scipy.sparse.csr_array,
         n_bins: Optional[int] = None,
         smoothing_window_bins: Optional[int] = None,
         session_bool: Optional[np.ndarray] = None,
@@ -88,14 +88,14 @@ class Clusterer(util.ROICaT_Module):
         Initializes the Clusterer with similarity matrices and metric configs.
 
         Args:
-            similarities (Dict[str, scipy.sparse.csr_matrix]):
+            similarities (Dict[str, scipy.sparse.csr_array]):
                 Dict mapping metric name to similarity matrix. All matrices
                 must share the same nonzero pattern (same nnz). Example:
-                ``{'sf': csr_matrix, 'nn': csr_matrix, 'swt': csr_matrix}``.
+                ``{'sf': csr_array, 'nn': csr_array, 'swt': csr_array}``.
             metric_configs (List[SimilarityMetric]):
                 List of metric configurations describing each metric's
                 role in optimization (sparsity source, sigmoid, power, etc.).
-            s_sesh (scipy.sparse.csr_matrix):
+            s_sesh (scipy.sparse.csr_array):
                 Inter-session mask. Shape: *(n_rois, n_rois)*. Boolean,
                 with 1s where two ROIs are from different sessions.
             n_bins (Optional[int]):
@@ -900,7 +900,7 @@ class Clusterer(util.ROICaT_Module):
         n_bins: Optional[int] = None,
         smoothing_window_bins: Optional[int] = None,
         prob_clip: Tuple[float, float] = (1e-4, 1 - 1e-4),
-    ) -> Tuple[scipy.sparse.csr_matrix, scipy.sparse.csr_matrix, Dict[str, Any]]:
+    ) -> Tuple[scipy.sparse.csr_array, scipy.sparse.csr_array, Dict[str, Any]]:
         """
         Compute pairwise distance matrix using independent per-feature
         calibration combined via naive Bayes.
@@ -931,10 +931,10 @@ class Clusterer(util.ROICaT_Module):
                 Clamp P(same|s_k) to ``[lo, hi]`` before logit.
 
         Returns:
-            (Tuple[scipy.sparse.csr_matrix, scipy.sparse.csr_matrix, Dict]):
-                dConj (scipy.sparse.csr_matrix):
+            (Tuple[scipy.sparse.csr_array, scipy.sparse.csr_array, Dict]):
+                dConj (scipy.sparse.csr_array):
                     Distance matrix ``d = 1 - P(same|all)``.
-                sConj (scipy.sparse.csr_matrix):
+                sConj (scipy.sparse.csr_array):
                     Similarity matrix ``s = P(same|all)``.
                 calibrations (Dict[str, Any]):
                     Diagnostic dict with per-feature calibrations,
@@ -1243,7 +1243,7 @@ class Clusterer(util.ROICaT_Module):
             import scipy.sparse
             if s is None:
                 return None
-            s_pruned = scipy.sparse.csr_matrix(graph_pruned.shape, dtype=np.float32)
+            s_pruned = scipy.sparse.csr_array(graph_pruned.shape, dtype=np.float32)
             s_pruned[graph_pruned] = s[graph_pruned]
             s_pruned = s_pruned.tocsr()
             return s_pruned
@@ -1258,7 +1258,7 @@ class Clusterer(util.ROICaT_Module):
 
     def fit(
         self,
-        d_conj: scipy.sparse.csr_matrix,
+        d_conj: scipy.sparse.csr_array,
         session_bool: np.ndarray,
         min_cluster_size: int = 2,
         n_iter_violationCorrection: int = 5,
@@ -1287,7 +1287,7 @@ class Clusterer(util.ROICaT_Module):
         RH 2023 / 2025
 
         Args:
-            d_conj (scipy.sparse.csr_matrix):
+            d_conj (scipy.sparse.csr_array):
                 Conjunctive distance matrix.
             session_bool (np.ndarray):
                 Boolean array indicating which ROIs belong to which session.
@@ -1389,7 +1389,7 @@ class Clusterer(util.ROICaT_Module):
 
     def _fit_fast_hdbscan(
         self,
-        d_conj: scipy.sparse.csr_matrix,
+        d_conj: scipy.sparse.csr_array,
         session_bool: np.ndarray,
         min_cluster_size: int = 2,
         cluster_selection_method: str = 'leaf',
@@ -1408,7 +1408,7 @@ class Clusterer(util.ROICaT_Module):
         RH 2025
 
         Args:
-            d_conj (scipy.sparse.csr_matrix):
+            d_conj (scipy.sparse.csr_array):
                 Conjunctive distance matrix. Shape: *(n_rois, n_rois)*.
             session_bool (np.ndarray):
                 Boolean array indicating which ROIs belong to which session.
@@ -1497,7 +1497,7 @@ class Clusterer(util.ROICaT_Module):
 
     def _fit_legacy_hdbscan(
         self,
-        d_conj: scipy.sparse.csr_matrix,
+        d_conj: scipy.sparse.csr_array,
         session_bool: np.ndarray,
         min_cluster_size: int = 2,
         n_iter_violationCorrection: int = 5,
@@ -1526,7 +1526,7 @@ class Clusterer(util.ROICaT_Module):
         RH 2023
 
         Args:
-            d_conj (scipy.sparse.csr_matrix):
+            d_conj (scipy.sparse.csr_array):
                 Conjunctive distance matrix.
             session_bool (np.ndarray):
                 Boolean array indicating which ROIs belong to which session.
@@ -1678,21 +1678,21 @@ class Clusterer(util.ROICaT_Module):
 
     def fit_sequentialHungarian(
         self,
-        d_conj: scipy.sparse.csr_matrix,
+        d_conj: scipy.sparse.csr_array,
         session_bool: np.ndarray,
         thresh_cost: float = 0.95,
     ) -> np.ndarray:
         """
-        Applies CaImAn's method for clustering. 
-        
+        Applies CaImAn's method for clustering.
+
         For further details, please refer to:
             * [CaImAn's paper](https://elifesciences.org/articles/38173#s4)
             * [CaImAn's repository](https://github.com/flatironinstitute/CaImAn)
             * [Relevant script in CaImAn's repository](https://github.com/flatironinstitute/CaImAn/blob/master/caiman/base/rois.py)
 
         Args:
-            d_conj (scipy.sparse.csr_matrix): 
-                Distance matrix. 
+            d_conj (scipy.sparse.csr_array):
+                Distance matrix.
                 Shape: *(n_rois, n_rois)*
             session_bool (np.ndarray): 
                 Boolean array indicating which ROIs are in which sessions. 
@@ -1801,16 +1801,16 @@ class Clusterer(util.ROICaT_Module):
             
     def make_conjunctive_distance_matrix(
         self,
-        similarities: Dict[str, scipy.sparse.csr_matrix],
+        similarities: Dict[str, scipy.sparse.csr_array],
         mixing_params: Dict[str, Any],
-    ) -> Tuple[scipy.sparse.csr_matrix, scipy.sparse.csr_matrix, Dict[str, torch.Tensor]]:
+    ) -> Tuple[scipy.sparse.csr_array, scipy.sparse.csr_array, Dict[str, torch.Tensor]]:
         """
         Makes a conjunctive distance matrix from the similarity matrices
         using the given mixing parameters.
         RH 2023 / 2025
 
         Args:
-            similarities (Dict[str, scipy.sparse.csr_matrix]):
+            similarities (Dict[str, scipy.sparse.csr_array]):
                 Dict mapping metric name to sparse similarity matrix.
             mixing_params (Dict[str, Any]):
                 Mixing parameters dict. Expected keys: \n
@@ -1824,9 +1824,9 @@ class Clusterer(util.ROICaT_Module):
 
         Returns:
             (Tuple): Tuple containing:
-                dConj (scipy.sparse.csr_matrix):
+                dConj (scipy.sparse.csr_array):
                     Conjunctive distance matrix (1 - sConj).
-                sConj (scipy.sparse.csr_matrix):
+                sConj (scipy.sparse.csr_array):
                     Conjunctive similarity matrix.
                 activated_data (Dict[str, torch.Tensor]):
                     Per-metric activated similarity data arrays.
@@ -1857,7 +1857,7 @@ class Clusterer(util.ROICaT_Module):
         sConj_data = self._pNorm(s_list=s_list, p=p_norm)  ## shape: (nnz,)
 
         ## Build sparse sConj using the first similarity's sparsity pattern
-        template = next(iter(similarities.values()))  ## csr_matrix (n_roi, n_roi)
+        template = next(iter(similarities.values()))  ## csr_array (n_roi, n_roi)
         sConj = template.copy()
         sConj.data = sConj_data.numpy()
 
@@ -2113,7 +2113,7 @@ class Clusterer(util.ROICaT_Module):
 
     def _separate_diffSame_distributions(
         self,
-        d_conj: scipy.sparse.csr_matrix,
+        d_conj: scipy.sparse.csr_array,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
         """
         Estimate the 'same' and 'different' distance distributions from a
@@ -2125,7 +2125,7 @@ class Clusterer(util.ROICaT_Module):
         :meth:`_compute_histogram_overlap`.
 
         Args:
-            d_conj (scipy.sparse.csr_matrix):
+            d_conj (scipy.sparse.csr_array):
                 Conjunctive distance matrix.
 
         Returns:
@@ -2291,8 +2291,8 @@ class Clusterer(util.ROICaT_Module):
             assert hasattr(self, 'labels'), "self.labels does not exist. Run self.find_optimal_parameters_for_pruning() first or specify labels."
             labels = self.labels
             
-        assert scipy.sparse.issparse(sim_mat), "sim_mat must be a scipy.sparse.csr_matrix."
-        assert scipy.sparse.issparse(dist_mat), "dist_mat must be a scipy.sparse.csr_matrix."
+        assert scipy.sparse.issparse(sim_mat), "sim_mat must be a scipy.sparse.csr_array."
+        assert scipy.sparse.issparse(dist_mat), "dist_mat must be a scipy.sparse.csr_array."
 
         labels_unique, cs_intra_means, cs_intra_mins, cs_intra_maxs, cs_sil = cluster_quality_metrics(
             sim=sim_mat,
@@ -2676,7 +2676,7 @@ def score_labels(
 
 
 def cluster_quality_metrics(
-    sim: Union[np.ndarray, scipy.sparse.csr_matrix], 
+    sim: Union[np.ndarray, scipy.sparse.csr_array],
     labels: np.ndarray,
 ) -> Tuple:
     """
@@ -2686,7 +2686,7 @@ def cluster_quality_metrics(
     RH 2023
 
     Args:
-        sim (Union[np.ndarray, scipy.sparse.csr_matrix]):
+        sim (Union[np.ndarray, scipy.sparse.csr_array]):
             Similarity matrix. (shape: *(n_roi, n_roi)*) It can be obtained
             using `_, sConj, _,_,_,_ =
             clusterer.make_conjunctive_similarity_matrix()`.
@@ -2740,9 +2740,9 @@ def make_label_variants(
                 Cluster labels squeezed into a continuous range starting from 0.
             labels_bySession (List[np.ndarray]):
                 List of label arrays split by session.
-            labels_bool (scipy.sparse.csr_matrix):
+            labels_bool (scipy.sparse.csr_array):
                 Sparse boolean matrix representation of labels.
-            labels_bool_bySession (List[scipy.sparse.csr_matrix]):
+            labels_bool_bySession (List[scipy.sparse.csr_array]):
                 List of sparse boolean matrix representations of labels split by
                 session.
             labels_dict (Dict[int, np.ndarray]):
@@ -2780,7 +2780,7 @@ def make_label_variants(
     ## make variants
     labels_squeezed = helpers.squeeze_integers(labels)
     labels_bySession = [labels_squeezed[idx] for idx in session_bool.T]
-    labels_bool = scipy.sparse.vstack([scipy.sparse.csr_matrix(labels_squeezed==u) for u in np.sort(np.unique(labels_squeezed))]).T.tocsr()
+    labels_bool = scipy.sparse.vstack([scipy.sparse.csr_array(labels_squeezed==u) for u in np.sort(np.unique(labels_squeezed))]).T.tocsr()
     labels_bool_bySession = [labels_bool[idx] for idx in session_bool.T]
     labels_dict = {u: np.where(labels_squeezed==u)[0] for u in np.unique(labels_squeezed)}
 

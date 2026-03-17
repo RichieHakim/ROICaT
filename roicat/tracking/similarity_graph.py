@@ -178,13 +178,13 @@ class ROI_graph(util.ROICaT_Module):
             (Optional)
 
     Attributes:
-        similarities (Dict[str, scipy.sparse.csr_matrix]):
+        similarities (Dict[str, scipy.sparse.csr_array]):
             Dict mapping metric name to pairwise similarity matrix. Populated
             after ``compute_similarity_blockwise`` is called.
-        s_sesh (scipy.sparse.csr_matrix):
+        s_sesh (scipy.sparse.csr_array):
             Pairwise session-membership mask (True where ROIs come from
             different sessions).
-        similarities_z (Dict[str, scipy.sparse.csr_matrix]):
+        similarities_z (Dict[str, scipy.sparse.csr_array]):
             Dict mapping metric name to z-scored similarity matrix. Populated
             after ``make_normalized_similarities`` is called.
     """
@@ -303,13 +303,13 @@ class ROI_graph(util.ROICaT_Module):
 
     def compute_similarity_blockwise(
         self,
-        spatialFootprints: scipy.sparse.csr_matrix,
+        spatialFootprints: scipy.sparse.csr_array,
         ROI_session_bool: torch.Tensor,
         features: Dict[str, torch.Tensor],
         spatialFootprint_maskPower: float = 1.0,
-        precomputed_similarities: Optional[Dict[str, scipy.sparse.csr_matrix]] = None,
+        precomputed_similarities: Optional[Dict[str, scipy.sparse.csr_array]] = None,
         metric_configs: Optional[List[SimilarityMetric]] = None,
-    ) -> Dict[str, scipy.sparse.csr_matrix]:
+    ) -> Dict[str, scipy.sparse.csr_array]:
         """
         Computes the similarity graph between ROIs for all configured metrics.
         Results are stored in ``self.similarities`` (dict mapping metric name
@@ -318,7 +318,7 @@ class ROI_graph(util.ROICaT_Module):
         Computation is done block-by-block over the field of view.
 
         Args:
-            spatialFootprints (scipy.sparse.csr_matrix):
+            spatialFootprints (scipy.sparse.csr_array):
                 The spatial footprints of the ROIs. Can be obtained from
                 ``blurring.ROI_blurrer.ROIs_blurred`` or
                 ``data_importing.Data_suite2p.spatialFootprints``.
@@ -336,7 +336,7 @@ class ROI_graph(util.ROICaT_Module):
                 values (e.g. 2.0) for intensity-dependent similarities.
                 Applied ONCE inside ``_compute_manhattan_similarity``.
                 (Default is ``1.0``)
-            precomputed_similarities (Optional[Dict[str, scipy.sparse.csr_matrix]]):
+            precomputed_similarities (Optional[Dict[str, scipy.sparse.csr_array]]):
                 Optional dict of precomputed similarity matrices (keyed by
                 metric name). These bypass the similarity computation step
                 for the corresponding metric. (Default is ``None``)
@@ -346,7 +346,7 @@ class ROI_graph(util.ROICaT_Module):
                 (Default is ``None``)
 
         Returns:
-            Dict[str, scipy.sparse.csr_matrix]:
+            Dict[str, scipy.sparse.csr_array]:
                 Dict mapping metric name to pairwise similarity matrix.
                 Also stored as ``self.similarities``.
         """
@@ -454,7 +454,7 @@ class ROI_graph(util.ROICaT_Module):
                 s_csr.data[s_csr.data < 0] = 1e-10
                 s_coo = s_csr.tocoo()
                 ## Remap local block indices to global indices and add shift
-                return scipy.sparse.coo_matrix(
+                return scipy.sparse.coo_array(
                     (s_coo.data + shift_val, (idx[s_coo.row], idx[s_coo.col])),
                     shape=shape,  ## (n_roi, n_roi)
                 )
@@ -507,9 +507,9 @@ class ROI_graph(util.ROICaT_Module):
 
     def _helper_compute_ROI_similarity_graph(
         self,
-        spatialFootprints: scipy.sparse.csr_matrix,
+        spatialFootprints: scipy.sparse.csr_array,
         block_features: Dict[str, torch.Tensor],
-        block_precomputed: Dict[str, scipy.sparse.csr_matrix],
+        block_precomputed: Dict[str, scipy.sparse.csr_array],
         ROI_session_bool: np.ndarray,
         metric_configs: List[SimilarityMetric],
     ) -> Tuple[Optional[Dict[str, Any]], Optional[Any]]:
@@ -522,12 +522,12 @@ class ROI_graph(util.ROICaT_Module):
         metrics are then masked to that pattern.
 
         Args:
-            spatialFootprints (scipy.sparse.csr_matrix):
+            spatialFootprints (scipy.sparse.csr_array):
                 Spatial footprints for ROIs in this block. Shape:
                 *(n_roi_block, n_pixels)*. maskPower has NOT been applied.
             block_features (Dict[str, torch.Tensor]):
                 Features for ROIs in this block, keyed by metric name.
-            block_precomputed (Dict[str, scipy.sparse.csr_matrix]):
+            block_precomputed (Dict[str, scipy.sparse.csr_array]):
                 Precomputed similarity sub-matrices for this block, keyed
                 by metric name.
             ROI_session_bool (np.ndarray):
@@ -538,8 +538,8 @@ class ROI_graph(util.ROICaT_Module):
 
         Returns:
             Tuple of (similarities_dict, s_sesh), or (None, None) if no ROIs.
-                similarities_dict: Dict[str, scipy.sparse.csr_matrix]
-                s_sesh: scipy.sparse.csr_matrix
+                similarities_dict: Dict[str, scipy.sparse.csr_array]
+                s_sesh: scipy.sparse.csr_array
         """
         ## If no ROIs in block, skip
         if spatialFootprints.shape[0] == 0:
@@ -551,14 +551,14 @@ class ROI_graph(util.ROICaT_Module):
         ## Step 1: Compute sparsity source similarities
         ## ---------------------------------------------------------------
         sparsity_configs = [m for m in metric_configs if m.is_sparsity_source]
-        sparsity_results = {}  ## name -> scipy.sparse.csr_matrix
+        sparsity_results = {}  ## name -> scipy.sparse.csr_array
 
         for config in sparsity_configs:
             if config.name in block_precomputed:
                 ## Use precomputed matrix directly
                 s_raw = block_precomputed[config.name]
                 if not scipy.sparse.issparse(s_raw):
-                    s_raw = scipy.sparse.csr_matrix(s_raw)
+                    s_raw = scipy.sparse.csr_array(s_raw)
             else:
                 ## Compute from features or spatial footprints
                 s_raw = self._compute_metric_similarity(
@@ -574,7 +574,7 @@ class ROI_graph(util.ROICaT_Module):
         ## Build combined sparsity mask: intersection of all sparsity sources
         sparsity_mask = None
         for name, s_sparse in sparsity_results.items():
-            s_csr = s_sparse.tocsr() if not scipy.sparse.isspmatrix_csr(s_sparse) else s_sparse
+            s_csr = s_sparse.tocsr() if not (scipy.sparse.issparse(s_sparse) and s_sparse.format == 'csr') else s_sparse
             binary_mask = (s_csr != 0).astype(np.float64)
             if sparsity_mask is None:
                 sparsity_mask = binary_mask
@@ -591,7 +591,7 @@ class ROI_graph(util.ROICaT_Module):
         ## Store sparsity source results (already sparse)
         for config in sparsity_configs:
             s = sparsity_results[config.name]
-            if not scipy.sparse.isspmatrix_csr(s):
+            if not (scipy.sparse.issparse(s) and s.format == 'csr'):
                 s = s.tocsr()
             ## Apply combined mask (relevant when multiple sparsity sources)
             s_masked = helpers.sparse_mask(s, sparsity_mask, do_safety_steps=True)
@@ -663,14 +663,14 @@ class ROI_graph(util.ROICaT_Module):
             config (SimilarityMetric):
                 Metric configuration.
             features (Any):
-                For ``'manhattan'``: scipy.sparse.csr_matrix of spatial
+                For ``'manhattan'``: scipy.sparse.csr_array of spatial
                 footprints, shape *(n_roi_block, n_pixels)*.
                 For ``'cosine'``: torch.Tensor of feature vectors, shape
                 *(n_roi_block, n_features)*.
                 For callable: passed directly to the callable.
 
         Returns:
-            For ``'manhattan'``: scipy.sparse.csr_matrix (already sparse).
+            For ``'manhattan'``: scipy.sparse.csr_array (already sparse).
             For ``'cosine'``: torch.Tensor (dense, will be sparse-masked
             later).
             For callable: whatever the callable returns.
@@ -701,9 +701,9 @@ class ROI_graph(util.ROICaT_Module):
 
     def _compute_manhattan_similarity(
         self,
-        spatialFootprints: scipy.sparse.csr_matrix,
+        spatialFootprints: scipy.sparse.csr_array,
         config: SimilarityMetric,
-    ) -> scipy.sparse.csr_matrix:
+    ) -> scipy.sparse.csr_array:
         """
         Computes pairwise manhattan-distance-based similarity between spatial
         footprints. maskPower is applied ONCE here.
@@ -716,7 +716,7 @@ class ROI_graph(util.ROICaT_Module):
             5. Zero out self-similarities and near-zero values
 
         Args:
-            spatialFootprints (scipy.sparse.csr_matrix):
+            spatialFootprints (scipy.sparse.csr_array):
                 Raw (un-powered) spatial footprints. Shape:
                 *(n_roi_block, n_pixels)*.
             config (SimilarityMetric):
@@ -724,7 +724,7 @@ class ROI_graph(util.ROICaT_Module):
                 ``'algorithm'`` and other kwargs for sklearn NearestNeighbors.
 
         Returns:
-            scipy.sparse.csr_matrix:
+            scipy.sparse.csr_array:
                 Pairwise similarity matrix. Shape:
                 *(n_roi_block, n_roi_block)*.
         """
@@ -732,8 +732,8 @@ class ROI_graph(util.ROICaT_Module):
         sf = spatialFootprints.power(self._sf_maskPower)  ## shape: (n_roi_block, n_pixels)
 
         ## Normalize each footprint so rows sum to 0.5
-        sf = sf.multiply(0.5 / sf.sum(1))  ## shape: (n_roi_block, n_pixels)
-        sf = scipy.sparse.csr_matrix(sf)
+        sf = sf.multiply(0.5 / np.asarray(sf.sum(1)).reshape(-1, 1))  ## shape: (n_roi_block, n_pixels)
+        sf = scipy.sparse.csr_array(sf)
 
         ## Resolve algorithm kwargs: config overrides, fall back to instance defaults
         algo = config.similarity_fn_kwargs.get('algorithm', self._algo_sf)
@@ -961,7 +961,7 @@ class ROI_graph(util.ROICaT_Module):
 
 
     @property
-    def similarities_final(self) -> Dict[str, scipy.sparse.csr_matrix]:
+    def similarities_final(self) -> Dict[str, scipy.sparse.csr_array]:
         """
         Returns the final similarity matrices for downstream use (e.g.,
         Clusterer). For metrics with ``normalize_zscore=True``, returns
@@ -972,7 +972,7 @@ class ROI_graph(util.ROICaT_Module):
         available.
 
         Returns:
-            Dict[str, scipy.sparse.csr_matrix]:
+            Dict[str, scipy.sparse.csr_array]:
                 Dict mapping metric name to final similarity matrix.
         """
         if hasattr(self, 'similarities_z') and self.similarities_z is not None:
@@ -1102,32 +1102,32 @@ def get_idx_in_kRange(
     k_min: int = 100,
     algo_kNN: str = 'brute',
     n_workers: int = -1,
-) -> Tuple[np.ndarray, scipy.sparse.coo_matrix]:
+) -> Tuple[np.ndarray, scipy.sparse.coo_array]:
     """
     Get indices in a given range for k-Nearest Neighbors graph.
     RH 2022
 
     Args:
-        X (np.ndarray): 
+        X (np.ndarray):
             Input data array where each row is a data point and each column is a
             feature.
-        k_max (int): 
+        k_max (int):
             Maximum number of neighbors to find. (Default is ``3000``)
-        k_min (int): 
+        k_min (int):
             Minimum number of neighbors to consider. (Default is ``100``)
-        algo_kNN (str): 
+        algo_kNN (str):
             Algorithm to use for nearest neighbors search. (Default is
             ``'brute'``)
-        n_workers (int): 
+        n_workers (int):
             Number of worker processes to use. If ``-1``, use all available
             cores. (Default is ``-1``)
 
     Returns:
-        (Tuple[np.ndarray, scipy.sparse.coo_matrix]): tuple containing:
-            idx_diff (np.ndarray): 
+        (Tuple[np.ndarray, scipy.sparse.coo_array]): tuple containing:
+            idx_diff (np.ndarray):
                 Indices of the non-zero values in the distance graph, with a
                 range between ``k_min`` and ``k_max``.
-            d (scipy.sparse.coo_matrix): 
+            d (scipy.sparse.coo_array):
                 Sparse matrix representing the distance graph from the k-Nearest
                 Neighbors algorithm.
     """

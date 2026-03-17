@@ -1029,27 +1029,27 @@ def sparse_to_dense_fill(
 
 
 def sparse_mask(
-    x: scipy.sparse.csr_matrix, 
-    mask_sparse: scipy.sparse.csr_matrix, 
+    x: scipy.sparse.csr_array,
+    mask_sparse: scipy.sparse.csr_array,
     do_safety_steps: bool = True
-) -> scipy.sparse.csr_matrix:
+) -> scipy.sparse.csr_array:
     """
     Masks a **sparse matrix** with the non-zero elements of another sparse
     matrix.
     RH 2022
 
     Args:
-        x (scipy.sparse.csr_matrix):
+        x (scipy.sparse.csr_array):
             Sparse matrix to mask.
-        mask_sparse (scipy.sparse.csr_matrix):
+        mask_sparse (scipy.sparse.csr_array):
             Sparse matrix to mask with.
         do_safety_steps (bool):
             Whether to do safety steps to ensure that things are working as
             expected. (Default is ``True``)
 
     Returns:
-        (scipy.sparse.csr_matrix):
-            output (scipy.sparse.csr_matrix):
+        (scipy.sparse.csr_array):
+            output (scipy.sparse.csr_array):
                 Masked sparse matrix.
     """
     if do_safety_steps:
@@ -1060,20 +1060,20 @@ def sparse_mask(
     return (m!=0).multiply(x)
 
 
-class scipy_sparse_csr_with_length(scipy.sparse.csr_matrix):
+class scipy_sparse_csr_with_length(scipy.sparse.csr_array):
     """
-    A scipy sparse matrix with a **length** attribute.
+    A scipy sparse array with a **length** attribute.
     RH 2023
 
     Attributes:
         length (int):
-            The length of the matrix (shape[0])
+            The length of the array (shape[0])
 
     Args:
         *args (object):
-            Arbitrary arguments passed to scipy.sparse.csr_matrix.
+            Arbitrary arguments passed to scipy.sparse.csr_array.
         **kwargs (object):
-            Arbitrary keyword arguments passed to scipy.sparse.csr_matrix.
+            Arbitrary keyword arguments passed to scipy.sparse.csr_array.
     """
     def __init__(
         self, 
@@ -1152,7 +1152,7 @@ class lazy_repeat_obj():
 
 
 def find_nonredundant_idx(
-    s: scipy.sparse.coo_matrix,
+    s: scipy.sparse.coo_array,
 ) -> np.ndarray:
     """
     Finds the indices of the nonredundant entries in a sparse matrix. Useful
@@ -1161,7 +1161,7 @@ def find_nonredundant_idx(
     RH 2022
 
     Args:
-        s (scipy.sparse.coo_matrix):
+        s (scipy.sparse.coo_array):
             Sparse matrix. Should be in COO format.
 
     Returns:
@@ -1169,23 +1169,23 @@ def find_nonredundant_idx(
             idx_unique (np.ndarray):
                 Indices of the nonredundant entries.
     """
-    if s.getformat() != 'coo':
-        s = s.coo()
+    if s.format != 'coo':
+        s = s.tocoo()
     idx_rowCol = np.vstack((s.row, s.col)).T
     u, idx_u = np.unique(idx_rowCol, axis=0, return_index=True)
     return idx_u
 
 def remove_redundant_elements(
-    s: scipy.sparse.coo_matrix, 
+    s: scipy.sparse.coo_array,
     inPlace: bool = False,
-) -> scipy.sparse.coo_matrix:
+) -> scipy.sparse.coo_array:
     """
     Removes redundant entries from a sparse matrix. Useful when manually
     populating a sparse matrix and you want to remove redundant entries.
     RH 2022
 
     Args:
-        s (scipy.sparse.coo_matrix):
+        s (scipy.sparse.coo_array):
             Sparse matrix. Should be in COO format.
         inPlace (bool):
             * If ``True``, the input matrix is modified in place.
@@ -1193,33 +1193,33 @@ def remove_redundant_elements(
             (Default is ``False``)
 
     Returns:
-        (scipy.sparse.coo_matrix):
-            s (scipy.sparse.coo_matrix):
+        (scipy.sparse.coo_array):
+            s (scipy.sparse.coo_array):
                 Sparse matrix with redundant entries removed.
     """
     idx_nonRed = find_nonredundant_idx(s)
     if inPlace:
         s_out = s
     else:
-        s_out = scipy.sparse.coo_matrix(s.shape)
+        s_out = scipy.sparse.coo_array(s.shape)
     s_out.row = s.row[idx_nonRed]
     s_out.col = s.col[idx_nonRed]
     s_out.data = s.data[idx_nonRed]
     return s_out
 
 def merge_sparse_arrays(
-        s_list: List[scipy.sparse.csr_matrix], 
-        idx_list: List[np.ndarray], 
-        shape_full: Tuple[int, int], 
-        remove_redundant: bool = True, 
+        s_list: List[scipy.sparse.csr_array],
+        idx_list: List[np.ndarray],
+        shape_full: Tuple[int, int],
+        remove_redundant: bool = True,
         elim_zeros: bool = True
-) -> scipy.sparse.csr_matrix:
+) -> scipy.sparse.csr_array:
     """
     Merges a list of square sparse arrays into a single square sparse array.
     Redundant entries are not selected; only entries chosen by np.unique are kept.
 
     Args:
-        s_list (List[scipy.sparse.csr_matrix]):
+        s_list (List[scipy.sparse.csr_array]):
             List of sparse arrays to merge. Each array can be any shape.
         idx_list (List[np.ndarray]):
             List of integer arrays. Each array should be the same length as its
@@ -1236,33 +1236,33 @@ def merge_sparse_arrays(
             * ``False``: Keeps zeros.
 
     Returns:
-        scipy.sparse.csr_matrix:
-            s_full (scipy.sparse.csr_matrix):
+        scipy.sparse.csr_array:
+            s_full (scipy.sparse.csr_array):
                 Full sparse matrix merged from the input list.
     """
     row, col, data = np.array([]), np.array([]), np.array([])
     for s, idx in zip(s_list, idx_list):
-        s_i = s.tocsr() if s.getformat() != 'csr' else s
+        s_i = s.tocsr() if s.format != 'csr' else s
         s_i.eliminate_zeros() if elim_zeros else s_i
         idx_grid = np.meshgrid(idx, idx)
         row = np.concatenate([row, (s_i != 0).multiply(idx_grid[0]).data])
         col = np.concatenate([col, (s_i != 0).multiply(idx_grid[1]).data])
         data = np.concatenate([data, s_i.data])
-    s_full = scipy.sparse.coo_matrix((data, (row, col)), shape=shape_full)
+    s_full = scipy.sparse.coo_array((data, (row, col)), shape=shape_full)
     if remove_redundant:
         remove_redundant_elements(s_full, inPlace=True)
     return s_full
 
 
 def scipy_sparse_to_torch_coo(
-    sp_array: scipy.sparse.coo_matrix, 
+    sp_array: scipy.sparse.coo_array,
     dtype: Optional[type] = None
 ) -> torch.sparse_coo_tensor:
     """
     Converts a Scipy sparse array to a PyTorch sparse COO tensor.
 
     Args:
-        sp_array (scipy.sparse.coo_matrix):
+        sp_array (scipy.sparse.coo_array):
             Scipy sparse array to be converted to a PyTorch sparse COO tensor.
         dtype (Optional[type]):
             Data type to which the values of the input sparse array are to be
@@ -1276,7 +1276,7 @@ def scipy_sparse_to_torch_coo(
     """
     import torch
 
-    coo = scipy.sparse.coo_matrix(sp_array)
+    coo = scipy.sparse.coo_array(sp_array)
     
     values = coo.data
     # print(values.dtype)
@@ -4305,13 +4305,13 @@ def remap_sparse_images(
     safe: bool = True,
     n_workers: int = -1,
     verbose: bool = True,
-) -> List[scipy.sparse.csr_matrix]:
+) -> List[scipy.sparse.csr_array]:
     """
     Remaps a list of sparse images using the given remap field.
     RH 2023
 
     Args:
-        ims_sparse (Union[scipy.sparse.spmatrix, List[scipy.sparse.spmatrix]]): 
+        ims_sparse (Union[scipy.sparse.spmatrix, List[scipy.sparse.spmatrix]]):
             A single sparse image or a list of sparse images.
         remappingIdx (np.ndarray): 
             An array of shape *(H, W, 2)* representing the remap field. It
@@ -4340,8 +4340,8 @@ def remap_sparse_images(
             Whether or not to use a tqdm progress bar. (Default is ``True``)
 
     Returns:
-        (List[scipy.sparse.csr_matrix]): 
-            ims_sparse_out (List[scipy.sparse.csr_matrix]): 
+        (List[scipy.sparse.csr_array]):
+            ims_sparse_out (List[scipy.sparse.csr_array]):
                 A list of remapped sparse images.
 
     Raises:
@@ -4371,15 +4371,15 @@ def remap_sparse_images(
         )
 
     def warp_sparse_image(
-        im_sparse: scipy.sparse.csr_matrix,
+        im_sparse: scipy.sparse.csr_array,
         remappingIdx: np.ndarray,
         method: str = method,
         fill_value: float = fill_value,
         safe: bool = safe
-    ) -> scipy.sparse.csr_matrix:
+    ) -> scipy.sparse.csr_array:
         
         # Convert sparse image to COO format
-        im_coo = scipy.sparse.coo_matrix(im_sparse)
+        im_coo = scipy.sparse.coo_array(im_sparse)
 
         # Get coordinates and values from COO format
         rows, cols = im_coo.row, im_coo.col
@@ -4416,7 +4416,7 @@ def remap_sparse_images(
             raise Exception(f"Error interpolating sparse image. Something is either weird about one of the input images or the remappingIdx. Error: {e}")
         
         # Create a new sparse image from the nonzero pixels
-        warped_sparse_image = scipy.sparse.csr_matrix(grid_values, dtype=dtype)
+        warped_sparse_image = scipy.sparse.csr_array(grid_values, dtype=dtype)
         warped_sparse_image.eliminate_zeros()
         return warped_sparse_image
     
@@ -5581,7 +5581,7 @@ class Toeplitz_convolution2d():
                 mode='same',
             )
             toeplitz_convolution2d(
-                x=scipy.sparse.csr_matrix(np.random.rand(5,3000)),
+                x=scipy.sparse.csr_array(np.random.rand(5,3000)),
                 batch_size=True,
             )
     """
@@ -5607,13 +5607,13 @@ class Toeplitz_convolution2d():
         self.so = so = size_output_array = ( (k.shape[0] + x_shape[0] -1), (k.shape[1] + x_shape[1] -1))  ## 'size out' is the size of the output array
 
         ## make the toeplitz matrices
-        t = toeplitz_matrices = [scipy.sparse.diags(
-            diagonals=np.ones((k.shape[1], x_shape[1]), dtype=dtype) * k_i[::-1][:,None], 
-            offsets=np.arange(-k.shape[1]+1, 1), 
+        t = toeplitz_matrices = [scipy.sparse.diags_array(
+            np.ones((k.shape[1], x_shape[1]), dtype=dtype) * k_i[::-1][:,None],
+            offsets=np.arange(-k.shape[1]+1, 1),
             shape=(so[1], x_shape[1]),
             dtype=dtype,
         ) for k_i in k[::-1]]  ## make the toeplitz matrices for the rows of the kernel
-        tc = toeplitz_concatenated = scipy.sparse.vstack(t + [scipy.sparse.dia_matrix((t[0].shape), dtype=dtype)]*(x_shape[0]-1))  ## add empty matrices to the bottom of the block due to padding, then concatenate
+        tc = toeplitz_concatenated = scipy.sparse.vstack(t + [scipy.sparse.dia_array((t[0].shape), dtype=dtype)]*(x_shape[0]-1))  ## add empty matrices to the bottom of the block due to padding, then concatenate
 
         ## make the double block toeplitz matrix
         self.dt = double_toeplitz = scipy.sparse.hstack([self._roll_sparse(
@@ -5623,16 +5623,16 @@ class Toeplitz_convolution2d():
     
     def __call__(
         self,
-        x: Union[np.ndarray, scipy.sparse.csc_matrix, scipy.sparse.csr_matrix],
+        x: Union[np.ndarray, scipy.sparse.csc_array, scipy.sparse.csr_array],
         batching: bool = True,
         mode: Optional[str] = None,
-    ) -> Union[np.ndarray, scipy.sparse.csr_matrix]:
+    ) -> Union[np.ndarray, scipy.sparse.csr_array]:
         """
         Convolve the input array with the kernel.
 
         Args:
-            x (Union[np.ndarray, scipy.sparse.csc_matrix,
-            scipy.sparse.csr_matrix]): 
+            x (Union[np.ndarray, scipy.sparse.csc_array,
+            scipy.sparse.csr_array]):
                 Input array(s) (i.e. image(s)) to convolve with the kernel. \n
                 * If ``batching==False``: Single 2D array to convolve with the
                   kernel. Shape: *(self.x_shape[0], self.x_shape[1])*
@@ -5652,8 +5652,8 @@ class Toeplitz_convolution2d():
                 the mode set in __init__. (Default is ``None``)
 
         Returns:
-            (Union[np.ndarray, scipy.sparse.csr_matrix]):
-                out (Union[np.ndarray, scipy.sparse.csr_matrix]): 
+            (Union[np.ndarray, scipy.sparse.csr_array]):
+                out (Union[np.ndarray, scipy.sparse.csr_array]):
                     * ``batching==True``: Multiple convolved 2D arrays that have
                       been flattened into row vectors (with order='C'). Shape:
                       *(n_arrays, height*width)*
@@ -5711,7 +5711,7 @@ class Toeplitz_convolution2d():
     
     def _roll_sparse(
         self,
-        x: scipy.sparse.csr_matrix,
+        x: scipy.sparse.csr_array,
         shift: int,
     ):
         """
@@ -5919,7 +5919,7 @@ def _func_wrapper_helper(*func_args_index):
 
 
 def compute_cluster_similarity_matrices(
-    s: Union[scipy.sparse.csr_matrix, np.ndarray, sparse.COO], 
+    s: Union[scipy.sparse.csr_array, np.ndarray, sparse.COO],
     l: np.ndarray, 
     verbose: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -5929,7 +5929,7 @@ def compute_cluster_similarity_matrices(
     RH 2023
 
     Args:
-        s (Union[scipy.sparse.csr_matrix, np.ndarray, sparse.COO]): 
+        s (Union[scipy.sparse.csr_array, np.ndarray, sparse.COO]):
             Similarity matrix. Entries should be non-negative floats.
         l (np.ndarray): 
             Labels for each row of ``s``. Labels should ideally be integers.
@@ -5960,7 +5960,7 @@ def compute_cluster_similarity_matrices(
     import scipy.sparse
 
     l_arr = np.array(l)
-    ss = scipy.sparse.csr_matrix(s.astype(np.float32))
+    ss = scipy.sparse.csr_array(s.astype(np.float32))
 
     ## assert that all labels have at least two samples
     l_u ,l_c = np.unique(l_arr, return_counts=True)
@@ -5978,7 +5978,7 @@ def compute_cluster_similarity_matrices(
         if not (ss - ss.T).sum() == 0:
             print("Warning: Similarity matrix is not symmetric.") if verbose else None
         ## Warn if s is not sparse
-        if not isinstance(ss, (np.ndarray, sparse.COO, scipy.sparse.csr_matrix)):
+        if not (isinstance(ss, (np.ndarray, sparse.COO)) or scipy.sparse.issparse(ss)):
             print("Warning: Similarity matrix is not a recognized sparse type or np.ndarray. Will attempt to convert to sparse.COO") if verbose else None
         ## Warn if diagonal is not all ones. It will be converted
         if not np.allclose(np.array(ss[range(ss.shape[0]), range(ss.shape[0])]), 1):
@@ -6495,13 +6495,13 @@ def reshape_coo_manual(coo, new_shape):
     RH 2025
     
     Parameters:
-      coo : scipy.sparse.coo_matrix
+      coo : scipy.sparse.coo_array
           The input sparse matrix in COO format.
       new_shape : tuple of ints
           The desired shape, e.g. (1, -1) expanded to a complete tuple.
-    
+
     Returns:
-      new_coo : scipy.sparse.coo_matrix
+      new_coo : scipy.sparse.coo_array
           The reshaped COO matrix.
     """
     # Ensure new_shape is fully specified.
@@ -6532,4 +6532,4 @@ def reshape_coo_manual(coo, new_shape):
     new_col = flat_idx % n_cols_new
     
     # Create a new COO matrix with the new indices.
-    return scipy.sparse.coo_matrix((coo.data, (new_row, new_col)), shape=new_shape)
+    return scipy.sparse.coo_array((coo.data, (new_row, new_col)), shape=new_shape)
