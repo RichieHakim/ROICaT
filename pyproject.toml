@@ -39,6 +39,7 @@ core = [
     "onnx>=1.17.0,<1.21.0",
     "onnxruntime==1.24.1",
     "richfile>=0.6.2",
+    "sparse_convolution>=0.4.0",
 ]
 classification = [
     "roicat[core]",
@@ -100,6 +101,7 @@ all_latest = [
     "scikit-image",
     "selenium",
     "roiextractors==0.8.0",
+    "sparse_convolution",
 ]
 
 [project.scripts]

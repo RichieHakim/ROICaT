@@ -604,6 +604,107 @@ class Test_flatten_dict:
 
 
 ######################################################################################################################################
+########################################################## BLURRING ##################################################################
+######################################################################################################################################
+
+
+class Test_ROI_Blurrer:
+    """Tests for ROI_Blurrer using sparse_convolution library."""
+
+    def test_basic_blurring(self):
+        """Blurring sparse ROIs produces correct shape and nonzero output."""
+        from roicat.tracking.blurring import ROI_Blurrer
+
+        blurrer = ROI_Blurrer(frame_shape=(64, 64), kernel_halfWidth=2, verbose=False)
+        sf = scipy.sparse.random(10, 64 * 64, density=0.01, format='csr', dtype=np.float32)
+        result = blurrer.blur_ROIs([sf])
+
+        assert len(result) == 1
+        assert result[0].shape == sf.shape  ## mode='same' preserves shape
+        assert scipy.sparse.issparse(result[0])
+        assert result[0].nnz > sf.nnz  ## blurring spreads nonzeros
+
+    def test_zero_halfwidth_bypass(self):
+        """kernel_halfWidth=0 returns input unchanged."""
+        from roicat.tracking.blurring import ROI_Blurrer
+
+        blurrer = ROI_Blurrer(frame_shape=(64, 64), kernel_halfWidth=0, verbose=False)
+        sf = scipy.sparse.random(5, 64 * 64, density=0.01, format='csr', dtype=np.float32)
+        result = blurrer.blur_ROIs([sf])
+
+        assert result[0] is sf  ## exact same object, no copy
+
+    def test_parity_with_old_toeplitz(self):
+        """New sparse_convolution.direct matches the old helpers.Toeplitz_convolution2d."""
+        from roicat.tracking.blurring import ROI_Blurrer
+
+        ## Build kernel matching ROI_Blurrer internals
+        kernel_halfWidth = 2
+        width = kernel_halfWidth * 2
+        kernel_size = max(int((width // 2) * 2) - 1, 1)
+        kernel = helpers.cosine_kernel_2D(
+            center=(kernel_size // 2, kernel_size // 2),
+            image_size=(kernel_size, kernel_size),
+            width=width,
+        )
+        kernel = kernel / kernel.sum()
+
+        ## Old implementation (still in helpers.py)
+        old_conv = helpers.Toeplitz_convolution2d(
+            x_shape=(64, 64), k=kernel, mode='same', dtype=np.float32,
+        )
+        ## New implementation via ROI_Blurrer
+        blurrer = ROI_Blurrer(frame_shape=(64, 64), kernel_halfWidth=2, verbose=False)
+
+        rng = np.random.default_rng(42)
+        x_dense = rng.random((20, 64 * 64), dtype=np.float32)
+        x_dense[x_dense > 0.01] = 0.0
+        x_sparse = scipy.sparse.csr_matrix(x_dense)
+
+        out_old = old_conv(x=x_sparse, batching=True, mode='same')
+        blurrer.blur_ROIs([x_sparse])
+        out_new = blurrer.ROIs_blurred[0]
+
+        np.testing.assert_allclose(
+            out_old.toarray(), out_new.toarray(), atol=1e-6,
+            err_msg="sparse_convolution direct method does not match old Toeplitz",
+        )
+
+    def test_parity_with_scipy_convolve2d(self):
+        """Blurred output matches scipy.signal.convolve2d ground truth."""
+        import scipy.signal
+        from roicat.tracking.blurring import ROI_Blurrer
+
+        blurrer = ROI_Blurrer(frame_shape=(32, 32), kernel_halfWidth=2, verbose=False)
+
+        rng = np.random.default_rng(123)
+        x_dense = rng.random((32, 32), dtype=np.float32)
+        x_dense[x_dense > 0.02] = 0.0
+
+        ## Ground truth
+        expected = scipy.signal.convolve2d(x_dense, blurrer.kernel, mode='same')
+
+        ## Via ROI_Blurrer
+        x_sparse = scipy.sparse.csr_matrix(x_dense.ravel()[None, :])
+        blurrer.blur_ROIs([x_sparse])
+        actual = blurrer.ROIs_blurred[0].toarray().reshape(32, 32)
+
+        np.testing.assert_allclose(actual, expected, atol=1e-6)
+
+    def test_max_intensity_projection(self):
+        """get_ROIsBlurred_maxIntensityProjection returns correct shape."""
+        from roicat.tracking.blurring import ROI_Blurrer
+
+        blurrer = ROI_Blurrer(frame_shape=(32, 32), kernel_halfWidth=2, verbose=False)
+        sf = scipy.sparse.random(5, 32 * 32, density=0.01, format='csr', dtype=np.float32)
+        blurrer.blur_ROIs([sf])
+        mip = blurrer.get_ROIsBlurred_maxIntensityProjection()
+
+        assert len(mip) == 1
+        assert mip[0].shape == (32, 32)
+
+
+######################################################################################################################################
 ####################################################### DATA_IMPORTING ###############################################################
 ######################################################################################################################################
 
