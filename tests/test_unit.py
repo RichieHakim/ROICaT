@@ -838,7 +838,7 @@ def clusterer_with_data(dir_data_test):
 
     from roicat.tracking.similarity_graph import DEFAULT_METRICS
     clusterer = tracking.clustering.Clusterer(
-        similarities={'sf': sim['s_sf'], 'nn': sim['s_NN_z'], 'swt': sim['s_SWT_z']},
+        similarities=sim['similarities_z'],
         metric_configs=DEFAULT_METRICS,
         s_sesh=sim['s_sesh'],
         verbose=False,
@@ -977,7 +977,7 @@ class Test_estimate_sigmoid_params:
         sim = util.RichFile_ROICaT(path=path_run_data)['sim'].load()
         from roicat.tracking.similarity_graph import DEFAULT_METRICS
         fresh = tracking.clustering.Clusterer(
-            similarities={'sf': sim['s_sf'], 'nn': sim['s_NN_z'], 'swt': sim['s_SWT_z']},
+            similarities=sim['similarities_z'],
             metric_configs=DEFAULT_METRICS,
             s_sesh=sim['s_sesh'],
             verbose=False,
@@ -1409,6 +1409,67 @@ class TestFastHDBSCAN:
                     f"seed={seed}, cluster {ucid}: same-session violation "
                     f"session_counts={session_counts[session_counts > 1]}"
                 )
+
+    def test_fast_hdbscan_group_labels_follow_session_bool_row_order(self, synthetic_setup, monkeypatch):
+        """
+        Group-label cannot-link constraints should use the per-row session ID,
+        not assume ROIs are stored in contiguous session blocks.
+        """
+        from roicat import tracking
+        from roicat.tracking.similarity_graph import DEFAULT_METRICS
+        import fast_hdbscan
+
+        clusterer, d_conj, session_bool = synthetic_setup
+        n_sessions = session_bool.shape[1]
+        n_rois_per_session = session_bool.shape[0] // n_sessions
+
+        ## Interleave rows by ROI index across sessions so session membership
+        ## is no longer represented by contiguous blocks in row order.
+        perm = np.arange(session_bool.shape[0]).reshape(n_sessions, n_rois_per_session).T.reshape(-1)
+        session_bool_perm = session_bool[perm]
+
+        similarities_perm = {
+            name: scipy.sparse.csr_array(sim[perm][:, perm])
+            for name, sim in clusterer.similarities.items()
+        }
+        s_sesh_perm = scipy.sparse.csr_array(clusterer.s_sesh[perm][:, perm])
+        d_conj_perm = scipy.sparse.csr_array(d_conj[perm][:, perm])
+
+        clusterer_perm = tracking.clustering.Clusterer(
+            similarities=similarities_perm,
+            metric_configs=DEFAULT_METRICS,
+            s_sesh=s_sesh_perm,
+            session_bool=session_bool_perm,
+            verbose=False,
+        )
+
+        captured = {}
+
+        class DummyHDBSCAN:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+            def fit(self, d):
+                self.labels_ = np.ones(d.shape[0], dtype=np.int32) * -1
+                return self
+
+        monkeypatch.setattr(fast_hdbscan, 'HDBSCAN', DummyHDBSCAN)
+
+        clusterer_perm.fit(
+            d_conj=d_conj_perm,
+            session_bool=session_bool_perm,
+        )
+
+        expected = np.asarray(np.argmax(session_bool_perm, axis=1), dtype=np.int32)
+        wrong_if_block_assumed = np.repeat(
+            np.arange(n_sessions, dtype=np.int32),
+            np.asarray(session_bool_perm.sum(axis=0), dtype=int),
+        )
+
+        assert not np.array_equal(expected, wrong_if_block_assumed), (
+            "Test setup should break the contiguous-block assumption."
+        )
+        assert np.array_equal(captured['cannot_link_groups'], expected)
 
     def test_fast_hdbscan_violations_attribute(self, synthetic_setup):
         """violations_labels should be empty with cannot-link constraints."""

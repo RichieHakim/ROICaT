@@ -1275,11 +1275,12 @@ class Clusterer(util.ROICaT_Module):
         Fits clustering using HDBSCAN with same-session constraint enforcement.
 
         By default (``backend='fast_hdbscan'``), uses ``fast_hdbscan.HDBSCAN``
-        with native cannot-link constraints. The cannot-link matrix is built
-        from ``self.s_sesh_inv`` (True where two ROIs are from the SAME
-        session), which prevents same-session ROIs from ever being placed in
-        the same cluster during MST construction. This eliminates the need
-        for iterative violation correction.
+        with group-label cannot-link constraints. Each ROI's session index
+        is passed as a group label; same-session ROIs cannot co-cluster.
+        This uses O(N) memory (an int32 vector) instead of the O(N^2) sparse
+        cannot-link matrix, and O(1) per-merge conflict checks via bitmask.
+        Transitive constraints are handled correctly: if components A and B
+        are merged and both contain session-0 ROIs, the merge is blocked.
 
         Set ``backend='legacy'`` to use the original ``hdbscan.HDBSCAN`` with
         iterative violation correction via dendrogram walk-back.
@@ -1397,13 +1398,13 @@ class Clusterer(util.ROICaT_Module):
         algorithm: str = 'kruskal',
     ) -> np.ndarray:
         """
-        Fit clustering using fast_hdbscan with native cannot-link constraints.
+        Fit clustering using fast_hdbscan with group-label cannot-link
+        constraints.
 
-        Cannot-link constraints enforce that ROIs from the same session
-        never end up in the same cluster. The constraints are enforced during
-        MST construction (Kruskal's algorithm skips edges between cannot-link
-        pairs that are already connected), eliminating the need for the
-        iterative violation-correction loop used by the legacy backend.
+        Each ROI is assigned its session index as a group label. Samples
+        sharing the same group label (i.e., same session) cannot co-cluster.
+        This uses a bitmask per DSU component for O(1) conflict checks,
+        replacing the previous O(N^2) sparse cannot-link matrix.
 
         RH 2025
 
@@ -1412,7 +1413,8 @@ class Clusterer(util.ROICaT_Module):
                 Conjunctive distance matrix. Shape: *(n_rois, n_rois)*.
             session_bool (np.ndarray):
                 Boolean array indicating which ROIs belong to which session.
-                Shape: *(n_rois, n_sessions)*.
+                Shape: *(n_rois, n_sessions)*. Each row should contain
+                exactly one ``True``.
             min_cluster_size (int):
                 Minimum cluster size. (Default is *2*)
             cluster_selection_method (str):
@@ -1445,15 +1447,19 @@ class Clusterer(util.ROICaT_Module):
         ## Auto-estimate d_clusterMerge
         d_clusterMerge = float(np.mean(d.data) + 1 * np.std(d.data)) if d_clusterMerge is None else float(d_clusterMerge)
 
-        ## Build cannot-link matrix from s_sesh_inv
-        ## s_sesh_inv is True where ROIs are from the SAME session — these
-        ## pairs must never appear in the same cluster.
-        cannot_link = self.s_sesh_inv.astype(bool).tocsr()
+        ## Build group-label cannot-link vector: explicit session index per ROI.
+        ## This avoids relying on ROIs being stored in contiguous session
+        ## blocks; fast_hdbscan expects one group label per sample.
+        n_sessions_per_roi = np.asarray(session_bool.sum(axis=1)).ravel()
+        assert np.all(n_sessions_per_roi == 1), (
+            "session_bool must contain exactly one True per ROI when using "
+            "fast_hdbscan cannot_link_groups"
+        )
+        cannot_link_groups = np.asarray(np.argmax(session_bool, axis=1), dtype=np.int32)
 
-        print('Fitting with fast_hdbscan (cannot-link constraints)') if self._verbose else None
+        print('Fitting with fast_hdbscan (group-label cannot-link constraints)') if self._verbose else None
 
-        ## Run fast_hdbscan with cannot-link constraints
-        ## Import lazily to match pattern used by other optional backends
+        ## Run fast_hdbscan with group-label cannot-link constraints
         import fast_hdbscan
         self.hdbs = fast_hdbscan.HDBSCAN(
             min_cluster_size=min_cluster_size,
@@ -1461,8 +1467,7 @@ class Clusterer(util.ROICaT_Module):
             max_cluster_size=n_sessions,
             metric='precomputed',
             algorithm=algorithm,
-            cannot_link=cannot_link,
-            validate_cannot_link=False,
+            cannot_link_groups=cannot_link_groups,
             cluster_selection_method=cluster_selection_method,
         )
         ## fast_hdbscan's Kruskal algorithm handles disconnected components
@@ -1473,12 +1478,15 @@ class Clusterer(util.ROICaT_Module):
         labels = self.hdbs.labels_.copy()
         self._fit_used_fully_connected_node = False
 
-        ## Report violations (should be zero with cannot-link)
-        violations_labels = np.unique(labels)[np.array([
-            (session_bool[labels == u].sum(0) > 1).sum().item()
-            for u in np.unique(labels)
-        ]) > 0]
-        violations_labels = violations_labels[violations_labels > -1]
+        ## Report violations (should be zero with group-label cannot-link)
+        unique_labels = np.unique(labels)
+        unique_labels = unique_labels[unique_labels > -1]
+        violations_labels = unique_labels[np.array([
+            np.unique(cannot_link_groups[mask := (labels == u)]).size < mask.sum()
+            for u in unique_labels
+        ], dtype=bool)]
+        ## A cluster violates if it has duplicate session indices.
+        ## Equivalently: n_unique_sessions < n_rois_in_cluster.
         self.violations_labels = violations_labels
         if self._verbose:
             n_violations = len(violations_labels)
