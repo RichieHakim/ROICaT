@@ -61,7 +61,7 @@ all = [
     "roicat[core,classification,tracking]",
     "onnx2torch==1.5.15",
     "scikit-image==0.26.0",
-    "selenium==4.40.0",
+    "selenium==4.41.0",
 ]
 all_latest = [
     "jupyter",
