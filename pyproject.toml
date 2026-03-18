@@ -120,4 +120,5 @@ include = ["roicat*"]
 testpaths = ["tests"]
 markers = [
     "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+    "determinism: marks tests that verify pipeline determinism (runs pipeline twice)",
 ]

@@ -17,6 +17,21 @@ WARNING: DO NOT REQUIRE ANY DEPENDENCIES FROM ANY NON-STANDARD LIBRARY
 """
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--regenerate-golden",
+        action="store_true",
+        default=False,
+        help="Regenerate golden reference data for integration tests.",
+    )
+
+
+@pytest.fixture(scope='session')
+def regenerate_golden(request):
+    """Whether the --regenerate-golden flag was passed."""
+    return request.config.getoption("--regenerate-golden")
+
+
 @pytest.fixture(scope='session')
 def dir_data_test():
     """

@@ -336,6 +336,20 @@ class Test_Equivalence_checker:
         s2.data = s2.data * (1 + 1e-7)  ## Proportional perturbation within rtol
         assert checker(s2, s)[0] == True
 
+    def test_sparse_nonzero_atol_allows_implicit_zero_differences(self):
+        checker = helpers.Equivalence_checker(kwargs_allclose={'rtol': 0, 'atol': 0.2, 'equal_nan': True})
+        true = scipy.sparse.csr_array((3, 3), dtype=np.float32)
+        test = scipy.sparse.csr_array(([0.1], ([1], [2])), shape=(3, 3), dtype=np.float32)
+        result = checker(test, true)
+        assert result[0] == True
+
+    def test_sparse_exact_equality_ignores_explicit_zero_storage(self):
+        checker = helpers.Equivalence_checker(kwargs_allclose={'rtol': 0, 'atol': 0, 'equal_nan': True})
+        true = scipy.sparse.csr_array(([1.0], ([0], [0])), shape=(2, 2), dtype=np.float32)
+        test = scipy.sparse.csr_array(([1.0, 0.0], ([0, 1], [0, 1])), shape=(2, 2), dtype=np.float32)
+        result = checker(test, true)
+        assert result[0] == True
+
     def test_sparse_different(self):
         checker = helpers.Equivalence_checker()
         s1 = scipy.sparse.csr_array(np.eye(3))
@@ -400,6 +414,28 @@ class Test_Equivalence_checker:
         result = checker(a, b)
         # Should not crash; result[0] is None (skipped) or True/False
         assert result[0] is not None or isinstance(result[1], str)
+
+    def test_dict_vs_object_normalizes_public_attrs(self):
+        class Dummy:
+            def __init__(self):
+                self.a = np.array([1.0, 2.0], dtype=np.float32)
+                self.b = 'ok'
+                self._private = 'ignore'
+
+        checker = helpers.Equivalence_checker(verbose=False)
+        result = checker(
+            test=Dummy(),
+            true={'a': np.array([1.0, 2.0], dtype=np.float32), 'b': 'ok'},
+        )
+        assert result['a'][0] == True
+        assert result['b'][0] == True
+
+    def test_torch_tensor_leaf_normalized_to_numpy(self):
+        checker = helpers.Equivalence_checker(verbose=False)
+        tensor = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32)
+        array = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        result = checker(tensor, array)
+        assert result[0] == True
 
 
 class Test_get_nums_from_string:
