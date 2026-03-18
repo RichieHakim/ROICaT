@@ -270,6 +270,7 @@ def get_default_parameters(
                     'cluster_selection_method': 'eom',  ## (advanced) Method of cluster selection for HDBSCAN (see hdbscan documentation)
                     'cluster_selection_persistence': 0.0,  ## (advanced) Minimum stability for a cluster to survive. Higher values = fewer, more stable clusters.
                     'd_clusterMerge': None,  ## Distance below which clusters are merged. None defaults to d_cutoff (pruning threshold).
+                    'rescue_noise': True,  ## Post-HDBSCAN noise rescue: assign noise ROIs to nearby clusters via Kruskal DSU with cannot-link constraints.
                     'n_iter_violationCorrection': 6,  ## Number of times to redo clustering sweep after removing violations
                     'split_intraSession_clusters': True,  ## Whether or not to split clusters with ROIs from the same session
                     'alpha': 0.999,  ## (advanced) Scalar applied to distance matrix in HDBSCAN (see hdbscan documentation)

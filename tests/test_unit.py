@@ -1756,6 +1756,277 @@ def test_richfile_optimize_result_roundtrip(tmp_path):
 
 
 ######################################################################################################################################
+######################################################## NOISE RESCUE ################################################################
+######################################################################################################################################
+
+
+class TestNoiseRescue:
+    """Tests for noise_rescue_kruskal and Clusterer.rescue_noise."""
+
+    def _make_graph_and_labels(self):
+        """
+        Build a synthetic 8-node graph with 3 sessions, 2 pre-formed
+        clusters with gaps, and 4 noise points that can fill those gaps.
+        Returns (d_conj, labels, group_labels, session_bool, n_groups).
+
+        Layout (sessions S0, S1, S2):
+            Cluster 0: nodes 0 (S0), 1 (S1) — missing S2
+            Cluster 1: nodes 2 (S0), 3 (S1) — missing S2
+            Noise:     nodes 4 (S2), 5 (S2), 6 (S1), 7 (S0)
+
+        Noise edges (all inter-session by construction):
+            4 → 0 (d=0.2, S2→S0 — rescue 4 into cluster 0, no S2 conflict)
+            5 → 2 (d=0.25, S2→S0 — rescue 5 into cluster 1, no S2 conflict)
+            6 → 0 (d=0.3, S1→S0 — blocked: cluster 0 has node 1 from S1)
+            7 → 3 (d=0.35, S0→S1 — blocked: cluster 1 has node 2 from S0)
+        """
+        n = 8
+        n_sessions = 3
+
+        ## Session assignments
+        session_bool = np.zeros((n, n_sessions), dtype=bool)
+        session_bool[0, 0] = True  ## S0, cluster 0
+        session_bool[1, 1] = True  ## S1, cluster 0
+        session_bool[2, 0] = True  ## S0, cluster 1
+        session_bool[3, 1] = True  ## S1, cluster 1
+        session_bool[4, 2] = True  ## S2, noise
+        session_bool[5, 2] = True  ## S2, noise
+        session_bool[6, 1] = True  ## S1, noise
+        session_bool[7, 0] = True  ## S0, noise
+
+        group_labels = np.argmax(session_bool, axis=1).astype(np.int32)
+
+        ## Phase 1 labels: clusters 0 and 1, rest noise
+        labels = np.array([0, 0, 1, 1, -1, -1, -1, -1], dtype=np.int64)
+
+        ## Build inter-session masked distance matrix
+        rows = []
+        cols = []
+        dists = []
+
+        def add_edge(i, j, d):
+            if group_labels[i] != group_labels[j]:
+                rows.extend([i, j])
+                cols.extend([j, i])
+                dists.extend([d, d])
+
+        ## Intra-cluster edges (inter-session)
+        add_edge(0, 1, 0.1)   ## S0→S1, cluster 0
+        add_edge(2, 3, 0.1)   ## S0→S1, cluster 1
+
+        ## Noise rescue edges
+        add_edge(4, 0, 0.2)   ## S2→S0, rescue 4 into cluster 0
+        add_edge(5, 2, 0.25)  ## S2→S0, rescue 5 into cluster 1
+        add_edge(6, 0, 0.3)   ## S1→S0, but cluster 0 has S1 (node 1) → blocked
+        add_edge(7, 3, 0.35)  ## S0→S1, but cluster 1 has S0 (node 2) → blocked
+
+        d_conj = scipy.sparse.csr_array(
+            (np.array(dists, dtype=np.float64), (rows, cols)),
+            shape=(n, n),
+        )
+        d_conj.sort_indices()
+
+        return d_conj, labels, group_labels, session_bool, n_sessions
+
+    def test_noise_rescue_basic(self):
+        """Noise points near existing clusters should be rescued when no session conflict."""
+        from roicat.tracking.clustering import noise_rescue_kruskal
+
+        d_conj, labels, group_labels, session_bool, n_groups = self._make_graph_and_labels()
+
+        new_labels = noise_rescue_kruskal(
+            d_conj=d_conj,
+            labels=labels,
+            group_labels=group_labels,
+            n_groups=n_groups,
+            d_cutoff=0.5,
+        )
+
+        ## Node 4 (S2, noise) → edge to node 0 (S0, cluster 0): no S2 in cluster 0 → rescued
+        assert new_labels[4] == 0, f"Node 4 should join cluster 0, got {new_labels[4]}"
+        ## Node 5 (S2, noise) → edge to node 2 (S0, cluster 1): no S2 in cluster 1 → rescued
+        assert new_labels[5] == 1, f"Node 5 should join cluster 1, got {new_labels[5]}"
+        ## Node 6 (S1, noise) → edge to node 0 (S0, cluster 0): cluster 0 has S1 (node 1) → blocked
+        assert new_labels[6] == -1, f"Node 6 should stay noise (session conflict), got {new_labels[6]}"
+        ## Node 7 (S0, noise) → edge to node 3 (S1, cluster 1): cluster 1 has S0 (node 2) → blocked
+        assert new_labels[7] == -1, f"Node 7 should stay noise (session conflict), got {new_labels[7]}"
+        ## Original cluster members should keep their labels
+        assert new_labels[0] == 0
+        assert new_labels[1] == 0
+        assert new_labels[2] == 1
+        assert new_labels[3] == 1
+
+    def test_noise_rescue_session_constraint(self):
+        """Noise rescue should block merges that would violate session constraints."""
+        from roicat.tracking.clustering import noise_rescue_kruskal
+
+        ## Build graph: cluster 0 has nodes from S0 and S1.
+        ## Noise node from S0 has edge to cluster 0 — should be blocked.
+        n = 4
+        session_bool = np.zeros((n, 2), dtype=bool)
+        session_bool[0, 0] = True  ## S0, cluster 0
+        session_bool[1, 1] = True  ## S1, cluster 0
+        session_bool[2, 0] = True  ## S0, noise — same session as node 0
+        session_bool[3, 1] = True  ## S1, noise — same session as node 1
+
+        group_labels = np.argmax(session_bool, axis=1).astype(np.int32)
+        labels = np.array([0, 0, -1, -1], dtype=np.int64)
+
+        ## Noise node 2 (S0) → node 1 (S1, cluster 0): blocked because
+        ## cluster 0 already has node 0 (S0) — session conflict!
+        ## Noise node 3 (S1) → node 0 (S0, cluster 0): blocked because
+        ## cluster 0 already has node 1 (S1) — session conflict!
+        rows = [2, 1, 3, 0]
+        cols = [1, 2, 0, 3]
+        dists = [0.2, 0.2, 0.2, 0.2]
+        ## Also the intra-cluster edge
+        rows += [0, 1]
+        cols += [1, 0]
+        dists += [0.1, 0.1]
+
+        d_conj = scipy.sparse.csr_array(
+            (np.array(dists, dtype=np.float64), (rows, cols)),
+            shape=(n, n),
+        )
+        d_conj.sort_indices()
+
+        new_labels = noise_rescue_kruskal(
+            d_conj=d_conj,
+            labels=labels,
+            group_labels=group_labels,
+            n_groups=2,
+            d_cutoff=0.5,
+        )
+
+        ## Both noise nodes should remain noise (or form their own cluster
+        ## if they can merge with each other, but they are from different
+        ## sessions so they CAN merge)
+        ## Node 2 (S0) and node 3 (S1) can merge since they are from
+        ## different sessions. But they have no direct edge to each other.
+        ## So they should remain -1.
+        assert new_labels[2] == -1, f"Node 2 should stay noise, got {new_labels[2]}"
+        assert new_labels[3] == -1, f"Node 3 should stay noise, got {new_labels[3]}"
+
+    def test_noise_rescue_d_cutoff(self):
+        """Edges beyond d_cutoff should be ignored."""
+        from roicat.tracking.clustering import noise_rescue_kruskal
+
+        d_conj, labels, group_labels, session_bool, n_groups = self._make_graph_and_labels()
+
+        ## Set d_cutoff to 0.22 — only node 4→0 (d=0.2) should make it
+        new_labels = noise_rescue_kruskal(
+            d_conj=d_conj,
+            labels=labels,
+            group_labels=group_labels,
+            n_groups=n_groups,
+            d_cutoff=0.22,
+        )
+
+        ## Node 4 rescued (edge d=0.2 <= 0.22)
+        assert new_labels[4] == 0, f"Node 4 should be rescued, got {new_labels[4]}"
+        ## Node 5 NOT rescued (edge d=0.25 > 0.22)
+        assert new_labels[5] == -1, f"Node 5 should stay noise, got {new_labels[5]}"
+
+    def test_noise_rescue_nucleation(self):
+        """Two noise points from different sessions should nucleate a new cluster."""
+        from roicat.tracking.clustering import noise_rescue_kruskal
+
+        ## 4 nodes: 2 in cluster 0, 2 noise that are close to each other
+        ## but far from the cluster
+        n = 4
+        session_bool = np.zeros((n, 2), dtype=bool)
+        session_bool[0, 0] = True  ## S0, cluster 0
+        session_bool[1, 1] = True  ## S1, cluster 0
+        session_bool[2, 0] = True  ## S0, noise
+        session_bool[3, 1] = True  ## S1, noise
+
+        group_labels = np.argmax(session_bool, axis=1).astype(np.int32)
+        labels = np.array([0, 0, -1, -1], dtype=np.int64)
+
+        ## Intra-cluster edge
+        rows = [0, 1]
+        cols = [1, 0]
+        dists = [0.1, 0.1]
+        ## Noise-to-noise edge (different sessions, so OK)
+        rows += [2, 3]
+        cols += [3, 2]
+        dists += [0.15, 0.15]
+
+        d_conj = scipy.sparse.csr_array(
+            (np.array(dists, dtype=np.float64), (rows, cols)),
+            shape=(n, n),
+        )
+        d_conj.sort_indices()
+
+        new_labels = noise_rescue_kruskal(
+            d_conj=d_conj,
+            labels=labels,
+            group_labels=group_labels,
+            n_groups=2,
+            d_cutoff=0.5,
+        )
+
+        ## Nodes 2 and 3 should form a new cluster (label > 0)
+        assert new_labels[2] >= 0, f"Node 2 should be in a cluster, got {new_labels[2]}"
+        assert new_labels[2] == new_labels[3], (
+            f"Nodes 2 and 3 should be in same cluster: {new_labels[2]} vs {new_labels[3]}"
+        )
+        ## The new cluster should have a different label from cluster 0
+        assert new_labels[2] != labels[0], (
+            f"New cluster should have a fresh label, not {labels[0]}"
+        )
+
+    def test_noise_rescue_no_mutation(self):
+        """Input labels array should not be modified."""
+        from roicat.tracking.clustering import noise_rescue_kruskal
+
+        d_conj, labels, group_labels, session_bool, n_groups = self._make_graph_and_labels()
+        labels_copy = labels.copy()
+
+        noise_rescue_kruskal(
+            d_conj=d_conj,
+            labels=labels,
+            group_labels=group_labels,
+            n_groups=n_groups,
+            d_cutoff=0.5,
+        )
+
+        np.testing.assert_array_equal(labels, labels_copy, err_msg="Input labels were mutated")
+
+    def test_rescue_noise_wired_into_fit(self):
+        """fit(rescue_noise=True) should rescue more noise than rescue_noise=False."""
+        from roicat.tracking import clustering
+        from roicat.tracking.similarity_graph import SimilarityMetric
+
+        clusterer, d_conj, session_bool = _make_synthetic_clusterer(
+            n_sessions=5, n_rois_per_session=30, seed=42,
+        )
+        ## First run without rescue
+        labels_no_rescue = clusterer.fit(
+            d_conj=d_conj,
+            session_bool=session_bool,
+            rescue_noise=False,
+        )
+        n_noise_no_rescue = np.sum(labels_no_rescue == -1)
+
+        ## Re-create to avoid state leakage
+        clusterer2, d_conj2, session_bool2 = _make_synthetic_clusterer(
+            n_sessions=5, n_rois_per_session=30, seed=42,
+        )
+        labels_rescue = clusterer2.fit(
+            d_conj=d_conj2,
+            session_bool=session_bool2,
+            rescue_noise=True,
+        )
+        n_noise_rescue = np.sum(labels_rescue == -1)
+
+        ## Rescue should reduce noise (or at worst keep it the same)
+        assert n_noise_rescue <= n_noise_no_rescue, (
+            f"Rescue should not increase noise: {n_noise_rescue} > {n_noise_no_rescue}"
+        )
+
+
+######################################################################################################################################
 ######################################################## ROIEXTRACTORS ###############################################################
 ######################################################################################################################################
 
