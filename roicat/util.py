@@ -265,10 +265,13 @@ def get_default_parameters(
                 },
                 'hdbscan': {
                     'min_cluster_size': 2,  ## Minimum number of ROIs that can be considered a 'cluster'
+                    'max_cluster_size': None,  ## Maximum cluster size. None defaults to n_sessions (one ROI per session).
+                    'min_samples': None,  ## Number of neighbors for core-point density. None defaults to min_cluster_size. Lower values reduce noise points.
+                    'cluster_selection_method': 'eom',  ## (advanced) Method of cluster selection for HDBSCAN (see hdbscan documentation)
+                    'cluster_selection_persistence': 0.0,  ## (advanced) Minimum stability for a cluster to survive. Higher values = fewer, more stable clusters.
+                    'd_clusterMerge': None,  ## Distance below which clusters are merged. None defaults to d_cutoff (pruning threshold).
                     'n_iter_violationCorrection': 6,  ## Number of times to redo clustering sweep after removing violations
                     'split_intraSession_clusters': True,  ## Whether or not to split clusters with ROIs from the same session
-                    'cluster_selection_method': 'leaf',  ## (advanced) Method of cluster selection for HDBSCAN (see hdbscan documentation)
-                    'd_clusterMerge': None,  ## Distance below which all ROIs are merged into a cluster
                     'alpha': 0.999,  ## (advanced) Scalar applied to distance matrix in HDBSCAN (see hdbscan documentation)
                     'discard_failed_pruning': True,  ## (advanced) Whether or not to set all ROIs that could be separated from clusters with ROIs from the same sessions to label=-1
                     'n_steps_clusterSplit': 100,  ## (advanced) How finely to step through distances to remove violations

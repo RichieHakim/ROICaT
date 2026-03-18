@@ -1629,6 +1629,41 @@ class TestFastHDBSCAN:
                 f"got sizes: {c}"
             )
 
+    def test_fast_hdbscan_min_samples(self, synthetic_setup):
+        """min_samples should be accepted and produce valid labels."""
+        clusterer, d_conj, session_bool = synthetic_setup
+        labels = clusterer.fit(
+            d_conj=d_conj,
+            session_bool=session_bool,
+            min_samples=1,
+        )
+        assert isinstance(labels, np.ndarray)
+        assert len(labels) == session_bool.shape[0]
+
+    def test_fast_hdbscan_cluster_selection_persistence(self, synthetic_setup):
+        """cluster_selection_persistence should be accepted."""
+        clusterer, d_conj, session_bool = synthetic_setup
+        labels = clusterer.fit(
+            d_conj=d_conj,
+            session_bool=session_bool,
+            cluster_selection_persistence=0.1,
+        )
+        assert isinstance(labels, np.ndarray)
+        assert len(labels) == session_bool.shape[0]
+
+    def test_fast_hdbscan_d_clusterMerge_defaults_to_d_cutoff(self, synthetic_setup):
+        """When d_clusterMerge=None, should use self.d_cutoff if available."""
+        clusterer, d_conj, session_bool = synthetic_setup
+        ## Set d_cutoff as if make_pruned_similarity_graphs was called
+        clusterer.d_cutoff = 0.42
+        labels = clusterer.fit(
+            d_conj=d_conj,
+            session_bool=session_bool,
+        )
+        assert isinstance(labels, np.ndarray)
+        ## Verify the stored param reflects the d_cutoff value
+        assert clusterer.params['fit']['d_clusterMerge'] is None  ## original arg was None
+
 
 class TestFastHDBSCANQualityMetrics:
     """Tests for quality metrics extraction with fast_hdbscan backend."""

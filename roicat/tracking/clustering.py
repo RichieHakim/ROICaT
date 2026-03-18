@@ -1256,13 +1256,101 @@ class Clusterer(util.ROICaT_Module):
         self.dConj_pruned = prune(self.dConj, self.graph_pruned)
         self.sConj_pruned = prune(self.sConj, self.graph_pruned)
 
+    def apply_weighted_jaccard(
+        self,
+        s_conj: Optional[scipy.sparse.csr_array] = None,
+        d_conj: Optional[scipy.sparse.csr_array] = None,
+        alpha: float = 1.0,
+    ) -> Tuple[scipy.sparse.csr_array, scipy.sparse.csr_array]:
+        """
+        Apply weighted Jaccard preprocessing to a similarity graph.
+        Returns new similarity and distance matrices without modifying
+        ``self``.
+
+        Can be called in two ways:
+
+        1. **From stored state** (no args): uses ``self.sConj_pruned`` from
+           ``make_pruned_similarity_graphs()``.
+        2. **Purely functional**: pass ``s_conj`` or ``d_conj`` directly.
+           Exactly one must be provided; the other is derived as ``1 - x``.
+
+        The weighted Jaccard replaces each pairwise similarity with a
+        measure of shared neighborhood structure:
+
+        .. math::
+
+            J_w(i,j) = \\frac{\\sum_k \\min(s_{ik}, s_{jk})}
+                             {\\sum_k \\max(s_{ik}, s_{jk})}
+
+        This amplifies within-cluster similarity and suppresses cross-cluster
+        noise. See :func:`weighted_jaccard_similarity` for details.
+
+        Args:
+            s_conj (Optional[scipy.sparse.csr_array]):
+                Similarity matrix to transform. If ``None``, uses
+                ``self.sConj_pruned``. Mutually exclusive with ``d_conj``.
+            d_conj (Optional[scipy.sparse.csr_array]):
+                Distance matrix to transform (converted to similarity via
+                ``1 - d``). If ``None``, uses ``self.sConj_pruned``.
+                Mutually exclusive with ``s_conj``.
+            alpha (float):
+                Blending weight between Jaccard and original similarity.
+                ``alpha=1.0`` uses pure Jaccard (default). ``alpha=0.0``
+                returns copies of the originals. Values in between give a
+                linear blend: ``s_final = alpha * s_jaccard + (1-alpha) * s_original``.
+
+        Returns:
+            (Tuple[scipy.sparse.csr_array, scipy.sparse.csr_array]):
+                sConj_jaccard (scipy.sparse.csr_array):
+                    Jaccard-refined similarity matrix. Same sparsity as input.
+                dConj_jaccard (scipy.sparse.csr_array):
+                    Corresponding distance matrix (``1 - sConj_jaccard``).
+        """
+        assert not (s_conj is not None and d_conj is not None), (
+            "Provide s_conj or d_conj, not both."
+        )
+        assert 0.0 <= alpha <= 1.0, f"alpha must be in [0, 1], got {alpha}"
+
+        ## Resolve input similarity matrix
+        if s_conj is not None:
+            s = s_conj
+        elif d_conj is not None:
+            s = d_conj.copy()
+            s.data = 1.0 - s.data
+        else:
+            assert hasattr(self, 'sConj_pruned') and self.sConj_pruned is not None, (
+                "No input provided and self.sConj_pruned is not set. "
+                "Either pass s_conj/d_conj or call make_pruned_similarity_graphs() first."
+            )
+            s = self.sConj_pruned
+
+        if alpha == 0.0:
+            s_out = s.copy()
+            d_out = s.copy()
+            d_out.data = 1.0 - d_out.data
+            return s_out, d_out
+
+        s_jaccard = weighted_jaccard_similarity(s)
+
+        if alpha < 1.0:
+            ## Blend: s_final = alpha * s_jaccard + (1 - alpha) * s_original
+            s_jaccard.data = alpha * s_jaccard.data + (1.0 - alpha) * s.data
+
+        d_jaccard = s_jaccard.copy()
+        d_jaccard.data = 1.0 - d_jaccard.data
+
+        return s_jaccard, d_jaccard
+
     def fit(
         self,
         d_conj: scipy.sparse.csr_array,
         session_bool: np.ndarray,
         min_cluster_size: int = 2,
+        max_cluster_size: Optional[int] = None,
+        min_samples: Optional[int] = None,
         n_iter_violationCorrection: int = 5,
         cluster_selection_method: str = 'leaf',
+        cluster_selection_persistence: float = 0.0,
         d_clusterMerge: Optional[float] = None,
         alpha: float = 0.999,
         split_intraSession_clusters: bool = True,
@@ -1296,6 +1384,18 @@ class Clusterer(util.ROICaT_Module):
             min_cluster_size (int):
                 Minimum cluster size to be considered a cluster. Can be 'all'.
                 (Default is *2*)
+            max_cluster_size (Optional[int]):
+                Maximum cluster size. Clusters larger than this are split. If
+                ``None``, defaults to ``n_sessions`` (one ROI per session),
+                which is the natural constraint for neuron tracking. Set to a
+                larger value to allow clusters spanning a subset of sessions.
+                (Default is ``None``)
+            min_samples (Optional[int]):
+                Number of neighbors a point needs to be considered "core"
+                (non-noise) by HDBSCAN. Controls the density threshold
+                independently of ``min_cluster_size``. Lower values → fewer
+                noise points. If ``None``, defaults to ``min_cluster_size``
+                (HDBSCAN default behavior). (Default is ``None``)
             n_iter_violationCorrection (int):
                 Number of iterations to correct for clusters with multiple ROIs
                 per session. Only used with ``backend='legacy'``.
@@ -1304,11 +1404,20 @@ class Clusterer(util.ROICaT_Module):
                 Cluster selection method. Either ``'leaf'`` or ``'eom'``. 'leaf'
                 leans towards smaller clusters, 'eom' towards larger clusters.
                 (Default is ``'leaf'``)
+            cluster_selection_persistence (float):
+                Minimum stability (persistence) a cluster must have to survive
+                selection. Clusters below this threshold are folded into their
+                parent. Higher values → fewer but more stable clusters. Only
+                used with ``backend='fast_hdbscan'``. (Default is *0.0*)
             d_clusterMerge (Optional[float]):
-                Distance threshold for merging clusters. All clusters with ROIs
-                closer than this distance will be merged. If ``None``, the
-                distance is calculated as the mean + 1*std of the conjunctive
-                distances. (Default is ``None``)
+                Distance threshold for merging clusters
+                (``cluster_selection_epsilon`` in HDBSCAN). Clusters separated
+                by less than this distance are merged. If ``None``, defaults to
+                ``self.d_cutoff`` (the pruning threshold from
+                ``make_pruned_similarity_graphs``), which is the inferred
+                same/different decision boundary. Falls back to
+                ``mean + 1*std`` of the distance data if ``d_cutoff`` is not
+                available. (Default is ``None``)
             alpha (float):
                 Alpha value. Only used with ``backend='legacy'``. (Default is
                 *0.999*)
@@ -1349,8 +1458,11 @@ class Clusterer(util.ROICaT_Module):
             locals_dict=locals(),
             keys=[
                 'min_cluster_size',
+                'max_cluster_size',
+                'min_samples',
                 'n_iter_violationCorrection',
                 'cluster_selection_method',
+                'cluster_selection_persistence',
                 'd_clusterMerge',
                 'alpha',
                 'split_intraSession_clusters',
@@ -1361,12 +1473,21 @@ class Clusterer(util.ROICaT_Module):
             ],
         )
 
+        ## Resolve d_clusterMerge default: use d_cutoff from pruning if available
+        if d_clusterMerge is None:
+            if hasattr(self, 'd_cutoff') and self.d_cutoff is not None:
+                d_clusterMerge = float(self.d_cutoff)
+            ## Otherwise each backend falls back to mean + 1*std heuristic
+
         if backend == 'fast_hdbscan':
             return self._fit_fast_hdbscan(
                 d_conj=d_conj,
                 session_bool=session_bool,
                 min_cluster_size=min_cluster_size,
+                max_cluster_size=max_cluster_size,
+                min_samples=min_samples,
                 cluster_selection_method=cluster_selection_method,
+                cluster_selection_persistence=cluster_selection_persistence,
                 d_clusterMerge=d_clusterMerge,
                 algorithm=algorithm,
             )
@@ -1375,6 +1496,8 @@ class Clusterer(util.ROICaT_Module):
                 d_conj=d_conj,
                 session_bool=session_bool,
                 min_cluster_size=min_cluster_size,
+                max_cluster_size=max_cluster_size,
+                min_samples=min_samples,
                 n_iter_violationCorrection=n_iter_violationCorrection,
                 cluster_selection_method=cluster_selection_method,
                 d_clusterMerge=d_clusterMerge,
@@ -1393,7 +1516,10 @@ class Clusterer(util.ROICaT_Module):
         d_conj: scipy.sparse.csr_array,
         session_bool: np.ndarray,
         min_cluster_size: int = 2,
+        max_cluster_size: Optional[int] = None,
+        min_samples: Optional[int] = None,
         cluster_selection_method: str = 'leaf',
+        cluster_selection_persistence: float = 0.0,
         d_clusterMerge: Optional[float] = None,
         algorithm: str = 'kruskal',
     ) -> np.ndarray:
@@ -1417,8 +1543,17 @@ class Clusterer(util.ROICaT_Module):
                 exactly one ``True``.
             min_cluster_size (int):
                 Minimum cluster size. (Default is *2*)
+            max_cluster_size (Optional[int]):
+                Maximum cluster size. If ``None``, defaults to ``n_sessions``.
+                (Default is ``None``)
+            min_samples (Optional[int]):
+                Number of neighbors for core-point density estimation. If
+                ``None``, defaults to ``min_cluster_size``.
+                (Default is ``None``)
             cluster_selection_method (str):
                 ``'leaf'`` or ``'eom'``. (Default is ``'leaf'``)
+            cluster_selection_persistence (float):
+                Minimum cluster stability threshold. (Default is *0.0*)
             d_clusterMerge (Optional[float]):
                 Distance threshold for merging clusters. If ``None``, computed
                 as mean + 1*std of the distance data. (Default is ``None``)
@@ -1444,7 +1579,11 @@ class Clusterer(util.ROICaT_Module):
             min_cluster_size = n_sessions
             print(f'Setting min_cluster_size to {min_cluster_size} (all ROIs in a session)') if self._verbose else None
 
-        ## Auto-estimate d_clusterMerge
+        ## Resolve max_cluster_size default: one ROI per session
+        if max_cluster_size is None:
+            max_cluster_size = n_sessions
+
+        ## Auto-estimate d_clusterMerge from distance statistics
         d_clusterMerge = float(np.mean(d.data) + 1 * np.std(d.data)) if d_clusterMerge is None else float(d_clusterMerge)
 
         ## Build group-label cannot-link vector: explicit session index per ROI.
@@ -1463,8 +1602,10 @@ class Clusterer(util.ROICaT_Module):
         import fast_hdbscan
         self.hdbs = fast_hdbscan.HDBSCAN(
             min_cluster_size=min_cluster_size,
+            min_samples=min_samples,
             cluster_selection_epsilon=d_clusterMerge,
-            max_cluster_size=n_sessions,
+            cluster_selection_persistence=cluster_selection_persistence,
+            max_cluster_size=max_cluster_size,
             metric='precomputed',
             algorithm=algorithm,
             cannot_link_groups=cannot_link_groups,
@@ -1508,6 +1649,8 @@ class Clusterer(util.ROICaT_Module):
         d_conj: scipy.sparse.csr_array,
         session_bool: np.ndarray,
         min_cluster_size: int = 2,
+        max_cluster_size: Optional[int] = None,
+        min_samples: Optional[int] = None,
         n_iter_violationCorrection: int = 5,
         cluster_selection_method: str = 'leaf',
         d_clusterMerge: Optional[float] = None,
@@ -1542,6 +1685,13 @@ class Clusterer(util.ROICaT_Module):
             min_cluster_size (int):
                 Minimum cluster size to be considered a cluster. Can be 'all'.
                 (Default is *2*)
+            max_cluster_size (Optional[int]):
+                Maximum cluster size. If ``None``, defaults to ``n_sessions``.
+                (Default is ``None``)
+            min_samples (Optional[int]):
+                Number of neighbors for core-point density estimation. If
+                ``None``, defaults to ``min_cluster_size``.
+                (Default is ``None``)
             n_iter_violationCorrection (int):
                 Number of iterations to correct for clusters with multiple ROIs
                 per session. (Default is *5*)
@@ -1582,6 +1732,10 @@ class Clusterer(util.ROICaT_Module):
             min_cluster_size = n_sessions
             print(f'Setting min_cluster_size to {min_cluster_size} (all ROIs in a session)') if self._verbose else None
 
+        ## Resolve max_cluster_size default: one ROI per session
+        if max_cluster_size is None:
+            max_cluster_size = n_sessions
+
         print('Fitting with HDBSCAN and splitting clusters with multiple ROIs per session') if self._verbose else None
         for ii in tqdm(range(n_iter_violationCorrection)):
             ## Prep parameters for splitting clusters
@@ -1592,8 +1746,9 @@ class Clusterer(util.ROICaT_Module):
 
             self.hdbs = hdbscan.HDBSCAN(
                 min_cluster_size=min_cluster_size,
+                min_samples=min_samples,
                 cluster_selection_epsilon=d_clusterMerge,
-                max_cluster_size=n_sessions,
+                max_cluster_size=max_cluster_size,
                 metric='precomputed',
                 alpha=alpha,
                 algorithm='generic',
@@ -2501,6 +2656,165 @@ class Clusterer(util.ROICaT_Module):
             return 0
         return (dens_same * dens_diff).sum().item()
 
+
+
+## Lazy-compiled numba kernel for weighted Jaccard. Compiled on first call
+## to avoid numba import overhead (subprocess spam on macOS) at module load.
+_weighted_jaccard_csr_kernel = None
+
+def _get_weighted_jaccard_kernel():
+    """
+    Lazily compile and cache the numba kernel for weighted Jaccard.
+    Returns the compiled ``_weighted_jaccard_csr_kernel`` function.
+    """
+    global _weighted_jaccard_csr_kernel
+    if _weighted_jaccard_csr_kernel is not None:
+        return _weighted_jaccard_csr_kernel
+
+    import numba
+
+    @numba.njit(cache=True)
+    def kernel(indptr, indices, data, out_data):
+        """
+        Numba kernel: weighted Jaccard (Ruzicka) similarity for each edge in a
+        symmetric CSR similarity matrix.
+
+        For each stored edge (i, j), computes:
+            J_w(i,j) = Σ_k min(s_ik, s_jk) / Σ_k max(s_ik, s_jk)
+        where the sum runs over all k in the union of neighbors of i and j,
+        **excluding k = i and k = j** (the direct edge endpoints).
+
+        Assumptions:
+            - Symmetric matrix (s_ij = s_ji for all stored pairs).
+            - Zero diagonal (no self-loops stored).
+            - Indices within each row are sorted ascending (CSR standard).
+            - All data values are non-negative.
+        """
+        n = len(indptr) - 1
+        for i in range(n):
+            for ptr_ij in range(indptr[i], indptr[i + 1]):
+                j = indices[ptr_ij]
+
+                ## Merge-scan sorted neighbor lists of rows i and j
+                pi = indptr[i]
+                pi_end = indptr[i + 1]
+                pj = indptr[j]
+                pj_end = indptr[j + 1]
+
+                sum_min = 0.0
+                sum_max = 0.0
+
+                while pi < pi_end and pj < pj_end:
+                    ki = indices[pi]
+                    kj = indices[pj]
+
+                    if ki == kj:
+                        ## Shared neighbor — skip if it is one of the edge endpoints
+                        if ki != i and ki != j:
+                            vi = data[pi]
+                            vj = data[pj]
+                            if vi < vj:
+                                sum_min += vi
+                                sum_max += vj
+                            else:
+                                sum_min += vj
+                                sum_max += vi
+                        pi += 1
+                        pj += 1
+                    elif ki < kj:
+                        ## Neighbor of i only — skip if it is j
+                        if ki != j:
+                            sum_max += data[pi]
+                        pi += 1
+                    else:
+                        ## Neighbor of j only — skip if it is i
+                        if kj != i:
+                            sum_max += data[pj]
+                        pj += 1
+
+                ## Drain remaining from row i
+                while pi < pi_end:
+                    if indices[pi] != j:
+                        sum_max += data[pi]
+                    pi += 1
+
+                ## Drain remaining from row j
+                while pj < pj_end:
+                    if indices[pj] != i:
+                        sum_max += data[pj]
+                    pj += 1
+
+                if sum_max > 0.0:
+                    out_data[ptr_ij] = sum_min / sum_max
+                else:
+                    out_data[ptr_ij] = 0.0
+
+    _weighted_jaccard_csr_kernel = kernel
+    return _weighted_jaccard_csr_kernel
+
+
+def weighted_jaccard_similarity(
+    s: scipy.sparse.csr_array,
+) -> scipy.sparse.csr_array:
+    """
+    Compute weighted Jaccard (Ruzicka) similarity from a sparse similarity
+    graph. For each pair (i, j) in the input, replaces the direct similarity
+    ``s_ij`` with a neighborhood-based structural similarity:
+
+    .. math::
+
+        J_w(i, j) = \\frac{\\sum_{k \\neq i,j} \\min(s_{ik}, s_{jk})}
+                          {\\sum_{k \\neq i,j} \\max(s_{ik}, s_{jk})}
+
+    where the sum is over all ``k`` in the union of non-zero neighbors of
+    ``i`` and ``j``, excluding ``k = i`` and ``k = j``.
+
+    This is a second-order similarity: two nodes score high if they share
+    many strong connections to the same neighbors. Acts as a denoising step
+    that amplifies community structure. Used in SNN clustering (Seurat),
+    Louvain/Leiden, and UMAP local connectivity.
+
+    Uses a numba-accelerated merge-scan over sorted CSR rows.
+    Complexity: O(nnz * avg_degree).
+
+    Args:
+        s (scipy.sparse.csr_array):
+            Sparse symmetric similarity matrix. Shape: *(n, n)*. Must have
+            non-negative values, zero diagonal (not stored), and sorted
+            indices within each row (standard CSR convention).
+
+    Returns:
+        (scipy.sparse.csr_array):
+            s_jaccard (scipy.sparse.csr_array):
+                Weighted Jaccard similarity matrix. Same sparsity pattern as
+                input. Values in [0, 1]. Symmetric if input is symmetric.
+                Zero diagonal.
+    """
+    assert isinstance(s, scipy.sparse.csr_array), (
+        f"Expected scipy.sparse.csr_array, got {type(s)}"
+    )
+    assert s.shape[0] == s.shape[1], "Matrix must be square."
+
+    ## Ensure sorted indices (required for merge-scan)
+    s_sorted = s
+    if not s.has_sorted_indices:
+        s_sorted = s.copy()
+        s_sorted.sort_indices()
+
+    data_f64 = s_sorted.data.astype(np.float64)
+    out_data = np.empty(len(data_f64), dtype=np.float64)
+
+    kernel = _get_weighted_jaccard_kernel()
+    kernel(
+        indptr=s_sorted.indptr,
+        indices=s_sorted.indices,
+        data=data_f64,
+        out_data=out_data,
+    )
+
+    s_jaccard = s_sorted.copy()
+    s_jaccard.data = out_data.astype(s.data.dtype)
+    return s_jaccard
 
 
 def attach_fully_connected_node(
