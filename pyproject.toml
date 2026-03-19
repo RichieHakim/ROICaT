@@ -51,7 +51,7 @@ classification = [
 tracking = [
     "roicat[core]",
     "opencv-contrib-python-headless<=4.13.0.92",
-    "fast-hdbscan @ git+https://github.com/RichieHakim/fast_hdbscan.git",
+    "fast-hdbscan==0.3.0",
     "kymatio==0.3.0",
     "kornia==0.8.2",
     "romatch-roicat>=0.1.2.post1",
@@ -93,7 +93,7 @@ all_latest = [
     "holoviews[recommended]",
     "jupyter-bokeh",
     "opencv-contrib-python-headless",
-    "fast-hdbscan @ git+https://github.com/RichieHakim/fast_hdbscan.git",
+    "fast-hdbscan==0.3.0",
     "kymatio",
     "kornia",
     "romatch-roicat",
