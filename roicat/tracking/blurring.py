@@ -1,14 +1,17 @@
-from typing import Union, List, Tuple, Optional
+from typing import List, Tuple, Optional
 
-import scipy.sparse
 import numpy as np
-from tqdm.auto import tqdm
+
+import sparse_convolution
 
 from .. import helpers, util
-    
+
 class ROI_Blurrer(util.ROICaT_Module):
     """
-    Blurs the Region of Interest (ROI).
+    Blurs the Region of Interest (ROI) spatial footprints using 2D convolution
+    to account for registration uncertainty across imaging sessions. Uses the
+    ``sparse_convolution`` library for fast sparse convolution via the
+    ``'direct'`` method (batch-parallel numba scatter).
     RH 2022
 
     Args:
@@ -39,17 +42,16 @@ class ROI_Blurrer(util.ROICaT_Module):
             Whether to print the convolutional blurring operation progress.
     """
     def __init__(
-        self, 
+        self,
         frame_shape: Tuple[int, int] = (512, 512),
         kernel_halfWidth: int = 2,
         plot_kernel: bool = False,
         verbose: bool = True,
     ):
         """
-        Initializes the ROI_Blurrer with the given frame shape, kernel half-width, 
+        Initializes the ROI_Blurrer with the given frame shape, kernel half-width,
         plot kernel and verbosity setting.
         """
-        ## Imports
         super().__init__()
 
         ## Store parameter (but not data) args as attributes
@@ -63,25 +65,25 @@ class ROI_Blurrer(util.ROICaT_Module):
             ],
         )
 
-
         self._frame_shape = frame_shape
         self._verbose = verbose
 
         self._width = kernel_halfWidth * 2
         self._kernel_size = max(int((self._width//2)*2) - 1, 1)
         kernel_tmp = helpers.cosine_kernel_2D(
-            center=(self._kernel_size//2, self._kernel_size//2), 
+            center=(self._kernel_size//2, self._kernel_size//2),
             image_size=(self._kernel_size, self._kernel_size),
             width=self._width
         )
         self.kernel = kernel_tmp / kernel_tmp.sum()
 
-        print('Preparing the Toeplitz convolution matrix') if self._verbose else None
-        self._conv = helpers.Toeplitz_convolution2d(
+        print('Preparing sparse convolution') if self._verbose else None
+        self._conv = sparse_convolution.Toeplitz_convolution2d(
             x_shape=self._frame_shape,
             k=self.kernel,
             mode='same',
             dtype=np.float32,
+            method='direct',
         )
 
         if plot_kernel:
@@ -102,11 +104,11 @@ class ROI_Blurrer(util.ROICaT_Module):
         Blurs the Region of Interest (ROI).
 
         Args:
-            spatialFootprints (List[object]): 
+            spatialFootprints (List[object]):
                 A list of sparse matrices corresponding to spatial footprints from each session.
 
         Returns:
-            (List[object]): 
+            (List[object]):
                 ROIs_blurred (List[object]):
                     A list of blurred ROI spatial footprints.
         """
@@ -122,13 +124,13 @@ class ROI_Blurrer(util.ROICaT_Module):
                     ) for sf in spatialFootprints
             ]
         return self.ROIs_blurred
-    
+
     def get_ROIsBlurred_maxIntensityProjection(self) -> List[object]:
         """
         Calculates the maximum intensity projection of the ROIs.
 
         Returns:
-            (List[object]): 
+            (List[object]):
                 ims (List[object]):
                     The maximum intensity projection of the ROIs.
         """
@@ -174,7 +176,7 @@ class ROI_Blurrer(util.ROICaT_Module):
 #         self._width = kernel_halfWidth * 2
 #         self._kernel_size = int((self._width//2)*2) + 3
 #         kernel_tmp = helpers.cosine_kernel_2D(
-#             center=(self._kernel_size//2, self._kernel_size//2), 
+#             center=(self._kernel_size//2, self._kernel_size//2),
 #             image_size=(self._kernel_size, self._kernel_size),
 #             width=self._width
 #         )
@@ -182,23 +184,23 @@ class ROI_Blurrer(util.ROICaT_Module):
 
 #         ## prepare kernel
 #         kernel_prep = torch.as_tensor(
-#             self.kernel[:,:,None,None], 
+#             self.kernel[:,:,None,None],
 #             dtype=torch.float32,
 #             device=device
 #         ).contiguous()
-        
+
 #         ## prepare convolution
 #         self._conv = spconv.SparseConv2d(
-#             in_channels=1, 
+#             in_channels=1,
 #             out_channels=1,
-#             kernel_size=self.kernel.shape, 
-#             stride=1, 
-#             padding=self.kernel.shape[0]//2, 
-#             dilation=1, 
-#             groups=1, 
+#             kernel_size=self.kernel.shape,
+#             stride=1,
+#             padding=self.kernel.shape[0]//2,
+#             dilation=1,
+#             groups=1,
 #             bias=False
 #         )
-        
+
 #         self._conv.weight = torch.nn.Parameter(data=kernel_prep, requires_grad=False)
 
 #         if plot_kernel:
@@ -209,7 +211,7 @@ class ROI_Blurrer(util.ROICaT_Module):
 
 #     def _sparse_conv2D(
 #         self,
-#         sf_sparseCOO, 
+#         sf_sparseCOO,
 #     ):
 #         """
 #         Method to perform a 2D convolution on a sparse matrix.
@@ -228,10 +230,10 @@ class ROI_Blurrer(util.ROICaT_Module):
 #         return sparse_convert_spconv_to_scipy(images_conv)
 
 #     def blur_ROIs(
-#         self, 
-#         spatialFootprints, 
-#         batch_size=None, 
-#         num_batches=100, 
+#         self,
+#         spatialFootprints,
+#         batch_size=None,
+#         num_batches=100,
 #     ):
 #         """
 #         Method to blur ROIs.
@@ -248,9 +250,9 @@ class ROI_Blurrer(util.ROICaT_Module):
 #                 The number of batches to use for blurring.
 #         """
 #         sf_coo = [sparse.as_coo(sf).reshape((sf.shape[0], self._frame_shape[0], self._frame_shape[1])) for sf in spatialFootprints]
-        
+
 #         self.ROIs_blurred = [scipy.sparse.vstack([self._sparse_conv2D(
-#             sf_sparseCOO=batch, 
+#             sf_sparseCOO=batch,
 #         ) for batch in helpers.make_batches(sf, batch_size=batch_size, num_batches=num_batches)]) for sf in sf_coo]
 
 #         return self.ROIs_blurred
@@ -269,7 +271,7 @@ class ROI_Blurrer(util.ROICaT_Module):
 #     spconv_array = spconv.SparseConvTensor(
 #         features=torch.as_tensor(coo.reshape((-1)).T.data, dtype=torch.float32, device=device)[:,None].contiguous(),
 #         indices=idx_raw,
-#         spatial_shape=coo.shape[1:], 
+#         spatial_shape=coo.shape[1:],
 #         batch_size=coo.shape[0]
 #     )
 #     return spconv_array
@@ -281,4 +283,3 @@ class ROI_Blurrer(util.ROICaT_Module):
 #         shape=[sp_arr.batch_size] + sp_arr.spatial_shape
 #     )
 #     return coo.reshape((coo.shape[0], -1)).to_scipy_sparse().tocsr()
-

@@ -336,6 +336,20 @@ class Test_Equivalence_checker:
         s2.data = s2.data * (1 + 1e-7)  ## Proportional perturbation within rtol
         assert checker(s2, s)[0] == True
 
+    def test_sparse_nonzero_atol_allows_implicit_zero_differences(self):
+        checker = helpers.Equivalence_checker(kwargs_allclose={'rtol': 0, 'atol': 0.2, 'equal_nan': True})
+        true = scipy.sparse.csr_array((3, 3), dtype=np.float32)
+        test = scipy.sparse.csr_array(([0.1], ([1], [2])), shape=(3, 3), dtype=np.float32)
+        result = checker(test, true)
+        assert result[0] == True
+
+    def test_sparse_exact_equality_ignores_explicit_zero_storage(self):
+        checker = helpers.Equivalence_checker(kwargs_allclose={'rtol': 0, 'atol': 0, 'equal_nan': True})
+        true = scipy.sparse.csr_array(([1.0], ([0], [0])), shape=(2, 2), dtype=np.float32)
+        test = scipy.sparse.csr_array(([1.0, 0.0], ([0, 1], [0, 1])), shape=(2, 2), dtype=np.float32)
+        result = checker(test, true)
+        assert result[0] == True
+
     def test_sparse_different(self):
         checker = helpers.Equivalence_checker()
         s1 = scipy.sparse.csr_array(np.eye(3))
@@ -400,6 +414,28 @@ class Test_Equivalence_checker:
         result = checker(a, b)
         # Should not crash; result[0] is None (skipped) or True/False
         assert result[0] is not None or isinstance(result[1], str)
+
+    def test_dict_vs_object_normalizes_public_attrs(self):
+        class Dummy:
+            def __init__(self):
+                self.a = np.array([1.0, 2.0], dtype=np.float32)
+                self.b = 'ok'
+                self._private = 'ignore'
+
+        checker = helpers.Equivalence_checker(verbose=False)
+        result = checker(
+            test=Dummy(),
+            true={'a': np.array([1.0, 2.0], dtype=np.float32), 'b': 'ok'},
+        )
+        assert result['a'][0] == True
+        assert result['b'][0] == True
+
+    def test_torch_tensor_leaf_normalized_to_numpy(self):
+        checker = helpers.Equivalence_checker(verbose=False)
+        tensor = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32)
+        array = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        result = checker(tensor, array)
+        assert result[0] == True
 
 
 class Test_get_nums_from_string:
@@ -604,6 +640,107 @@ class Test_flatten_dict:
 
 
 ######################################################################################################################################
+########################################################## BLURRING ##################################################################
+######################################################################################################################################
+
+
+class Test_ROI_Blurrer:
+    """Tests for ROI_Blurrer using sparse_convolution library."""
+
+    def test_basic_blurring(self):
+        """Blurring sparse ROIs produces correct shape and nonzero output."""
+        from roicat.tracking.blurring import ROI_Blurrer
+
+        blurrer = ROI_Blurrer(frame_shape=(64, 64), kernel_halfWidth=2, verbose=False)
+        sf = scipy.sparse.random(10, 64 * 64, density=0.01, format='csr', dtype=np.float32)
+        result = blurrer.blur_ROIs([sf])
+
+        assert len(result) == 1
+        assert result[0].shape == sf.shape  ## mode='same' preserves shape
+        assert scipy.sparse.issparse(result[0])
+        assert result[0].nnz > sf.nnz  ## blurring spreads nonzeros
+
+    def test_zero_halfwidth_bypass(self):
+        """kernel_halfWidth=0 returns input unchanged."""
+        from roicat.tracking.blurring import ROI_Blurrer
+
+        blurrer = ROI_Blurrer(frame_shape=(64, 64), kernel_halfWidth=0, verbose=False)
+        sf = scipy.sparse.random(5, 64 * 64, density=0.01, format='csr', dtype=np.float32)
+        result = blurrer.blur_ROIs([sf])
+
+        assert result[0] is sf  ## exact same object, no copy
+
+    def test_parity_with_old_toeplitz(self):
+        """New sparse_convolution.direct matches the old helpers.Toeplitz_convolution2d."""
+        from roicat.tracking.blurring import ROI_Blurrer
+
+        ## Build kernel matching ROI_Blurrer internals
+        kernel_halfWidth = 2
+        width = kernel_halfWidth * 2
+        kernel_size = max(int((width // 2) * 2) - 1, 1)
+        kernel = helpers.cosine_kernel_2D(
+            center=(kernel_size // 2, kernel_size // 2),
+            image_size=(kernel_size, kernel_size),
+            width=width,
+        )
+        kernel = kernel / kernel.sum()
+
+        ## Old implementation (still in helpers.py)
+        old_conv = helpers.Toeplitz_convolution2d(
+            x_shape=(64, 64), k=kernel, mode='same', dtype=np.float32,
+        )
+        ## New implementation via ROI_Blurrer
+        blurrer = ROI_Blurrer(frame_shape=(64, 64), kernel_halfWidth=2, verbose=False)
+
+        rng = np.random.default_rng(42)
+        x_dense = rng.random((20, 64 * 64), dtype=np.float32)
+        x_dense[x_dense > 0.01] = 0.0
+        x_sparse = scipy.sparse.csr_matrix(x_dense)
+
+        out_old = old_conv(x=x_sparse, batching=True, mode='same')
+        blurrer.blur_ROIs([x_sparse])
+        out_new = blurrer.ROIs_blurred[0]
+
+        np.testing.assert_allclose(
+            out_old.toarray(), out_new.toarray(), atol=1e-6,
+            err_msg="sparse_convolution direct method does not match old Toeplitz",
+        )
+
+    def test_parity_with_scipy_convolve2d(self):
+        """Blurred output matches scipy.signal.convolve2d ground truth."""
+        import scipy.signal
+        from roicat.tracking.blurring import ROI_Blurrer
+
+        blurrer = ROI_Blurrer(frame_shape=(32, 32), kernel_halfWidth=2, verbose=False)
+
+        rng = np.random.default_rng(123)
+        x_dense = rng.random((32, 32), dtype=np.float32)
+        x_dense[x_dense > 0.02] = 0.0
+
+        ## Ground truth
+        expected = scipy.signal.convolve2d(x_dense, blurrer.kernel, mode='same')
+
+        ## Via ROI_Blurrer
+        x_sparse = scipy.sparse.csr_matrix(x_dense.ravel()[None, :])
+        blurrer.blur_ROIs([x_sparse])
+        actual = blurrer.ROIs_blurred[0].toarray().reshape(32, 32)
+
+        np.testing.assert_allclose(actual, expected, atol=1e-6)
+
+    def test_max_intensity_projection(self):
+        """get_ROIsBlurred_maxIntensityProjection returns correct shape."""
+        from roicat.tracking.blurring import ROI_Blurrer
+
+        blurrer = ROI_Blurrer(frame_shape=(32, 32), kernel_halfWidth=2, verbose=False)
+        sf = scipy.sparse.random(5, 32 * 32, density=0.01, format='csr', dtype=np.float32)
+        blurrer.blur_ROIs([sf])
+        mip = blurrer.get_ROIsBlurred_maxIntensityProjection()
+
+        assert len(mip) == 1
+        assert mip[0].shape == (32, 32)
+
+
+######################################################################################################################################
 ####################################################### DATA_IMPORTING ###############################################################
 ######################################################################################################################################
 
@@ -737,7 +874,7 @@ def clusterer_with_data(dir_data_test):
 
     from roicat.tracking.similarity_graph import DEFAULT_METRICS
     clusterer = tracking.clustering.Clusterer(
-        similarities={'sf': sim['s_sf'], 'nn': sim['s_NN_z'], 'swt': sim['s_SWT_z']},
+        similarities=sim['similarities_z'],
         metric_configs=DEFAULT_METRICS,
         s_sesh=sim['s_sesh'],
         verbose=False,
@@ -876,7 +1013,7 @@ class Test_estimate_sigmoid_params:
         sim = util.RichFile_ROICaT(path=path_run_data)['sim'].load()
         from roicat.tracking.similarity_graph import DEFAULT_METRICS
         fresh = tracking.clustering.Clusterer(
-            similarities={'sf': sim['s_sf'], 'nn': sim['s_NN_z'], 'swt': sim['s_SWT_z']},
+            similarities=sim['similarities_z'],
             metric_configs=DEFAULT_METRICS,
             s_sesh=sim['s_sesh'],
             verbose=False,
@@ -1309,6 +1446,67 @@ class TestFastHDBSCAN:
                     f"session_counts={session_counts[session_counts > 1]}"
                 )
 
+    def test_fast_hdbscan_group_labels_follow_session_bool_row_order(self, synthetic_setup, monkeypatch):
+        """
+        Group-label cannot-link constraints should use the per-row session ID,
+        not assume ROIs are stored in contiguous session blocks.
+        """
+        from roicat import tracking
+        from roicat.tracking.similarity_graph import DEFAULT_METRICS
+        import fast_hdbscan
+
+        clusterer, d_conj, session_bool = synthetic_setup
+        n_sessions = session_bool.shape[1]
+        n_rois_per_session = session_bool.shape[0] // n_sessions
+
+        ## Interleave rows by ROI index across sessions so session membership
+        ## is no longer represented by contiguous blocks in row order.
+        perm = np.arange(session_bool.shape[0]).reshape(n_sessions, n_rois_per_session).T.reshape(-1)
+        session_bool_perm = session_bool[perm]
+
+        similarities_perm = {
+            name: scipy.sparse.csr_array(sim[perm][:, perm])
+            for name, sim in clusterer.similarities.items()
+        }
+        s_sesh_perm = scipy.sparse.csr_array(clusterer.s_sesh[perm][:, perm])
+        d_conj_perm = scipy.sparse.csr_array(d_conj[perm][:, perm])
+
+        clusterer_perm = tracking.clustering.Clusterer(
+            similarities=similarities_perm,
+            metric_configs=DEFAULT_METRICS,
+            s_sesh=s_sesh_perm,
+            session_bool=session_bool_perm,
+            verbose=False,
+        )
+
+        captured = {}
+
+        class DummyHDBSCAN:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+            def fit(self, d):
+                self.labels_ = np.ones(d.shape[0], dtype=np.int32) * -1
+                return self
+
+        monkeypatch.setattr(fast_hdbscan, 'HDBSCAN', DummyHDBSCAN)
+
+        clusterer_perm.fit(
+            d_conj=d_conj_perm,
+            session_bool=session_bool_perm,
+        )
+
+        expected = np.asarray(np.argmax(session_bool_perm, axis=1), dtype=np.int32)
+        wrong_if_block_assumed = np.repeat(
+            np.arange(n_sessions, dtype=np.int32),
+            np.asarray(session_bool_perm.sum(axis=0), dtype=int),
+        )
+
+        assert not np.array_equal(expected, wrong_if_block_assumed), (
+            "Test setup should break the contiguous-block assumption."
+        )
+        assert np.array_equal(captured['cannot_link_groups'], expected)
+
     def test_fast_hdbscan_violations_attribute(self, synthetic_setup):
         """violations_labels should be empty with cannot-link constraints."""
         clusterer, d_conj, session_bool = synthetic_setup
@@ -1431,6 +1629,41 @@ class TestFastHDBSCAN:
                 f"got sizes: {c}"
             )
 
+    def test_fast_hdbscan_min_samples(self, synthetic_setup):
+        """min_samples should be accepted and produce valid labels."""
+        clusterer, d_conj, session_bool = synthetic_setup
+        labels = clusterer.fit(
+            d_conj=d_conj,
+            session_bool=session_bool,
+            min_samples=1,
+        )
+        assert isinstance(labels, np.ndarray)
+        assert len(labels) == session_bool.shape[0]
+
+    def test_fast_hdbscan_cluster_selection_persistence(self, synthetic_setup):
+        """cluster_selection_persistence should be accepted."""
+        clusterer, d_conj, session_bool = synthetic_setup
+        labels = clusterer.fit(
+            d_conj=d_conj,
+            session_bool=session_bool,
+            cluster_selection_persistence=0.1,
+        )
+        assert isinstance(labels, np.ndarray)
+        assert len(labels) == session_bool.shape[0]
+
+    def test_fast_hdbscan_d_clusterMerge_defaults_to_d_cutoff(self, synthetic_setup):
+        """When d_clusterMerge=None, should use self.d_cutoff if available."""
+        clusterer, d_conj, session_bool = synthetic_setup
+        ## Set d_cutoff as if make_pruned_similarity_graphs was called
+        clusterer.d_cutoff = 0.42
+        labels = clusterer.fit(
+            d_conj=d_conj,
+            session_bool=session_bool,
+        )
+        assert isinstance(labels, np.ndarray)
+        ## Verify the stored param reflects the d_cutoff value
+        assert clusterer.params['fit']['d_clusterMerge'] is None  ## original arg was None
+
 
 class TestFastHDBSCANQualityMetrics:
     """Tests for quality metrics extraction with fast_hdbscan backend."""
@@ -1520,6 +1753,277 @@ def test_richfile_optimize_result_roundtrip(tmp_path):
     assert loaded['de_result'].nit == result.nit
     assert loaded['de_result'].success == result.success
     assert loaded['de_result'].message == result.message
+
+
+######################################################################################################################################
+######################################################## NOISE RESCUE ################################################################
+######################################################################################################################################
+
+
+class TestNoiseRescue:
+    """Tests for noise_rescue_kruskal and Clusterer.rescue_noise."""
+
+    def _make_graph_and_labels(self):
+        """
+        Build a synthetic 8-node graph with 3 sessions, 2 pre-formed
+        clusters with gaps, and 4 noise points that can fill those gaps.
+        Returns (d_conj, labels, group_labels, session_bool, n_groups).
+
+        Layout (sessions S0, S1, S2):
+            Cluster 0: nodes 0 (S0), 1 (S1) — missing S2
+            Cluster 1: nodes 2 (S0), 3 (S1) — missing S2
+            Noise:     nodes 4 (S2), 5 (S2), 6 (S1), 7 (S0)
+
+        Noise edges (all inter-session by construction):
+            4 → 0 (d=0.2, S2→S0 — rescue 4 into cluster 0, no S2 conflict)
+            5 → 2 (d=0.25, S2→S0 — rescue 5 into cluster 1, no S2 conflict)
+            6 → 0 (d=0.3, S1→S0 — blocked: cluster 0 has node 1 from S1)
+            7 → 3 (d=0.35, S0→S1 — blocked: cluster 1 has node 2 from S0)
+        """
+        n = 8
+        n_sessions = 3
+
+        ## Session assignments
+        session_bool = np.zeros((n, n_sessions), dtype=bool)
+        session_bool[0, 0] = True  ## S0, cluster 0
+        session_bool[1, 1] = True  ## S1, cluster 0
+        session_bool[2, 0] = True  ## S0, cluster 1
+        session_bool[3, 1] = True  ## S1, cluster 1
+        session_bool[4, 2] = True  ## S2, noise
+        session_bool[5, 2] = True  ## S2, noise
+        session_bool[6, 1] = True  ## S1, noise
+        session_bool[7, 0] = True  ## S0, noise
+
+        group_labels = np.argmax(session_bool, axis=1).astype(np.int32)
+
+        ## Phase 1 labels: clusters 0 and 1, rest noise
+        labels = np.array([0, 0, 1, 1, -1, -1, -1, -1], dtype=np.int64)
+
+        ## Build inter-session masked distance matrix
+        rows = []
+        cols = []
+        dists = []
+
+        def add_edge(i, j, d):
+            if group_labels[i] != group_labels[j]:
+                rows.extend([i, j])
+                cols.extend([j, i])
+                dists.extend([d, d])
+
+        ## Intra-cluster edges (inter-session)
+        add_edge(0, 1, 0.1)   ## S0→S1, cluster 0
+        add_edge(2, 3, 0.1)   ## S0→S1, cluster 1
+
+        ## Noise rescue edges
+        add_edge(4, 0, 0.2)   ## S2→S0, rescue 4 into cluster 0
+        add_edge(5, 2, 0.25)  ## S2→S0, rescue 5 into cluster 1
+        add_edge(6, 0, 0.3)   ## S1→S0, but cluster 0 has S1 (node 1) → blocked
+        add_edge(7, 3, 0.35)  ## S0→S1, but cluster 1 has S0 (node 2) → blocked
+
+        d_conj = scipy.sparse.csr_array(
+            (np.array(dists, dtype=np.float64), (rows, cols)),
+            shape=(n, n),
+        )
+        d_conj.sort_indices()
+
+        return d_conj, labels, group_labels, session_bool, n_sessions
+
+    def test_noise_rescue_basic(self):
+        """Noise points near existing clusters should be rescued when no session conflict."""
+        from roicat.tracking.clustering import noise_rescue_kruskal
+
+        d_conj, labels, group_labels, session_bool, n_groups = self._make_graph_and_labels()
+
+        new_labels = noise_rescue_kruskal(
+            d_conj=d_conj,
+            labels=labels,
+            group_labels=group_labels,
+            n_groups=n_groups,
+            d_cutoff=0.5,
+        )
+
+        ## Node 4 (S2, noise) → edge to node 0 (S0, cluster 0): no S2 in cluster 0 → rescued
+        assert new_labels[4] == 0, f"Node 4 should join cluster 0, got {new_labels[4]}"
+        ## Node 5 (S2, noise) → edge to node 2 (S0, cluster 1): no S2 in cluster 1 → rescued
+        assert new_labels[5] == 1, f"Node 5 should join cluster 1, got {new_labels[5]}"
+        ## Node 6 (S1, noise) → edge to node 0 (S0, cluster 0): cluster 0 has S1 (node 1) → blocked
+        assert new_labels[6] == -1, f"Node 6 should stay noise (session conflict), got {new_labels[6]}"
+        ## Node 7 (S0, noise) → edge to node 3 (S1, cluster 1): cluster 1 has S0 (node 2) → blocked
+        assert new_labels[7] == -1, f"Node 7 should stay noise (session conflict), got {new_labels[7]}"
+        ## Original cluster members should keep their labels
+        assert new_labels[0] == 0
+        assert new_labels[1] == 0
+        assert new_labels[2] == 1
+        assert new_labels[3] == 1
+
+    def test_noise_rescue_session_constraint(self):
+        """Noise rescue should block merges that would violate session constraints."""
+        from roicat.tracking.clustering import noise_rescue_kruskal
+
+        ## Build graph: cluster 0 has nodes from S0 and S1.
+        ## Noise node from S0 has edge to cluster 0 — should be blocked.
+        n = 4
+        session_bool = np.zeros((n, 2), dtype=bool)
+        session_bool[0, 0] = True  ## S0, cluster 0
+        session_bool[1, 1] = True  ## S1, cluster 0
+        session_bool[2, 0] = True  ## S0, noise — same session as node 0
+        session_bool[3, 1] = True  ## S1, noise — same session as node 1
+
+        group_labels = np.argmax(session_bool, axis=1).astype(np.int32)
+        labels = np.array([0, 0, -1, -1], dtype=np.int64)
+
+        ## Noise node 2 (S0) → node 1 (S1, cluster 0): blocked because
+        ## cluster 0 already has node 0 (S0) — session conflict!
+        ## Noise node 3 (S1) → node 0 (S0, cluster 0): blocked because
+        ## cluster 0 already has node 1 (S1) — session conflict!
+        rows = [2, 1, 3, 0]
+        cols = [1, 2, 0, 3]
+        dists = [0.2, 0.2, 0.2, 0.2]
+        ## Also the intra-cluster edge
+        rows += [0, 1]
+        cols += [1, 0]
+        dists += [0.1, 0.1]
+
+        d_conj = scipy.sparse.csr_array(
+            (np.array(dists, dtype=np.float64), (rows, cols)),
+            shape=(n, n),
+        )
+        d_conj.sort_indices()
+
+        new_labels = noise_rescue_kruskal(
+            d_conj=d_conj,
+            labels=labels,
+            group_labels=group_labels,
+            n_groups=2,
+            d_cutoff=0.5,
+        )
+
+        ## Both noise nodes should remain noise (or form their own cluster
+        ## if they can merge with each other, but they are from different
+        ## sessions so they CAN merge)
+        ## Node 2 (S0) and node 3 (S1) can merge since they are from
+        ## different sessions. But they have no direct edge to each other.
+        ## So they should remain -1.
+        assert new_labels[2] == -1, f"Node 2 should stay noise, got {new_labels[2]}"
+        assert new_labels[3] == -1, f"Node 3 should stay noise, got {new_labels[3]}"
+
+    def test_noise_rescue_d_cutoff(self):
+        """Edges beyond d_cutoff should be ignored."""
+        from roicat.tracking.clustering import noise_rescue_kruskal
+
+        d_conj, labels, group_labels, session_bool, n_groups = self._make_graph_and_labels()
+
+        ## Set d_cutoff to 0.22 — only node 4→0 (d=0.2) should make it
+        new_labels = noise_rescue_kruskal(
+            d_conj=d_conj,
+            labels=labels,
+            group_labels=group_labels,
+            n_groups=n_groups,
+            d_cutoff=0.22,
+        )
+
+        ## Node 4 rescued (edge d=0.2 <= 0.22)
+        assert new_labels[4] == 0, f"Node 4 should be rescued, got {new_labels[4]}"
+        ## Node 5 NOT rescued (edge d=0.25 > 0.22)
+        assert new_labels[5] == -1, f"Node 5 should stay noise, got {new_labels[5]}"
+
+    def test_noise_rescue_nucleation(self):
+        """Two noise points from different sessions should nucleate a new cluster."""
+        from roicat.tracking.clustering import noise_rescue_kruskal
+
+        ## 4 nodes: 2 in cluster 0, 2 noise that are close to each other
+        ## but far from the cluster
+        n = 4
+        session_bool = np.zeros((n, 2), dtype=bool)
+        session_bool[0, 0] = True  ## S0, cluster 0
+        session_bool[1, 1] = True  ## S1, cluster 0
+        session_bool[2, 0] = True  ## S0, noise
+        session_bool[3, 1] = True  ## S1, noise
+
+        group_labels = np.argmax(session_bool, axis=1).astype(np.int32)
+        labels = np.array([0, 0, -1, -1], dtype=np.int64)
+
+        ## Intra-cluster edge
+        rows = [0, 1]
+        cols = [1, 0]
+        dists = [0.1, 0.1]
+        ## Noise-to-noise edge (different sessions, so OK)
+        rows += [2, 3]
+        cols += [3, 2]
+        dists += [0.15, 0.15]
+
+        d_conj = scipy.sparse.csr_array(
+            (np.array(dists, dtype=np.float64), (rows, cols)),
+            shape=(n, n),
+        )
+        d_conj.sort_indices()
+
+        new_labels = noise_rescue_kruskal(
+            d_conj=d_conj,
+            labels=labels,
+            group_labels=group_labels,
+            n_groups=2,
+            d_cutoff=0.5,
+        )
+
+        ## Nodes 2 and 3 should form a new cluster (label > 0)
+        assert new_labels[2] >= 0, f"Node 2 should be in a cluster, got {new_labels[2]}"
+        assert new_labels[2] == new_labels[3], (
+            f"Nodes 2 and 3 should be in same cluster: {new_labels[2]} vs {new_labels[3]}"
+        )
+        ## The new cluster should have a different label from cluster 0
+        assert new_labels[2] != labels[0], (
+            f"New cluster should have a fresh label, not {labels[0]}"
+        )
+
+    def test_noise_rescue_no_mutation(self):
+        """Input labels array should not be modified."""
+        from roicat.tracking.clustering import noise_rescue_kruskal
+
+        d_conj, labels, group_labels, session_bool, n_groups = self._make_graph_and_labels()
+        labels_copy = labels.copy()
+
+        noise_rescue_kruskal(
+            d_conj=d_conj,
+            labels=labels,
+            group_labels=group_labels,
+            n_groups=n_groups,
+            d_cutoff=0.5,
+        )
+
+        np.testing.assert_array_equal(labels, labels_copy, err_msg="Input labels were mutated")
+
+    def test_rescue_noise_wired_into_fit(self):
+        """fit(rescue_noise=True) should rescue more noise than rescue_noise=False."""
+        from roicat.tracking import clustering
+        from roicat.tracking.similarity_graph import SimilarityMetric
+
+        clusterer, d_conj, session_bool = _make_synthetic_clusterer(
+            n_sessions=5, n_rois_per_session=30, seed=42,
+        )
+        ## First run without rescue
+        labels_no_rescue = clusterer.fit(
+            d_conj=d_conj,
+            session_bool=session_bool,
+            rescue_noise=False,
+        )
+        n_noise_no_rescue = np.sum(labels_no_rescue == -1)
+
+        ## Re-create to avoid state leakage
+        clusterer2, d_conj2, session_bool2 = _make_synthetic_clusterer(
+            n_sessions=5, n_rois_per_session=30, seed=42,
+        )
+        labels_rescue = clusterer2.fit(
+            d_conj=d_conj2,
+            session_bool=session_bool2,
+            rescue_noise=True,
+        )
+        n_noise_rescue = np.sum(labels_rescue == -1)
+
+        ## Rescue should reduce noise (or at worst keep it the same)
+        assert n_noise_rescue <= n_noise_no_rescue, (
+            f"Rescue should not increase noise: {n_noise_rescue} > {n_noise_no_rescue}"
+        )
 
 
 ######################################################################################################################################

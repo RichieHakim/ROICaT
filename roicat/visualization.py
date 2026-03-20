@@ -167,6 +167,7 @@ def compute_colored_FOV(
     cmap: Union[str, object] = 'random',
     alphas_labels: Optional[np.ndarray] = None,
     alphas_sf: Optional[Union[List[np.ndarray], np.ndarray]] = None,
+    color_unlabeled: Optional[List[float]] = None,
 ) -> List[np.ndarray]:
     """
     Computes a set of images of fields of view (FOV) of spatial footprints,
@@ -258,7 +259,7 @@ def compute_colored_FOV(
         colors = np.array([[0,0,0,0]])
 
     if np.isin(-1, labels_cat):
-        colors[0] = [0,0,0,0]
+        colors[0] = [0, 0, 0, 0] if color_unlabeled is None else color_unlabeled
 
     labels_squeezed = helpers.squeeze_integers(labels_cat)
     labels_squeezed -= labels_squeezed.min()
@@ -342,7 +343,7 @@ def display_cropped_cluster_ims(
     labels_bool_t = labels_bool_t[:n_labels_to_display]
 
     def helper_crop_cluster_ims(ii):
-        idx = labels_bool_t[ii].indices
+        idx = labels_bool_t[[ii]].indices
         return np.concatenate(list(crop_cluster_ims(ROI_ims_sparse[idx].toarray().reshape(len(idx), FOV_height, FOV_width))), axis=1)
 
     labels_sfCat = [helper_crop_cluster_ims(ii) for ii in range(labels_bool_t.shape[0])]

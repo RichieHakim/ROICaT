@@ -1256,13 +1256,101 @@ class Clusterer(util.ROICaT_Module):
         self.dConj_pruned = prune(self.dConj, self.graph_pruned)
         self.sConj_pruned = prune(self.sConj, self.graph_pruned)
 
+    def apply_weighted_jaccard(
+        self,
+        s_conj: Optional[scipy.sparse.csr_array] = None,
+        d_conj: Optional[scipy.sparse.csr_array] = None,
+        alpha: float = 1.0,
+    ) -> Tuple[scipy.sparse.csr_array, scipy.sparse.csr_array]:
+        """
+        Apply weighted Jaccard preprocessing to a similarity graph.
+        Returns new similarity and distance matrices without modifying
+        ``self``.
+
+        Can be called in two ways:
+
+        1. **From stored state** (no args): uses ``self.sConj_pruned`` from
+           ``make_pruned_similarity_graphs()``.
+        2. **Purely functional**: pass ``s_conj`` or ``d_conj`` directly.
+           Exactly one must be provided; the other is derived as ``1 - x``.
+
+        The weighted Jaccard replaces each pairwise similarity with a
+        measure of shared neighborhood structure:
+
+        .. math::
+
+            J_w(i,j) = \\frac{\\sum_k \\min(s_{ik}, s_{jk})}
+                             {\\sum_k \\max(s_{ik}, s_{jk})}
+
+        This amplifies within-cluster similarity and suppresses cross-cluster
+        noise. See :func:`weighted_jaccard_similarity` for details.
+
+        Args:
+            s_conj (Optional[scipy.sparse.csr_array]):
+                Similarity matrix to transform. If ``None``, uses
+                ``self.sConj_pruned``. Mutually exclusive with ``d_conj``.
+            d_conj (Optional[scipy.sparse.csr_array]):
+                Distance matrix to transform (converted to similarity via
+                ``1 - d``). If ``None``, uses ``self.sConj_pruned``.
+                Mutually exclusive with ``s_conj``.
+            alpha (float):
+                Blending weight between Jaccard and original similarity.
+                ``alpha=1.0`` uses pure Jaccard (default). ``alpha=0.0``
+                returns copies of the originals. Values in between give a
+                linear blend: ``s_final = alpha * s_jaccard + (1-alpha) * s_original``.
+
+        Returns:
+            (Tuple[scipy.sparse.csr_array, scipy.sparse.csr_array]):
+                sConj_jaccard (scipy.sparse.csr_array):
+                    Jaccard-refined similarity matrix. Same sparsity as input.
+                dConj_jaccard (scipy.sparse.csr_array):
+                    Corresponding distance matrix (``1 - sConj_jaccard``).
+        """
+        assert not (s_conj is not None and d_conj is not None), (
+            "Provide s_conj or d_conj, not both."
+        )
+        assert 0.0 <= alpha <= 1.0, f"alpha must be in [0, 1], got {alpha}"
+
+        ## Resolve input similarity matrix
+        if s_conj is not None:
+            s = s_conj
+        elif d_conj is not None:
+            s = d_conj.copy()
+            s.data = 1.0 - s.data
+        else:
+            assert hasattr(self, 'sConj_pruned') and self.sConj_pruned is not None, (
+                "No input provided and self.sConj_pruned is not set. "
+                "Either pass s_conj/d_conj or call make_pruned_similarity_graphs() first."
+            )
+            s = self.sConj_pruned
+
+        if alpha == 0.0:
+            s_out = s.copy()
+            d_out = s.copy()
+            d_out.data = 1.0 - d_out.data
+            return s_out, d_out
+
+        s_jaccard = weighted_jaccard_similarity(s)
+
+        if alpha < 1.0:
+            ## Blend: s_final = alpha * s_jaccard + (1 - alpha) * s_original
+            s_jaccard.data = alpha * s_jaccard.data + (1.0 - alpha) * s.data
+
+        d_jaccard = s_jaccard.copy()
+        d_jaccard.data = 1.0 - d_jaccard.data
+
+        return s_jaccard, d_jaccard
+
     def fit(
         self,
         d_conj: scipy.sparse.csr_array,
         session_bool: np.ndarray,
         min_cluster_size: int = 2,
+        max_cluster_size: Optional[int] = None,
+        min_samples: Optional[int] = None,
         n_iter_violationCorrection: int = 5,
         cluster_selection_method: str = 'leaf',
+        cluster_selection_persistence: float = 0.0,
         d_clusterMerge: Optional[float] = None,
         alpha: float = 0.999,
         split_intraSession_clusters: bool = True,
@@ -1270,16 +1358,18 @@ class Clusterer(util.ROICaT_Module):
         n_steps_clusterSplit: int = 100,
         backend: str = 'fast_hdbscan',
         algorithm: str = 'kruskal',
+        rescue_noise: bool = True,
     ) -> np.ndarray:
         """
         Fits clustering using HDBSCAN with same-session constraint enforcement.
 
         By default (``backend='fast_hdbscan'``), uses ``fast_hdbscan.HDBSCAN``
-        with native cannot-link constraints. The cannot-link matrix is built
-        from ``self.s_sesh_inv`` (True where two ROIs are from the SAME
-        session), which prevents same-session ROIs from ever being placed in
-        the same cluster during MST construction. This eliminates the need
-        for iterative violation correction.
+        with group-label cannot-link constraints. Each ROI's session index
+        is passed as a group label; same-session ROIs cannot co-cluster.
+        This uses O(N) memory (an int32 vector) instead of the O(N^2) sparse
+        cannot-link matrix, and O(1) per-merge conflict checks via bitmask.
+        Transitive constraints are handled correctly: if components A and B
+        are merged and both contain session-0 ROIs, the merge is blocked.
 
         Set ``backend='legacy'`` to use the original ``hdbscan.HDBSCAN`` with
         iterative violation correction via dendrogram walk-back.
@@ -1295,6 +1385,18 @@ class Clusterer(util.ROICaT_Module):
             min_cluster_size (int):
                 Minimum cluster size to be considered a cluster. Can be 'all'.
                 (Default is *2*)
+            max_cluster_size (Optional[int]):
+                Maximum cluster size. Clusters larger than this are split. If
+                ``None``, defaults to ``n_sessions`` (one ROI per session),
+                which is the natural constraint for neuron tracking. Set to a
+                larger value to allow clusters spanning a subset of sessions.
+                (Default is ``None``)
+            min_samples (Optional[int]):
+                Number of neighbors a point needs to be considered "core"
+                (non-noise) by HDBSCAN. Controls the density threshold
+                independently of ``min_cluster_size``. Lower values → fewer
+                noise points. If ``None``, defaults to ``min_cluster_size``
+                (HDBSCAN default behavior). (Default is ``None``)
             n_iter_violationCorrection (int):
                 Number of iterations to correct for clusters with multiple ROIs
                 per session. Only used with ``backend='legacy'``.
@@ -1303,11 +1405,20 @@ class Clusterer(util.ROICaT_Module):
                 Cluster selection method. Either ``'leaf'`` or ``'eom'``. 'leaf'
                 leans towards smaller clusters, 'eom' towards larger clusters.
                 (Default is ``'leaf'``)
+            cluster_selection_persistence (float):
+                Minimum stability (persistence) a cluster must have to survive
+                selection. Clusters below this threshold are folded into their
+                parent. Higher values → fewer but more stable clusters. Only
+                used with ``backend='fast_hdbscan'``. (Default is *0.0*)
             d_clusterMerge (Optional[float]):
-                Distance threshold for merging clusters. All clusters with ROIs
-                closer than this distance will be merged. If ``None``, the
-                distance is calculated as the mean + 1*std of the conjunctive
-                distances. (Default is ``None``)
+                Distance threshold for merging clusters
+                (``cluster_selection_epsilon`` in HDBSCAN). Clusters separated
+                by less than this distance are merged. If ``None``, defaults to
+                ``self.d_cutoff`` (the pruning threshold from
+                ``make_pruned_similarity_graphs``), which is the inferred
+                same/different decision boundary. Falls back to
+                ``mean + 1*std`` of the distance data if ``d_cutoff`` is not
+                available. (Default is ``None``)
             alpha (float):
                 Alpha value. Only used with ``backend='legacy'``. (Default is
                 *0.999*)
@@ -1337,6 +1448,12 @@ class Clusterer(util.ROICaT_Module):
                 * ``'boruvka'``: Boruvka parallel MST. Supports cannot-link
                   only with ``metric='precomputed'``. \n
                 (Default is ``'kruskal'``)
+            rescue_noise (bool):
+                If ``True``, run a post-HDBSCAN noise rescue pass that
+                assigns noise ROIs to nearby clusters (or nucleates new small
+                clusters) using a Kruskal-style sorted-edge traversal with
+                DSU bitmask cannot-link constraints. Only used with
+                ``backend='fast_hdbscan'``. (Default is ``True``)
 
         Returns:
             (np.ndarray):
@@ -1348,8 +1465,11 @@ class Clusterer(util.ROICaT_Module):
             locals_dict=locals(),
             keys=[
                 'min_cluster_size',
+                'max_cluster_size',
+                'min_samples',
                 'n_iter_violationCorrection',
                 'cluster_selection_method',
+                'cluster_selection_persistence',
                 'd_clusterMerge',
                 'alpha',
                 'split_intraSession_clusters',
@@ -1357,23 +1477,36 @@ class Clusterer(util.ROICaT_Module):
                 'n_steps_clusterSplit',
                 'backend',
                 'algorithm',
+                'rescue_noise',
             ],
         )
+
+        ## Resolve d_clusterMerge default: use d_cutoff from pruning if available
+        if d_clusterMerge is None:
+            if hasattr(self, 'd_cutoff') and self.d_cutoff is not None:
+                d_clusterMerge = float(self.d_cutoff)
+            ## Otherwise each backend falls back to mean + 1*std heuristic
 
         if backend == 'fast_hdbscan':
             return self._fit_fast_hdbscan(
                 d_conj=d_conj,
                 session_bool=session_bool,
                 min_cluster_size=min_cluster_size,
+                max_cluster_size=max_cluster_size,
+                min_samples=min_samples,
                 cluster_selection_method=cluster_selection_method,
+                cluster_selection_persistence=cluster_selection_persistence,
                 d_clusterMerge=d_clusterMerge,
                 algorithm=algorithm,
+                rescue_noise=rescue_noise,
             )
         elif backend == 'legacy':
             return self._fit_legacy_hdbscan(
                 d_conj=d_conj,
                 session_bool=session_bool,
                 min_cluster_size=min_cluster_size,
+                max_cluster_size=max_cluster_size,
+                min_samples=min_samples,
                 n_iter_violationCorrection=n_iter_violationCorrection,
                 cluster_selection_method=cluster_selection_method,
                 d_clusterMerge=d_clusterMerge,
@@ -1392,18 +1525,22 @@ class Clusterer(util.ROICaT_Module):
         d_conj: scipy.sparse.csr_array,
         session_bool: np.ndarray,
         min_cluster_size: int = 2,
+        max_cluster_size: Optional[int] = None,
+        min_samples: Optional[int] = None,
         cluster_selection_method: str = 'leaf',
+        cluster_selection_persistence: float = 0.0,
         d_clusterMerge: Optional[float] = None,
         algorithm: str = 'kruskal',
+        rescue_noise: bool = True,
     ) -> np.ndarray:
         """
-        Fit clustering using fast_hdbscan with native cannot-link constraints.
+        Fit clustering using fast_hdbscan with group-label cannot-link
+        constraints, optionally followed by a noise rescue pass.
 
-        Cannot-link constraints enforce that ROIs from the same session
-        never end up in the same cluster. The constraints are enforced during
-        MST construction (Kruskal's algorithm skips edges between cannot-link
-        pairs that are already connected), eliminating the need for the
-        iterative violation-correction loop used by the legacy backend.
+        Each ROI is assigned its session index as a group label. Samples
+        sharing the same group label (i.e., same session) cannot co-cluster.
+        This uses a bitmask per DSU component for O(1) conflict checks,
+        replacing the previous O(N^2) sparse cannot-link matrix.
 
         RH 2025
 
@@ -1412,17 +1549,30 @@ class Clusterer(util.ROICaT_Module):
                 Conjunctive distance matrix. Shape: *(n_rois, n_rois)*.
             session_bool (np.ndarray):
                 Boolean array indicating which ROIs belong to which session.
-                Shape: *(n_rois, n_sessions)*.
+                Shape: *(n_rois, n_sessions)*. Each row should contain
+                exactly one ``True``.
             min_cluster_size (int):
                 Minimum cluster size. (Default is *2*)
+            max_cluster_size (Optional[int]):
+                Maximum cluster size. If ``None``, defaults to ``n_sessions``.
+                (Default is ``None``)
+            min_samples (Optional[int]):
+                Number of neighbors for core-point density estimation. If
+                ``None``, defaults to ``min_cluster_size``.
+                (Default is ``None``)
             cluster_selection_method (str):
                 ``'leaf'`` or ``'eom'``. (Default is ``'leaf'``)
+            cluster_selection_persistence (float):
+                Minimum cluster stability threshold. (Default is *0.0*)
             d_clusterMerge (Optional[float]):
                 Distance threshold for merging clusters. If ``None``, computed
                 as mean + 1*std of the distance data. (Default is ``None``)
             algorithm (str):
                 MST construction algorithm. ``'kruskal'`` or ``'boruvka'``.
                 (Default is ``'kruskal'``)
+            rescue_noise (bool):
+                If ``True``, run a post-HDBSCAN noise rescue pass.
+                (Default is ``True``)
 
         Returns:
             (np.ndarray):
@@ -1442,27 +1592,36 @@ class Clusterer(util.ROICaT_Module):
             min_cluster_size = n_sessions
             print(f'Setting min_cluster_size to {min_cluster_size} (all ROIs in a session)') if self._verbose else None
 
-        ## Auto-estimate d_clusterMerge
+        ## Resolve max_cluster_size default: one ROI per session
+        if max_cluster_size is None:
+            max_cluster_size = n_sessions
+
+        ## Auto-estimate d_clusterMerge from distance statistics
         d_clusterMerge = float(np.mean(d.data) + 1 * np.std(d.data)) if d_clusterMerge is None else float(d_clusterMerge)
 
-        ## Build cannot-link matrix from s_sesh_inv
-        ## s_sesh_inv is True where ROIs are from the SAME session — these
-        ## pairs must never appear in the same cluster.
-        cannot_link = self.s_sesh_inv.astype(bool).tocsr()
+        ## Build group-label cannot-link vector: explicit session index per ROI.
+        ## This avoids relying on ROIs being stored in contiguous session
+        ## blocks; fast_hdbscan expects one group label per sample.
+        n_sessions_per_roi = np.asarray(session_bool.sum(axis=1)).ravel()
+        assert np.all(n_sessions_per_roi == 1), (
+            "session_bool must contain exactly one True per ROI when using "
+            "fast_hdbscan cannot_link_groups"
+        )
+        cannot_link_groups = np.asarray(np.argmax(session_bool, axis=1), dtype=np.int32)
 
-        print('Fitting with fast_hdbscan (cannot-link constraints)') if self._verbose else None
+        print('Fitting with fast_hdbscan (group-label cannot-link constraints)') if self._verbose else None
 
-        ## Run fast_hdbscan with cannot-link constraints
-        ## Import lazily to match pattern used by other optional backends
+        ## Run fast_hdbscan with group-label cannot-link constraints
         import fast_hdbscan
         self.hdbs = fast_hdbscan.HDBSCAN(
             min_cluster_size=min_cluster_size,
+            min_samples=min_samples,
             cluster_selection_epsilon=d_clusterMerge,
-            max_cluster_size=n_sessions,
+            cluster_selection_persistence=cluster_selection_persistence,
+            max_cluster_size=max_cluster_size,
             metric='precomputed',
             algorithm=algorithm,
-            cannot_link=cannot_link,
-            validate_cannot_link=False,
+            cannot_link_groups=cannot_link_groups,
             cluster_selection_method=cluster_selection_method,
         )
         ## fast_hdbscan's Kruskal algorithm handles disconnected components
@@ -1473,33 +1632,105 @@ class Clusterer(util.ROICaT_Module):
         labels = self.hdbs.labels_.copy()
         self._fit_used_fully_connected_node = False
 
-        ## Report violations (should be zero with cannot-link)
-        violations_labels = np.unique(labels)[np.array([
-            (session_bool[labels == u].sum(0) > 1).sum().item()
-            for u in np.unique(labels)
-        ]) > 0]
-        violations_labels = violations_labels[violations_labels > -1]
+        ## Report violations (should be zero with group-label cannot-link)
+        unique_labels = np.unique(labels)
+        unique_labels = unique_labels[unique_labels > -1]
+        violations_labels = unique_labels[np.array([
+            np.unique(cannot_link_groups[mask := (labels == u)]).size < mask.sum()
+            for u in unique_labels
+        ], dtype=bool)]
+        ## A cluster violates if it has duplicate session indices.
+        ## Equivalently: n_unique_sessions < n_rois_in_cluster.
         self.violations_labels = violations_labels
         if self._verbose:
             n_violations = len(violations_labels)
             print(f'Session violations after fast_hdbscan: {n_violations} clusters, d_clusterMerge={d_clusterMerge:.2f}')
 
-        ## Post-processing: squeeze labels, remove singletons
+        ## Phase 2: noise rescue — assign noise ROIs to nearby clusters or
+        ## nucleate new small clusters via Kruskal DSU with bitmask constraints.
+        ## Operates on the same inter-session-masked distance matrix `d` and
+        ## uses d_clusterMerge as the edge distance cutoff.
+        if rescue_noise and np.any(labels == -1):
+            labels = self.rescue_noise(
+                d_conj=d,
+                labels=labels,
+                session_bool=session_bool,
+                d_cutoff=d_clusterMerge,
+            )
+
+        ## Post-processing: squeeze labels, remove too-small clusters
         labels = helpers.squeeze_integers(labels)
 
-        ## Set clusters with too few ROIs to -1
+        ## Set clusters below min_cluster_size to noise. This catches both
+        ## singletons and small nucleated clusters from noise rescue.
         u, c = np.unique(labels, return_counts=True)
-        labels[np.isin(labels, u[c < 2])] = -1
+        labels[np.isin(labels, u[c < min_cluster_size])] = -1
         labels = helpers.squeeze_integers(labels)
 
         self.labels = labels
         return self.labels
+
+    def rescue_noise(
+        self,
+        d_conj: scipy.sparse.csr_array,
+        labels: np.ndarray,
+        session_bool: np.ndarray,
+        d_cutoff: float,
+    ) -> np.ndarray:
+        """
+        Assign noise ROIs (``label == -1``) to nearby clusters or nucleate
+        new small clusters, respecting same-session cannot-link constraints.
+
+        Uses a Kruskal-style sorted-edge traversal with DSU and bitmask
+        constraints (Phase 2 of two-phase clustering). See
+        :func:`noise_rescue_kruskal` for algorithm details.
+
+        Non-mutating: does not modify ``self.labels`` or any stored state.
+
+        Args:
+            d_conj (scipy.sparse.csr_array):
+                Inter-session masked distance matrix. Shape: *(n_rois, n_rois)*.
+            labels (np.ndarray):
+                Phase 1 cluster labels from HDBSCAN. Shape: *(n_rois,)*.
+                ``-1`` = noise.
+            session_bool (np.ndarray):
+                Boolean array, shape *(n_rois, n_sessions)*. Each row has
+                exactly one ``True``.
+            d_cutoff (float):
+                Maximum edge distance to accept for noise rescue.
+
+        Returns:
+            (np.ndarray):
+                new_labels (np.ndarray):
+                    Updated cluster labels after noise rescue. Shape:
+                    *(n_rois,)*.
+        """
+        n_sessions = session_bool.shape[1]
+        group_labels = np.asarray(np.argmax(session_bool, axis=1), dtype=np.int32)
+
+        n_noise_before = np.sum(labels == -1)
+        new_labels = noise_rescue_kruskal(
+            d_conj=d_conj,
+            labels=labels,
+            group_labels=group_labels,
+            n_groups=n_sessions,
+            d_cutoff=d_cutoff,
+        )
+
+        n_noise_after = np.sum(new_labels == -1)
+        n_rescued = n_noise_before - n_noise_after
+        if self._verbose:
+            print(f'Noise rescue: {n_rescued}/{n_noise_before} noise ROIs rescued, {n_noise_after} remain noise')
+
+        return new_labels
 
     def _fit_legacy_hdbscan(
         self,
         d_conj: scipy.sparse.csr_array,
         session_bool: np.ndarray,
         min_cluster_size: int = 2,
+        max_cluster_size: Optional[int] = None,
+        min_samples: Optional[int] = None,
         n_iter_violationCorrection: int = 5,
         cluster_selection_method: str = 'leaf',
         d_clusterMerge: Optional[float] = None,
@@ -1534,6 +1765,13 @@ class Clusterer(util.ROICaT_Module):
             min_cluster_size (int):
                 Minimum cluster size to be considered a cluster. Can be 'all'.
                 (Default is *2*)
+            max_cluster_size (Optional[int]):
+                Maximum cluster size. If ``None``, defaults to ``n_sessions``.
+                (Default is ``None``)
+            min_samples (Optional[int]):
+                Number of neighbors for core-point density estimation. If
+                ``None``, defaults to ``min_cluster_size``.
+                (Default is ``None``)
             n_iter_violationCorrection (int):
                 Number of iterations to correct for clusters with multiple ROIs
                 per session. (Default is *5*)
@@ -1574,6 +1812,10 @@ class Clusterer(util.ROICaT_Module):
             min_cluster_size = n_sessions
             print(f'Setting min_cluster_size to {min_cluster_size} (all ROIs in a session)') if self._verbose else None
 
+        ## Resolve max_cluster_size default: one ROI per session
+        if max_cluster_size is None:
+            max_cluster_size = n_sessions
+
         print('Fitting with HDBSCAN and splitting clusters with multiple ROIs per session') if self._verbose else None
         for ii in tqdm(range(n_iter_violationCorrection)):
             ## Prep parameters for splitting clusters
@@ -1584,8 +1826,9 @@ class Clusterer(util.ROICaT_Module):
 
             self.hdbs = hdbscan.HDBSCAN(
                 min_cluster_size=min_cluster_size,
+                min_samples=min_samples,
                 cluster_selection_epsilon=d_clusterMerge,
-                max_cluster_size=n_sessions,
+                max_cluster_size=max_cluster_size,
                 metric='precomputed',
                 alpha=alpha,
                 algorithm='generic',
@@ -2493,6 +2736,500 @@ class Clusterer(util.ROICaT_Module):
             return 0
         return (dens_same * dens_diff).sum().item()
 
+
+
+## Lazy-compiled numba kernel for weighted Jaccard. Compiled on first call
+## to avoid numba import overhead (subprocess spam on macOS) at module load.
+_weighted_jaccard_csr_kernel = None
+
+def _get_weighted_jaccard_kernel():
+    """
+    Lazily compile and cache the numba kernel for weighted Jaccard.
+    Returns the compiled ``_weighted_jaccard_csr_kernel`` function.
+    """
+    global _weighted_jaccard_csr_kernel
+    if _weighted_jaccard_csr_kernel is not None:
+        return _weighted_jaccard_csr_kernel
+
+    import numba
+
+    @numba.njit(cache=True)
+    def kernel(indptr, indices, data, out_data):
+        """
+        Numba kernel: weighted Jaccard (Ruzicka) similarity for each edge in a
+        symmetric CSR similarity matrix.
+
+        For each stored edge (i, j), computes:
+            J_w(i,j) = Σ_k min(s_ik, s_jk) / Σ_k max(s_ik, s_jk)
+        where the sum runs over all k in the union of neighbors of i and j,
+        **excluding k = i and k = j** (the direct edge endpoints).
+
+        Assumptions:
+            - Symmetric matrix (s_ij = s_ji for all stored pairs).
+            - Zero diagonal (no self-loops stored).
+            - Indices within each row are sorted ascending (CSR standard).
+            - All data values are non-negative.
+        """
+        n = len(indptr) - 1
+        for i in range(n):
+            for ptr_ij in range(indptr[i], indptr[i + 1]):
+                j = indices[ptr_ij]
+
+                ## Merge-scan sorted neighbor lists of rows i and j
+                pi = indptr[i]
+                pi_end = indptr[i + 1]
+                pj = indptr[j]
+                pj_end = indptr[j + 1]
+
+                sum_min = 0.0
+                sum_max = 0.0
+
+                while pi < pi_end and pj < pj_end:
+                    ki = indices[pi]
+                    kj = indices[pj]
+
+                    if ki == kj:
+                        ## Shared neighbor — skip if it is one of the edge endpoints
+                        if ki != i and ki != j:
+                            vi = data[pi]
+                            vj = data[pj]
+                            if vi < vj:
+                                sum_min += vi
+                                sum_max += vj
+                            else:
+                                sum_min += vj
+                                sum_max += vi
+                        pi += 1
+                        pj += 1
+                    elif ki < kj:
+                        ## Neighbor of i only — skip if it is j
+                        if ki != j:
+                            sum_max += data[pi]
+                        pi += 1
+                    else:
+                        ## Neighbor of j only — skip if it is i
+                        if kj != i:
+                            sum_max += data[pj]
+                        pj += 1
+
+                ## Drain remaining from row i
+                while pi < pi_end:
+                    if indices[pi] != j:
+                        sum_max += data[pi]
+                    pi += 1
+
+                ## Drain remaining from row j
+                while pj < pj_end:
+                    if indices[pj] != i:
+                        sum_max += data[pj]
+                    pj += 1
+
+                if sum_max > 0.0:
+                    out_data[ptr_ij] = sum_min / sum_max
+                else:
+                    out_data[ptr_ij] = 0.0
+
+    _weighted_jaccard_csr_kernel = kernel
+    return _weighted_jaccard_csr_kernel
+
+
+def weighted_jaccard_similarity(
+    s: scipy.sparse.csr_array,
+) -> scipy.sparse.csr_array:
+    """
+    Compute weighted Jaccard (Ruzicka) similarity from a sparse similarity
+    graph. For each pair (i, j) in the input, replaces the direct similarity
+    ``s_ij`` with a neighborhood-based structural similarity:
+
+    .. math::
+
+        J_w(i, j) = \\frac{\\sum_{k \\neq i,j} \\min(s_{ik}, s_{jk})}
+                          {\\sum_{k \\neq i,j} \\max(s_{ik}, s_{jk})}
+
+    where the sum is over all ``k`` in the union of non-zero neighbors of
+    ``i`` and ``j``, excluding ``k = i`` and ``k = j``.
+
+    This is a second-order similarity: two nodes score high if they share
+    many strong connections to the same neighbors. Acts as a denoising step
+    that amplifies community structure. Used in SNN clustering (Seurat),
+    Louvain/Leiden, and UMAP local connectivity.
+
+    Uses a numba-accelerated merge-scan over sorted CSR rows.
+    Complexity: O(nnz * avg_degree).
+
+    Args:
+        s (scipy.sparse.csr_array):
+            Sparse symmetric similarity matrix. Shape: *(n, n)*. Must have
+            non-negative values, zero diagonal (not stored), and sorted
+            indices within each row (standard CSR convention).
+
+    Returns:
+        (scipy.sparse.csr_array):
+            s_jaccard (scipy.sparse.csr_array):
+                Weighted Jaccard similarity matrix. Same sparsity pattern as
+                input. Values in [0, 1]. Symmetric if input is symmetric.
+                Zero diagonal.
+    """
+    assert isinstance(s, scipy.sparse.csr_array), (
+        f"Expected scipy.sparse.csr_array, got {type(s)}"
+    )
+    assert s.shape[0] == s.shape[1], "Matrix must be square."
+
+    ## Ensure sorted indices (required for merge-scan)
+    s_sorted = s
+    if not s.has_sorted_indices:
+        s_sorted = s.copy()
+        s_sorted.sort_indices()
+
+    data_f64 = s_sorted.data.astype(np.float64)
+    out_data = np.empty(len(data_f64), dtype=np.float64)
+
+    kernel = _get_weighted_jaccard_kernel()
+    kernel(
+        indptr=s_sorted.indptr,
+        indices=s_sorted.indices,
+        data=data_f64,
+        out_data=out_data,
+    )
+
+    s_jaccard = s_sorted.copy()
+    s_jaccard.data = out_data.astype(s.data.dtype)
+    return s_jaccard
+
+
+## Lazy-compiled numba kernel for noise rescue Kruskal. Same pattern as
+## weighted Jaccard: compiled on first call to avoid numba import overhead.
+_noise_rescue_kruskal_kernel = None
+
+def _get_noise_rescue_kernel():
+    """
+    Lazily compile and cache the numba kernel for noise rescue Kruskal.
+    Returns the compiled ``_noise_rescue_kruskal_kernel`` function.
+    """
+    global _noise_rescue_kruskal_kernel
+    if _noise_rescue_kruskal_kernel is not None:
+        return _noise_rescue_kruskal_kernel
+
+    import numba
+
+    @numba.njit(cache=True)
+    def kernel(
+        indptr,       ## int32[:], CSR row pointers
+        indices,      ## int32[:], CSR column indices
+        data,         ## float64[:], CSR edge distances
+        labels,       ## int64[:], Phase 1 labels (-1 = noise)
+        group_labels, ## int32[:], session index per ROI
+        n_groups,     ## int, number of sessions
+        d_cutoff,     ## float64, maximum distance for edge acceptance
+    ):
+        """
+        Kruskal-style noise rescue with DSU + bitmask cannot-link constraints.
+
+        Given Phase 1 cluster labels, processes edges from the distance graph
+        where at least one endpoint is noise (label == -1), sorted by distance
+        ascending. Merges are accepted if:
+            1. d <= d_cutoff
+            2. endpoints are in different DSU components
+            3. no session-conflict (bitmask AND == 0)
+
+        The DSU is pre-initialized with Phase 1 clusters: all members of the
+        same cluster are pre-merged and their component bitmask is the OR of
+        their session bits.
+
+        After processing, labels are extracted:
+            - Components containing Phase 1 cluster members inherit that label
+            - Components of only ex-noise points with size >= 2 get new labels
+              (starting from max_existing_label + 1)
+            - Remaining singletons stay -1
+
+        Returns new_labels: int64[:] of length n_rois.
+        """
+        n = len(indptr) - 1  ## n_rois
+
+        ## -- DSU arrays --
+        parent = np.arange(n, dtype=np.int64)
+        rank = np.zeros(n, dtype=np.int32)
+
+        ## -- Bitmask arrays: comp_mask[root, word] --
+        n_words = (n_groups + 63) // 64
+        comp_mask = np.zeros((n, n_words), dtype=np.uint64)
+
+        ## Initialize bitmasks from group_labels
+        for i in range(n):
+            g = group_labels[i]
+            if g >= 0:
+                w = g // 64
+                b = np.uint64(g % 64)
+                comp_mask[i, w] = comp_mask[i, w] | (np.uint64(1) << b)
+
+        ## -- Pre-merge Phase 1 clusters --
+        ## For each cluster label > -1, union all its members.
+        ## First pass: find max label to size the bookkeeping.
+        max_label = -1
+        for i in range(n):
+            if labels[i] > max_label:
+                max_label = labels[i]
+
+        if max_label >= 0:
+            ## For each cluster, track first member seen as the anchor
+            cluster_anchor = np.full(max_label + 1, -1, dtype=np.int64)
+            for i in range(n):
+                lbl = labels[i]
+                if lbl < 0:
+                    continue
+                if cluster_anchor[lbl] < 0:
+                    cluster_anchor[lbl] = i
+                else:
+                    ## Union i with the anchor
+                    anchor = cluster_anchor[lbl]
+
+                    ## Find root of anchor
+                    root_a = anchor
+                    while parent[root_a] != root_a:
+                        root_a = parent[root_a]
+                    curr = anchor
+                    while curr != root_a:
+                        nxt = parent[curr]
+                        parent[curr] = root_a
+                        curr = nxt
+
+                    ## Find root of i
+                    root_i = i
+                    while parent[root_i] != root_i:
+                        root_i = parent[root_i]
+                    curr = i
+                    while curr != root_i:
+                        nxt = parent[curr]
+                        parent[curr] = root_i
+                        curr = nxt
+
+                    if root_a != root_i:
+                        ## Union by rank
+                        if rank[root_a] > rank[root_i]:
+                            new_root = root_a
+                            old_root = root_i
+                        elif rank[root_a] < rank[root_i]:
+                            new_root = root_i
+                            old_root = root_a
+                        else:
+                            new_root = root_a
+                            old_root = root_i
+                            rank[new_root] += 1
+                        parent[old_root] = new_root
+                        ## Merge bitmasks
+                        for ww in range(n_words):
+                            comp_mask[new_root, ww] = (
+                                comp_mask[new_root, ww] | comp_mask[old_root, ww]
+                            )
+
+        ## -- Collect edges where at least one endpoint is noise --
+        ## Count first
+        n_edges = 0
+        for i in range(n):
+            for ptr in range(indptr[i], indptr[i + 1]):
+                j = indices[ptr]
+                if j <= i:
+                    continue  ## upper triangle only (avoid duplicates)
+                if labels[i] == -1 or labels[j] == -1:
+                    n_edges += 1
+
+        ## Allocate and fill
+        edge_u = np.empty(n_edges, dtype=np.int64)
+        edge_v = np.empty(n_edges, dtype=np.int64)
+        edge_d = np.empty(n_edges, dtype=np.float64)
+        idx = 0
+        for i in range(n):
+            for ptr in range(indptr[i], indptr[i + 1]):
+                j = indices[ptr]
+                if j <= i:
+                    continue
+                if labels[i] == -1 or labels[j] == -1:
+                    edge_u[idx] = i
+                    edge_v[idx] = j
+                    edge_d[idx] = data[ptr]
+                    idx += 1
+
+        ## -- Sort edges by distance ascending --
+        sort_order = np.argsort(edge_d)
+
+        ## -- Kruskal traversal --
+        for idx in range(len(sort_order)):
+            eidx = sort_order[idx]
+            d_val = edge_d[eidx]
+
+            ## Stop if beyond cutoff
+            if d_val > d_cutoff:
+                break
+
+            u = edge_u[eidx]
+            v = edge_v[eidx]
+
+            ## Find root of u with path compression
+            root_u = u
+            while parent[root_u] != root_u:
+                root_u = parent[root_u]
+            curr = u
+            while curr != root_u:
+                nxt = parent[curr]
+                parent[curr] = root_u
+                curr = nxt
+
+            ## Find root of v with path compression
+            root_v = v
+            while parent[root_v] != root_v:
+                root_v = parent[root_v]
+            curr = v
+            while curr != root_v:
+                nxt = parent[curr]
+                parent[curr] = root_v
+                curr = nxt
+
+            ## Already same component
+            if root_u == root_v:
+                continue
+
+            ## Conflict check: bitmask AND
+            conflict = False
+            for ww in range(n_words):
+                if (comp_mask[root_u, ww] & comp_mask[root_v, ww]) != np.uint64(0):
+                    conflict = True
+                    break
+            if conflict:
+                continue
+
+            ## Union by rank
+            if rank[root_u] > rank[root_v]:
+                new_root = root_u
+                old_root = root_v
+            elif rank[root_u] < rank[root_v]:
+                new_root = root_v
+                old_root = root_u
+            else:
+                new_root = root_u
+                old_root = root_v
+                rank[new_root] += 1
+            parent[old_root] = new_root
+
+            ## Merge bitmasks
+            for ww in range(n_words):
+                comp_mask[new_root, ww] = (
+                    comp_mask[new_root, ww] | comp_mask[old_root, ww]
+                )
+
+        ## -- Extract labels from DSU --
+        ## Find root for every node (with path compression)
+        for i in range(n):
+            root_i = i
+            while parent[root_i] != root_i:
+                root_i = parent[root_i]
+            curr = i
+            while curr != root_i:
+                nxt = parent[curr]
+                parent[curr] = root_i
+                curr = nxt
+
+        ## Map: root → Phase 1 label (if component has one)
+        ## Also count component sizes
+        root_to_label = np.full(n, -1, dtype=np.int64)
+        comp_size = np.zeros(n, dtype=np.int64)
+        for i in range(n):
+            root_i = parent[i]
+            comp_size[root_i] += 1
+            if labels[i] >= 0:
+                root_to_label[root_i] = labels[i]
+
+        ## Assign new labels for noise-only components of size >= 2
+        next_label = max_label + 1 if max_label >= 0 else 0
+        for i in range(n):
+            if parent[i] == i and root_to_label[i] < 0 and comp_size[i] >= 2:
+                root_to_label[i] = next_label
+                next_label += 1
+
+        ## Build output labels
+        new_labels = np.empty(n, dtype=np.int64)
+        for i in range(n):
+            new_labels[i] = root_to_label[parent[i]]
+
+        return new_labels
+
+    _noise_rescue_kruskal_kernel = kernel
+    return _noise_rescue_kruskal_kernel
+
+
+def noise_rescue_kruskal(
+    d_conj: scipy.sparse.csr_array,
+    labels: np.ndarray,
+    group_labels: np.ndarray,
+    n_groups: int,
+    d_cutoff: float,
+) -> np.ndarray:
+    """
+    Assign HDBSCAN noise points to nearby clusters (or nucleate new small
+    clusters) using a Kruskal-style sorted-edge traversal with DSU and
+    bitmask cannot-link constraints.
+
+    This is Phase 2 of a two-phase clustering strategy:
+        * **Phase 1**: HDBSCAN with ``min_samples > 1`` produces robust core
+          clusters but marks many ROIs as noise (``label == -1``).
+        * **Phase 2** (this function): Processes edges from the distance graph
+          where at least one endpoint is noise, sorted by distance. Merges
+          are accepted only if no session conflict arises (checked via
+          ``uint64`` bitmask per DSU component). This can either assign noise
+          points to existing Phase 1 clusters or nucleate new clusters when
+          2+ noise points are mutual neighbors within ``d_cutoff``.
+
+    The algorithm uses the same DSU + bitmask pattern as
+    ``fast_hdbscan``'s ``_kruskal_core_group_constrained``, but with the DSU
+    **pre-initialized** from Phase 1's pre-formed clusters.
+
+    Args:
+        d_conj (scipy.sparse.csr_array):
+            Sparse distance matrix (inter-session masked). Shape:
+            *(n_rois, n_rois)*. Must be symmetric with sorted indices.
+        labels (np.ndarray):
+            Phase 1 cluster labels. Shape: *(n_rois,)*. ``-1`` = noise.
+        group_labels (np.ndarray):
+            Session index per ROI (``int32``). Shape: *(n_rois,)*.
+        n_groups (int):
+            Number of distinct sessions (groups).
+        d_cutoff (float):
+            Maximum edge distance to accept. Edges with ``d > d_cutoff``
+            are ignored.
+
+    Returns:
+        (np.ndarray):
+            new_labels (np.ndarray):
+                Updated cluster labels. Shape: *(n_rois,)*. Noise points
+                that were rescued get their assigned cluster label; new
+                clusters of 2+ ex-noise points get fresh label IDs;
+                remaining singletons stay ``-1``.
+    """
+    assert isinstance(d_conj, scipy.sparse.csr_array), (
+        f"Expected scipy.sparse.csr_array, got {type(d_conj)}"
+    )
+    assert d_conj.shape[0] == d_conj.shape[1], "Distance matrix must be square."
+    n = d_conj.shape[0]
+    assert labels.shape == (n,), f"labels shape {labels.shape} != ({n},)"
+    assert group_labels.shape == (n,), f"group_labels shape {group_labels.shape} != ({n},)"
+
+    ## Ensure sorted indices for consistent edge iteration
+    d_sorted = d_conj
+    if not d_conj.has_sorted_indices:
+        d_sorted = d_conj.copy()
+        d_sorted.sort_indices()
+
+    kernel = _get_noise_rescue_kernel()
+    new_labels = kernel(
+        indptr=d_sorted.indptr.astype(np.int32),
+        indices=d_sorted.indices.astype(np.int32),
+        data=d_sorted.data.astype(np.float64),
+        labels=labels.astype(np.int64),
+        group_labels=group_labels.astype(np.int32),
+        n_groups=int(n_groups),
+        d_cutoff=float(d_cutoff),
+    )
+
+    return new_labels
 
 
 def attach_fully_connected_node(

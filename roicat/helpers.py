@@ -6187,6 +6187,84 @@ class Equivalence_checker():
         self._kwargs_allclose = kwargs_allclose
         self._assert_mode = assert_mode
         self._verbose = verbose
+
+    def _normalize_leaf(self, value: Any) -> Any:
+        """
+        Normalize common array-like leaf objects before comparison.
+
+        Torch tensors are converted to CPU NumPy arrays so they can be compared
+        with the same logic as serialized payloads loaded from RichFile.
+        """
+        ## This is intentionally a tiny normalization layer. The integration
+        ## tests now do higher-level tree normalization before they call into
+        ## Equivalence_checker, so this helper only needs to smooth over
+        ## end-value array/tensor representation differences.
+        if torch.is_tensor(value):
+            return value.detach().cpu().numpy()
+        return value
+
+    def _compare_sparse(
+        self,
+        test: Any,
+        true: Any,
+    ) -> Tuple[bool, str]:
+        """
+        Compare sparse arrays without densifying and while correctly handling
+        nonzero ``atol`` for implicit zeros.
+        """
+        ## Canonicalize first so explicit zeros and storage format differences
+        ## do not create false mismatches before we even inspect values.
+        test_csr = scipy.sparse.csr_array(test, copy=True)
+        true_csr = scipy.sparse.csr_array(true, copy=True)
+        test_csr.eliminate_zeros()
+        true_csr.eliminate_zeros()
+
+        if true_csr.shape != test_csr.shape:
+            return (False, f'shape mismatch: test={test_csr.shape}, true={true_csr.shape}')
+        if true_csr.dtype != test_csr.dtype:
+            return (False, f'dtype mismatch: test={test_csr.dtype}, true={true_csr.dtype}')
+
+        ## Build the union of nonzero coordinates from both arrays. This is the
+        ## key sparse-specific step: values that are not stored explicitly are
+        ## still treated as zeros, and those zeros can still matter for atol.
+        ## So we compare every position where either array stores a value.
+        test_mask = test_csr.copy()
+        true_mask = true_csr.copy()
+        test_mask.data = np.ones_like(test_mask.data, dtype=np.int8)
+        true_mask.data = np.ones_like(true_mask.data, dtype=np.int8)
+        union_mask = (test_mask + true_mask).astype(bool).tocoo()
+
+        if union_mask.nnz == 0:
+            return (True, 'equivalence')
+
+        rows, cols = union_mask.row, union_mask.col
+        ## Pull only the positions we actually need instead of converting the
+        ## whole sparse matrix into a dense one.
+        test_vals = np.asarray(test_csr[rows, cols]).reshape(-1)
+        true_vals = np.asarray(true_csr[rows, cols]).reshape(-1)
+
+        kwargs = {
+            'rtol': self._kwargs_allclose.get('rtol', 1e-7),
+            'atol': self._kwargs_allclose.get('atol', 0),
+            'equal_nan': self._kwargs_allclose.get('equal_nan', False),
+        }
+        is_close = np.isclose(test_vals, true_vals, **kwargs)
+        if np.all(is_close):
+            return (True, 'equivalence')
+
+        mismatched = ~is_close
+        ## Report the amount by which the worst offending entry exceeded the
+        ## allowed tolerance, not just the raw absolute difference.
+        abs_diff = np.abs(test_vals[mismatched] - true_vals[mismatched])
+        tol = kwargs['atol'] + kwargs['rtol'] * np.abs(true_vals[mismatched])
+        max_violation = float(np.max(abs_diff - tol))
+        n_mismatches = int(np.sum(mismatched))
+        n_elements = true_csr.shape[0] * true_csr.shape[1]
+        return (
+            False,
+            f"sparse allclose failed: n_mismatches={n_mismatches}, "
+            f"max_violation={max_violation:.3e}, n_elements={n_elements}",
+        )
         
     def _checker(
         self, 
@@ -6214,6 +6292,8 @@ class Equivalence_checker():
                     Returns True if all elements in test and true are close.
                     Otherwise, returns False.
         """
+        test = self._normalize_leaf(test)
+        true = self._normalize_leaf(true)
         try:
             ## If the dtype is a kind of string (or byte string) or object, then allclose will raise an error. In this case, just check if the values are equal.
             if np.issubdtype(test.dtype, np.str_) or np.issubdtype(test.dtype, np.bytes_) or test.dtype == np.object_:
@@ -6287,6 +6367,9 @@ class Equivalence_checker():
         if path is None:
             path = ['']
 
+        test = self._normalize_leaf(test)
+        true = self._normalize_leaf(true)
+
         if len(path) > 0:
             if path[-1].startswith('_'):
                 return (None, 'excluded from testing')
@@ -6298,29 +6381,10 @@ class Equivalence_checker():
         elif scipy.sparse.issparse(true):
             if not scipy.sparse.issparse(test):
                 result = (False, f'type mismatch: test is {type(test).__name__}, true is {type(true).__name__}')
-            elif true.shape != test.shape:
-                result = (False, f'shape mismatch: test={test.shape}, true={true.shape}')
             else:
-                diff_sparse = (test - true).tocsr()
-                diff_sparse.eliminate_zeros()
-                if diff_sparse.nnz == 0:
-                    result = (True, 'equivalence')
-                else:
-                    rtol = self._kwargs_allclose.get('rtol', 1e-7)
-                    atol = self._kwargs_allclose.get('atol', 0)
-                    abs_diff = abs(diff_sparse)
-                    abs_true = abs(true).tocsr()
-                    tol = atol + rtol * abs_true
-                    exceeded = abs_diff - tol
-                    exceeded.eliminate_zeros()
-                    is_close = all(x <= 0 for x in exceeded.data) if exceeded.nnz > 0 else True
-                    if is_close:
-                        result = (True, 'equivalence')
-                    else:
-                        n_elements = true.shape[0] * true.shape[1]
-                        n_mismatches = int(np.sum(exceeded.data > 0))
-                        max_violation = float(np.max(exceeded.data))
-                        result = (False, f"sparse allclose failed: n_mismatches={n_mismatches}, max_violation={max_violation:.3e}, n_elements={n_elements}")
+                ## Keep sparse comparison on the dedicated path so we never
+                ## accidentally densify large matrices through np.allclose.
+                result = self._compare_sparse(test=test, true=true)
         ## NP.NDARRAY
         elif isinstance(true, np.ndarray):
             result = self._checker(test, true, path)
@@ -6335,6 +6399,15 @@ class Equivalence_checker():
             result = self._checker(test, true, path)
         ## DICT
         elif isinstance(true, dict):
+            if not isinstance(test, dict):
+                ## test is not a dict — try to compare via __dict__ if available,
+                ## otherwise report type mismatch. This is primarily to support
+                ## comparing live helper objects against their serialized dict
+                ## form when the meaningful saved data is still the same.
+                if hasattr(test, '__dict__'):
+                    test = {k: v for k, v in test.__dict__.items() if not k.startswith('_')}
+                else:
+                    return (False, f'type mismatch: test is {type(test).__name__}, true is dict')
             result = {}
             for key in true:
                 if key not in test:
@@ -6364,14 +6437,19 @@ class Equivalence_checker():
 
         ## OBJECT with __dict__
         elif hasattr(true, '__dict__'):
-            result = {}
-            for key in true.__dict__:
-                if key.startswith('_'):
-                    continue
-                if not hasattr(test, key):
-                    result[str(key)] = (False, 'key not found')
-                else:
-                    result[str(key)] = self.__call__(getattr(test, key), getattr(true, key), path=path + [str(key)])
+            true_dict = {k: v for k, v in true.__dict__.items() if not k.startswith('_')}
+            if isinstance(test, dict):
+                ## When the serialized side is a dict and the live side is an
+                ## object, recurse back through the dict branch so both paths
+                ## follow the same key-by-key comparison logic.
+                result = self.__call__(test, true_dict, path=path)
+            else:
+                result = {}
+                for key in true_dict:
+                    if not hasattr(test, key):
+                        result[str(key)] = (False, 'key not found')
+                    else:
+                        result[str(key)] = self.__call__(getattr(test, key), true_dict[key], path=path + [str(key)])
         ## N/A
         else:
             result = (None, 'not tested')

@@ -265,10 +265,14 @@ def get_default_parameters(
                 },
                 'hdbscan': {
                     'min_cluster_size': 2,  ## Minimum number of ROIs that can be considered a 'cluster'
+                    'max_cluster_size': None,  ## Maximum cluster size. None defaults to n_sessions (one ROI per session).
+                    'min_samples': None,  ## Number of neighbors for core-point density. None defaults to min_cluster_size. Lower values reduce noise points.
+                    'cluster_selection_method': 'eom',  ## (advanced) Method of cluster selection for HDBSCAN (see hdbscan documentation)
+                    'cluster_selection_persistence': 0.0,  ## (advanced) Minimum stability for a cluster to survive. Higher values = fewer, more stable clusters.
+                    'd_clusterMerge': None,  ## Distance below which clusters are merged. None defaults to d_cutoff (pruning threshold).
+                    'rescue_noise': True,  ## Post-HDBSCAN noise rescue: assign noise ROIs to nearby clusters via Kruskal DSU with cannot-link constraints.
                     'n_iter_violationCorrection': 6,  ## Number of times to redo clustering sweep after removing violations
                     'split_intraSession_clusters': True,  ## Whether or not to split clusters with ROIs from the same session
-                    'cluster_selection_method': 'leaf',  ## (advanced) Method of cluster selection for HDBSCAN (see hdbscan documentation)
-                    'd_clusterMerge': None,  ## Distance below which all ROIs are merged into a cluster
                     'alpha': 0.999,  ## (advanced) Scalar applied to distance matrix in HDBSCAN (see hdbscan documentation)
                     'discard_failed_pruning': True,  ## (advanced) Whether or not to set all ROIs that could be separated from clusters with ROIs from the same sessions to label=-1
                     'n_steps_clusterSplit': 100,  ## (advanced) How finely to step through distances to remove violations
@@ -1113,6 +1117,41 @@ class RichFile_ROICaT(rf.RichFile):
             ("convergence_checker_optuna", helpers.Convergence_checker_optuna),
             ("image_alignment_checker", helpers.ImageAlignmentChecker),
         ]]
+
+        ## sparse_convolution.Toeplitz_convolution2d: store as JSON dict
+        ## (its dtype attr is a type object that richfile can't serialize as-is)
+        import sparse_convolution
+        def _save_sparse_conv(obj, path, **kwargs):
+            d = {
+                'x_shape': list(obj.x_shape),
+                'k': obj.k.tolist(),
+                'mode': obj.mode,
+                'method': obj.method,
+                'dtype': np.dtype(obj.dtype).str,
+            }
+            with open(path, 'w') as f:
+                json.dump(d, f)
+
+        def _load_sparse_conv(path, **kwargs):
+            with open(path, 'r') as f:
+                d = json.load(f)
+            return sparse_convolution.Toeplitz_convolution2d(
+                x_shape=tuple(d['x_shape']),
+                k=np.array(d['k']),
+                mode=d['mode'],
+                method=d['method'],
+                dtype=np.dtype(d['dtype']),
+            )
+
+        sparse_conv_dict = {
+            'type_name': 'sparse_conv',
+            'object_class': sparse_convolution.Toeplitz_convolution2d,
+            'suffix': 'json',
+            'library': 'sparse_convolution',
+            'versions_supported': [],
+            'function_save': _save_sparse_conv,
+            'function_load': _load_sparse_conv,
+        }
         # roicat_module_tds = []
         
 
@@ -1297,7 +1336,7 @@ class RichFile_ROICaT(rf.RichFile):
                 "library":            "roicat",
                 "versions_supported": [],
             },
-        ] + [t.get_property_dict() for t in roicat_module_tds]
+        ] + [t.get_property_dict() for t in roicat_module_tds] + [sparse_conv_dict]
 
         [self.register_type_from_dict(d) for d in type_dicts]
         

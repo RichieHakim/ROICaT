@@ -53,7 +53,7 @@ def test_internal_package_tests():
         'skl2onnx',
         # 'holoviews',
         'bokeh',
-        'sparse',
+        # 'sparse',  ## ships test files that require uninstalled deps (MLIR, dask)
     ]
 
     ## Iterate over each package

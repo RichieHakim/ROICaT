@@ -20,14 +20,14 @@ core = [
     "mat73==0.65",
     "natsort==8.4.0",
     "numpy==2.4.3",
-    "optuna==4.7.0",
-    "Pillow==12.1.0",
+    "optuna==4.8.0",
+    "Pillow==12.1.1",
     "pytest==9.0.2",
     "PyYAML==6.0.3",
     "scikit-learn==1.8.0",
     "scipy==1.17.1",
     "seaborn==0.13.2",
-    "sparse==0.17.0",
+    "sparse==0.18.0",
     "tqdm==4.67.3",
     "xxhash==3.6.0",
     "torch==2.10.0",
@@ -37,20 +37,21 @@ core = [
     "py-cpuinfo==9.0.0",
     "skl2onnx==1.20.0",
     "onnx>=1.17.0,<1.21.0",
-    "onnxruntime==1.24.1",
+    "onnxruntime==1.24.4",
     "richfile>=0.6.2",
+    "sparse_convolution>=0.4.0",
 ]
 classification = [
     "roicat[core]",
     "umap-learn==0.5.11",
-    "bokeh==3.8.2",
+    "bokeh==3.9.0",
     "holoviews[recommended]==1.22.1",
     "jupyter-bokeh==4.0.5",
 ]
 tracking = [
     "roicat[core]",
     "opencv-contrib-python-headless<=4.13.0.92",
-    "fast-hdbscan @ git+https://github.com/TutteInstitute/fast_hdbscan.git",
+    "fast-hdbscan==0.3.0",
     "kymatio==0.3.0",
     "kornia==0.8.2",
     "romatch-roicat>=0.1.2.post1",
@@ -60,7 +61,7 @@ all = [
     "roicat[core,classification,tracking]",
     "onnx2torch==1.5.15",
     "scikit-image==0.26.0",
-    "selenium==4.40.0",
+    "selenium==4.41.0",
 ]
 all_latest = [
     "jupyter",
@@ -92,7 +93,7 @@ all_latest = [
     "holoviews[recommended]",
     "jupyter-bokeh",
     "opencv-contrib-python-headless",
-    "fast-hdbscan @ git+https://github.com/TutteInstitute/fast_hdbscan.git",
+    "fast-hdbscan==0.3.0",
     "kymatio",
     "kornia",
     "romatch-roicat",
@@ -100,6 +101,7 @@ all_latest = [
     "scikit-image",
     "selenium",
     "roiextractors==0.8.0",
+    "sparse_convolution",
 ]
 
 [project.scripts]
@@ -118,4 +120,5 @@ include = ["roicat*"]
 testpaths = ["tests"]
 markers = [
     "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+    "determinism: marks tests that verify pipeline determinism (runs pipeline twice)",
 ]
