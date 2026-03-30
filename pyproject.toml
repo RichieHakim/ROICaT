@@ -19,7 +19,7 @@ core = [
     "matplotlib==3.10.8",
     "mat73==0.65",
     "natsort==8.4.0",
-    "numpy==2.4.3",
+    "numpy==2.4.4",
     "optuna==4.8.0",
     "Pillow==12.1.1",
     "pytest==9.0.2",
