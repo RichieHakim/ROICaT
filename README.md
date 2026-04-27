@@ -186,12 +186,12 @@ sudo docker run -it -p 7860:7860 --platform=linux/amd64 --shm-size=10g registry.
 
 # TODO:
 #### algorithmic improvements:
-- [ ] Add in method to use more similarity metrics for tracking
+- [x] Add in method to use more similarity metrics for tracking
 - ~~[ ] Coordinate descent on each similarity metric~~
 - [ ] Add F and Fneu to data_roicat, dFoF and trace quality metric functions
 - [ ] Add in notebook for demonstrating using temporal similarity metrics (SWT on dFoF)
 - [ ] Make a standard classifier
-- [ ] Try other clustering methods
+- [x] Try other clustering methods
 - [x] Make image aligner based on image similarity + RANSAC of centroids or s_SF
 - [ ] Better post-hoc curation metrics and visualizations
 - [ ] Discount the non-rigid warp masks towards the edges to be more like the rigid warp map in order improve border performance
