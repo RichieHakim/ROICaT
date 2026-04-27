@@ -54,7 +54,8 @@ tracking = [
     "fast-hdbscan==0.3.0",
     "kymatio==0.3.0",
     "kornia==0.8.2",
-    "romatch-roicat>=0.1.2.post1",
+    "romatch-roicat[fused-local-corr]>=0.1.2.post1; sys_platform == 'linux'",
+    "romatch-roicat>=0.1.2.post1; sys_platform != 'linux'",
     "roiextractors==0.8.0",
 ]
 all = [
@@ -96,7 +97,8 @@ all_latest = [
     "fast-hdbscan==0.3.0",
     "kymatio",
     "kornia",
-    "romatch-roicat",
+    "romatch-roicat[fused-local-corr]; sys_platform == 'linux'",
+    "romatch-roicat; sys_platform != 'linux'",
     "onnx2torch",
     "scikit-image",
     "selenium",
