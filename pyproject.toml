@@ -29,7 +29,7 @@ core = [
     "seaborn==0.13.2",
     "sparse==0.18.0",
     "tqdm==4.67.3",
-    "xxhash==3.6.0",
+    "xxhash==3.7.0",
     "torch==2.11.0",
     "torchvision==0.26.0",
     "torchaudio==2.11.0",
