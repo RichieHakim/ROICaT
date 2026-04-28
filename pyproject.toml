@@ -22,7 +22,7 @@ core = [
     "numpy==2.4.4",
     "optuna==4.8.0",
     "Pillow==12.1.1",
-    "pytest==9.0.2",
+    "pytest==9.0.3",
     "PyYAML==6.0.3",
     "scikit-learn==1.8.0",
     "scipy==1.17.1",
