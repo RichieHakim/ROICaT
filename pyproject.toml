@@ -16,7 +16,7 @@ keywords = ["neuroscience", "neuroimaging", "machine learning", "deep learning"]
 [project.optional-dependencies]
 core = [
     "jupyter==1.1.1",
-    "matplotlib==3.10.8",
+    "matplotlib==3.10.9",
     "mat73==0.65",
     "natsort==8.4.0",
     "numpy==2.4.4",
