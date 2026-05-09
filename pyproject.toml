@@ -41,6 +41,8 @@ core = [
     "richfile>=0.6.2",
     "sparse_convolution>=0.4.0",
 ]
+
+
 classification = [
     "roicat[core]",
     "umap-learn==0.5.11",
@@ -105,6 +107,52 @@ all_latest = [
     "roiextractors==0.8.0",
     "sparse_convolution",
 ]
+
+core_algo = [
+    "natsort",
+    "numpy",
+    "optuna",
+    "Pillow",
+    "PyYAML",
+    "scikit-learn",
+    "scipy",
+    "sparse",
+    "tqdm",
+    "torch",
+    "torchvision",
+    "torchaudio",
+    "psutil",
+    "py-cpuinfo",
+    "skl2onnx",
+    "onnx>=1.17.0,<1.22.0",
+    "onnxruntime",
+    "richfile>=0.6.2",
+    "sparse_convolution>=0.4.0",
+]
+
+classification_algo = [
+    "roicat[core_algo]",
+    "umap-learn"
+]
+
+tracking_algo = [
+    "roicat[core_algo]",
+    "opencv-contrib-python-headless",
+    "fast-hdbscan",
+    "kymatio",
+    "kornia",
+    "romatch-roicat[fused-local-corr]>=0.1.2.post1; sys_platform == 'linux'",
+    "romatch-roicat>=0.1.2.post1; sys_platform != 'linux'",
+    "roiextractors==0.8.0",
+]
+
+all_algo = [
+    "roicat[core_algo,tracking_algo,classification_algo]",
+    "onnx2torch",
+    "scikit-image"
+]
+
+
 
 [project.scripts]
 roicat = "roicat.__main__:main"
