@@ -137,7 +137,7 @@ classification_algo = [
 
 tracking_algo = [
     "roicat[core_algo]",
-    "opencv-contrib-python-headless",
+    "opencv-contrib-python-headless==4.10.0.84", ## For cv2 DeepFlow
     "fast-hdbscan",
     "kymatio",
     "kornia",
