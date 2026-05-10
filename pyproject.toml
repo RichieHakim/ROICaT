@@ -141,8 +141,7 @@ tracking_algo = [
     "fast-hdbscan",
     "kymatio",
     "kornia",
-    "romatch-roicat[fused-local-corr]>=0.1.2.post1; sys_platform == 'linux'",
-    "romatch-roicat>=0.1.2.post1; sys_platform != 'linux'",
+    "romatch-roicat[core_algo] @ git+https://github.com/apasarkar/RoMa.git@local_corr_check",
     "roiextractors==0.8.0",
 ]
 

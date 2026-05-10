@@ -1,6 +1,5 @@
 ## Import basic libraries
 from pathlib import Path
-import copy
 import tempfile
 from IPython.display import display
 import time
@@ -9,7 +8,7 @@ import time
 import numpy as np
 
 ## Import roicat submodules
-from . import data_importing, ROInet, helpers, util, visualization, tracking, classification
+from . import data_importing, ROInet, helpers, util, tracking
 
 def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = None) -> tuple:
     """
@@ -450,7 +449,8 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         )
         (Path(dir_save).resolve() / 'visualization' / 'clustering').mkdir(parents=True, exist_ok=True)
         fig.savefig(str(Path(dir_save).resolve() / 'visualization' / 'clustering' / 'quality_metrics.png'))
-        
+
+        from . import visualization
         ### Save a gif of the ROIs
         FOV_clusters = visualization.compute_colored_FOV(
             spatialFootprints=[r.power(1.0) for r in results_all['ROIs']['ROIs_aligned']],  ## Spatial footprint sparse arrays
