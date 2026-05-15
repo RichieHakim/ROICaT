@@ -256,6 +256,7 @@ class Aligner(util.ROICaT_Module):
             'max_iter': 10,
             'confidence': 0.99,
         },
+        compute_final_all_to_all: bool = True,
         verbose: Optional[bool] = None,
     ) -> np.ndarray:
         """
@@ -322,6 +323,15 @@ class Aligner(util.ROICaT_Module):
                   (Default is 10)
                 * 'confidence' (float): Confidence level for RANSAC. (Default is
                   0.99)
+            compute_final_all_to_all (bool):
+                Whether to run the final N x N all-to-all alignment scoring
+                step after registration. This is the dominant cost when there
+                are many images, since it scales as ``O(N^2)`` phase
+                correlations on the full warped images. Set to ``False`` to
+                skip it; ``results_geometric['final']['score_all_to_all']``
+                and ``alignment_all_to_all`` will be ``None`` in that case.
+                The cheap ``O(N)`` template-to-all final score is always
+                computed. (Default is ``True``)
             verbose (Optional[bool]):
                 Whether to print progress updates. If ``None``, the verbose
                 level set during initialization will be used.
@@ -342,6 +352,7 @@ class Aligner(util.ROICaT_Module):
                 'kwargs_method',
                 'constraint',
                 'kwargs_RANSAC',
+                'compute_final_all_to_all',
                 'verbose',
             ],
         )
@@ -611,8 +622,12 @@ class Aligner(util.ROICaT_Module):
         ### Make the registered images
         self.ims_registered_geo = self.transform_images(ims_moving=ims_moving, remappingIdx=self.remappingIdx_geo)
         ### Compute the new alignment scores
-        score_all_to_all_final = iac_geo.score_alignment(images=self.ims_registered_geo, verbose=verbose, desc='Final geometric: all-to-all alignment scores')['z_in']
-        alignment_all_to_all_final = score_all_to_all_final > self.z_threshold
+        if compute_final_all_to_all:
+            score_all_to_all_final = iac_geo.score_alignment(images=self.ims_registered_geo, verbose=verbose, desc='Final geometric: all-to-all alignment scores')['z_in']
+            alignment_all_to_all_final = score_all_to_all_final > self.z_threshold
+        else:
+            score_all_to_all_final = None
+            alignment_all_to_all_final = None
         score_template_to_all_final = iac_geo.score_alignment(images=self.ims_registered_geo, images_ref=im_template_global, verbose=verbose, desc='Final geometric: images vs. template')['z_in'][:, 0]
         alignment_template_to_all_final = score_template_to_all_final > self.z_threshold
 
