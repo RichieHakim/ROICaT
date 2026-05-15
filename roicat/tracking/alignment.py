@@ -472,6 +472,8 @@ class Aligner(util.ROICaT_Module):
         score_template_to_all = iac_geo.score_alignment(
             images=images_warped_all_to_template,
             images_ref=im_template_global,
+            verbose=verbose,
+            desc='Initial alignment: images vs. template',
         )['z_in'][:, 0]
         alignment_template_to_all = score_template_to_all > self.z_threshold
         idx_not_aligned = np.where(alignment_template_to_all == False)[0]
@@ -507,7 +509,7 @@ class Aligner(util.ROICaT_Module):
                         remappingIdx_geo_all_to_current = [helpers.warp_matrix_to_remappingIdx(warp_matrix=warp_matrix, x=W, y=H) for warp_matrix in warp_matrices_all_to_all[idx_current]]
                         images_warped_all_to_current = self.transform_images(ims_moving=ims_moving, remappingIdx=remappingIdx_geo_all_to_current)
                         ## Check alignment
-                        score_all_to_all[idx_current] = iac_geo.score_alignment(images=images_warped_all_to_current, images_ref=im_current)['z_in'][:, 0]  ## shape: (N,)
+                        score_all_to_all[idx_current] = iac_geo.score_alignment(images=images_warped_all_to_current, images_ref=im_current, verbose=verbose, desc=f'Match search: scoring all vs. template idx {idx_current}')['z_in'][:, 0]  ## shape: (N,)
                         # score_all_to_all[:, idx_current] = score_all_to_all[idx_current]  ## add the transpose of the score matrix
                         alignment_all_to_all[idx_current] = score_all_to_all[idx_current] > self.z_threshold  ## returns a boolean array of shape (n_images,)
                         # alignment_all_to_all[:, idx_current] = alignment_all_to_all[idx_current]  ## add the transpose of the alignment matrix
@@ -554,7 +556,7 @@ class Aligner(util.ROICaT_Module):
                     ## compute warped images and check alignment
                     remappingIdx_geo_all_to_template_new = [helpers.warp_matrix_to_remappingIdx(warp_matrix=warp_matrix, x=W, y=H) for warp_matrix in warp_matrices_all_to_template_new]
                     images_warped_all_to_template_new = self.transform_images(ims_moving=ims_moving, remappingIdx=remappingIdx_geo_all_to_template_new)
-                    score_template_to_all_new = iac_geo.score_alignment(images=images_warped_all_to_template_new, images_ref=im_template_global)['z_in'][:, 0]
+                    score_template_to_all_new = iac_geo.score_alignment(images=images_warped_all_to_template_new, images_ref=im_template_global, verbose=verbose, desc='Path-finding: scoring composed warps vs. template')['z_in'][:, 0]
                     alignment_template_to_all_new = score_template_to_all_new > self.z_threshold
                     idx_no_path = np.where(np.logical_not(alignment_template_to_all_new))[0]
 
@@ -609,9 +611,9 @@ class Aligner(util.ROICaT_Module):
         ### Make the registered images
         self.ims_registered_geo = self.transform_images(ims_moving=ims_moving, remappingIdx=self.remappingIdx_geo)
         ### Compute the new alignment scores
-        score_all_to_all_final = iac_geo.score_alignment(images=self.ims_registered_geo)['z_in']
+        score_all_to_all_final = iac_geo.score_alignment(images=self.ims_registered_geo, verbose=verbose, desc='Final geometric: all-to-all alignment scores')['z_in']
         alignment_all_to_all_final = score_all_to_all_final > self.z_threshold
-        score_template_to_all_final = iac_geo.score_alignment(images=self.ims_registered_geo, images_ref=im_template_global)['z_in'][:, 0]
+        score_template_to_all_final = iac_geo.score_alignment(images=self.ims_registered_geo, images_ref=im_template_global, verbose=verbose, desc='Final geometric: images vs. template')['z_in'][:, 0]
         alignment_template_to_all_final = score_template_to_all_final > self.z_threshold
 
 
@@ -869,7 +871,7 @@ class Aligner(util.ROICaT_Module):
             order=self.order,
             device='cpu',
         )
-        score_all_to_all_final = iac_nonrigid.score_alignment(images=self.ims_registered_geo)['z_in']
+        score_all_to_all_final = iac_nonrigid.score_alignment(images=self.ims_registered_geo, verbose=self._verbose, desc='Final nonrigid: all-to-all alignment scores')['z_in']
         alignment_all_to_all_final = score_all_to_all_final > self.z_threshold
 
         ## Prepare outputs

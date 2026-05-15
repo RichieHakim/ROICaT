@@ -2076,3 +2076,100 @@ class Test_roiextractors:
         assert scipy.sparse.issparse(sf)
         assert sf.shape[0] == n_rois
         assert sf.shape[1] == height * width
+
+
+######################################################################################################################################
+########################################### IMAGE ALIGNMENT CHECKER (score_alignment) ################################################
+######################################################################################################################################
+
+
+class Test_image_alignment_checker_batching:
+    """
+    score_alignment chunks over the leading dim of `images`. These tests pin
+    bit-exact equivalence between the chunked path (batch_size < N) and the
+    single-shot path (batch_size >= N), since chunking should be a pure
+    rearrangement of independent per-pair computations.
+    """
+
+    METRIC_KEYS = ('mean_out', 'mean_in', 'ptile95_out', 'max_in',
+                   'std_out', 'std_in', 'max_diff', 'z_in', 'r_in')
+
+    def _make_iac(self, hw=(64, 64)):
+        return helpers.ImageAlignmentChecker(
+            hw=hw, radius_in=4.0, radius_out=20.0, order=5, device='cpu',
+        )
+
+    def _make_ims(self, n, hw, seed):
+        rng = np.random.RandomState(seed)
+        return rng.randn(n, hw[0], hw[1]).astype(np.float32)
+
+    def _assert_bit_exact(self, chunked, single_shot):
+        for k in self.METRIC_KEYS:
+            np.testing.assert_array_equal(
+                chunked[k], single_shot[k],
+                err_msg=f'metric {k!r} differs between chunked and single-shot paths',
+            )
+
+    def test_cross_ragged_last_chunk(self):
+        """N=7 with batch_size=4 -> chunks of [4, 3]; metrics must equal single-shot."""
+        iac = self._make_iac()
+        ims = self._make_ims(7, (64, 64), seed=0)
+        ref = self._make_ims(3, (64, 64), seed=1)
+        chunked = iac.score_alignment(ims, images_ref=ref, batch_size=4, verbose=False)
+        single = iac.score_alignment(ims, images_ref=ref, batch_size=ims.shape[0], verbose=False)
+        self._assert_bit_exact(chunked, single)
+
+    def test_cross_multiple_full_chunks(self):
+        """N=12, batch_size=4 -> three full chunks, no ragged tail."""
+        iac = self._make_iac()
+        ims = self._make_ims(12, (64, 64), seed=2)
+        ref = self._make_ims(5, (64, 64), seed=3)
+        chunked = iac.score_alignment(ims, images_ref=ref, batch_size=4, verbose=False)
+        single = iac.score_alignment(ims, images_ref=ref, batch_size=ims.shape[0], verbose=False)
+        self._assert_bit_exact(chunked, single)
+
+    def test_self_comparison(self):
+        """images_ref=None -> N x N self-comparison; chunked must match single-shot."""
+        iac = self._make_iac()
+        ims = self._make_ims(6, (64, 64), seed=4)
+        chunked = iac.score_alignment(ims, batch_size=4, verbose=False)
+        single = iac.score_alignment(ims, batch_size=ims.shape[0], verbose=False)
+        self._assert_bit_exact(chunked, single)
+        ## sanity: square output for self-comparison
+        assert chunked['z_in'].shape == (6, 6)
+
+    def test_batch_size_larger_than_n(self):
+        """batch_size > N is a single chunk; output identical to single-shot."""
+        iac = self._make_iac()
+        ims = self._make_ims(3, (64, 64), seed=5)
+        ref = self._make_ims(2, (64, 64), seed=6)
+        a = iac.score_alignment(ims, images_ref=ref, batch_size=64, verbose=False)
+        b = iac.score_alignment(ims, images_ref=ref, batch_size=ims.shape[0], verbose=False)
+        self._assert_bit_exact(a, b)
+
+    def test_pc_dropped_by_default(self):
+        """'pc' must not be in outs unless return_pc=True (avoids huge alloc by default)."""
+        iac = self._make_iac()
+        ims = self._make_ims(4, (64, 64), seed=7)
+        out_default = iac.score_alignment(ims, batch_size=2, verbose=False)
+        assert 'pc' not in out_default, "'pc' should be absent unless return_pc=True"
+
+    def test_pc_roundtrip_when_requested(self):
+        """return_pc=True yields a (N, M, H, W) pc array assembled from chunks."""
+        iac = self._make_iac()
+        H = W = 64
+        ims = self._make_ims(5, (H, W), seed=8)
+        ref = self._make_ims(3, (H, W), seed=9)
+        chunked = iac.score_alignment(ims, images_ref=ref, batch_size=2,
+                                      return_pc=True, verbose=False)
+        single = iac.score_alignment(ims, images_ref=ref, batch_size=ims.shape[0],
+                                     return_pc=True, verbose=False)
+        assert chunked['pc'].shape == (5, 3, H, W)
+        np.testing.assert_array_equal(chunked['pc'], single['pc'])
+
+    def test_invalid_batch_size_raises(self):
+        """batch_size < 1 should be rejected."""
+        iac = self._make_iac()
+        ims = self._make_ims(3, (64, 64), seed=10)
+        with pytest.raises(AssertionError):
+            iac.score_alignment(ims, batch_size=0, verbose=False)

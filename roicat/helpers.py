@@ -5078,49 +5078,73 @@ class ImageAlignmentChecker:
         self,
         images: Union[np.ndarray, torch.Tensor],
         images_ref: Optional[Union[np.ndarray, torch.Tensor]] = None,
+        batch_size: int = 4,
+        return_pc: bool = False,
+        verbose: bool = True,
+        desc: str = 'Scoring image alignment',
     ):
         """
         Score the alignment of a set of images using phase correlation. Computes
         the stats of the center ('in') of the phase correlation image over the
         stats of the outer region ('out') of the phase correlation image.
+
+        Memory note: the underlying phase correlation has shape
+        *(n_images, n_images_ref, H, W)*. Allocating it in one shot is
+        infeasible for many large images, so ``images`` is processed in
+        chunks of size ``batch_size`` along its leading dimension.
         RH 2024
 
         Args:
-            images (Union[np.ndarray, torch.Tensor]): 
+            images (Union[np.ndarray, torch.Tensor]):
                 A 3D array of images. Shape: *(n_images, height, width)*
             images_ref (Optional[Union[np.ndarray, torch.Tensor]]):
                 Reference images to compare against. If provided, the images
                 will be compared against these images. If not provided, the
                 images will be compared against themselves. (Default is
                 ``None``)
+            batch_size (int):
+                Number of ``images`` rows to process per chunk. Each chunk
+                allocates a tensor of shape *(batch_size, n_images_ref, H, W)*.
+                (Default is *4*)
+            return_pc (bool):
+                If ``True``, the full phase correlation tensor is concatenated
+                across chunks and returned in the output dict under ``'pc'``.
+                This defeats the memory benefit of chunking and is intended for
+                debugging on small inputs only. (Default is ``False``)
+            verbose (bool):
+                If ``True``, show a tqdm progress bar over chunks.
+                (Default is ``True``)
 
         Returns:
-            (Dict): 
+            (Dict):
                 Dictionary containing the following keys:
-                * 'mean_out': 
+                * 'mean_out':
                     Mean of the phase correlation image weighted by the
                     'out' filter
-                * 'mean_in': 
+                * 'mean_in':
                     Mean of the phase correlation image weighted by the
                     'in' filter
-                * 'ptile95_out': 
+                * 'ptile95_out':
                     95th percentile of the phase correlation image multiplied by
                     the 'out' filter
-                * 'max_in': 
+                * 'max_in':
                     Maximum value of the phase correlation image multiplied by
                     the 'in' filter
-                * 'std_out': 
+                * 'std_out':
                     Standard deviation of the phase correlation image weighted by
                     the 'out' filter
-                * 'std_in': 
+                * 'std_in':
                     Standard deviation of the phase correlation image weighted by
                     the 'in' filter
-                * 'max_diff': 
+                * 'max_diff':
                     Difference between the 'max_in' and 'ptile95_out' values
-                * 'z_in': 
+                * 'z_in':
                     max_diff divided by the 'std_out' value
-                * 'r_in': 
+                * 'r_in':
                     max_diff divided by the 'ptile95_out' value
+                * 'pc':
+                    Full phase correlation tensor. Only present if
+                    ``return_pc=True``.
         """
         def _fix_images(ims):
             assert isinstance(ims, (np.ndarray, torch.Tensor, list, tuple)), f'images must be np.ndarray, torch.Tensor, or a list/tuple of np.ndarray or torch.Tensor. Found type: {type(ims)}'
@@ -5142,37 +5166,56 @@ class ImageAlignmentChecker:
 
         images = _fix_images(images)
         images_ref = _fix_images(images_ref) if images_ref is not None else images
-        
-        pc = phase_correlation(images_ref[None, :, :, :], images[:, None, :, :])  ## All to all phase correlation. Shape: (n_images, n_images, height, width)
+        assert int(batch_size) >= 1, f'batch_size must be >= 1, got {batch_size}'
 
-        ## metrics
-        filt_in, filt_out = self.filt_in[None, None, :, :], self.filt_out[None, None, :, :]
-        mean_out = (pc * filt_out).sum(dim=(-2, -1)) / filt_out.sum(dim=(-2, -1))
-        mean_in =  (pc * filt_in).sum(dim=(-2, -1))  / filt_in.sum(dim=(-2, -1))
-        ptile95_out = torch.quantile((pc * filt_out).reshape(pc.shape[0], pc.shape[1], -1)[:, :, filt_out.reshape(-1) > 1e-3], 0.95, dim=-1)
-        max_in = (pc * filt_in).amax(dim=(-2, -1))
-        std_out = torch.sqrt(torch.mean((pc - mean_out[:, :, None, None])**2 * filt_out, dim=(-2, -1)))
-        std_in = torch.sqrt(torch.mean((pc - mean_in[:, :, None, None])**2 * filt_in, dim=(-2, -1)))
+        N = images.shape[0]
+        filt_in = self.filt_in[None, None, :, :]
+        filt_out = self.filt_out[None, None, :, :]
+        sum_filt_out = filt_out.sum(dim=(-2, -1))
+        sum_filt_in = filt_in.sum(dim=(-2, -1))
+        mask_out_flat = filt_out.reshape(-1) > 1e-3
 
-        max_diff = max_in - ptile95_out
-        z_in = max_diff / std_out
-        r_in = max_diff / ptile95_out
+        chunk_metrics = {k: [] for k in ('mean_out', 'mean_in', 'ptile95_out', 'max_in', 'std_out', 'std_in')}
+        pc_chunks = [] if return_pc else None
+
+        n_chunks = (N + batch_size - 1) // batch_size
+        for start in tqdm(range(0, N, batch_size), desc=desc, total=n_chunks, unit='chunk', disable=not verbose):
+            chunk = images[start:start + batch_size]  ## (b, H, W)
+            pc = phase_correlation(images_ref[None, :, :, :], chunk[:, None, :, :])  ## (b, M, H, W)
+
+            m_out = (pc * filt_out).sum(dim=(-2, -1)) / sum_filt_out
+            m_in  = (pc * filt_in).sum(dim=(-2, -1))  / sum_filt_in
+            p95_out = torch.quantile((pc * filt_out).reshape(pc.shape[0], pc.shape[1], -1)[:, :, mask_out_flat], 0.95, dim=-1)
+            mx_in = (pc * filt_in).amax(dim=(-2, -1))
+            s_out = torch.sqrt(torch.mean((pc - m_out[:, :, None, None])**2 * filt_out, dim=(-2, -1)))
+            s_in  = torch.sqrt(torch.mean((pc - m_in[:, :, None, None])**2 * filt_in, dim=(-2, -1)))
+
+            chunk_metrics['mean_out'].append(m_out)
+            chunk_metrics['mean_in'].append(m_in)
+            chunk_metrics['ptile95_out'].append(p95_out)
+            chunk_metrics['max_in'].append(mx_in)
+            chunk_metrics['std_out'].append(s_out)
+            chunk_metrics['std_in'].append(s_in)
+            if return_pc:
+                pc_chunks.append(pc.cpu())
+            del pc
+
+        metrics = {k: torch.cat(v, dim=0) for k, v in chunk_metrics.items()}
+        max_diff = metrics['max_in'] - metrics['ptile95_out']
+        z_in = max_diff / metrics['std_out']
+        r_in = max_diff / metrics['ptile95_out']
 
         outs = {
-            'pc': pc.cpu().numpy(),
-            'mean_out': mean_out,
-            'mean_in': mean_in,
-            'ptile95_out': ptile95_out,
-            'max_in': max_in,
-            'std_out': std_out,
-            'std_in': std_in,
+            **metrics,
             'max_diff': max_diff,
             'z_in': z_in,  ## z-score of in value over out distribution
             'r_in': r_in,
         }
+        if return_pc:
+            outs['pc'] = torch.cat(pc_chunks, dim=0).numpy()
 
         outs = {k: val.cpu().numpy() if isinstance(val, torch.Tensor) else val for k, val in outs.items()}
-        
+
         return outs
     
     def __call__(
