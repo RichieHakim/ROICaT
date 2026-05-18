@@ -139,3 +139,5 @@ AGENTS.md
 CLAUDE.md
 manuscript/
 .claude/
+agent_assets/
+wandb/

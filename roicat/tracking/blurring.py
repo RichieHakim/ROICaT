@@ -2,8 +2,6 @@ from typing import List, Tuple, Optional
 
 import numpy as np
 
-import sparse_convolution
-
 from .. import helpers, util
 
 class ROI_Blurrer(util.ROICaT_Module):
@@ -78,6 +76,7 @@ class ROI_Blurrer(util.ROICaT_Module):
         self.kernel = kernel_tmp / kernel_tmp.sum()
 
         print('Preparing sparse convolution') if self._verbose else None
+        import sparse_convolution  ## local import; not needed at module load
         self._conv = sparse_convolution.Toeplitz_convolution2d(
             x_shape=self._frame_shape,
             k=self.kernel,
