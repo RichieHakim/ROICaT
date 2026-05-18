@@ -495,7 +495,8 @@ class Simclr_Model():
                 "x": {0: "batch_size"},
                 # list value: automatic names
                 "latents": [0],
-            }
+            },
+            dynamo=False,  ## torch>=2.10 defaults to dynamo exporter which requires onnxscript; force the legacy TorchScript exporter
         )
         self.model.to(device_prev)
         self.model.train()

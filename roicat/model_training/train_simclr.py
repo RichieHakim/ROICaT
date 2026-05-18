@@ -21,6 +21,39 @@ from roicat.model_training import model
 
 path_script = sys.argv[0]
 
+
+def init_wandb_run(spec_wandb):
+    """
+    Initialize a wandb run from a config-dict spec, or return None.
+
+    If ``spec_wandb`` is falsy, or ``wandb`` is not importable, returns
+    None and skips logging. Under SLURM, defaults ``id`` to
+    ``f"slurm_{SLURM_JOB_ID}"`` and ``resume`` to ``"allow"`` so requeued
+    jobs reattach to the same wandb run. Both defaults are user-overridable
+    by setting them explicitly in the config.
+
+    Args:
+        spec_wandb (Optional[dict]):
+            Either None / empty (skip), or a dict of kwargs forwarded to
+            ``wandb.init`` (e.g. ``{"project": ..., "name": ..., "mode": ...}``).
+
+    Returns:
+        (Optional[wandb.sdk.wandb_run.Run]):
+            Live wandb Run on success; None if skipped or wandb unavailable.
+    """
+    if not spec_wandb:
+        return None
+    try:
+        import wandb
+    except ImportError:
+        return None
+    spec = dict(spec_wandb)
+    job_id = os.environ.get("SLURM_JOB_ID")
+    if job_id:
+        spec.setdefault("id", f"slurm_{job_id}")
+        spec.setdefault("resume", "allow")
+    return wandb.init(**spec)
+
 # Parse arguments for data directory, parameters, and save directory
 parser = argparse.ArgumentParser(
     prog='ROICaT SimCLR Training',
@@ -86,6 +119,9 @@ with open(filepath_params) as f:
 if directory_save is not None:
     dict_params['model']['filepath_model_noPCA'] = str(Path(directory_save) / (dict_params['model']['torchvision_model'] + '_' + 'trainingBest_noPCA.onnx'))
 
+# Initialize wandb (soft dep: returns None if not configured or not installed)
+wandb_run = init_wandb_run(dict_params.get('trainer', {}).get('wandb'))
+
 # Load data from dir_data into Data object
 ROI_sparse_all = [scipy.sparse.load_npz(filepath_ROI_images) for filepath_ROI_images in list_filepaths_data if filepath_ROI_images.suffix == '.npz']
 ROI_images = [sf_sparse.toarray().reshape(sf_sparse.shape[0], 36,36).astype(np.float32) for sf_sparse in ROI_sparse_all]
@@ -105,12 +141,13 @@ data.set_ROI_images(
 
 # Create dataset / dataloader for SimCLR training
 ROI_images_rs = ROInet.Resizer_ROI_images(
-    ROI_images=np.concatenate(data.ROI_images, axis=0),
-    um_per_pixel=dict_params['data']['um_per_pixel'],
     nan_to_num=dict_params['data']['nan_to_num'],
     nan_to_num_val=dict_params['data']['nan_to_num_val'],
-    verbose=dict_params['data']['verbose']
-).ROI_images_rs
+    verbose=dict_params['data']['verbose'],
+).resize_ROIs(
+    ROI_images=np.concatenate(data.ROI_images, axis=0),
+    um_per_pixel=dict_params['data']['um_per_pixel'],
+)
 dataloader_generator = ROInet.Dataloader_ROInet(
     ROI_images_rs,
     batchSize_dataloader=dict_params['dataloader']['batchSize_dataloader'],
@@ -160,12 +197,23 @@ trainer = sth.Simclr_Trainer(
     temperature=dict_params['trainer']['temperature'],
     l2_alpha=dict_params['trainer']['l2_alpha'],
     path_saveLog=filepath_logger,
-    path_saveLoss=filepath_losses
+    path_saveLoss=filepath_losses,
+    resume_from_checkpoint=dict_params['trainer'].get('resume_from_checkpoint', True),
+    save_onnx_each_epoch=dict_params['trainer'].get('save_onnx_each_epoch', True),
+    wandb_run=wandb_run,
+    use_amp_bf16=dict_params['trainer'].get('use_amp_bf16', False),
 )
 
 # Loop through epochs, batches, etc. if loss becomes NaNs, don't save the network and stop training.
 # Otherwise, save the network as an onnx file.
-trainer.train()
+try:
+    trainer.train()
+finally:
+    if wandb_run is not None:
+        try:
+            wandb_run.finish()
+        except Exception:
+            pass
 
 if test_option:
     pass

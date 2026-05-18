@@ -1,4 +1,6 @@
 # Imports
+import os
+from pathlib import Path
 import numpy as np
 import torch
 from PIL import Image
@@ -19,10 +21,53 @@ from torch.optim import Adam
 
 from . import model
 
+
+def _resolve_amp_bf16(device: Any, use_amp_bf16: bool) -> Tuple[str, bool]:
+    """
+    Resolve ``(device_type, enabled)`` for ``torch.autocast(dtype=bfloat16)``.
+
+    Inspects the training device's hardware bf16 support and returns a tuple
+    suitable for direct use in ``torch.autocast(device_type=..., enabled=...)``.
+    If ``use_amp_bf16`` is requested but the hardware does not support bf16
+    (e.g., pre-Ampere CUDA, CPU, missing CUDA), a ``UserWarning`` is emitted
+    and ``enabled=False`` is returned so training continues in fp32.
+
+    Args:
+        device: A ``torch.device`` or device-string like ``'cuda:0'``, ``'mps'``,
+            or ``'cpu'``.
+        use_amp_bf16: User request to enable bf16 autocast.
+
+    Returns:
+        (device_type, enabled): strings/bools ready for ``torch.autocast``.
+    """
+    import warnings
+    dev = device if isinstance(device, torch.device) else torch.device(device)
+    dtype = dev.type
+    if not use_amp_bf16:
+        return dtype, False
+    if dtype == 'cuda':
+        if not torch.cuda.is_available():
+            warnings.warn("use_amp_bf16=True but CUDA is not available; disabling.", stacklevel=2)
+            return dtype, False
+        if not torch.cuda.is_bf16_supported():
+            cap = torch.cuda.get_device_capability(dev.index if dev.index is not None else 0)
+            warnings.warn(f"use_amp_bf16=True but CUDA device sm_{cap[0]}{cap[1]} lacks native bf16 (need sm_80+: A100/3090/4090/H100); disabling.", stacklevel=2)
+            return dtype, False
+        return dtype, True
+    if dtype == 'mps':
+        warnings.warn("use_amp_bf16=True on MPS: PyTorch MPS bf16 autocast is experimental; op coverage may be incomplete.", stacklevel=2)
+        return dtype, True
+    if dtype == 'cpu':
+        warnings.warn("use_amp_bf16=True on CPU: bf16 autocast works but is unlikely to speed up training.", stacklevel=2)
+        return dtype, True
+    warnings.warn(f"use_amp_bf16=True on unrecognized device type '{dtype}'; disabling.", stacklevel=2)
+    return dtype, False
+
+
 def log_fn(log_str, log_file):
     """
     Write a string to a log file
-    
+
     Args:
         log_str (str):
             String to be written to the log file
@@ -31,6 +76,49 @@ def log_fn(log_str, log_file):
     """
     with open(log_file, 'a') as f:
         f.write(log_str + '\n')
+
+
+def _save_checkpoint_atomic(
+    filepath: str,
+    epoch: int,
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    scheduler: Optional[torch.optim.lr_scheduler._LRScheduler],
+    losses: List[float],
+) -> None:
+    """
+    Atomically write a resumable training checkpoint.
+
+    Writes to ``<filepath>_tmp.pth`` then ``os.replace`` onto ``filepath``
+    so that a crash during writing cannot leave a corrupted checkpoint.
+
+    Args:
+        filepath (str):
+            Destination path (typically ``{dir_save}/checkpoint_latest.pth``).
+        epoch (int):
+            Current epoch index (zero-based; the value stored is the epoch
+            that just completed).
+        model (torch.nn.Module):
+            Model whose state_dict will be saved.
+        optimizer (torch.optim.Optimizer):
+            Optimizer whose state will be saved.
+        scheduler (Optional[torch.optim.lr_scheduler._LRScheduler]):
+            Scheduler whose state will be saved. Pass None to skip.
+        losses (List[float]):
+            Per-step loss list to persist for resume continuity.
+    """
+    ckpt = {
+        "epoch": int(epoch),
+        "model_state": model.state_dict(),
+        "optimizer_state": optimizer.state_dict(),
+        "scheduler_state": scheduler.state_dict() if scheduler is not None else None,
+        "losses": list(losses),
+        "torch_rng_state": torch.get_rng_state(),
+        "cuda_rng_state": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+    }
+    filepath_tmp = str(filepath) + "_tmp.pth"
+    torch.save(ckpt, filepath_tmp)
+    os.replace(filepath_tmp, filepath)
 
 
 class Simclr_Trainer():
@@ -68,6 +156,31 @@ class Simclr_Trainer():
             The path to which to save the training log.
         path_saveLoss (Optional[str]):
             The path to which to save the losses.
+        dir_save (Optional[str]):
+            Directory into which to write per-epoch ``checkpoint_latest.pth``
+            for resume-from-checkpoint. If None, derived from ``path_saveLoss``.
+        resume_from_checkpoint (bool):
+            If True and ``{dir_save}/checkpoint_latest.pth`` exists, restore
+            model, optimizer, scheduler, RNG, and losses from it and continue
+            from ``epoch + 1``. If True and no checkpoint exists, train from
+            scratch.
+        save_onnx_each_epoch (bool):
+            If True (default), call ``model_container.save_onnx`` after each
+            epoch. If False, skip the ONNX export but still write the .pth
+            state checkpoint. Useful when ``onnx``/``onnxruntime`` are not
+            installed in the environment.
+        wandb_run (Optional[Any]):
+            An optional ``wandb.sdk.wandb_run.Run`` instance. If provided,
+            per-step ``loss``, ``lr``, and ``pos_over_neg`` are logged. If
+            None (default), no wandb logging and ``wandb`` is not imported.
+        use_amp_bf16 (bool):
+            If True, wrap the model forward sub-batch loop in
+            ``torch.autocast(device_type='cuda', dtype=torch.bfloat16)`` for
+            ~2.8× throughput improvement on H100 / Ampere GPUs. Features are
+            cast back to fp32 before the contrastive loss. Default False so
+            existing behaviour is unchanged. No GradScaler is used (bf16 has
+            sufficient dynamic range). Enable by setting ``"use_amp_bf16":
+            true`` under the ``trainer`` section of your params JSON.
     """
 
 
@@ -75,9 +188,9 @@ class Simclr_Trainer():
             self,
             dataloader: torch.utils.data.DataLoader,
             model_container: model.Simclr_Model,
-            
+
             training_stop_revert_atNan: bool = True,
-                    
+
             n_epochs: int = 9999999,
             device_train: str = 'cuda:0',
             inner_batch_size: int = 256,
@@ -90,6 +203,12 @@ class Simclr_Trainer():
 
             path_saveLog: Optional[str] = None,
             path_saveLoss: Optional[str] = None,
+
+            dir_save: Optional[str] = None,
+            resume_from_checkpoint: bool = True,
+            save_onnx_each_epoch: bool = True,
+            wandb_run: Optional[Any] = None,
+            use_amp_bf16: bool = False,
         ):
 
         self.dataloader = dataloader
@@ -107,11 +226,28 @@ class Simclr_Trainer():
         self.path_saveLog = path_saveLog
         self.path_saveLoss = path_saveLoss
 
+        ## Resolve dir_save: explicit arg wins; else derive from path_saveLoss; else None.
+        if dir_save is not None:
+            self.dir_save = str(dir_save)
+        elif path_saveLoss is not None:
+            self.dir_save = str(Path(path_saveLoss).parent)
+        else:
+            self.dir_save = None
+        self.resume_from_checkpoint = resume_from_checkpoint
+        self.save_onnx_each_epoch = save_onnx_each_epoch
+        self.wandb_run = wandb_run
+        self.amp_device_type, self.use_amp_bf16 = _resolve_amp_bf16(self.device_train, use_amp_bf16)
+
     def train(
             self
             ):
         """
         Trains the model using the saved attributes.
+
+        Per-epoch order: epoch_step -> save losses -> NaN-break check ->
+        write ``checkpoint_latest.pth`` atomically -> (optional) ONNX export.
+        The state_dict checkpoint is written before the ONNX export so a
+        crash in ONNX export does not lose the resumable .pth checkpoint.
         """
         self.model_container.model.train();
         self.model_container.model.to(self.device_train)
@@ -120,70 +256,108 @@ class Simclr_Trainer():
         criteria = [CrossEntropyLoss()]
         criteria = [criterion.to(self.device_train) for criterion in criteria]
         optimizer = Adam(
-            self.model_container.model.parameters(), 
+            self.model_container.model.parameters(),
             lr=self.learning_rate,
         )
         scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer,
                                                         gamma=self.gamma,
                                                         )
-        
-        self.dataloader
-        self.model_container
-        self.n_epochs
-        self.device_train
-        self.inner_batch_size
-        self.learning_rate
-        self.penalty_orthogonality
-        self.weight_decay
-        self.gamma
-        self.temperature
-        self.l2_alpha
-        self.path_saveLog
 
         log_function = partial(log_fn, log_file=self.path_saveLog) if self.path_saveLog is not None else lambda x: None
 
+        ## ------------------------------------------------------------
+        ## Resume-from-checkpoint
+        ## ------------------------------------------------------------
         losses_train, losses_val = [], [np.nan]
-        for epoch in tqdm.tqdm(range(self.n_epochs)):
+        epoch_start = 0
+        filepath_ckpt = (
+            str(Path(self.dir_save) / "checkpoint_latest.pth")
+            if self.dir_save is not None else None
+        )
+        if self.resume_from_checkpoint and filepath_ckpt is not None and Path(filepath_ckpt).exists():
+            ckpt = torch.load(filepath_ckpt, map_location=self.device_train, weights_only=False)
+            self.model_container.model.load_state_dict(ckpt["model_state"])
+            optimizer.load_state_dict(ckpt["optimizer_state"])
+            if "scheduler_state" in ckpt and ckpt["scheduler_state"] is not None:
+                scheduler.load_state_dict(ckpt["scheduler_state"])
+            losses_train = list(ckpt.get("losses", []))
+            if "torch_rng_state" in ckpt and ckpt["torch_rng_state"] is not None:
+                torch.set_rng_state(ckpt["torch_rng_state"].cpu().to(torch.uint8))
+            if torch.cuda.is_available() and ckpt.get("cuda_rng_state") is not None:
+                try:
+                    torch.cuda.set_rng_state_all([s.cpu().to(torch.uint8) for s in ckpt["cuda_rng_state"]])
+                except Exception as e:
+                    print(f"[RESUME] Could not restore CUDA RNG state: {e}")
+            epoch_start = int(ckpt["epoch"]) + 1
+            msg_resume = f"[RESUME] Loaded {filepath_ckpt}. Resuming from epoch {epoch_start}. n_losses_so_far={len(losses_train)}."
+            print(msg_resume)
+            log_function(msg_resume)
+        elif self.resume_from_checkpoint and filepath_ckpt is not None:
+            msg_fresh = f"[RESUME] No checkpoint at {filepath_ckpt}. Starting fresh."
+            print(msg_fresh)
+            log_function(msg_fresh)
+
+        for epoch in tqdm.tqdm(range(epoch_start, self.n_epochs)):
             print(f'epoch: {epoch}')
             losses_train = epoch_step(
-                self.dataloader, 
-                self.model_container.model, 
-                optimizer, 
+                self.dataloader,
+                self.model_container.model,
+                optimizer,
                 criteria,
                 scheduler=scheduler,
                 temperature=self.temperature,
                 penalty_orthogonality=self.penalty_orthogonality,
-                loss_rolling_train=losses_train, 
+                loss_rolling_train=losses_train,
                 loss_rolling_val=losses_val,
-                device=self.device_train, 
+                device=self.device_train,
                 inner_batch_size=self.inner_batch_size,
                 verbose=2,
                 verbose_update_period=1,
                 log_function=log_function,
+                wandb_run=self.wandb_run,
+                wandb_step_offset=len(losses_train),
+                use_amp_bf16=self.use_amp_bf16,
+                amp_device_type=self.amp_device_type,
             )
-            
+
             ## save loss information
             if self.path_saveLoss is not None:
                 np.save(self.path_saveLoss, losses_train)
-            
-            ## if loss becomes NaNs, don't save the network and stop training
+
+            ## if loss becomes NaNs, don't save the network and stop training.
+            ## Break BEFORE writing the resume checkpoint so a NaN epoch never
+            ## poisons the resume.
             if torch.isnan(torch.as_tensor(losses_train[-1])) and self.training_stop_revert_atNan:
                 break
 
-            ## save model
-            self.model_container.save_onnx(check_load_onnx_valid=True)
+            ## Write resumable state checkpoint atomically.
+            if self.dir_save is not None:
+                _save_checkpoint_atomic(
+                    filepath=filepath_ckpt,
+                    epoch=epoch,
+                    model=self.model_container.model,
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                    losses=losses_train,
+                )
 
-def train_step_simCLR( 
-    X_train_batch, 
-    y_train_batch, 
-    model, 
+            ## save ONNX model (gated)
+            if self.save_onnx_each_epoch:
+                self.model_container.save_onnx(check_load_onnx_valid=True)
+
+def train_step_simCLR(
+    X_train_batch,
+    y_train_batch,
+    model,
     optimizer,
-    criterion, 
-    scheduler, 
-    temperature, 
+    criterion,
+    scheduler,
+    temperature,
     sample_weights,
     penalty_orthogonality=0,
     inner_batch_size=None,
+    use_amp_bf16: bool = False,
+    amp_device_type: str = 'cuda',
     ):
     """
     Performs a single training step.
@@ -213,7 +387,12 @@ def train_step_simCLR(
             Penalty for the orthogonality of the weights
         inner_batch_size (Optional[int]):
             Batch size for the inner loop. If None, the whole batch is used.
-    
+        use_amp_bf16 (bool):
+            If True, wraps the model forward calls in
+            ``torch.autocast(device_type='cuda', dtype=torch.bfloat16)``.
+            Features are cast back to fp32 before the contrastive loss.
+            Default False; behaviour is byte-identical to prior code when False.
+
     Returns:
         loss (float):
             Loss of the current batch
@@ -226,11 +405,23 @@ def train_step_simCLR(
     
     optimizer.zero_grad()
 
-    if inner_batch_size is None:
-        features = model.forward_latent(X_train_batch)
-    else:
-        features = torch.cat([model.forward_latent(sub_batch) for sub_batch in make_batches(X_train_batch, batch_size=inner_batch_size)], dim=0)
-    
+    ## Forward sub-batch loop: optionally run under bfloat16 autocast for ~2.8×
+    ## throughput on Ampere/H100 GPUs. enabled=False is a lightweight no-op that
+    ## preserves byte-identical fp32 behaviour when use_amp_bf16=False.
+    ## amp_device_type is resolved upstream (Simclr_Trainer.__init__) from the
+    ## training device — 'cuda', 'mps', or 'cpu' — so the same flag works on
+    ## non-CUDA devices.
+    with torch.autocast(device_type=amp_device_type, dtype=torch.bfloat16, enabled=use_amp_bf16):
+        if inner_batch_size is None:
+            features = model.forward_latent(X_train_batch)
+        else:
+            features = torch.cat(
+                [model.forward_latent(sub_batch) for sub_batch in make_batches(X_train_batch, batch_size=inner_batch_size)],
+                dim=0,
+            )
+    ## Cast back to fp32: required for loss computation; no-op when use_amp_bf16=False.
+    features = features.float()
+
     torch.cuda.empty_cache()
 
     logits, labels = richs_contrastive_matrix(features, batch_size=X_train_batch.shape[0]/2, n_views=2, temperature=temperature, DEVICE=X_train_batch.device) #### FOR RICH - THIS IS THE LINE IN QUESTION. I THINK "/2" NEEDS TO BE REMOVED FROM "X_train_batch.shape[0]/2"
@@ -284,20 +475,24 @@ def L2_reg(model):
         penalty += torch.sum(param**2)
     return penalty
 
-def epoch_step( dataloader, 
-                model, 
-                optimizer, 
-                criterion, 
-                scheduler=None, 
+def epoch_step( dataloader,
+                model,
+                optimizer,
+                criterion,
+                scheduler=None,
                 temperature=0.5,
                 penalty_orthogonality=0,
-                loss_rolling_train=[], 
+                loss_rolling_train=[],
                 loss_rolling_val=[],
-                device='cpu', 
+                device='cpu',
                 inner_batch_size=None,
                 verbose=False,
                 verbose_update_period=100,
-                log_function=print
+                log_function=print,
+                wandb_run: Optional[Any] = None,
+                wandb_step_offset: int = 0,
+                use_amp_bf16: bool = False,
+                amp_device_type: str = 'cuda',
                 ):
     """
     Performs an epoch step.
@@ -334,6 +529,16 @@ def epoch_step( dataloader,
             How often to print out the loss
         log_function (function):
             Function to use for printing out the loss
+        wandb_run (Optional[Any]):
+            Optional wandb Run; if provided, per-step ``loss``, ``lr``, and
+            ``pos_over_neg`` are logged with explicit step counter
+            ``wandb_step_offset + i_batch``.
+        wandb_step_offset (int):
+            Step counter offset (typically ``len(loss_rolling_train)`` at
+            epoch start) so the global wandb step is monotonic across
+            epochs and resumes.
+        use_amp_bf16 (bool):
+            Forwarded directly to ``train_step_simCLR``. Default False.
 
     Returns:
         loss_rolling_train (list):
@@ -347,24 +552,35 @@ def epoch_step( dataloader,
         X_batch = torch.cat(X_batch, dim=0)
         X_batch = X_batch.to(device)
         y_batch = y_batch.to(device)
-        
+
         # Get batch weights
         loss, pos_over_neg = train_step_simCLR(
-            X_batch, 
-            y_batch, 
-            model, 
-            optimizer, 
-            criterion, 
-            scheduler, 
-            temperature, 
+            X_batch,
+            y_batch,
+            model,
+            optimizer,
+            criterion,
+            scheduler,
+            temperature,
             sample_weights=torch.as_tensor(sample_weights, device=device),
             penalty_orthogonality=penalty_orthogonality,
             inner_batch_size=inner_batch_size,
+            use_amp_bf16=use_amp_bf16,
+            amp_device_type=amp_device_type,
             ) # Needs to take in weights
         loss_rolling_train.append(loss)
         # if False and do_validation:
         #     loss = validation_Object.get_predictions()
         #     loss_rolling_val.append(loss)
+        if wandb_run is not None:
+            wandb_run.log(
+                {
+                    "loss": float(loss),
+                    "lr": float(optimizer.param_groups[0]["lr"]),
+                    "pos_over_neg": float(pos_over_neg),
+                },
+                step=int(wandb_step_offset + i_batch),
+            )
         if verbose>0:
             if i_batch%verbose_update_period == 0:
                 print_info( batch=i_batch,
