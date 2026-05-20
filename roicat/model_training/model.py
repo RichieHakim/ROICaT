@@ -14,7 +14,16 @@ from typing import Optional, List, Tuple, Union, Dict, Any
 from torch.nn import CrossEntropyLoss
 from torch.optim import Adam
 
-from .. import helpers
+
+## Inlined from roicat.helpers so this module can be loaded standalone (e.g. inside a distributed bundle via sys.path.append + bare `import model`).
+def get_nums_from_string(string_with_nums):
+    """Return the digits in a string concatenated as an int, or None if no digits are present."""
+    _digits = set('0123456789')
+    nums = [ch for ch in string_with_nums if ch in _digits]
+    if not nums:
+        return None
+    return int(''.join(nums))
+
 
 class ModelTackOn(torch.nn.Module):
     """
@@ -289,6 +298,182 @@ class ModelTackOn(torch.nn.Module):
         """
         return next(self.parameters()).device
 
+class Simclr_Model_with_PCA(torch.nn.Module):
+    """
+    Backbone + head + frozen PCA-whitening layer, fused into a single
+    ``nn.Module`` for serialisation as a ``.pth`` state dict.
+    RH 2026
+
+    The PCA layer implements centering + orthogonal whitening of the
+    256-d head embeddings via a single fused ``nn.Linear``::
+
+        weight = pca.components_                      (pca_size × pca_size)
+        bias   = -pca.components_ @ pca_mean          (pca_size,)
+
+    Weights and bias are stored as **buffers** (not Parameters) so they
+    travel with ``state_dict`` but are excluded from ``parameters()`` and
+    never updated by an optimizer.
+
+    Args:
+        backbone (torch.nn.Module):
+            Trained SimCLR backbone+head (a ``ModelTackOn`` instance).
+            Must accept ``(N, C, H, W)`` and return ``(N, pca_size)``.
+        pca_weight (torch.Tensor):
+            PCA rotation matrix.  Shape: ``(pca_size, pca_size)``.
+        pca_bias (torch.Tensor):
+            Fused centering bias ``-components @ mean``.
+            Shape: ``(pca_size,)``.
+    """
+
+    def __init__(
+        self,
+        backbone: torch.nn.Module,
+        pca_weight: torch.Tensor,
+        pca_bias: torch.Tensor,
+    ):
+        super().__init__()
+        self.backbone = backbone
+        ## Register as buffers: saved/loaded with state_dict, not optimised.
+        self.register_buffer('pca_weight', pca_weight.clone().detach().float())
+        self.register_buffer('pca_bias', pca_bias.clone().detach().float())
+
+    @classmethod
+    def from_simclr_and_sklearn_pca(
+        cls,
+        model_container: 'Simclr_Model',
+        pca_sklearn,
+        pca_mean: np.ndarray,
+        trainer_scale: bool = False,
+    ) -> 'Simclr_Model_with_PCA':
+        """
+        Construct from a trained ``Simclr_Model`` container and a fitted
+        ``sklearn.decomposition.PCA``.
+
+        Args:
+            model_container (Simclr_Model):
+                Trained container; its ``.model`` attribute is used as the
+                backbone.
+            pca_sklearn:
+                A fitted ``sklearn.PCA`` instance.  Uses
+                ``pca_sklearn.components_`` (shape: ``(pca_size, pca_size)``).
+            pca_mean (np.ndarray):
+                The centering mean to bake into the fused bias.  Must be
+                supplied explicitly: ``Simclr_PCA_Trainer`` zeros
+                ``pca_sklearn.mean_`` before fitting, so
+                ``pca_sklearn.mean_`` cannot be used.  Use
+                ``trainer.pca_mean_fitted`` (see ``simclr_training_helpers.py``).
+            trainer_scale (bool):
+                Must be False.  ``scale=True`` is not yet supported.
+
+        Returns:
+            (Simclr_Model_with_PCA):
+                Ready-to-save module with frozen PCA buffers.
+        """
+        if pca_mean is None:
+            raise ValueError(
+                "pca_mean must be supplied explicitly. "
+                "Simclr_PCA_Trainer zeros pca_sklearn.mean_ before fitting, "
+                "so pca_sklearn.mean_ cannot be used for centering. "
+                "Pass trainer.pca_mean_fitted instead."
+            )
+        if trainer_scale:
+            raise ValueError(
+                "scale=True is not yet supported in Simclr_Model_with_PCA."
+                " Use scale=False (the default) in Simclr_PCA_Trainer."
+            )
+        components = torch.as_tensor(pca_sklearn.components_, dtype=torch.float32)  # (pca_size, pca_size)
+        mean = torch.as_tensor(pca_mean, dtype=torch.float32)  # (pca_size,)
+        ## Fused bias: -components @ mean
+        bias = -(components @ mean)  # (pca_size,)
+        return cls(
+            backbone=model_container.model,
+            pca_weight=components,
+            pca_bias=bias,
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass: backbone → (flatten if needed) → fused PCA linear.
+
+        Args:
+            x (torch.Tensor):
+                Input images.  Shape: ``(N, C, H, W)``.
+
+        Returns:
+            (torch.Tensor):
+                PCA-whitened embeddings.  Shape: ``(N, pca_size)``.
+        """
+        h = self.backbone(x)  # (N, pca_size)
+        if h.dim() > 2:
+            h = h.flatten(start_dim=1)
+        ## torch.nn.functional.linear: y = x @ weight.T + bias
+        return torch.nn.functional.linear(h, self.pca_weight, self.pca_bias)
+
+    @property
+    def device(self) -> torch.device:
+        """Device of the first registered buffer."""
+        return self.pca_weight.device
+
+
+def build_backbone(
+    base_model: torch.nn.Module,
+    head_pool_method: str,
+    head_pool_method_kwargs: dict,
+    n_block_toInclude: int,
+    image_out_size: Tuple[int, int, int],
+    pre_head_fc_sizes: List[int],
+    post_head_fc_sizes: List[int],
+    head_nonlinearity: str,
+    head_nonlinearity_kwargs: dict,
+) -> ModelTackOn:
+    """
+    Build the chopped + pooled + flattened backbone and wrap it in a ``ModelTackOn``.
+
+    Freeze-agnostic: caller is responsible for freezing ``base_model`` parameters
+    before calling this function if required.
+
+    Args:
+        base_model (torch.nn.Module):
+            Torchvision base model (full architecture; will be chopped internally).
+        head_pool_method (str):
+            Name of a ``torch.nn`` pooling class, e.g. ``'AdaptiveAvgPool2d'``.
+        head_pool_method_kwargs (dict):
+            Kwargs passed to the pooling constructor.
+        n_block_toInclude (int):
+            Number of children blocks to retain from ``base_model``.
+        image_out_size (Tuple[int, int, int]):
+            ``(C, H, W)`` input tensor shape used to infer FC layer sizes.
+        pre_head_fc_sizes (List[int]):
+            Sizes of the fully-connected layers before the head.
+        post_head_fc_sizes (List[int]):
+            Sizes of the fully-connected layers after the head.
+        head_nonlinearity (str):
+            Name of a ``torch.nn`` nonlinearity class, e.g. ``'ReLU'``.
+        head_nonlinearity_kwargs (dict):
+            Kwargs passed to the nonlinearity constructor.
+
+    Returns:
+        (ModelTackOn):
+            Ready-to-use backbone module on CPU.
+    """
+    model_chopped = torch.nn.Sequential(list(base_model.children())[0][:n_block_toInclude])
+    model_chopped_pooled = torch.nn.Sequential(
+        model_chopped,
+        torch.nn.__dict__[head_pool_method](**head_pool_method_kwargs),
+        torch.nn.Flatten(),
+    )
+    data_dim = (1, *image_out_size)
+    return ModelTackOn(
+        base_model=model_chopped_pooled.to('cpu'),
+        un_modified_model=base_model.to('cpu'),
+        data_dim=data_dim,
+        pre_head_fc_sizes=pre_head_fc_sizes,
+        post_head_fc_sizes=post_head_fc_sizes,
+        nonlinearity=head_nonlinearity,
+        kwargs_nonlinearity=head_nonlinearity_kwargs,
+    )
+
+
 class Simclr_Model():
     """
     SimCLR model class
@@ -371,7 +556,55 @@ class Simclr_Model():
                 )
         self.filepath_model_save = filepath_model_save
         self.filepath_model_load = filepath_model_load
-            
+
+    @classmethod
+    def from_dict_params(
+        cls,
+        dict_params_model: dict,
+        base_model: torch.nn.Module,
+        image_out_size: Tuple[int, int, int],
+        forward_version: str,
+        filepath_model_save: Optional[str] = None,
+    ) -> 'Simclr_Model':
+        """
+        Convenience constructor: pulls standard model kwargs out of ``dict_params['model']``
+        and instantiates ``Simclr_Model``.
+
+        Args:
+            dict_params_model (dict):
+                The ``dict_params['model']`` sub-dict. Expected keys:
+                ``head_pool_method``, ``head_pool_method_kwargs``,
+                ``pre_head_fc_sizes``, ``post_head_fc_sizes``,
+                ``head_nonlinearity``, ``head_nonlinearity_kwargs``,
+                ``block_to_unfreeze``, ``n_block_toInclude``.
+            base_model (torch.nn.Module):
+                Pretrained torchvision backbone instance.
+            image_out_size (Tuple[int, int, int]):
+                ``(C, H, W)`` input tensor shape (e.g. ``[3, 224, 224]``).
+            forward_version (str):
+                Forward-pass binding, e.g. ``'forward_latent'`` or ``'forward_head'``.
+            filepath_model_save (Optional[str]):
+                Path for save target (e.g. for ``save_onnx``). ``None`` if not needed.
+
+        Returns:
+            (Simclr_Model):
+                Newly constructed model container.
+        """
+        return cls(
+            filepath_model_save=filepath_model_save,
+            base_model=base_model,
+            head_pool_method=dict_params_model['head_pool_method'],
+            head_pool_method_kwargs=dict_params_model['head_pool_method_kwargs'],
+            pre_head_fc_sizes=dict_params_model['pre_head_fc_sizes'],
+            post_head_fc_sizes=dict_params_model['post_head_fc_sizes'],
+            head_nonlinearity=dict_params_model['head_nonlinearity'],
+            head_nonlinearity_kwargs=dict_params_model['head_nonlinearity_kwargs'],
+            block_to_unfreeze=dict_params_model['block_to_unfreeze'],
+            n_block_toInclude=dict_params_model['n_block_toInclude'],
+            image_out_size=image_out_size,
+            forward_version=forward_version,
+        )
+
     def create_model(
             self,
             base_model=None, # Freeze base_model
@@ -414,28 +647,25 @@ class Simclr_Model():
                 Version of the forward pass to use
         """
 
-        base_model_frozen = base_model
-        for param in base_model_frozen.parameters():
+        for param in base_model.parameters():
             param.requires_grad = False
 
-        model_chopped = torch.nn.Sequential(list(base_model_frozen.children())[0][:n_block_toInclude])  ## 0.
-        model_chopped_pooled = torch.nn.Sequential(model_chopped, torch.nn.__dict__[head_pool_method](**head_pool_method_kwargs), torch.nn.Flatten())  ## 1.
-
-        data_dim = tuple([1] + list(image_out_size))
-        self.model = ModelTackOn(
-            model_chopped_pooled.to('cpu'),
-            base_model_frozen.to('cpu'),
-            data_dim=data_dim,
+        self.model = build_backbone(
+            base_model=base_model,
+            head_pool_method=head_pool_method,
+            head_pool_method_kwargs=head_pool_method_kwargs,
+            n_block_toInclude=n_block_toInclude,
+            image_out_size=tuple(image_out_size),
             pre_head_fc_sizes=pre_head_fc_sizes,
             post_head_fc_sizes=post_head_fc_sizes,
-            nonlinearity=head_nonlinearity,
-            kwargs_nonlinearity=head_nonlinearity_kwargs,
+            head_nonlinearity=head_nonlinearity,
+            head_nonlinearity_kwargs=head_nonlinearity_kwargs,
         )
 
         mnp = [name for name, param in self.model.named_parameters()]  ## 'model named parameters'
         mnp_blockNums = [name[name.find('.'):name.find('.')+8] for name in mnp]  ## pulls out the numbers just after the model name
-        mnp_nums = [helpers.get_nums_from_string(name) for name in mnp_blockNums]  ## converts them to numbers
-        block_to_freeze_nums = helpers.get_nums_from_string(block_to_unfreeze)  ## converts the input parameter specifying the block to freeze into a number for comparison
+        mnp_nums = [get_nums_from_string(name) for name in mnp_blockNums]  ## converts them to numbers
+        block_to_freeze_nums = get_nums_from_string(block_to_unfreeze)  ## converts the input parameter specifying the block to freeze into a number for comparison
 
         m_baseName = mnp[0][:mnp[0].find('.')]
 
@@ -496,6 +726,7 @@ class Simclr_Model():
                 # list value: automatic names
                 "latents": [0],
             },
+            opset_version=17,  ## opset 17 — onnx2torch (used in load_onnx for round-trip + by train_simclr_PCA.py) does not yet support Gelu v20
             dynamo=False,  ## torch>=2.10 defaults to dynamo exporter which requires onnxscript; force the legacy TorchScript exporter
         )
         self.model.to(device_prev)
@@ -583,4 +814,39 @@ class Simclr_Model():
             self.model = model
         else:
             return model
+
+
+def make_model(fwd_version: str, **params) -> 'Simclr_Model_with_PCA':
+    """
+    Factory called by ``ROInet_embedder`` after loading ``params.json`` from a distributed bundle.
+    Rebuilds the chopped + pooled backbone, wraps it with the frozen PCA-whitening layer, and returns a ``Simclr_Model_with_PCA`` whose state_dict the caller loads next.
+
+    ``fwd_version`` is accepted for ROInet_embedder API compatibility but ignored: the wPCA bundle always returns PCA-whitened head output regardless of value.
+
+    Args:
+        fwd_version (str): Forward-pass version from ROInet_embedder (``'latent'`` / ``'head'`` / ``'base'``). Ignored.
+        **params: All keys from ``params.json`` — ``torchvision_model``, ``head_pool_method``, ``head_pool_method_kwargs``, ``pre_head_fc_sizes``, ``post_head_fc_sizes``, ``head_nonlinearity``, ``head_nonlinearity_kwargs``, ``n_block_toInclude``, ``pca_size``.
+    """
+    base_model = torchvision.models.__dict__[params['torchvision_model']](weights=None)
+    ## ROInet always feeds 224x224 RGB
+    backbone = build_backbone(
+        base_model=base_model,
+        head_pool_method=params['head_pool_method'],
+        head_pool_method_kwargs=params['head_pool_method_kwargs'],
+        n_block_toInclude=params['n_block_toInclude'],
+        image_out_size=(3, 224, 224),
+        pre_head_fc_sizes=params['pre_head_fc_sizes'],
+        post_head_fc_sizes=params['post_head_fc_sizes'],
+        head_nonlinearity=params['head_nonlinearity'],
+        head_nonlinearity_kwargs=params['head_nonlinearity_kwargs'],
+    )
+    ## wPCA bundle wraps the 256-d head output regardless of fwd_version
+    backbone.forward = backbone.forward_head
+
+    pca_size = params['pca_size']
+    return Simclr_Model_with_PCA(
+        backbone=backbone,
+        pca_weight=torch.zeros(pca_size, pca_size),
+        pca_bias=torch.zeros(pca_size),
+    )
 

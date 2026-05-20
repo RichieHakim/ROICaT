@@ -168,19 +168,12 @@ dataloader_generator = ROInet.Dataloader_ROInet(
 dataloader = dataloader_generator.dataloader
 
 # Create Model
-model_container = model.Simclr_Model(
-    filepath_model_save=dict_params['model']['filepath_model_noPCA'], # Set filepath to/from which to save/load model
+model_container = model.Simclr_Model.from_dict_params(
+    dict_params_model=dict_params['model'],
     base_model=torchvision.models.__dict__[dict_params['model']['torchvision_model']](weights='DEFAULT'),
-    head_pool_method=dict_params['model']['head_pool_method'],
-    head_pool_method_kwargs=dict_params['model']['head_pool_method_kwargs'],
-    pre_head_fc_sizes=dict_params['model']['pre_head_fc_sizes'],
-    post_head_fc_sizes=dict_params['model']['post_head_fc_sizes'],
-    head_nonlinearity=dict_params['model']['head_nonlinearity'],
-    head_nonlinearity_kwargs=dict_params['model']['head_nonlinearity_kwargs'],
-    block_to_unfreeze=dict_params['model']['block_to_unfreeze'],
-    n_block_toInclude=dict_params['model']['n_block_toInclude'],
     image_out_size=list(dataloader_generator.dataset[0][0][0].shape),
     forward_version=dict_params['trainer']['forward_version'],
+    filepath_model_save=dict_params['model']['filepath_model_noPCA'],
 )
 
 # Specify criterion, optimizer, scheduler, learning rate, etc.
@@ -199,7 +192,7 @@ trainer = sth.Simclr_Trainer(
     path_saveLog=filepath_logger,
     path_saveLoss=filepath_losses,
     resume_from_checkpoint=dict_params['trainer'].get('resume_from_checkpoint', True),
-    save_onnx_each_epoch=dict_params['trainer'].get('save_onnx_each_epoch', True),
+    save_onnx_each_epoch=dict_params['trainer'].get('save_onnx_each_epoch', False),
     wandb_run=wandb_run,
     use_amp_bf16=dict_params['trainer'].get('use_amp_bf16', False),
 )

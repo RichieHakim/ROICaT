@@ -206,7 +206,7 @@ class Simclr_Trainer():
 
             dir_save: Optional[str] = None,
             resume_from_checkpoint: bool = True,
-            save_onnx_each_epoch: bool = True,
+            save_onnx_each_epoch: bool = False,
             wandb_run: Optional[Any] = None,
             use_amp_bf16: bool = False,
         ):
@@ -820,6 +820,7 @@ class Simclr_PCA_Trainer():
             center: bool = True,
             scale: bool = False,
             path_saveLog: Optional[str] = None,
+            save_onnx_each_epoch: bool = False,
 
             # use_iterated_learning: bool = False,
             ):
@@ -839,6 +840,10 @@ class Simclr_PCA_Trainer():
                 Whether to scale the data.
             path_saveLog (str):
                 The path to which to save the training log.
+            save_onnx_each_epoch (bool):
+                If True, call ``model_container.save_onnx`` after fitting the PCA layer.
+                Default False; set True only when onnx/onnxruntime are available and
+                an ONNX export is explicitly desired.
         """
 
         self.dataloader = dataloader
@@ -846,6 +851,7 @@ class Simclr_PCA_Trainer():
         self.center = center
         self.scale = scale
         self.path_saveLog = path_saveLog
+        self.save_onnx_each_epoch = save_onnx_each_epoch
 
     def train(self, check_pca_layer_valid: bool=True):
         """
@@ -886,7 +892,11 @@ class Simclr_PCA_Trainer():
         pca_sklearn = PCA()
         pca_sklearn.fit(np_output_head_centered)
         pca_sklearn.components_ = pca_sklearn.components_.astype(np.float32)
+        ## Preserve raw centering mean before zeroing; required for fused-bias construction.
+        ## pca_sklearn.mean_ is zeroed below so it cannot be used for centering downstream.
+        self.pca_mean_fitted = output_head_centerer.detach().cpu().numpy().astype(np.float32)  # (pca_size,)
         pca_sklearn.mean_ = np.zeros(pca_size, dtype=np.float32)
+        self.pca_sklearn_fitted = pca_sklearn  ## expose for caller to construct Simclr_Model_with_PCA
 
         pca_layer[1].weight = torch.nn.Parameter(torch.tensor(pca_sklearn.components_, dtype=torch.float32))
         # pca_layer[1].bias = torch.nn.Parameter(torch.tensor(np.zeros(pca_size,),dtype=torch.float32))
@@ -902,21 +912,16 @@ class Simclr_PCA_Trainer():
         
         print('save')
 
-        ## save model
-        class ModelPCATackOn(torch.nn.Module):
-            def __init__(self, model_pre, pca_layer):
-                super().__init__()
-                self.model = torch.nn.Sequential(
-                    model_pre,
-                    pca_layer
-                )
-            @property
-            def device(self):
-                return next(self.model.parameters()).device
-            def forward(self, x):
-                return self.model(x)
-        self.model_container.model = ModelPCATackOn(self.model_container.model, pca_layer)
-
-        self.model_container.save_onnx(check_load_onnx_valid=True, revert_train=False)
+        ## ONNX export: wraps model_container.model in Simclr_Model_with_PCA then saves.
+        ## Gated so the wrapping (which mutates model_container.model) is skipped by default.
+        ## When gate is off, model_container.model remains the bare ModelTackOn backbone.
+        if self.save_onnx_each_epoch:
+            self.model_container.model = model.Simclr_Model_with_PCA.from_simclr_and_sklearn_pca(
+                model_container=self.model_container,
+                pca_sklearn=self.pca_sklearn_fitted,
+                pca_mean=self.pca_mean_fitted,
+                trainer_scale=self.scale,
+            )
+            self.model_container.save_onnx(check_load_onnx_valid=True, revert_train=False)
 
         print('pca layer trained and saved to model_container')
