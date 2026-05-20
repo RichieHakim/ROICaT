@@ -505,18 +505,27 @@ class Auto_LogisticRegression(Autotuner_regression):
             'tol_frac': 0.05,
             'max_trials': 150,
             'max_duration': 60*10,
-        }, 
+        },
         n_jobs_optuna: int = 1,
         penalty_testTrainRatio: float = 1.0,
         test_size: float = 0.3,
         class_weight: Optional[Union[Dict[str, float], str]] = 'balanced',
         sample_weight: Optional[List[float]] = None,
         cv: Optional[sklearn.model_selection._split.BaseCrossValidator] = None,
+        label_names: Optional[List[str]] = None,
         verbose: bool = True,
     ) -> None:
         """
         Initializes Auto_LogisticRegression with the given parameters and data.
+
+        Args:
+            label_names (Optional[List[str]]):
+                Human-readable names for each class, in the same order as
+                ``np.unique(y)``.  Stored as ``self.label_names`` and
+                surfaced by ``ClassifierPackage``.  If ``None``, defaults to
+                the string representations of the unique integer labels.
         """
+        self.label_names = label_names
         ## Prepare class weights
         self.classes = np.unique(y)
         class_weight = sklearn.utils.class_weight.compute_class_weight(

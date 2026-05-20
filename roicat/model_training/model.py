@@ -414,6 +414,49 @@ class Simclr_Model_with_PCA(torch.nn.Module):
         """Device of the first registered buffer."""
         return self.pca_weight.device
 
+    def embed(self, patches_np: np.ndarray, device: str = 'cpu') -> np.ndarray:
+        """
+        Preprocess ROI patches and run the forward pass, returning CPU numpy latents.
+
+        Applies the same transform pipeline used by ``ROInet_embedder``'s
+        ``Dataloader_ROInet``: min-max scaling per image → bilinear resize to
+        (224, 224) → tile to 3 channels.  Runs inference in ``eval()`` mode
+        with ``torch.no_grad()``.
+
+        Args:
+            patches_np (np.ndarray):
+                ROI image patches.  Shape: ``(N, H, W)``, float or uint8.
+            device (str):
+                Torch device string, e.g. ``'cpu'`` or ``'cuda:0'``.
+
+        Returns:
+            (np.ndarray):
+                Latent embeddings.  Shape: ``(N, pca_size)``, dtype float32.
+        """
+        ## Build the same deterministic transform stack as Dataloader_ROInet
+        _eps = 1e-9
+        _resize = torchvision.transforms.Resize(
+            size=(224, 224),
+            interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
+            antialias=True,
+        )
+
+        x = torch.as_tensor(patches_np, dtype=torch.float32)  # (N, H, W)
+        ## Per-image min-max to [0, 1]
+        x_min = x.flatten(1).min(dim=1).values[:, None, None]  # (N, 1, 1)
+        x_max = x.flatten(1).max(dim=1).values[:, None, None]  # (N, 1, 1)
+        x = (x - x_min) / (x_max - x_min + _eps)  # (N, H, W)
+        ## Resize each image: operate per-sample since Resize expects (C, H, W)
+        x = torch.stack([_resize(img[None, ...]) for img in x], dim=0)  # (N, 1, 224, 224)
+        ## Tile to 3 channels
+        x = x.expand(-1, 3, -1, -1)  # (N, 3, 224, 224)
+
+        self.eval()
+        self.to(device)
+        with torch.no_grad():
+            latents = self(x.to(device)).cpu().numpy()  # (N, pca_size)
+        return latents
+
 
 def build_backbone(
     base_model: torch.nn.Module,
@@ -703,9 +746,12 @@ def make_model(fwd_version: str, **params) -> 'Simclr_Model_with_PCA':
     backbone.forward = backbone.forward_head
 
     pca_size = params['pca_size']
-    return Simclr_Model_with_PCA(
+    net = Simclr_Model_with_PCA(
         backbone=backbone,
         pca_weight=torch.zeros(pca_size, pca_size),
         pca_bias=torch.zeros(pca_size),
     )
+    ## Attach arch_kwargs so ClassifierPackage._pack_embedder can roundtrip them.
+    net.arch_kwargs = dict(params)
+    return net
 
