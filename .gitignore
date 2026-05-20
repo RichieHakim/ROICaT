@@ -134,10 +134,9 @@ data_test/
 .vscode/
 .fuse_hidden*
 .fr-*
-agent_assets/
+agent_assets
 AGENTS.md
 CLAUDE.md
 manuscript/
 .claude/
-agent_assets/
 wandb/
