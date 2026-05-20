@@ -164,11 +164,6 @@ class Simclr_Trainer():
             model, optimizer, scheduler, RNG, and losses from it and continue
             from ``epoch + 1``. If True and no checkpoint exists, train from
             scratch.
-        save_onnx_each_epoch (bool):
-            If True (default), call ``model_container.save_onnx`` after each
-            epoch. If False, skip the ONNX export but still write the .pth
-            state checkpoint. Useful when ``onnx``/``onnxruntime`` are not
-            installed in the environment.
         wandb_run (Optional[Any]):
             An optional ``wandb.sdk.wandb_run.Run`` instance. If provided,
             per-step ``loss``, ``lr``, and ``pos_over_neg`` are logged. If
@@ -206,7 +201,6 @@ class Simclr_Trainer():
 
             dir_save: Optional[str] = None,
             resume_from_checkpoint: bool = True,
-            save_onnx_each_epoch: bool = False,
             wandb_run: Optional[Any] = None,
             use_amp_bf16: bool = False,
         ):
@@ -234,7 +228,6 @@ class Simclr_Trainer():
         else:
             self.dir_save = None
         self.resume_from_checkpoint = resume_from_checkpoint
-        self.save_onnx_each_epoch = save_onnx_each_epoch
         self.wandb_run = wandb_run
         self.amp_device_type, self.use_amp_bf16 = _resolve_amp_bf16(self.device_train, use_amp_bf16)
 
@@ -245,9 +238,7 @@ class Simclr_Trainer():
         Trains the model using the saved attributes.
 
         Per-epoch order: epoch_step -> save losses -> NaN-break check ->
-        write ``checkpoint_latest.pth`` atomically -> (optional) ONNX export.
-        The state_dict checkpoint is written before the ONNX export so a
-        crash in ONNX export does not lose the resumable .pth checkpoint.
+        write ``checkpoint_latest.pth`` atomically.
         """
         self.model_container.model.train();
         self.model_container.model.to(self.device_train)
@@ -341,9 +332,6 @@ class Simclr_Trainer():
                     losses=losses_train,
                 )
 
-            ## save ONNX model (gated)
-            if self.save_onnx_each_epoch:
-                self.model_container.save_onnx(check_load_onnx_valid=True)
 
 def train_step_simCLR(
     X_train_batch,
@@ -820,7 +808,6 @@ class Simclr_PCA_Trainer():
             center: bool = True,
             scale: bool = False,
             path_saveLog: Optional[str] = None,
-            save_onnx_each_epoch: bool = False,
 
             # use_iterated_learning: bool = False,
             ):
@@ -840,10 +827,6 @@ class Simclr_PCA_Trainer():
                 Whether to scale the data.
             path_saveLog (str):
                 The path to which to save the training log.
-            save_onnx_each_epoch (bool):
-                If True, call ``model_container.save_onnx`` after fitting the PCA layer.
-                Default False; set True only when onnx/onnxruntime are available and
-                an ONNX export is explicitly desired.
         """
 
         self.dataloader = dataloader
@@ -851,12 +834,12 @@ class Simclr_PCA_Trainer():
         self.center = center
         self.scale = scale
         self.path_saveLog = path_saveLog
-        self.save_onnx_each_epoch = save_onnx_each_epoch
 
     def train(self, check_pca_layer_valid: bool=True):
         """
-        Trains the pca layer of the model using the input data x and saves
-        the updated model to self.model_container.filepath_model_save
+        Trains the PCA layer of the model using the input data x and exposes
+        ``pca_sklearn_fitted`` and ``pca_mean_fitted`` attributes for the caller
+        to build a ``Simclr_Model_with_PCA`` bundle.
 
         Args:
             check_pca_layer_valid (bool):
@@ -911,17 +894,5 @@ class Simclr_PCA_Trainer():
                             ), 'pca layer not working'
         
         print('save')
-
-        ## ONNX export: wraps model_container.model in Simclr_Model_with_PCA then saves.
-        ## Gated so the wrapping (which mutates model_container.model) is skipped by default.
-        ## When gate is off, model_container.model remains the bare ModelTackOn backbone.
-        if self.save_onnx_each_epoch:
-            self.model_container.model = model.Simclr_Model_with_PCA.from_simclr_and_sklearn_pca(
-                model_container=self.model_container,
-                pca_sklearn=self.pca_sklearn_fitted,
-                pca_mean=self.pca_mean_fitted,
-                trainer_scale=self.scale,
-            )
-            self.model_container.save_onnx(check_load_onnx_valid=True, revert_train=False)
 
         print('pca layer trained and saved to model_container')

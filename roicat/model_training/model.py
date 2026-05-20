@@ -479,8 +479,6 @@ class Simclr_Model():
     SimCLR model class
 
     Args:
-        filepath_model_save (str):
-            Filepath to which to save the model
         filepath_model_load (str):
             Filepath from which to load a pretrained model
         base_model (torch.nn.Module):
@@ -488,7 +486,7 @@ class Simclr_Model():
         head_pool_method (str):
             Pooling method to use for the head
         head_pool_method_kwargs (dict):
-            Pooling method kwargs to use for the head  
+            Pooling method kwargs to use for the head
         pre_head_fc_sizes (list):
             List of fully connected layer sizes to be attached before the head
         post_head_fc_sizes (list):
@@ -508,7 +506,6 @@ class Simclr_Model():
     """
     def __init__(
             self,
-            filepath_model_save: Optional[torch.nn.Module]=None, # Set filepath to load model
             filepath_model_load: Optional[torch.nn.Module]=None, # Set filepath to save model
             base_model: Optional[torch.nn.Module]=None, # Set base model to use
             head_pool_method: Optional[str]=None, # Set pooling method to use for the head
@@ -522,7 +519,7 @@ class Simclr_Model():
             image_out_size: Optional[int]=None, # Set the size of the output image
             forward_version: Optional[str]=None, # Set the version of the forward pass to use
             ):
-        
+
         assert filepath_model_load is not None or (
             base_model is not None and
             head_pool_method is not None and
@@ -535,26 +532,27 @@ class Simclr_Model():
             n_block_toInclude is not None and
             image_out_size is not None and
             forward_version is not None
-            ), "Either filepath_model_load or every other parameter must be set (except filepath_model_save)"
+            ), "Either filepath_model_load or every other parameter must be set"
 
-        # If loading model, load it from onnx, otherwise create one from scratch using the other parameters
+        # If loading model, load it from a checkpoint, otherwise create one from scratch using the other parameters
         if filepath_model_load is not None:
-            self.load_onnx(filepath_model_load)
-        else:
-            self.create_model(
-                base_model=base_model,
-                head_pool_method=head_pool_method,
-                head_pool_method_kwargs=head_pool_method_kwargs,
-                pre_head_fc_sizes=pre_head_fc_sizes,
-                post_head_fc_sizes=post_head_fc_sizes,
-                head_nonlinearity=head_nonlinearity,
-                head_nonlinearity_kwargs=head_nonlinearity_kwargs,
-                block_to_unfreeze=block_to_unfreeze,
-                n_block_toInclude=n_block_toInclude,
-                image_out_size=image_out_size,
-                forward_version=forward_version
-                )
-        self.filepath_model_save = filepath_model_save
+            raise NotImplementedError(
+                "Loading a model via filepath_model_load is no longer supported in Simclr_Model.__init__. "
+                "Build the architecture with from_dict_params(), then load weights with torch.load() + model.load_state_dict()."
+            )
+        self.create_model(
+            base_model=base_model,
+            head_pool_method=head_pool_method,
+            head_pool_method_kwargs=head_pool_method_kwargs,
+            pre_head_fc_sizes=pre_head_fc_sizes,
+            post_head_fc_sizes=post_head_fc_sizes,
+            head_nonlinearity=head_nonlinearity,
+            head_nonlinearity_kwargs=head_nonlinearity_kwargs,
+            block_to_unfreeze=block_to_unfreeze,
+            n_block_toInclude=n_block_toInclude,
+            image_out_size=image_out_size,
+            forward_version=forward_version
+            )
         self.filepath_model_load = filepath_model_load
 
     @classmethod
@@ -564,7 +562,6 @@ class Simclr_Model():
         base_model: torch.nn.Module,
         image_out_size: Tuple[int, int, int],
         forward_version: str,
-        filepath_model_save: Optional[str] = None,
     ) -> 'Simclr_Model':
         """
         Convenience constructor: pulls standard model kwargs out of ``dict_params['model']``
@@ -583,15 +580,12 @@ class Simclr_Model():
                 ``(C, H, W)`` input tensor shape (e.g. ``[3, 224, 224]``).
             forward_version (str):
                 Forward-pass binding, e.g. ``'forward_latent'`` or ``'forward_head'``.
-            filepath_model_save (Optional[str]):
-                Path for save target (e.g. for ``save_onnx``). ``None`` if not needed.
 
         Returns:
             (Simclr_Model):
                 Newly constructed model container.
         """
         return cls(
-            filepath_model_save=filepath_model_save,
             base_model=base_model,
             head_pool_method=dict_params_model['head_pool_method'],
             head_pool_method_kwargs=dict_params_model['head_pool_method_kwargs'],
@@ -679,141 +673,6 @@ class Simclr_Model():
         # self.model.forward = self.model.forward_latent if forward_version == 'forward_latent' else self.model.forward_head_pca
         self.model.forward = self.model.forward_latent if forward_version == 'forward_latent' else self.model.forward_head
     
-    def save_onnx(
-        self,
-        check_load_onnx_valid: bool=False,
-        revert_train: bool=True,
-    ):
-        """
-        Uses ONNX to save the current model as a binary file.
-
-        Args:
-            check_load_onnx_valid (bool):
-                Whether to check that the saved model is valid by loading onnx back in and
-                comparing outputs
-        """
-
-        assert self.filepath_model_save is not None, 'You need to specify a filepath to save the model to.'
-
-        batch_size = 1 # Arbitrary batch_size for saving the onnx model. Can be anything after load.
-
-        import datetime
-        try:
-            import onnx
-        except ImportError as e:
-            raise ImportError(f'You need to (pip) install onnx to use this method. {e}')
-        
-        ## Make sure we have what we need
-        assert self.model is not None, 'You need to fit the model first.'
-
-        # Convert the model to ONNX format
-        ## Prepare initial types
-
-        # torch.onnx.export
-        ## Prepare model
-        self.model.eval()
-        device_prev = self.model.device
-        self.model.to('cpu')
-        torch.onnx.export(
-            self.model,
-            (torch.ones(batch_size, 3, 224, 224),),
-            self.filepath_model_save, # "onnx.pb",
-            input_names=["x"],
-            output_names=["latents"],
-            dynamic_axes={
-                # dict value: manually named axes
-                "x": {0: "batch_size"},
-                # list value: automatic names
-                "latents": [0],
-            },
-            opset_version=17,  ## opset 17 — onnx2torch (used in load_onnx for round-trip + by train_simclr_PCA.py) does not yet support Gelu v20
-            dynamo=False,  ## torch>=2.10 defaults to dynamo exporter which requires onnxscript; force the legacy TorchScript exporter
-        )
-        self.model.to(device_prev)
-        self.model.train()
-        
-        if check_load_onnx_valid:
-            self.test(torch.ones((batch_size, 3, 224, 224), device='cpu'), revert_train=revert_train)
-
-    def test(
-        self,
-        x,
-        revert_train: bool=True,
-        ):
-        """
-        Tests the model by loading the ONNX model and comparing outputs.
-
-        Args:
-            x (torch.Tensor):
-                Input tensor to test the model with.
-        """
-    
-        print('Checking ONNX model...')
-        import onnxruntime as ort
-        # Create example data
-        # x = torch.ones((batch_size, 3, 224, 224))
-        if hasattr(self.model, 'prep_contrast'):
-            self.model.prep_contrast()
-        self.model.eval()
-        device_prev = self.model.device
-        self.model.to('cpu')
-        out_torch_original = self.model(x).cpu().detach().numpy()
-        self.model.to(device_prev)
-        
-        model_loaded = self.load_onnx(self.filepath_model_save, inplace=False)
-        model_loaded.eval()
-        out_torch_loaded = model_loaded(x.cpu()).cpu().detach().numpy()
-
-        # Check the Onnx output against PyTorch
-        print(np.max(np.abs(out_torch_original - out_torch_loaded)))
-        assert np.allclose(out_torch_original, out_torch_loaded, atol=1.e-5), "The outputs from the saved and loaded models are different."
-        print('Saved ONNX model is valid.')
-
-        if hasattr(self.model, 'prep_contrast'):
-            self.model.prep_contrast()
-        
-        if revert_train:
-            self.model.train()
-            model_loaded.train()
-
-    def load_onnx(
-            self,
-            filepath_model=None,
-            inplace=True,
-            ):
-        """
-        Loads the ONNX model from a file.
-
-        Args:
-            filepath_model (str):
-                Path to the ONNX model file.
-            inplace (bool):
-                Whether to load the model as an attribute or return it.
-
-        Returns:
-            model (ModelTackOn):
-                The loaded model.
-        """
-        
-        assert filepath_model is not None, 'You need to specify a filepath from which to load the model.'
-
-        try:
-            import onnx
-            import torch
-            import onnx2torch
-        except ImportError as e:
-            raise ImportError(f'You need to (pip) install onnx and skl2onnx to use this method. {e}')
-        
-        # load ONNX model first
-        if isinstance(filepath_model, str):
-            model = onnx2torch.convert(filepath_model)
-        else:
-            raise ValueError(f'path_or_bytes must be either a string or bytes. This error should never be raised.')
-        
-        if inplace:
-            self.model = model
-        else:
-            return model
 
 
 def make_model(fwd_version: str, **params) -> 'Simclr_Model_with_PCA':

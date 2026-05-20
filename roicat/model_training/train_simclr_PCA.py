@@ -149,7 +149,6 @@ model_container = model.Simclr_Model.from_dict_params(
     base_model=torchvision.models.__dict__[dict_params['model']['torchvision_model']](weights='DEFAULT'),
     image_out_size=list(dataloader_generator.dataset[0][0][0].shape),
     forward_version=dict_params['trainer']['forward_version'],
-    filepath_model_save=dict_params['model']['filepath_model_wPCA'],
 )
 filepath_source_pth = dict_params['model']['filepath_model_noPCA']
 ckpt = torch.load(filepath_source_pth, map_location='cpu', weights_only=True)

@@ -117,7 +117,7 @@ with open(filepath_params) as f:
     dict_params = json.load(f)
 ## If directory_save is specified from the arg parser, overwrite the save directory in the params file
 if directory_save is not None:
-    dict_params['model']['filepath_model_noPCA'] = str(Path(directory_save) / (dict_params['model']['torchvision_model'] + '_' + 'trainingBest_noPCA.onnx'))
+    dict_params['model']['filepath_model_noPCA'] = str(Path(directory_save) / (dict_params['model']['torchvision_model'] + '_' + 'trainingBest_noPCA.pth'))
 
 # Initialize wandb (soft dep: returns None if not configured or not installed)
 wandb_run = init_wandb_run(dict_params.get('trainer', {}).get('wandb'))
@@ -173,7 +173,6 @@ model_container = model.Simclr_Model.from_dict_params(
     base_model=torchvision.models.__dict__[dict_params['model']['torchvision_model']](weights='DEFAULT'),
     image_out_size=list(dataloader_generator.dataset[0][0][0].shape),
     forward_version=dict_params['trainer']['forward_version'],
-    filepath_model_save=dict_params['model']['filepath_model_noPCA'],
 )
 
 # Specify criterion, optimizer, scheduler, learning rate, etc.
@@ -192,7 +191,6 @@ trainer = sth.Simclr_Trainer(
     path_saveLog=filepath_logger,
     path_saveLoss=filepath_losses,
     resume_from_checkpoint=dict_params['trainer'].get('resume_from_checkpoint', True),
-    save_onnx_each_epoch=dict_params['trainer'].get('save_onnx_each_epoch', False),
     wandb_run=wandb_run,
     use_amp_bf16=dict_params['trainer'].get('use_amp_bf16', False),
 )
