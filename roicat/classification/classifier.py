@@ -525,9 +525,24 @@ class Auto_LogisticRegression(Autotuner_regression):
                 surfaced by ``ClassifierPackage``.  If ``None``, defaults to
                 the string representations of the unique integer labels.
         """
-        self.label_names = label_names
-        ## Prepare class weights
+        ## Class set (sklearn 'classes_' ordering)
         self.classes = np.unique(y)
+
+        ## label_names: default to str(class); else validate length + element types.
+        if label_names is None:
+            self.label_names = [str(c) for c in self.classes]
+        else:
+            if not isinstance(label_names, (list, tuple)):
+                raise TypeError(f"label_names must be list[str], got {type(label_names).__name__}.")
+            if len(label_names) != len(self.classes):
+                raise ValueError(
+                    f"label_names length ({len(label_names)}) must equal number of classes ({len(self.classes)})."
+                )
+            if not all(isinstance(n, str) for n in label_names):
+                raise TypeError("label_names must all be str.")
+            self.label_names = list(label_names)
+
+        ## Prepare class weights
         class_weight = sklearn.utils.class_weight.compute_class_weight(
             class_weight=class_weight,
             y=y,
@@ -535,14 +550,14 @@ class Auto_LogisticRegression(Autotuner_regression):
         )
         self.class_weight = {c: cw for c, cw in zip(self.classes, class_weight)}
         self.sample_weight = sklearn.utils.class_weight.compute_sample_weight(
-            class_weight=sample_weight, 
+            class_weight=sample_weight,
             y=y,
         )
 
         ## Prepare the loss function
         self.fn_loss = LossFunction_CrossEntropy_CV(
             penalty_testTrainRatio=penalty_testTrainRatio,
-            labels=y,
+            labels=np.unique(y),
         )
 
         ## Prepare the cross-validation
