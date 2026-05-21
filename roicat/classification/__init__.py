@@ -1,6 +1,10 @@
 __all__ = [
     'classifier',
+    'package',
+    'ClassifierPackage',
+    'PackageIntegrityError',
 ]
 
-for pkg in __all__:
-    exec('from . import ' + pkg)
+from . import classifier
+from . import package
+from .package import ClassifierPackage, PackageIntegrityError
