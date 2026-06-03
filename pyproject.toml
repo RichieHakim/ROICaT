@@ -20,7 +20,7 @@ core = [
     "mat73==0.65",
     "natsort==8.4.0",
     "numpy==2.4.6",
-    "optuna==4.8.0",
+    "optuna==4.9.0",
     "Pillow==12.2.0",
     "pytest==9.0.3",
     "PyYAML==6.0.3",
