@@ -24,7 +24,7 @@ core = [
     "Pillow==12.2.0",
     "pytest==9.0.3",
     "PyYAML==6.0.3",
-    "scikit-learn==1.8.0",
+    "scikit-learn==1.9.0",
     "scipy==1.17.1",
     "seaborn==0.13.2",
     "sparse==0.18.0",
