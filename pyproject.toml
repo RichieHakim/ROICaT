@@ -44,7 +44,7 @@ core = [
 classification = [
     "roicat[core]",
     "umap-learn==0.5.12",
-    "bokeh==3.9.0",
+    "bokeh==3.9.1",
     "holoviews[recommended]==1.22.1",
     "jupyter-bokeh==4.0.5",
 ]
