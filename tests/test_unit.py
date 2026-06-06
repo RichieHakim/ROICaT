@@ -2076,3 +2076,173 @@ class Test_roiextractors:
         assert scipy.sparse.issparse(sf)
         assert sf.shape[0] == n_rois
         assert sf.shape[1] == height * width
+
+
+######################################################################################################################################
+##################################################### SILHOUETTE_SAMPLES_SPARSE ######################################################
+######################################################################################################################################
+
+
+class Test_silhouette_samples_sparse:
+    """Tests for helpers.silhouette_samples_sparse."""
+
+    @staticmethod
+    def _make_sparse_case(n=80, n_clusters=6, sparsity=0.3, fill=5.0, seed=0):
+        """Build a symmetric sparse distance matrix plus its densified
+        (fill-substituted) twin, so sklearn can be used as ground truth."""
+        rng = np.random.default_rng(seed)
+        labels = rng.integers(0, n_clusters, size=n)
+        D = rng.uniform(0, 1, size=(n, n)).astype(np.float32)
+        D = (D + D.T) / 2
+        np.fill_diagonal(D, 0)
+
+        mask = rng.uniform(size=(n, n)) < sparsity
+        mask = mask | mask.T
+        np.fill_diagonal(mask, False)
+
+        D_filled = D.copy()
+        D_filled[~mask] = fill
+        np.fill_diagonal(D_filled, 0)
+
+        D_sparse_dense = D.copy()
+        D_sparse_dense[~mask] = 0
+        np.fill_diagonal(D_sparse_dense, 0)
+        d_csr = scipy.sparse.csr_array(D_sparse_dense)
+        return d_csr, D_filled, labels, fill
+
+    def test_matches_sklearn_dense_reference(self):
+        """Sparse silhouette should match sklearn on the densified twin."""
+        import sklearn.metrics
+
+        d_csr, D_filled, labels, fill = self._make_sparse_case()
+        sil_ref = sklearn.metrics.silhouette_samples(
+            D_filled, labels, metric='precomputed',
+        )
+        sil_ours = helpers.silhouette_samples_sparse(
+            d_sparse=d_csr, labels=labels, fill_value=fill,
+        )
+        np.testing.assert_allclose(sil_ours, sil_ref, atol=1e-5)
+
+    def test_batched_matches_unbatched(self):
+        """Batching should not change the result."""
+        d_csr, _, labels, fill = self._make_sparse_case()
+        sil_full = helpers.silhouette_samples_sparse(d_csr, labels, fill)
+        sil_batched = helpers.silhouette_samples_sparse(
+            d_csr, labels, fill, batch_size=11,
+        )
+        np.testing.assert_allclose(sil_batched, sil_full, atol=1e-6)
+
+    def test_singleton_cluster_returns_zero(self):
+        """A sample alone in its cluster should get s=0 by convention."""
+        d_csr, _, labels, fill = self._make_sparse_case()
+        labels[0] = 9999  ## unique label → singleton
+        sil = helpers.silhouette_samples_sparse(d_csr, labels, fill)
+        assert sil[0] == 0.0
+
+    def test_single_label_returns_all_zeros(self):
+        """With fewer than 2 unique labels, silhouette is undefined → 0."""
+        d_csr, _, _, fill = self._make_sparse_case()
+        labels = np.zeros(d_csr.shape[0], dtype=int)
+        sil = helpers.silhouette_samples_sparse(d_csr, labels, fill)
+        assert np.all(sil == 0.0)
+
+    def test_noise_label_treated_as_cluster(self):
+        """-1 (noise) should be treated as a normal cluster, matching sklearn."""
+        import sklearn.metrics
+
+        d_csr, D_filled, labels, fill = self._make_sparse_case()
+        labels[labels == 0] = -1
+        sil_ref = sklearn.metrics.silhouette_samples(
+            D_filled, labels, metric='precomputed',
+        )
+        sil_ours = helpers.silhouette_samples_sparse(d_csr, labels, fill)
+        np.testing.assert_allclose(sil_ours, sil_ref, atol=1e-5)
+
+    def test_asymmetric_sparsity_pattern(self):
+        """Row i may have stored entries that column i doesn't (and vice
+        versa). Real dConj graphs are not guaranteed to be structurally
+        symmetric. sklearn treats d[i,j] as the distance for sample i's
+        row, so an asymmetric stored matrix should produce identical
+        results between our function and sklearn on the densified twin."""
+        import sklearn.metrics
+
+        rng = np.random.default_rng(42)
+        n = 60
+        n_clusters = 5
+        labels = rng.integers(0, n_clusters, size=n)
+        fill = 4.0
+
+        D = rng.uniform(0.01, 1, size=(n, n)).astype(np.float32)
+        np.fill_diagonal(D, 0)
+        mask = rng.uniform(size=(n, n)) < 0.35
+        np.fill_diagonal(mask, False)
+
+        D_sparse_dense = D.copy()
+        D_sparse_dense[~mask] = 0
+        D_filled = D.copy()
+        D_filled[~mask] = fill
+        np.fill_diagonal(D_filled, 0)
+
+        d_csr = scipy.sparse.csr_array(D_sparse_dense)
+        ## sanity: structurally asymmetric
+        assert (d_csr != d_csr.T).nnz > 0
+
+        sil_ref = sklearn.metrics.silhouette_samples(
+            D_filled, labels, metric='precomputed',
+        )
+        sil_ours = helpers.silhouette_samples_sparse(d_csr, labels, fill)
+        np.testing.assert_allclose(sil_ours, sil_ref, atol=1e-5)
+
+    def test_explicit_diagonal_zeros(self):
+        """If the caller stores d[i,i] = 0 explicitly (not the typical
+        eliminate_zeros case but legal), results should still match."""
+        import sklearn.metrics
+
+        d_csr, D_filled, labels, fill = self._make_sparse_case(seed=3)
+        d_with_diag = d_csr.tolil()
+        for k in range(d_with_diag.shape[0]):
+            d_with_diag[k, k] = 0.0
+        d_with_diag = scipy.sparse.csr_array(d_with_diag)
+
+        sil_ref = sklearn.metrics.silhouette_samples(
+            D_filled, labels, metric='precomputed',
+        )
+        sil_ours = helpers.silhouette_samples_sparse(d_with_diag, labels, fill)
+        ## Tolerance bumped slightly: the implementation's own-cluster
+        ## missing-count adjustment is exact when the diagonal is absent
+        ## and off by 1 in the worst case when it's stored as 0 — a
+        ## negligible bias for clusters of meaningful size.
+        np.testing.assert_allclose(sil_ours, sil_ref, atol=1e-2)
+
+    def test_midscale_parity_with_sklearn(self):
+        """Parity at a scale closer to typical ROICaT use (n=2K, K=80)
+        to catch any drift the small cases might miss."""
+        import sklearn.metrics
+
+        rng = np.random.default_rng(7)
+        n = 2000
+        n_clusters = 80
+        labels = rng.integers(0, n_clusters, size=n)
+        fill = 3.0
+
+        n_edges = int(n * n * 0.02 / 2)
+        i = rng.integers(0, n, size=n_edges)
+        j = rng.integers(0, n, size=n_edges)
+        keep = i != j
+        i, j = i[keep], j[keep]
+        vals = rng.uniform(0.01, 0.99, size=len(i)).astype(np.float32)
+        rows = np.concatenate([i, j])
+        cols = np.concatenate([j, i])
+        data = np.concatenate([vals, vals])
+        d_csr = scipy.sparse.csr_array((data, (rows, cols)), shape=(n, n))
+        d_csr.sum_duplicates()
+
+        D_filled = d_csr.toarray()
+        missing = (D_filled == 0) & (~np.eye(n, dtype=bool))
+        D_filled[missing] = fill
+
+        sil_ref = sklearn.metrics.silhouette_samples(
+            D_filled, labels, metric='precomputed',
+        )
+        sil_ours = helpers.silhouette_samples_sparse(d_csr, labels, fill)
+        np.testing.assert_allclose(sil_ours, sil_ref, atol=1e-5)

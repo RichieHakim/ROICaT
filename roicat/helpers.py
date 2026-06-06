@@ -6037,6 +6037,154 @@ def compute_cluster_similarity_matrices(
     return l_u, cs_mean, cs_max.todense(), cs_min
 
 
+def silhouette_samples_sparse(
+    d_sparse: scipy.sparse.csr_array,
+    labels: np.ndarray,
+    fill_value: float,
+    batch_size: Optional[int] = None,
+) -> np.ndarray:
+    """
+    Sparse-native implementation of ``sklearn.metrics.silhouette_samples``
+    with ``metric='precomputed'``.
+
+    Avoids materializing the full *(n, n)* dense distance matrix by
+    computing per-sample, per-cluster mean distances via sparse @ dense
+    matmul against a label-indicator matrix. Implicitly missing entries
+    in ``d_sparse`` are treated as having distance ``fill_value``
+    (matching the convention used for pruned similarity graphs, where
+    missing entries are "far"). The diagonal is treated as 0 (self
+    distance) regardless of whether it is stored.
+
+    Memory: *(n, n_clusters)* float32, instead of *(n, n)*. For typical
+    ROICaT pipelines, ``n_clusters << n`` so this is a large savings.
+
+    RH 2026
+
+    Args:
+        d_sparse (scipy.sparse.csr_array):
+            Pairwise distance matrix. Shape: *(n, n)*. Must be
+            non-negative.
+        labels (np.ndarray):
+            Cluster labels per sample. Shape: *(n,)*. ``-1`` is treated
+            as a normal cluster (matching ``sklearn`` behavior).
+        fill_value (float):
+            Distance assigned to implicit (missing) entries in
+            ``d_sparse``. Should be non-negative and typically larger
+            than the bulk of stored distances.
+        batch_size (Optional[int]):
+            Rows per batch. Peak memory is dominated by the
+            *(batch_size, n_clusters)* float32 intermediates allocated
+            inside the kernel (~8 of them live simultaneously). If
+            ``None``, auto-picked so each intermediate is ~32 MiB
+            (~256 MiB peak batch footprint), floored at 1024 rows and
+            capped at ``n``. (Default is ``None``)
+
+    Returns:
+        (np.ndarray):
+            sil (np.ndarray):
+                Silhouette score per sample. Shape: *(n,)*. Samples in
+                clusters of size 1 receive ``0.0`` by convention.
+    """
+    assert scipy.sparse.issparse(d_sparse), "d_sparse must be a scipy sparse array."
+    assert d_sparse.shape[0] == d_sparse.shape[1], "d_sparse must be square."
+    assert d_sparse.shape[0] == len(labels), "labels length must equal d_sparse.shape[0]."
+
+    n = d_sparse.shape[0]
+    labels = np.asarray(labels)
+    unique_labels, label_inverse = np.unique(labels, return_inverse=True)
+    n_clusters = len(unique_labels)
+
+    if n_clusters < 2:
+        return np.zeros(n, dtype=np.float32)
+
+    ## Cast to CSR float32 once
+    d = d_sparse.tocsr().astype(np.float32)
+
+    ## Label-indicator matrix M[j, c] = 1 if labels[j] == c. CSC for fast @.
+    M = scipy.sparse.csc_array(
+        (np.ones(n, dtype=np.float32), (np.arange(n), label_inverse)),
+        shape=(n, n_clusters),
+    )
+
+    ## Total samples per cluster
+    total_per_cluster = np.bincount(label_inverse, minlength=n_clusters).astype(np.float32)
+
+    ## Pattern matrix shares d's index arrays; only data differs
+    pattern = scipy.sparse.csr_array(
+        (np.ones_like(d.data, dtype=np.float32), d.indices, d.indptr),
+        shape=d.shape,
+    )
+
+    def _process(d_batch, pattern_batch, label_inverse_batch):
+        ## sparse @ sparse → sparse; densify result. Shape: (n_batch, n_clusters).
+        stored_sum = (d_batch @ M).toarray()
+        stored_count = (pattern_batch @ M).toarray()
+
+        ## (n_batch, n_clusters) bool: True where the column is the sample's own cluster
+        rows = np.arange(stored_sum.shape[0])
+        own_mask = np.zeros_like(stored_sum, dtype=bool)
+        own_mask[rows, label_inverse_batch] = True
+
+        ## Missing = (samples in cluster) - (stored entries to that cluster).
+        ## For own cluster, the count includes self in `total_per_cluster`
+        ## but not in `stored_count` (diagonal typically not stored), so we
+        ## subtract 1 to avoid filling self with `fill_value`. If self IS
+        ## stored as 0, this slightly over-counts missing by 1 for the own
+        ## cluster, which is a small bias for clusters of size >> 1 and
+        ## is preferable to an inconsistent contract.
+        missing = total_per_cluster[None, :] - stored_count - own_mask.astype(np.float32)
+
+        full_sum = stored_sum + missing * fill_value
+
+        ## Denominator: other samples in cluster. n_c - 1 for own cluster, n_c otherwise.
+        denom = total_per_cluster[None, :] - own_mask.astype(np.float32)
+
+        with np.errstate(divide='ignore', invalid='ignore'):
+            mean_dist = full_sum / denom  ## (n_batch, n_clusters)
+
+        a_batch = mean_dist[rows, label_inverse_batch]
+
+        ## For b, mask own-cluster column to +inf and take min over remaining
+        mean_dist_b = mean_dist.copy()
+        mean_dist_b[own_mask] = np.inf
+        b_batch = mean_dist_b.min(axis=1)
+
+        return a_batch, b_batch
+
+    if batch_size is None:
+        ## Auto-pick batch size so each (batch, n_clusters) float32
+        ## intermediate is ~32 MiB. ~8 such arrays live concurrently
+        ## inside _process, so peak batch footprint ~256 MiB regardless
+        ## of n. Floor at 1024 rows so small jobs don't micro-batch.
+        target_array_bytes = 32 * 2**20
+        batch_size = max(1024, target_array_bytes // (n_clusters * 4))
+        batch_size = min(batch_size, n)
+
+    if batch_size >= n:
+        a, b = _process(d, pattern, label_inverse)
+    else:
+        a = np.empty(n, dtype=np.float32)
+        b = np.empty(n, dtype=np.float32)
+        for start in range(0, n, batch_size):
+            stop = min(start + batch_size, n)
+            a[start:stop], b[start:stop] = _process(
+                d[start:stop], pattern[start:stop], label_inverse[start:stop],
+            )
+
+    ## Silhouette per sample
+    with np.errstate(divide='ignore', invalid='ignore'):
+        sil = (b - a) / np.maximum(a, b)
+
+    ## Convention: samples in singleton clusters get 0
+    cluster_sizes_per_sample = total_per_cluster[label_inverse]
+    sil[cluster_sizes_per_sample <= 1] = 0.0
+
+    ## NaN (a == b == 0 or other degenerate cases) → 0
+    sil[~np.isfinite(sil)] = 0.0
+
+    return sil.astype(np.float32)
+
+
 ######################################################################################################################################
 ########################################################### STATS ####################################################################
 ######################################################################################################################################

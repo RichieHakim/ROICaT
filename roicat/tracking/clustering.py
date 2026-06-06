@@ -2542,18 +2542,39 @@ class Clusterer(util.ROICaT_Module):
             labels=labels,
         )
 
-        import sklearn
-        import sparse
-        d_dense = sparse.COO(dist_mat.copy().tocsr()).astype(np.float16)
-        d_dense.fill_value = (dist_mat.data.max() - dist_mat.data.min()).astype(np.float16) * 10
-        d_dense = d_dense.todense()
-        np.fill_diagonal(d_dense, 0)
-        ## Number of labels must be at least 2
+        ## Sparse-native silhouette: avoids the (n, n) densification that
+        ## blew up RAM at scale (issue #608). Missing entries are filled
+        ## with a "far" distance so unobserved pairs penalize separation,
+        ## matching the prior semantics of the dense path.
+        d_for_sil = dist_mat.tocsr().copy()
+        if d_for_sil.data.size > 0 and d_for_sil.data.min() < 0:
+            n_neg = int((d_for_sil.data < 0).sum())
+            most_neg = float(d_for_sil.data.min())
+            warnings.warn(
+                f"compute_quality_metrics: distance matrix has {n_neg} "
+                f"negative values (min={most_neg:.3e}). Clipping to 0 "
+                f"before silhouette. This indicates an upstream bug — "
+                f"please report (github.com/RichieHakim/ROICaT/issues/608)."
+            )
+            d_for_sil.data = np.clip(d_for_sil.data, 0, None)
+        ## Fill value for unobserved pairs: "much farther than anything
+        ## stored". Distances are non-negative (clipped above), so
+        ## max * 1000 puts unobserved pairs well outside the real range
+        ## regardless of where the bulk of stored distances sit.
+        if d_for_sil.data.size > 0:
+            fill_value = float(d_for_sil.data.max()) * 1000.0
+        else:
+            fill_value = 1.0
+
         if len(np.unique(labels)) < 2:
             warnings.warn(f"Silhouette samples calculation requires at least 2 labels. Returning None. Found {len(np.unique(labels))} labels.")
             rs_sil = None
         else:
-            rs_sil = sklearn.metrics.silhouette_samples(X=d_dense, labels=labels, metric='precomputed')
+            rs_sil = helpers.silhouette_samples_sparse(
+                d_sparse=d_for_sil,
+                labels=labels,
+                fill_value=fill_value,
+            )
 
         def to_list_of_floats(x):
             return [float(i) for i in x] if x is not None else None
