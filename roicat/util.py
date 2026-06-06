@@ -530,7 +530,15 @@ def set_random_seed(seed=None, deterministic=False):
     ## Make cudnn deterministic
     torch.backends.cudnn.deterministic = deterministic
     torch.backends.cudnn.benchmark = not deterministic
-    
+
+    ## Pin thread counts under deterministic mode. Multi-threaded BLAS /
+    ## OpenCV reductions accumulate in non-deterministic order across
+    ## platforms, which is the dominant source of golden-reference drift
+    ## in the tracking pipeline (aligner + blurrer stages).
+    if deterministic:
+        torch.set_num_threads(1)
+        cv2.setNumThreads(1)
+
     return seed
 
 
