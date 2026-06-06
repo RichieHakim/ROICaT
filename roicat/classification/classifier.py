@@ -59,7 +59,7 @@ class Autotuner_regression(util.ROICaT_Module):
         fn_loss (Callable):
             Function to compute the loss.
             Must have: \n
-                * Call signature: ``loss, loss_train, loss_test = fn_loss(y_pred_train, y_pred_test, y_true_train, y_true_test, sample_weight_train, sample_weight_test)`` \n
+                * Call signature: ``loss, loss_train, loss_test = fn_loss(y_proba_train, y_proba_test, y_true_train, y_true_test, sample_weight_train, sample_weight_test)`` \n
         n_jobs_optuna (int):
             Number of jobs for Optuna. Set to ``-1`` to use all cores.
             Note that some ``'solver'`` options are already parallelized (like
@@ -193,18 +193,18 @@ class Autotuner_regression(util.ROICaT_Module):
 
         # Transform the training data
         if hasattr(model, 'predict_proba'):
-            y_pred_train = model.predict_proba(X_train)
-            y_pred_test = model.predict_proba(X_test)
+            y_proba_train = model.predict_proba(X_train)
+            y_proba_test = model.predict_proba(X_test)
         elif hasattr(model, 'predict'):
-            y_pred_train = model.predict(X_train)
-            y_pred_test = model.predict(X_test)
+            y_proba_train = model.predict(X_train)
+            y_proba_test = model.predict(X_test)
         else:
             raise ValueError('Model must have either a predict_proba or predict method.')
 
         # Evaluate the classifier using the scoring method
         loss, loss_train, loss_test = self.fn_loss(
-            y_pred_train=y_pred_train, 
-            y_pred_test=y_pred_test,
+            y_proba_train=y_proba_train, 
+            y_proba_test=y_proba_test,
             y_train_true=y_train,
             y_test_true=y_test,
             sample_weight_train=sample_weight_train,
@@ -354,8 +354,8 @@ class LossFunction_CrossEntropy_CV():
     
     def __call__(
         self,
-        y_pred_train: np.ndarray, 
-        y_pred_test: np.ndarray,
+        y_proba_train: np.ndarray, 
+        y_proba_test: np.ndarray,
         y_train_true: np.ndarray,
         y_test_true: np.ndarray,
         sample_weight_train: Optional[List[float]] = None,
@@ -365,10 +365,10 @@ class LossFunction_CrossEntropy_CV():
         Calculates the cross-entropy loss using cross-validation.
 
         Args:
-            y_pred_train (np.ndarray): 
+            y_proba_train (np.ndarray): 
                 Predicted output data for the training set. (shape:
                 *(n_samples,)*)
-            y_pred_test (np.ndarray): 
+            y_proba_test (np.ndarray): 
                 Predicted output data for the test set. (shape: *(n_samples,)*)
             y_train_true (np.ndarray): 
                 True output data for the training set. (shape: *(n_samples,)*)
@@ -390,8 +390,8 @@ class LossFunction_CrossEntropy_CV():
         """
         # Calculate the cross-entropy loss using cross-validation.
         from sklearn.metrics import log_loss
-        loss_train = log_loss(y_train_true, y_pred_train, sample_weight=sample_weight_train, labels=self.labels)
-        loss_test =  log_loss(y_test_true,  y_pred_test,  sample_weight=sample_weight_test,  labels=self.labels)
+        loss_train = log_loss(y_train_true, y_proba_train, sample_weight=sample_weight_train, labels=self.labels)
+        loss_test =  log_loss(y_test_true,  y_proba_test,  sample_weight=sample_weight_test,  labels=self.labels)
         loss = self.fn_penalty_testTrainRatio(loss_test, loss_train)
 
         return loss, loss_train, loss_test
