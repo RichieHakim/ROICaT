@@ -770,6 +770,12 @@ class ROI_graph(util.ROICaT_Module):
         s_sf[range(n_roi_block), range(n_roi_block)] = 0
         s_sf.eliminate_zeros()
 
+        ## Canonicalize CSR storage order. kneighbors_graph emits elements in
+        ## KD-tree traversal order, which can flip on tied distances across
+        ## platforms. Sorted column indices give a deterministic `data` array
+        ## for serialization and downstream comparisons.
+        s_sf.sort_indices()
+
         return s_sf  ## shape: (n_roi_block, n_roi_block)
 
 
