@@ -1,4 +1,5 @@
 import multiprocessing as mp
+import warnings
 from dataclasses import dataclass, field, asdict
 from typing import Tuple, Union, List, Optional, Dict, Any, Callable
 
@@ -953,17 +954,36 @@ class ROI_graph(util.ROICaT_Module):
             mus_diff = s_diff.mean(1).to('cpu').numpy()   ## shape: (n_roi,)
             stds_diff = s_diff.std(1).to('cpu').numpy()   ## shape: (n_roi,)
 
+            ## A non-positive (zero or NaN) background std means an ROI's distant
+            ## "known-different" set is degenerate (e.g. empty/artifact ROIs with
+            ## zero features), so its per-ROI null can't be estimated. Dividing by
+            ## it yields ±Inf/NaN that poisons everything downstream. Fall back to
+            ## the population background (mean over valid ROIs) for those rows, so
+            ## they're z-scored on the same scale as everyone else: high raw
+            ## similarity still maps to a high z (match), low to low (non-match).
+            degenerate = ~(stds_diff > 0)
+            n_degenerate = int(degenerate.sum())
+            if n_degenerate > 0:
+                valid = ~degenerate
+                if valid.any():
+                    mus_diff[degenerate] = mus_diff[valid].mean()
+                    stds_diff[degenerate] = stds_diff[valid].mean()
+                else:
+                    stds_diff[degenerate] = 1.0  ## every ROI degenerate; avoid div-by-zero
+                warnings.warn(
+                    f"Metric '{m_name}': {n_degenerate} ROI(s) had a zero-variance "
+                    "'donut' of distant comparison ROIs (likely degenerate/empty ROIs); "
+                    "falling back to global population statistics to z-score them. "
+                    "Consider filtering these ROIs or running without z-scoring, and "
+                    "keep an eye out for very similar-looking ROIs."
+                )
+
             ## Z-score the sparse similarity matrix
             s_z = self.similarities[m_name].copy().tocoo()
             s_z.data = (
                 (s_z.data - mus_diff[s_z.row]) / stds_diff[s_z.row]
             )
             s_z = s_z.tocsr()
-
-            ## Replace non-finite z-scores with zero. A zero-variance row makes
-            ## stds_diff exactly 0, so the division yields NaN (0/0) or ±Inf
-            ## (nonzero/0); an Inf left here propagates to NaN downstream.
-            s_z.data[~np.isfinite(s_z.data)] = 0
 
             self.similarities_z[m_name] = s_z
 
