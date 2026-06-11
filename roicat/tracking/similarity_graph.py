@@ -960,8 +960,10 @@ class ROI_graph(util.ROICaT_Module):
             )
             s_z = s_z.tocsr()
 
-            ## Replace NaN values (from zero std) with zero
-            s_z.data[np.isnan(s_z.data)] = 0
+            ## Replace non-finite z-scores with zero. A zero-variance row makes
+            ## stds_diff exactly 0, so the division yields NaN (0/0) or ±Inf
+            ## (nonzero/0); an Inf left here propagates to NaN downstream.
+            s_z.data[~np.isfinite(s_z.data)] = 0
 
             self.similarities_z[m_name] = s_z
 
