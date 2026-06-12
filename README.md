@@ -58,7 +58,7 @@ With ROICaT, you can:
 ### TRACKING: 
 - [Online App](https://huggingface.co/spaces/richiehakim/ROICaT_tracking): Good for first time users. Try it out without installing anything.
 - [Interactive
-  notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/tracking/1_tracking_interactive_notebook.ipynb) (also available in colab) $~$<a target="_blank" href="https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/tracking/1_tracking_interactive_notebook.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
+  notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/tracking/1_tracking_interactive_notebook.ipynb) (also available in colab) <a target="_blank" href="https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/tracking/1_tracking_interactive_notebook.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
 - [Command line interface script](https://github.com/RichieHakim/ROICaT/blob/main/scripts/run_tracking.sh): 
 ```shell
 roicat --pipeline tracking --path_params /path/to/params.yaml --dir_data /folder/with/data/ --dir_save /folder/save/ --prefix_name_save expName --verbose
@@ -66,11 +66,11 @@ roicat --pipeline tracking --path_params /path/to/params.yaml --dir_data /folder
   
 ### CLASSIFICATION:
 - [Interactive notebook -
-  Drawing](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/classification/A1_classify_by_drawingSelection.ipynb). (also available in colab) $~$<a target="_blank" href="https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/classification/A1_classify_by_drawingSelection.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>: $~~$ Use mouse to draw circles around regions of a UMAP to classify ROIs.
+  Drawing](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/classification/A1_classify_by_drawingSelection.ipynb). (also available in colab) <a target="_blank" href="https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/classification/A1_classify_by_drawingSelection.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>:  Use mouse to draw circles around regions of a UMAP to classify ROIs.
 - [Interactive notebook - Simple interactive
-  Labeling](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/classification/B1a_labeling_interactive.ipynb): $~~$ Images of ROIs are displayed and you use the keyboard to manually label them.
+  Labeling](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/classification/B1a_labeling_interactive.ipynb):  Images of ROIs are displayed and you use the keyboard to manually label them.
 - [Interactive notebook - Interactive labeling with
-  drawing](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/classification/B1b_labeling_drawingAndInteractive.ipynb): $~~$ Draw circles around regions of a UMAP to subselect ROIs for manual labeling.
+  drawing](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/classification/B1b_labeling_drawingAndInteractive.ipynb):  Draw circles around regions of a UMAP to subselect ROIs for manual labeling.
 - [Interactive notebook - Train
   classifier](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/classification/B2_classifier_train_interactive.ipynb)
 - [Interactive notebook - Inference with
@@ -96,8 +96,6 @@ issue](https://github.com/RichieHakim/ROICaT/issues) with the error.
 - **Python 3.11 or 3.12** (3.13 is not yet supported).
 - [Anaconda](https://www.anaconda.com/distribution/) or
   [Miniconda](https://docs.conda.io/en/latest/miniconda.html).
-- If using Windows: [Microsoft C++ Build
-  Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
 - The below commands should be run in the terminal (Mac/Linux) or Anaconda
   Prompt (Windows).
 
