@@ -5078,49 +5078,73 @@ class ImageAlignmentChecker:
         self,
         images: Union[np.ndarray, torch.Tensor],
         images_ref: Optional[Union[np.ndarray, torch.Tensor]] = None,
+        batch_size: int = 4,
+        return_pc: bool = False,
+        verbose: bool = True,
+        desc: str = 'Scoring image alignment',
     ):
         """
         Score the alignment of a set of images using phase correlation. Computes
         the stats of the center ('in') of the phase correlation image over the
         stats of the outer region ('out') of the phase correlation image.
+
+        Memory note: the underlying phase correlation has shape
+        *(n_images, n_images_ref, H, W)*. Allocating it in one shot is
+        infeasible for many large images, so ``images`` is processed in
+        chunks of size ``batch_size`` along its leading dimension.
         RH 2024
 
         Args:
-            images (Union[np.ndarray, torch.Tensor]): 
+            images (Union[np.ndarray, torch.Tensor]):
                 A 3D array of images. Shape: *(n_images, height, width)*
             images_ref (Optional[Union[np.ndarray, torch.Tensor]]):
                 Reference images to compare against. If provided, the images
                 will be compared against these images. If not provided, the
                 images will be compared against themselves. (Default is
                 ``None``)
+            batch_size (int):
+                Number of ``images`` rows to process per chunk. Each chunk
+                allocates a tensor of shape *(batch_size, n_images_ref, H, W)*.
+                (Default is *4*)
+            return_pc (bool):
+                If ``True``, the full phase correlation tensor is concatenated
+                across chunks and returned in the output dict under ``'pc'``.
+                This defeats the memory benefit of chunking and is intended for
+                debugging on small inputs only. (Default is ``False``)
+            verbose (bool):
+                If ``True``, show a tqdm progress bar over chunks.
+                (Default is ``True``)
 
         Returns:
-            (Dict): 
+            (Dict):
                 Dictionary containing the following keys:
-                * 'mean_out': 
+                * 'mean_out':
                     Mean of the phase correlation image weighted by the
                     'out' filter
-                * 'mean_in': 
+                * 'mean_in':
                     Mean of the phase correlation image weighted by the
                     'in' filter
-                * 'ptile95_out': 
+                * 'ptile95_out':
                     95th percentile of the phase correlation image multiplied by
                     the 'out' filter
-                * 'max_in': 
+                * 'max_in':
                     Maximum value of the phase correlation image multiplied by
                     the 'in' filter
-                * 'std_out': 
+                * 'std_out':
                     Standard deviation of the phase correlation image weighted by
                     the 'out' filter
-                * 'std_in': 
+                * 'std_in':
                     Standard deviation of the phase correlation image weighted by
                     the 'in' filter
-                * 'max_diff': 
+                * 'max_diff':
                     Difference between the 'max_in' and 'ptile95_out' values
-                * 'z_in': 
+                * 'z_in':
                     max_diff divided by the 'std_out' value
-                * 'r_in': 
+                * 'r_in':
                     max_diff divided by the 'ptile95_out' value
+                * 'pc':
+                    Full phase correlation tensor. Only present if
+                    ``return_pc=True``.
         """
         def _fix_images(ims):
             assert isinstance(ims, (np.ndarray, torch.Tensor, list, tuple)), f'images must be np.ndarray, torch.Tensor, or a list/tuple of np.ndarray or torch.Tensor. Found type: {type(ims)}'
@@ -5142,37 +5166,56 @@ class ImageAlignmentChecker:
 
         images = _fix_images(images)
         images_ref = _fix_images(images_ref) if images_ref is not None else images
-        
-        pc = phase_correlation(images_ref[None, :, :, :], images[:, None, :, :])  ## All to all phase correlation. Shape: (n_images, n_images, height, width)
+        assert int(batch_size) >= 1, f'batch_size must be >= 1, got {batch_size}'
 
-        ## metrics
-        filt_in, filt_out = self.filt_in[None, None, :, :], self.filt_out[None, None, :, :]
-        mean_out = (pc * filt_out).sum(dim=(-2, -1)) / filt_out.sum(dim=(-2, -1))
-        mean_in =  (pc * filt_in).sum(dim=(-2, -1))  / filt_in.sum(dim=(-2, -1))
-        ptile95_out = torch.quantile((pc * filt_out).reshape(pc.shape[0], pc.shape[1], -1)[:, :, filt_out.reshape(-1) > 1e-3], 0.95, dim=-1)
-        max_in = (pc * filt_in).amax(dim=(-2, -1))
-        std_out = torch.sqrt(torch.mean((pc - mean_out[:, :, None, None])**2 * filt_out, dim=(-2, -1)))
-        std_in = torch.sqrt(torch.mean((pc - mean_in[:, :, None, None])**2 * filt_in, dim=(-2, -1)))
+        N = images.shape[0]
+        filt_in = self.filt_in[None, None, :, :]
+        filt_out = self.filt_out[None, None, :, :]
+        sum_filt_out = filt_out.sum(dim=(-2, -1))
+        sum_filt_in = filt_in.sum(dim=(-2, -1))
+        mask_out_flat = filt_out.reshape(-1) > 1e-3
 
-        max_diff = max_in - ptile95_out
-        z_in = max_diff / std_out
-        r_in = max_diff / ptile95_out
+        chunk_metrics = {k: [] for k in ('mean_out', 'mean_in', 'ptile95_out', 'max_in', 'std_out', 'std_in')}
+        pc_chunks = [] if return_pc else None
+
+        n_chunks = (N + batch_size - 1) // batch_size
+        for start in tqdm(range(0, N, batch_size), desc=desc, total=n_chunks, unit='chunk', disable=not verbose):
+            chunk = images[start:start + batch_size]  ## (b, H, W)
+            pc = phase_correlation(images_ref[None, :, :, :], chunk[:, None, :, :])  ## (b, M, H, W)
+
+            m_out = (pc * filt_out).sum(dim=(-2, -1)) / sum_filt_out
+            m_in  = (pc * filt_in).sum(dim=(-2, -1))  / sum_filt_in
+            p95_out = torch.quantile((pc * filt_out).reshape(pc.shape[0], pc.shape[1], -1)[:, :, mask_out_flat], 0.95, dim=-1)
+            mx_in = (pc * filt_in).amax(dim=(-2, -1))
+            s_out = torch.sqrt(torch.mean((pc - m_out[:, :, None, None])**2 * filt_out, dim=(-2, -1)))
+            s_in  = torch.sqrt(torch.mean((pc - m_in[:, :, None, None])**2 * filt_in, dim=(-2, -1)))
+
+            chunk_metrics['mean_out'].append(m_out)
+            chunk_metrics['mean_in'].append(m_in)
+            chunk_metrics['ptile95_out'].append(p95_out)
+            chunk_metrics['max_in'].append(mx_in)
+            chunk_metrics['std_out'].append(s_out)
+            chunk_metrics['std_in'].append(s_in)
+            if return_pc:
+                pc_chunks.append(pc.cpu())
+            del pc
+
+        metrics = {k: torch.cat(v, dim=0) for k, v in chunk_metrics.items()}
+        max_diff = metrics['max_in'] - metrics['ptile95_out']
+        z_in = max_diff / metrics['std_out']
+        r_in = max_diff / metrics['ptile95_out']
 
         outs = {
-            'pc': pc.cpu().numpy(),
-            'mean_out': mean_out,
-            'mean_in': mean_in,
-            'ptile95_out': ptile95_out,
-            'max_in': max_in,
-            'std_out': std_out,
-            'std_in': std_in,
+            **metrics,
             'max_diff': max_diff,
             'z_in': z_in,  ## z-score of in value over out distribution
             'r_in': r_in,
         }
+        if return_pc:
+            outs['pc'] = torch.cat(pc_chunks, dim=0).numpy()
 
         outs = {k: val.cpu().numpy() if isinstance(val, torch.Tensor) else val for k, val in outs.items()}
-        
+
         return outs
     
     def __call__(
@@ -6035,6 +6078,154 @@ def compute_cluster_similarity_matrices(
     cs_max = (s_big_conj - s_big_diag).max(axis=(2,3))
 
     return l_u, cs_mean, cs_max.todense(), cs_min
+
+
+def silhouette_samples_sparse(
+    d_sparse: scipy.sparse.csr_array,
+    labels: np.ndarray,
+    fill_value: float,
+    batch_size: Optional[int] = None,
+) -> np.ndarray:
+    """
+    Sparse-native implementation of ``sklearn.metrics.silhouette_samples``
+    with ``metric='precomputed'``.
+
+    Avoids materializing the full *(n, n)* dense distance matrix by
+    computing per-sample, per-cluster mean distances via sparse @ dense
+    matmul against a label-indicator matrix. Implicitly missing entries
+    in ``d_sparse`` are treated as having distance ``fill_value``
+    (matching the convention used for pruned similarity graphs, where
+    missing entries are "far"). The diagonal is treated as 0 (self
+    distance) regardless of whether it is stored.
+
+    Memory: *(n, n_clusters)* float32, instead of *(n, n)*. For typical
+    ROICaT pipelines, ``n_clusters << n`` so this is a large savings.
+
+    RH 2026
+
+    Args:
+        d_sparse (scipy.sparse.csr_array):
+            Pairwise distance matrix. Shape: *(n, n)*. Must be
+            non-negative.
+        labels (np.ndarray):
+            Cluster labels per sample. Shape: *(n,)*. ``-1`` is treated
+            as a normal cluster (matching ``sklearn`` behavior).
+        fill_value (float):
+            Distance assigned to implicit (missing) entries in
+            ``d_sparse``. Should be non-negative and typically larger
+            than the bulk of stored distances.
+        batch_size (Optional[int]):
+            Rows per batch. Peak memory is dominated by the
+            *(batch_size, n_clusters)* float32 intermediates allocated
+            inside the kernel (~8 of them live simultaneously). If
+            ``None``, auto-picked so each intermediate is ~32 MiB
+            (~256 MiB peak batch footprint), floored at 1024 rows and
+            capped at ``n``. (Default is ``None``)
+
+    Returns:
+        (np.ndarray):
+            sil (np.ndarray):
+                Silhouette score per sample. Shape: *(n,)*. Samples in
+                clusters of size 1 receive ``0.0`` by convention.
+    """
+    assert scipy.sparse.issparse(d_sparse), "d_sparse must be a scipy sparse array."
+    assert d_sparse.shape[0] == d_sparse.shape[1], "d_sparse must be square."
+    assert d_sparse.shape[0] == len(labels), "labels length must equal d_sparse.shape[0]."
+
+    n = d_sparse.shape[0]
+    labels = np.asarray(labels)
+    unique_labels, label_inverse = np.unique(labels, return_inverse=True)
+    n_clusters = len(unique_labels)
+
+    if n_clusters < 2:
+        return np.zeros(n, dtype=np.float32)
+
+    ## Cast to CSR float32 once
+    d = d_sparse.tocsr().astype(np.float32)
+
+    ## Label-indicator matrix M[j, c] = 1 if labels[j] == c. CSC for fast @.
+    M = scipy.sparse.csc_array(
+        (np.ones(n, dtype=np.float32), (np.arange(n), label_inverse)),
+        shape=(n, n_clusters),
+    )
+
+    ## Total samples per cluster
+    total_per_cluster = np.bincount(label_inverse, minlength=n_clusters).astype(np.float32)
+
+    ## Pattern matrix shares d's index arrays; only data differs
+    pattern = scipy.sparse.csr_array(
+        (np.ones_like(d.data, dtype=np.float32), d.indices, d.indptr),
+        shape=d.shape,
+    )
+
+    def _process(d_batch, pattern_batch, label_inverse_batch):
+        ## sparse @ sparse → sparse; densify result. Shape: (n_batch, n_clusters).
+        stored_sum = (d_batch @ M).toarray()
+        stored_count = (pattern_batch @ M).toarray()
+
+        ## (n_batch, n_clusters) bool: True where the column is the sample's own cluster
+        rows = np.arange(stored_sum.shape[0])
+        own_mask = np.zeros_like(stored_sum, dtype=bool)
+        own_mask[rows, label_inverse_batch] = True
+
+        ## Missing = (samples in cluster) - (stored entries to that cluster).
+        ## For own cluster, the count includes self in `total_per_cluster`
+        ## but not in `stored_count` (diagonal typically not stored), so we
+        ## subtract 1 to avoid filling self with `fill_value`. If self IS
+        ## stored as 0, this slightly over-counts missing by 1 for the own
+        ## cluster, which is a small bias for clusters of size >> 1 and
+        ## is preferable to an inconsistent contract.
+        missing = total_per_cluster[None, :] - stored_count - own_mask.astype(np.float32)
+
+        full_sum = stored_sum + missing * fill_value
+
+        ## Denominator: other samples in cluster. n_c - 1 for own cluster, n_c otherwise.
+        denom = total_per_cluster[None, :] - own_mask.astype(np.float32)
+
+        with np.errstate(divide='ignore', invalid='ignore'):
+            mean_dist = full_sum / denom  ## (n_batch, n_clusters)
+
+        a_batch = mean_dist[rows, label_inverse_batch]
+
+        ## For b, mask own-cluster column to +inf and take min over remaining
+        mean_dist_b = mean_dist.copy()
+        mean_dist_b[own_mask] = np.inf
+        b_batch = mean_dist_b.min(axis=1)
+
+        return a_batch, b_batch
+
+    if batch_size is None:
+        ## Auto-pick batch size so each (batch, n_clusters) float32
+        ## intermediate is ~32 MiB. ~8 such arrays live concurrently
+        ## inside _process, so peak batch footprint ~256 MiB regardless
+        ## of n. Floor at 1024 rows so small jobs don't micro-batch.
+        target_array_bytes = 32 * 2**20
+        batch_size = max(1024, target_array_bytes // (n_clusters * 4))
+        batch_size = min(batch_size, n)
+
+    if batch_size >= n:
+        a, b = _process(d, pattern, label_inverse)
+    else:
+        a = np.empty(n, dtype=np.float32)
+        b = np.empty(n, dtype=np.float32)
+        for start in range(0, n, batch_size):
+            stop = min(start + batch_size, n)
+            a[start:stop], b[start:stop] = _process(
+                d[start:stop], pattern[start:stop], label_inverse[start:stop],
+            )
+
+    ## Silhouette per sample
+    with np.errstate(divide='ignore', invalid='ignore'):
+        sil = (b - a) / np.maximum(a, b)
+
+    ## Convention: samples in singleton clusters get 0
+    cluster_sizes_per_sample = total_per_cluster[label_inverse]
+    sil[cluster_sizes_per_sample <= 1] = 0.0
+
+    ## NaN (a == b == 0 or other degenerate cases) → 0
+    sil[~np.isfinite(sil)] = 0.0
+
+    return sil.astype(np.float32)
 
 
 ######################################################################################################################################

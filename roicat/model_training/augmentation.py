@@ -1,14 +1,52 @@
 import torch
 from torch.nn import Module
 import torchvision.transforms
+import torchvision.transforms.v2
 import time
 
 
+## Re-exports from torchvision. Pipelines look up augmentations by name via
+## ``augmentation.__dict__[name]``, so any torchvision transform you want to
+## use in a params dict must be bound here under its bare class name.
 RandomHorizontalFlip = torchvision.transforms.RandomHorizontalFlip
+
+def RandomErasing(**kwargs):
+    ## torchvision v2 RandomErasing requires Tuple[float, float] for scale/ratio.
+    ## JSON-loaded kwargs are lists, which breaks torch.jit.script in the production
+    ## dataloader. Coerce to tuples here so the Sequential can be JIT-scripted.
+    if 'scale' in kwargs:
+        kwargs['scale'] = tuple(kwargs['scale'])
+    if 'ratio' in kwargs:
+        kwargs['ratio'] = tuple(kwargs['ratio'])
+    return torchvision.transforms.v2.RandomErasing(**kwargs)
+
 def RandomAffine(**kwargs):
     if 'interpolation' in kwargs:
         kwargs['interpolation'] = torchvision.transforms.InterpolationMode(kwargs['interpolation'])
     return torchvision.transforms.RandomAffine(**kwargs)
+
+
+class Resize(Module):
+    """Plain spatial resize on (C, H, W) or (N, C, H, W) tensors.
+    Use to upsize 36x36 to 224x224 without warping (compare to WarpPoints
+    which performs warp + resize jointly)."""
+    def __init__(self, size=(224, 224), mode='bilinear'):
+        super().__init__()
+        self.size = tuple(size)
+        self.mode = mode
+        self.align_corners = mode in ('bilinear', 'bicubic', 'trilinear')
+
+    def forward(self, x):
+        added_batch = x.dim() == 3
+        if added_batch:
+            x = x.unsqueeze(0)
+        if self.mode in ('bilinear', 'bicubic', 'trilinear'):
+            x = torch.nn.functional.interpolate(x, size=self.size, mode=self.mode, align_corners=False)
+        else:
+            x = torch.nn.functional.interpolate(x, size=self.size, mode=self.mode)
+        if added_batch:
+            x = x.squeeze(0)
+        return x
 
 
 class AddGaussianNoise(Module):
@@ -184,13 +222,14 @@ class WarpPoints(Module):
     
     def __init__(self,  r=[0, 2],
                         cx=[-0.5, 0.5],
-                        cy=[-0.5, 0.5], 
-                        dx=[-0.3, 0.3], 
-                        dy=[-0.3, 0.3], 
+                        cy=[-0.5, 0.5],
+                        dx=[-0.3, 0.3],
+                        dy=[-0.3, 0.3],
                         n_warps=1,
                         prob=0.5,
                         img_size_in=[36, 36],
-                        img_size_out=[36, 36]):
+                        img_size_out=[36, 36],
+                        mode='bicubic'):
         """
         Initializes the class.
 
@@ -228,6 +267,7 @@ class WarpPoints(Module):
 
         self.img_size_in = img_size_in
         self.img_size_out = img_size_out
+        self.mode = mode
 
         self.r_range = r[1] - r[0]
         self.cx_range = cx[1] - cx[0]
@@ -277,17 +317,16 @@ class WarpPoints(Module):
         if flag_batched:
             ## repmat for batch dimension
             im_newPos = torch.tile(im_newPos, (tensor.shape[0], 1, 1, 1))
-        ret = torch.nn.functional.grid_sample( tensor, 
-                                                im_newPos, 
-                                                mode='bicubic',
-                                                # mode='bicubic', 
-                                                padding_mode='zeros', 
+        ret = torch.nn.functional.grid_sample( tensor,
+                                                im_newPos,
+                                                mode=self.mode,
+                                                padding_mode='zeros',
                                                 align_corners=True)
         ret = ret[0] if not flag_batched else ret
         return ret
         
     def __repr__(self):
-        return f"WarpPoints(r={self.r}, cx={self.cx}, cy={self.cy}, dx={self.dx}, dy={self.dy}, n_warps={self.n_warps}, prob={self.prob}, img_size_in={self.img_size_in}, img_size_out={self.img_size_out})"
+        return f"WarpPoints(r={self.r}, cx={self.cx}, cy={self.cy}, dx={self.dx}, dy={self.dy}, n_warps={self.n_warps}, prob={self.prob}, img_size_in={self.img_size_in}, img_size_out={self.img_size_out}, mode={self.mode!r})"
     
     
 

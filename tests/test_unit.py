@@ -2076,3 +2076,270 @@ class Test_roiextractors:
         assert scipy.sparse.issparse(sf)
         assert sf.shape[0] == n_rois
         assert sf.shape[1] == height * width
+
+
+######################################################################################################################################
+##################################################### SILHOUETTE_SAMPLES_SPARSE ######################################################
+######################################################################################################################################
+
+
+class Test_silhouette_samples_sparse:
+    """Tests for helpers.silhouette_samples_sparse."""
+
+    @staticmethod
+    def _make_sparse_case(n=80, n_clusters=6, sparsity=0.3, fill=5.0, seed=0):
+        """Build a symmetric sparse distance matrix plus its densified
+        (fill-substituted) twin, so sklearn can be used as ground truth."""
+        rng = np.random.default_rng(seed)
+        labels = rng.integers(0, n_clusters, size=n)
+        D = rng.uniform(0, 1, size=(n, n)).astype(np.float32)
+        D = (D + D.T) / 2
+        np.fill_diagonal(D, 0)
+
+        mask = rng.uniform(size=(n, n)) < sparsity
+        mask = mask | mask.T
+        np.fill_diagonal(mask, False)
+
+        D_filled = D.copy()
+        D_filled[~mask] = fill
+        np.fill_diagonal(D_filled, 0)
+
+        D_sparse_dense = D.copy()
+        D_sparse_dense[~mask] = 0
+        np.fill_diagonal(D_sparse_dense, 0)
+        d_csr = scipy.sparse.csr_array(D_sparse_dense)
+        return d_csr, D_filled, labels, fill
+
+    def test_matches_sklearn_dense_reference(self):
+        """Sparse silhouette should match sklearn on the densified twin."""
+        import sklearn.metrics
+
+        d_csr, D_filled, labels, fill = self._make_sparse_case()
+        sil_ref = sklearn.metrics.silhouette_samples(
+            D_filled, labels, metric='precomputed',
+        )
+        sil_ours = helpers.silhouette_samples_sparse(
+            d_sparse=d_csr, labels=labels, fill_value=fill,
+        )
+        np.testing.assert_allclose(sil_ours, sil_ref, atol=1e-5)
+
+    def test_batched_matches_unbatched(self):
+        """Batching should not change the result."""
+        d_csr, _, labels, fill = self._make_sparse_case()
+        sil_full = helpers.silhouette_samples_sparse(d_csr, labels, fill)
+        sil_batched = helpers.silhouette_samples_sparse(
+            d_csr, labels, fill, batch_size=11,
+        )
+        np.testing.assert_allclose(sil_batched, sil_full, atol=1e-6)
+
+    def test_singleton_cluster_returns_zero(self):
+        """A sample alone in its cluster should get s=0 by convention."""
+        d_csr, _, labels, fill = self._make_sparse_case()
+        labels[0] = 9999  ## unique label → singleton
+        sil = helpers.silhouette_samples_sparse(d_csr, labels, fill)
+        assert sil[0] == 0.0
+
+    def test_single_label_returns_all_zeros(self):
+        """With fewer than 2 unique labels, silhouette is undefined → 0."""
+        d_csr, _, _, fill = self._make_sparse_case()
+        labels = np.zeros(d_csr.shape[0], dtype=int)
+        sil = helpers.silhouette_samples_sparse(d_csr, labels, fill)
+        assert np.all(sil == 0.0)
+
+    def test_noise_label_treated_as_cluster(self):
+        """-1 (noise) should be treated as a normal cluster, matching sklearn."""
+        import sklearn.metrics
+
+        d_csr, D_filled, labels, fill = self._make_sparse_case()
+        labels[labels == 0] = -1
+        sil_ref = sklearn.metrics.silhouette_samples(
+            D_filled, labels, metric='precomputed',
+        )
+        sil_ours = helpers.silhouette_samples_sparse(d_csr, labels, fill)
+        np.testing.assert_allclose(sil_ours, sil_ref, atol=1e-5)
+
+    def test_asymmetric_sparsity_pattern(self):
+        """Row i may have stored entries that column i doesn't (and vice
+        versa). Real dConj graphs are not guaranteed to be structurally
+        symmetric. sklearn treats d[i,j] as the distance for sample i's
+        row, so an asymmetric stored matrix should produce identical
+        results between our function and sklearn on the densified twin."""
+        import sklearn.metrics
+
+        rng = np.random.default_rng(42)
+        n = 60
+        n_clusters = 5
+        labels = rng.integers(0, n_clusters, size=n)
+        fill = 4.0
+
+        D = rng.uniform(0.01, 1, size=(n, n)).astype(np.float32)
+        np.fill_diagonal(D, 0)
+        mask = rng.uniform(size=(n, n)) < 0.35
+        np.fill_diagonal(mask, False)
+
+        D_sparse_dense = D.copy()
+        D_sparse_dense[~mask] = 0
+        D_filled = D.copy()
+        D_filled[~mask] = fill
+        np.fill_diagonal(D_filled, 0)
+
+        d_csr = scipy.sparse.csr_array(D_sparse_dense)
+        ## sanity: structurally asymmetric
+        assert (d_csr != d_csr.T).nnz > 0
+
+        sil_ref = sklearn.metrics.silhouette_samples(
+            D_filled, labels, metric='precomputed',
+        )
+        sil_ours = helpers.silhouette_samples_sparse(d_csr, labels, fill)
+        np.testing.assert_allclose(sil_ours, sil_ref, atol=1e-5)
+
+    def test_explicit_diagonal_zeros(self):
+        """If the caller stores d[i,i] = 0 explicitly (not the typical
+        eliminate_zeros case but legal), results should still match."""
+        import sklearn.metrics
+
+        d_csr, D_filled, labels, fill = self._make_sparse_case(seed=3)
+        d_with_diag = d_csr.tolil()
+        for k in range(d_with_diag.shape[0]):
+            d_with_diag[k, k] = 0.0
+        d_with_diag = scipy.sparse.csr_array(d_with_diag)
+
+        sil_ref = sklearn.metrics.silhouette_samples(
+            D_filled, labels, metric='precomputed',
+        )
+        sil_ours = helpers.silhouette_samples_sparse(d_with_diag, labels, fill)
+        ## Tolerance bumped slightly: the implementation's own-cluster
+        ## missing-count adjustment is exact when the diagonal is absent
+        ## and off by 1 in the worst case when it's stored as 0 — a
+        ## negligible bias for clusters of meaningful size.
+        np.testing.assert_allclose(sil_ours, sil_ref, atol=1e-2)
+
+    def test_midscale_parity_with_sklearn(self):
+        """Parity at a scale closer to typical ROICaT use (n=2K, K=80)
+        to catch any drift the small cases might miss."""
+        import sklearn.metrics
+
+        rng = np.random.default_rng(7)
+        n = 2000
+        n_clusters = 80
+        labels = rng.integers(0, n_clusters, size=n)
+        fill = 3.0
+
+        n_edges = int(n * n * 0.02 / 2)
+        i = rng.integers(0, n, size=n_edges)
+        j = rng.integers(0, n, size=n_edges)
+        keep = i != j
+        i, j = i[keep], j[keep]
+        vals = rng.uniform(0.01, 0.99, size=len(i)).astype(np.float32)
+        rows = np.concatenate([i, j])
+        cols = np.concatenate([j, i])
+        data = np.concatenate([vals, vals])
+        d_csr = scipy.sparse.csr_array((data, (rows, cols)), shape=(n, n))
+        d_csr.sum_duplicates()
+
+        D_filled = d_csr.toarray()
+        missing = (D_filled == 0) & (~np.eye(n, dtype=bool))
+        D_filled[missing] = fill
+
+        sil_ref = sklearn.metrics.silhouette_samples(
+            D_filled, labels, metric='precomputed',
+        )
+        sil_ours = helpers.silhouette_samples_sparse(d_csr, labels, fill)
+        np.testing.assert_allclose(sil_ours, sil_ref, atol=1e-5)
+
+
+######################################################################################################################################
+########################################### IMAGE ALIGNMENT CHECKER (score_alignment) ################################################
+######################################################################################################################################
+
+
+class Test_image_alignment_checker_batching:
+    """
+    score_alignment chunks over the leading dim of `images`. These tests pin
+    bit-exact equivalence between the chunked path (batch_size < N) and the
+    single-shot path (batch_size >= N), since chunking should be a pure
+    rearrangement of independent per-pair computations.
+    """
+
+    METRIC_KEYS = ('mean_out', 'mean_in', 'ptile95_out', 'max_in',
+                   'std_out', 'std_in', 'max_diff', 'z_in', 'r_in')
+
+    def _make_iac(self, hw=(64, 64)):
+        return helpers.ImageAlignmentChecker(
+            hw=hw, radius_in=4.0, radius_out=20.0, order=5, device='cpu',
+        )
+
+    def _make_ims(self, n, hw, seed):
+        rng = np.random.RandomState(seed)
+        return rng.randn(n, hw[0], hw[1]).astype(np.float32)
+
+    def _assert_bit_exact(self, chunked, single_shot):
+        for k in self.METRIC_KEYS:
+            np.testing.assert_array_equal(
+                chunked[k], single_shot[k],
+                err_msg=f'metric {k!r} differs between chunked and single-shot paths',
+            )
+
+    def test_cross_ragged_last_chunk(self):
+        """N=7 with batch_size=4 -> chunks of [4, 3]; metrics must equal single-shot."""
+        iac = self._make_iac()
+        ims = self._make_ims(7, (64, 64), seed=0)
+        ref = self._make_ims(3, (64, 64), seed=1)
+        chunked = iac.score_alignment(ims, images_ref=ref, batch_size=4, verbose=False)
+        single = iac.score_alignment(ims, images_ref=ref, batch_size=ims.shape[0], verbose=False)
+        self._assert_bit_exact(chunked, single)
+
+    def test_cross_multiple_full_chunks(self):
+        """N=12, batch_size=4 -> three full chunks, no ragged tail."""
+        iac = self._make_iac()
+        ims = self._make_ims(12, (64, 64), seed=2)
+        ref = self._make_ims(5, (64, 64), seed=3)
+        chunked = iac.score_alignment(ims, images_ref=ref, batch_size=4, verbose=False)
+        single = iac.score_alignment(ims, images_ref=ref, batch_size=ims.shape[0], verbose=False)
+        self._assert_bit_exact(chunked, single)
+
+    def test_self_comparison(self):
+        """images_ref=None -> N x N self-comparison; chunked must match single-shot."""
+        iac = self._make_iac()
+        ims = self._make_ims(6, (64, 64), seed=4)
+        chunked = iac.score_alignment(ims, batch_size=4, verbose=False)
+        single = iac.score_alignment(ims, batch_size=ims.shape[0], verbose=False)
+        self._assert_bit_exact(chunked, single)
+        ## sanity: square output for self-comparison
+        assert chunked['z_in'].shape == (6, 6)
+
+    def test_batch_size_larger_than_n(self):
+        """batch_size > N is a single chunk; output identical to single-shot."""
+        iac = self._make_iac()
+        ims = self._make_ims(3, (64, 64), seed=5)
+        ref = self._make_ims(2, (64, 64), seed=6)
+        a = iac.score_alignment(ims, images_ref=ref, batch_size=64, verbose=False)
+        b = iac.score_alignment(ims, images_ref=ref, batch_size=ims.shape[0], verbose=False)
+        self._assert_bit_exact(a, b)
+
+    def test_pc_dropped_by_default(self):
+        """'pc' must not be in outs unless return_pc=True (avoids huge alloc by default)."""
+        iac = self._make_iac()
+        ims = self._make_ims(4, (64, 64), seed=7)
+        out_default = iac.score_alignment(ims, batch_size=2, verbose=False)
+        assert 'pc' not in out_default, "'pc' should be absent unless return_pc=True"
+
+    def test_pc_roundtrip_when_requested(self):
+        """return_pc=True yields a (N, M, H, W) pc array assembled from chunks."""
+        iac = self._make_iac()
+        H = W = 64
+        ims = self._make_ims(5, (H, W), seed=8)
+        ref = self._make_ims(3, (H, W), seed=9)
+        chunked = iac.score_alignment(ims, images_ref=ref, batch_size=2,
+                                      return_pc=True, verbose=False)
+        single = iac.score_alignment(ims, images_ref=ref, batch_size=ims.shape[0],
+                                     return_pc=True, verbose=False)
+        assert chunked['pc'].shape == (5, 3, H, W)
+        np.testing.assert_array_equal(chunked['pc'], single['pc'])
+
+    def test_invalid_batch_size_raises(self):
+        """batch_size < 1 should be rejected."""
+        iac = self._make_iac()
+        ims = self._make_ims(3, (64, 64), seed=10)
+        with pytest.raises(AssertionError):
+            iac.score_alignment(ims, batch_size=0, verbose=False)

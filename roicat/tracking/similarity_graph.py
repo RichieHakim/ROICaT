@@ -1,4 +1,5 @@
 import multiprocessing as mp
+import warnings
 from dataclasses import dataclass, field, asdict
 from typing import Tuple, Union, List, Optional, Dict, Any, Callable
 
@@ -770,6 +771,12 @@ class ROI_graph(util.ROICaT_Module):
         s_sf[range(n_roi_block), range(n_roi_block)] = 0
         s_sf.eliminate_zeros()
 
+        ## Canonicalize CSR storage order. kneighbors_graph emits elements in
+        ## KD-tree traversal order, which can flip on tied distances across
+        ## platforms. Sorted column indices give a deterministic `data` array
+        ## for serialization and downstream comparisons.
+        s_sf.sort_indices()
+
         return s_sf  ## shape: (n_roi_block, n_roi_block)
 
 
@@ -947,15 +954,36 @@ class ROI_graph(util.ROICaT_Module):
             mus_diff = s_diff.mean(1).to('cpu').numpy()   ## shape: (n_roi,)
             stds_diff = s_diff.std(1).to('cpu').numpy()   ## shape: (n_roi,)
 
+            ## A non-positive (zero or NaN) background std means an ROI's distant
+            ## "known-different" set is degenerate (e.g. empty/artifact ROIs with
+            ## zero features), so its per-ROI null can't be estimated. Dividing by
+            ## it yields ±Inf/NaN that poisons everything downstream. Fall back to
+            ## the population background (mean over valid ROIs) for those rows, so
+            ## they're z-scored on the same scale as everyone else: high raw
+            ## similarity still maps to a high z (match), low to low (non-match).
+            degenerate = ~(stds_diff > 0)
+            n_degenerate = int(degenerate.sum())
+            if n_degenerate > 0:
+                valid = ~degenerate
+                if valid.any():
+                    mus_diff[degenerate] = mus_diff[valid].mean()
+                    stds_diff[degenerate] = stds_diff[valid].mean()
+                else:
+                    stds_diff[degenerate] = 1.0  ## every ROI degenerate; avoid div-by-zero
+                warnings.warn(
+                    f"Metric '{m_name}': {n_degenerate} ROI(s) had a zero-variance "
+                    "'donut' of distant comparison ROIs (likely degenerate/empty ROIs); "
+                    "falling back to global population statistics to z-score them. "
+                    "Consider filtering these ROIs or running without z-scoring, and "
+                    "keep an eye out for very similar-looking ROIs."
+                )
+
             ## Z-score the sparse similarity matrix
             s_z = self.similarities[m_name].copy().tocoo()
             s_z.data = (
                 (s_z.data - mus_diff[s_z.row]) / stds_diff[s_z.row]
             )
             s_z = s_z.tocsr()
-
-            ## Replace NaN values (from zero std) with zero
-            s_z.data[np.isnan(s_z.data)] = 0
 
             self.similarities_z[m_name] = s_z
 
