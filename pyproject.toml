@@ -56,7 +56,7 @@ tracking = [
     "kornia==0.8.3",
     "romatch-roicat[fused-local-corr]>=0.1.2.post1; sys_platform == 'linux'",
     "romatch-roicat>=0.1.2.post1; sys_platform != 'linux'",
-    "roiextractors==0.8.0",
+    "roiextractors==0.9.0",
 ]
 all = [
     "roicat[core,classification,tracking]",
@@ -102,7 +102,7 @@ all_latest = [
     "onnx2torch",
     "scikit-image",
     "selenium",
-    "roiextractors==0.8.0",
+    "roiextractors==0.9.0",
     "sparse_convolution",
 ]
 
