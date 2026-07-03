@@ -2256,9 +2256,12 @@ class Test_silhouette_samples_sparse:
 class Test_image_alignment_checker_batching:
     """
     score_alignment chunks over the leading dim of `images`. These tests pin
-    bit-exact equivalence between the chunked path (batch_size < N) and the
-    single-shot path (batch_size >= N), since chunking should be a pure
-    rearrangement of independent per-pair computations.
+    numerical equivalence (within a tight floating-point tolerance) between the
+    chunked path (batch_size < N) and the single-shot path (batch_size >= N).
+    Chunking is a rearrangement of independent per-pair computations, but it
+    changes the shape/order of the batched matmuls and reductions, so results
+    can differ in the last few ULPs (float ops are not associative) rather than
+    being bitwise identical.
     """
 
     METRIC_KEYS = ('mean_out', 'mean_in', 'ptile95_out', 'max_in',
@@ -2273,10 +2276,17 @@ class Test_image_alignment_checker_batching:
         rng = np.random.RandomState(seed)
         return rng.randn(n, hw[0], hw[1]).astype(np.float32)
 
-    def _assert_bit_exact(self, chunked, single_shot):
+    def _assert_close(self, chunked, single_shot):
+        # Assert closeness within a tight tolerance rather than bitwise equality.
+        # The chunked and single-shot paths do the same math in a different
+        # order/shape, so BLAS rounds the last bits differently (most visible on
+        # near-zero self-comparison entries, ~1e-13, and dependent on CPU/BLAS/
+        # thread count -- which is why bitwise equality was environment-flaky).
+        # A real chunking bug (mispaired or misassembled outputs) diverges by
+        # O(signal), orders of magnitude above these tolerances, and is caught.
         for k in self.METRIC_KEYS:
-            np.testing.assert_array_equal(
-                chunked[k], single_shot[k],
+            np.testing.assert_allclose(
+                chunked[k], single_shot[k], rtol=1e-5, atol=1e-8,
                 err_msg=f'metric {k!r} differs between chunked and single-shot paths',
             )
 
@@ -2287,7 +2297,7 @@ class Test_image_alignment_checker_batching:
         ref = self._make_ims(3, (64, 64), seed=1)
         chunked = iac.score_alignment(ims, images_ref=ref, batch_size=4, verbose=False)
         single = iac.score_alignment(ims, images_ref=ref, batch_size=ims.shape[0], verbose=False)
-        self._assert_bit_exact(chunked, single)
+        self._assert_close(chunked, single)
 
     def test_cross_multiple_full_chunks(self):
         """N=12, batch_size=4 -> three full chunks, no ragged tail."""
@@ -2296,7 +2306,7 @@ class Test_image_alignment_checker_batching:
         ref = self._make_ims(5, (64, 64), seed=3)
         chunked = iac.score_alignment(ims, images_ref=ref, batch_size=4, verbose=False)
         single = iac.score_alignment(ims, images_ref=ref, batch_size=ims.shape[0], verbose=False)
-        self._assert_bit_exact(chunked, single)
+        self._assert_close(chunked, single)
 
     def test_self_comparison(self):
         """images_ref=None -> N x N self-comparison; chunked must match single-shot."""
@@ -2304,7 +2314,7 @@ class Test_image_alignment_checker_batching:
         ims = self._make_ims(6, (64, 64), seed=4)
         chunked = iac.score_alignment(ims, batch_size=4, verbose=False)
         single = iac.score_alignment(ims, batch_size=ims.shape[0], verbose=False)
-        self._assert_bit_exact(chunked, single)
+        self._assert_close(chunked, single)
         ## sanity: square output for self-comparison
         assert chunked['z_in'].shape == (6, 6)
 
@@ -2315,7 +2325,7 @@ class Test_image_alignment_checker_batching:
         ref = self._make_ims(2, (64, 64), seed=6)
         a = iac.score_alignment(ims, images_ref=ref, batch_size=64, verbose=False)
         b = iac.score_alignment(ims, images_ref=ref, batch_size=ims.shape[0], verbose=False)
-        self._assert_bit_exact(a, b)
+        self._assert_close(a, b)
 
     def test_pc_dropped_by_default(self):
         """'pc' must not be in outs unless return_pc=True (avoids huge alloc by default)."""

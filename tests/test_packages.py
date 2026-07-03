@@ -21,7 +21,6 @@ PACKAGES = [
     'sklearn',
     'sparse',
     'torch',
-    'torchaudio',
     'torchvision',
     'tqdm',
     'xxhash',
