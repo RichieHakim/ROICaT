@@ -49,7 +49,7 @@ classification = [
 ]
 tracking = [
     "roicat[core]",
-    "opencv-contrib-python-headless<=4.13.0.92",
+    "opencv-contrib-python-headless<=5.0.0.93",
     "fast-hdbscan==0.3.2",
     "kymatio==0.3.0",
     "kornia==0.8.3",
