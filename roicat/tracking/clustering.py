@@ -2429,7 +2429,10 @@ class Clusterer(util.ROICaT_Module):
 
         return dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover
 
-    def _extract_hdbscan_quality_metrics(self) -> Dict:
+    def _extract_hdbscan_quality_metrics(
+        self,
+        return_as_numpy: bool = False,
+    ) -> Dict:
         """
         Extract HDBSCAN quality metrics, handling differences between legacy
         hdbscan and fast_hdbscan backends.
@@ -2439,6 +2442,12 @@ class Clusterer(util.ROICaT_Module):
         fast_hdbscan does not add extra nodes but exposes additional
         attributes: ``_core_distances`` (per-point core distance) and
         ``_min_spanning_tree`` (MST edge array).
+
+        Args:
+            return_as_numpy (bool):
+                Return numeric arrays as NumPy arrays instead of Python lists.
+                NumPy arrays are required for memory-efficient large-dataset
+                persistence. (Default is ``False``)
 
         Returns:
             (Dict):
@@ -2454,8 +2463,12 @@ class Clusterer(util.ROICaT_Module):
                   ``None`` (legacy).  Sorted MST edge weights; useful for
                   diagnosing cluster separation.
         """
-        def to_list_of_floats(x):
-            return [float(i) for i in x] if x is not None else None
+        def format_numeric(x):
+            if x is None:
+                return None
+            if return_as_numpy:
+                return np.asarray(x)
+            return [float(i) for i in x]
 
         used_fcn = getattr(self, '_fit_used_fully_connected_node', True)
 
@@ -2464,7 +2477,7 @@ class Clusterer(util.ROICaT_Module):
         if used_fcn:
             probs = probs[:-1]
         result = {
-            'sample_probabilities': to_list_of_floats(probs),
+            'sample_probabilities': format_numeric(probs),
         }
 
         ## Outlier scores (only available in legacy hdbscan, not fast_hdbscan)
@@ -2472,7 +2485,7 @@ class Clusterer(util.ROICaT_Module):
             scores = self.hdbs.outlier_scores_
             if used_fcn:
                 scores = scores[:-1]
-            result['sample_outlierScores'] = to_list_of_floats(scores)
+            result['sample_outlierScores'] = format_numeric(scores)
         else:
             result['sample_outlierScores'] = None
 
@@ -2481,7 +2494,7 @@ class Clusterer(util.ROICaT_Module):
         if core_dists is not None:
             if used_fcn:
                 core_dists = core_dists[:-1]
-            result['sample_coreDistances'] = to_list_of_floats(core_dists)
+            result['sample_coreDistances'] = format_numeric(core_dists)
         else:
             result['sample_coreDistances'] = None
 
@@ -2489,7 +2502,7 @@ class Clusterer(util.ROICaT_Module):
         mst = getattr(self.hdbs, '_min_spanning_tree', None)
         if mst is not None:
             ## MST is (n-1, 3) array with columns [src, dst, weight]
-            result['mst_edge_weights'] = to_list_of_floats(np.sort(mst[:, 2]))
+            result['mst_edge_weights'] = format_numeric(np.sort(mst[:, 2]))
         else:
             result['mst_edge_weights'] = None
 
@@ -2500,21 +2513,62 @@ class Clusterer(util.ROICaT_Module):
         sim_mat: Optional[object] = None,
         dist_mat: Optional[object] = None,
         labels: Optional[np.ndarray] = None,
+        include_sample_metrics: bool = True,
+        return_as_numpy: bool = False,
+        cluster_batch_size: int = 100_000,
+        sample_batch_size: int = 16_384,
+        max_edges_per_batch: int = 5_000_000,
     ) -> Dict:
         """
         Computes quality metrics of the dataset.
         RH 2023
 
+        **Metric inputs**
+
+        ``sim_mat`` and ``dist_mat`` are not interchangeable and support
+        different outputs:
+
+        * ``sim_mat`` (normally ``sConj``) is required for the four
+          cluster-level similarity metrics and cluster silhouette.
+        * ``dist_mat`` (normally ``dConj``) is required for standard
+          per-sample silhouette.
+        * HDBSCAN probabilities, outlier scores, core distances, and MST edge
+          weights come from ``self.hdbs`` rather than either matrix.
+
+        Therefore a portable bundle for reproducing the complete similarity
+        and silhouette calculation must contain ``sConj``, ``dConj``, and
+        ``labels``. ``dist_mat`` may be omitted only when
+        ``include_sample_metrics=False`` deliberately requests cluster-only
+        output.
+
         Args:
             sim_mat (Optional[object]): 
-                Similarity matrix of shape *(n_samples, n_samples)*. 
+                Similarity matrix of shape *(n_samples, n_samples)* used by
+                cluster-level metrics.
                 If ``None`` then self.sConj must exist. (Default is ``None``)
             dist_mat (Optional[object]): 
-                Distance matrix of shape *(n_samples, n_samples)*. 
-                If ``None`` then self.dConj must exist. (Default is ``None``)
+                Distance matrix of shape *(n_samples, n_samples)* used by
+                per-sample silhouette. If ``None`` and sample metrics are
+                enabled, self.dConj must exist. (Default is ``None``)
             labels (Optional[np.ndarray]): 
                 Cluster labels of shape *(n_samples,)*. 
                 If ``None``, then self.labels must exist. (Default is ``None``)
+            include_sample_metrics (bool):
+                Compute per-sample silhouette and HDBSCAN arrays. Disable this
+                for cluster-only quality control on very large datasets. When
+                ``False``, ``dist_mat`` is not required. (Default is ``True``)
+            return_as_numpy (bool):
+                Keep numeric outputs as NumPy arrays. The default converts them
+                to Python lists for JSON compatibility, which has substantial
+                memory overhead and should not be used for tens of millions of
+                values. (Default is ``False``)
+            cluster_batch_size (int):
+                Maximum rows per cluster-metric batch. (Default is *100,000*)
+            sample_batch_size (int):
+                Maximum rows per sample-silhouette batch. (Default is *16,384*)
+            max_edges_per_batch (int):
+                Target maximum sparse entries processed per kernel batch. A
+                single row may exceed the target. (Default is *5,000,000*)
 
         Returns:
             (Dict): 
@@ -2523,72 +2577,112 @@ class Clusterer(util.ROICaT_Module):
                     'cluster_intra_means', 'cluster_intra_mins',
                     'cluster_intra_maxs', 'cluster_silhouette',
                     'sample_silhouette', and other metrics if available.
+
+        Notes:
+            When an additional per-ROI output is too large, use
+            ``include_sample_metrics=False`` and ``return_as_numpy=True``.
+            Cluster metrics then use memory proportional to one sparse edge
+            batch plus the number of clusters. Exact sample silhouette requires
+            one float32 output per ROI, or ``4 * n_samples`` bytes.
+
+            Scalability also requires a bounded-degree CSR graph. No exact
+            pairwise method can make an arbitrarily large dense matrix
+            practical; batching bounds temporary memory, not input graph size.
+
+        Example:
+            .. code-block:: python
+
+                quality_metrics = clusterer.compute_quality_metrics(
+                    include_sample_metrics=False,
+                    return_as_numpy=True,
+                )
         """
         if sim_mat is None:
             assert hasattr(self, 'sConj'), "self.sConj does not exist. Run self.find_optimal_parameters_for_pruning() first or specify sim_mat."
             sim_mat = self.sConj
-        if dist_mat is None:
-            assert hasattr(self, 'dConj'), "self.dConj does not exist. Run self.find_optimal_parameters_for_pruning() first or specify dist_mat."
-            dist_mat = self.dConj
         if labels is None:
             assert hasattr(self, 'labels'), "self.labels does not exist. Run self.find_optimal_parameters_for_pruning() first or specify labels."
             labels = self.labels
             
         assert scipy.sparse.issparse(sim_mat), "sim_mat must be a scipy.sparse.csr_array."
-        assert scipy.sparse.issparse(dist_mat), "dist_mat must be a scipy.sparse.csr_array."
+        if include_sample_metrics:
+            if dist_mat is None:
+                assert hasattr(self, 'dConj'), "self.dConj does not exist. Run self.find_optimal_parameters_for_pruning() first or specify dist_mat."
+                dist_mat = self.dConj
+            assert scipy.sparse.issparse(dist_mat), "dist_mat must be a scipy.sparse.csr_array."
+
+        ## Encode labels once and share the result between cluster-level and
+        ## sample-level kernels. The inverse has one entry per ROI, so avoiding
+        ## a second encoding saves both a full-length array and another pass.
+        label_encoding = _encode_cluster_labels(labels=np.asarray(labels))
 
         labels_unique, cs_intra_means, cs_intra_mins, cs_intra_maxs, cs_sil = cluster_quality_metrics(
             sim=sim_mat,
             labels=labels,
+            batch_size=cluster_batch_size,
+            max_edges_per_batch=max_edges_per_batch,
+            _label_encoding=label_encoding,
         )
 
-        ## Sparse-native silhouette: avoids the (n, n) densification that
-        ## blew up RAM at scale (issue #608). Missing entries are filled
-        ## with a "far" distance so unobserved pairs penalize separation,
-        ## matching the prior semantics of the dense path.
-        d_for_sil = dist_mat.tocsr().copy()
-        if d_for_sil.data.size > 0 and d_for_sil.data.min() < 0:
-            n_neg = int((d_for_sil.data < 0).sum())
-            most_neg = float(d_for_sil.data.min())
-            warnings.warn(
-                f"compute_quality_metrics: distance matrix has {n_neg} "
-                f"negative values (min={most_neg:.3e}). Clipping to 0 "
-                f"before silhouette. This indicates an upstream bug — "
-                f"please report (github.com/RichieHakim/ROICaT/issues/608)."
+        rs_sil = None
+        hdbscan_metrics = None
+        if include_sample_metrics:
+            ## Missing distances represent pruned-away pairs and are therefore
+            ## assigned a value far beyond every stored edge. Keep the caller's
+            ## CSR matrix in place; copy only on the exceptional upstream-bug
+            ## path where negative distances must be clipped.
+            d_for_sil = dist_mat.tocsr(copy=False)
+            if d_for_sil.data.size > 0 and d_for_sil.data.min() < 0:
+                n_neg = int((d_for_sil.data < 0).sum())
+                most_neg = float(d_for_sil.data.min())
+                warnings.warn(
+                    f"compute_quality_metrics: distance matrix has {n_neg} "
+                    f"negative values (min={most_neg:.3e}). Clipping to 0 "
+                    f"before silhouette. This indicates an upstream bug - "
+                    f"please report (github.com/RichieHakim/ROICaT/issues/608)."
+                )
+                d_for_sil = d_for_sil.copy()
+                d_for_sil.data = np.clip(d_for_sil.data, 0, None)
+
+            fill_value = (
+                float(d_for_sil.data.max()) * 1000.0
+                if d_for_sil.data.size > 0
+                else 1.0
             )
-            d_for_sil.data = np.clip(d_for_sil.data, 0, None)
-        ## Fill value for unobserved pairs: "much farther than anything
-        ## stored". Distances are non-negative (clipped above), so
-        ## max * 1000 puts unobserved pairs well outside the real range
-        ## regardless of where the bulk of stored distances sit.
-        if d_for_sil.data.size > 0:
-            fill_value = float(d_for_sil.data.max()) * 1000.0
-        else:
-            fill_value = 1.0
+            if len(labels_unique) < 2:
+                warnings.warn(
+                    "Silhouette samples calculation requires at least 2 "
+                    f"labels. Returning None. Found {len(labels_unique)} labels."
+                )
+            else:
+                rs_sil = helpers.silhouette_samples_sparse(
+                    d_sparse=d_for_sil,
+                    labels=labels,
+                    fill_value=fill_value,
+                    batch_size=sample_batch_size,
+                    max_edges_per_batch=max_edges_per_batch,
+                    _label_encoding=label_encoding,
+                )
 
-        if len(np.unique(labels)) < 2:
-            warnings.warn(f"Silhouette samples calculation requires at least 2 labels. Returning None. Found {len(np.unique(labels))} labels.")
-            rs_sil = None
-        else:
-            rs_sil = helpers.silhouette_samples_sparse(
-                d_sparse=d_for_sil,
-                labels=labels,
-                fill_value=fill_value,
-            )
+            if hasattr(self, 'hdbs'):
+                hdbscan_metrics = self._extract_hdbscan_quality_metrics(
+                    return_as_numpy=return_as_numpy,
+                )
 
-        def to_list_of_floats(x):
-            return [float(i) for i in x] if x is not None else None
+        def format_numeric(x):
+            if x is None:
+                return None
+            if return_as_numpy:
+                return np.asarray(x)
+            return [float(i) for i in x]
 
-        ## Extract HDBSCAN-specific metrics
-        hdbscan_metrics = self._extract_hdbscan_quality_metrics() if hasattr(self, 'hdbs') else None
-
-        self.quality_metrics = util.JSON_Dict({
-            'cluster_labels_unique': to_list_of_floats(labels_unique),
-            'cluster_intra_means': to_list_of_floats(cs_intra_means),
-            'cluster_intra_mins': to_list_of_floats(cs_intra_mins),
-            'cluster_intra_maxs': to_list_of_floats(cs_intra_maxs),
-            'cluster_silhouette': to_list_of_floats(cs_sil),
-            'sample_silhouette': to_list_of_floats(rs_sil),
+        quality_metrics = {
+            'cluster_labels_unique': format_numeric(labels_unique),
+            'cluster_intra_means': format_numeric(cs_intra_means),
+            'cluster_intra_mins': format_numeric(cs_intra_mins),
+            'cluster_intra_maxs': format_numeric(cs_intra_maxs),
+            'cluster_silhouette': format_numeric(cs_sil),
+            'sample_silhouette': format_numeric(rs_sil),
             'sample_probabilities': hdbscan_metrics['sample_probabilities'] if hdbscan_metrics else None,
             'hdbscan': hdbscan_metrics,
             'sequentialHungarian': {
@@ -2597,7 +2691,12 @@ class Clusterer(util.ROICaT_Module):
                 'performance_f1': float(self.seqHung_performance['f1_score']),
                 'performance_accuracy': float(self.seqHung_performance['accuracy']),
             } if hasattr(self, 'seqHung_performance') else None,
-        })
+        }
+        self.quality_metrics = (
+            quality_metrics
+            if return_as_numpy
+            else util.JSON_Dict(quality_metrics)
+        )
         return self.quality_metrics
 
     ####################################################################
@@ -3433,15 +3532,136 @@ def score_labels(
     return out
 
 
+def _encode_cluster_labels(
+    labels: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Encode ROICaT cluster labels as consecutive array indices.
+
+    ROICaT clustering emits squeezed integer labels
+    ``[-1, 0, 1, ..., n_clusters - 2]``, where ``-1`` denotes noise. For this
+    normal case, encoding is a linear ``bincount`` pass and the per-ROI inverse
+    uses int32. This avoids ``np.unique(..., return_inverse=True)``, whose sort
+    and int64 inverse create large temporaries for very large label arrays.
+
+    Arbitrary non-contiguous labels retain public compatibility through a
+    ``np.unique`` fallback.
+
+    Args:
+        labels (np.ndarray):
+            One-dimensional cluster labels.
+
+    Returns:
+        (tuple): tuple containing:
+            labels_unique (np.ndarray):
+                Sorted original label values.
+            labels_inverse (np.ndarray):
+                Consecutive cluster index for every ROI. Uses int32 whenever
+                the number of clusters permits it.
+            samples_per_cluster (np.ndarray):
+                ROI count for every encoded cluster.
+    """
+    labels = np.asarray(labels)
+    assert labels.ndim == 1, "Labels must be a 1-D array."
+
+    if labels.size == 0:
+        return (
+            labels.copy(),
+            np.empty(0, dtype=np.int32),
+            np.empty(0, dtype=np.int64),
+        )
+
+    if np.issubdtype(labels.dtype, np.integer):
+        label_min = int(labels.min())
+        label_max = int(labels.max())
+        n_labels_possible = label_max - label_min + 1
+
+        ## Restrict the fast path to ROICaT's -1/0 starting labels. Besides
+        ## documenting the expected contract, this avoids overflow when an
+        ## arbitrary large integer label is cast to int32 before offsetting.
+        if (
+            label_min in (-1, 0)
+            and n_labels_possible <= labels.size
+            and n_labels_possible <= np.iinfo(np.int32).max
+        ):
+            if label_min == 0 and labels.dtype == np.int32:
+                labels_inverse = labels
+            else:
+                labels_inverse = labels.astype(np.int32, copy=True)
+                if label_min == -1:
+                    labels_inverse += 1
+
+            samples_per_cluster = np.bincount(
+                labels_inverse,
+                minlength=n_labels_possible,
+            )
+            if np.all(samples_per_cluster > 0):
+                labels_unique = np.arange(
+                    label_min,
+                    label_max + 1,
+                    dtype=labels.dtype,
+                )
+                return labels_unique, labels_inverse, samples_per_cluster
+
+            ## Missing integer IDs mean the input was not actually squeezed.
+            ## Release these potentially large arrays before sorting fallback.
+            del labels_inverse, samples_per_cluster
+
+    labels_unique, labels_inverse, samples_per_cluster = np.unique(
+        labels,
+        return_inverse=True,
+        return_counts=True,
+    )
+    if len(labels_unique) <= np.iinfo(np.int32).max:
+        labels_inverse = labels_inverse.astype(np.int32, copy=False)
+
+    return labels_unique, labels_inverse, samples_per_cluster
+
+
 def cluster_quality_metrics(
     sim: Union[np.ndarray, scipy.sparse.csr_array],
     labels: np.ndarray,
+    batch_size: int = 100_000,
+    max_edges_per_batch: int = 5_000_000,
+    _label_encoding: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = None,
 ) -> Tuple:
     """
-    Computes the cluster quality metrics for a clustering solution including
-    intra-cluster mean, minimum, maximum similarity, and cluster silhouette
-    score. 
-    RH 2023
+    Compute cluster-level quality metrics directly from a sparse ROI graph.
+
+    **Definitions**
+
+    Let *S_ij* be the directed similarity from ROI *i* to ROI *j*. A missing
+    sparse entry has similarity zero. Let cluster *c* contain *n_c* ROIs and
+    ``P_c = n_c * (n_c - 1)`` directed, non-self pairs.
+
+    The intra-cluster metrics are:
+
+    * ``intra_mean_c = sum(S_ij) / P_c`` for distinct *i,j* in *c*.
+    * ``intra_max_c = max(S_ij)`` for distinct *i,j* in *c*.
+    * ``intra_min_c`` is zero if any of the *P_c* pairs is missing or zero;
+      otherwise it is the smallest stored value (capped by conventional
+      self-similarity 1 for compatibility with the legacy implementation).
+
+    Define ``inter_max_c`` as the largest outgoing similarity from an ROI in
+    cluster *c* to an ROI in any other cluster. The cluster silhouette is:
+
+    ``(intra_mean_c - inter_max_c) / max(intra_mean_c, inter_max_c)``
+
+    This is ROICaT's historical cluster-level score; it is distinct from the
+    standard per-sample silhouette computed from distances.
+
+    **Processing**
+
+    The legacy implementation constructed a logical sparse array with shape
+    ``(n_clusters, n_clusters, n_samples, n_samples)``. NumPy must still be
+    able to linearize that logical shape, so sufficiently large inputs exceed
+    the platform indexing limit. The current implementation instead scans CSR
+    edges in batches and updates five per-cluster accumulator arrays.
+
+    Peak temporary memory is therefore
+    proportional to one bounded edge batch rather than the logical matrix size.
+
+    RH 2026
 
     Args:
         sim (Union[np.ndarray, scipy.sparse.csr_array]):
@@ -3450,9 +3670,24 @@ def cluster_quality_metrics(
             clusterer.make_conjunctive_similarity_matrix()`.
         labels (np.ndarray):
             Cluster labels. (shape: *(n_roi,)*)
+        batch_size (int):
+            Maximum similarity-matrix rows processed at once. This bounds
+            row-dependent temporary arrays; the separate edge limit handles
+            uneven graph degree. (Default is *100,000*)
+        max_edges_per_batch (int):
+            Target maximum stored similarities processed at once. A single
+            row with more entries is processed on its own. Peak working memory
+            is ``O(max_edges_per_batch + n_clusters)``. (Default is *5,000,000*)
+        _label_encoding (Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]]):
+            Internal precomputed ``(unique, inverse, counts)`` encoding. It is
+            supplied by ``Clusterer.compute_quality_metrics`` so labels are not
+            encoded twice when sample metrics are also requested. External
+            callers should leave this as ``None``.
 
     Returns:
         (tuple): tuple containing:
+            labels_unique (np.ndarray):
+                Unique cluster labels. (shape: *(n_clusters,)*)
             cs_intra_means (np.ndarray):
                 Intra-cluster mean similarity. (shape: *(n_clusters,)*)
             cs_intra_mins (np.ndarray):
@@ -3463,18 +3698,158 @@ def cluster_quality_metrics(
                 Cluster silhouette score. (shape: *(n_clusters,)*)
                 Describes intra_mean - inter_max_of_maxes
     """
-    import sparse
-    
-    labels_unique, cs_mean, cs_max, cs_min = helpers.compute_cluster_similarity_matrices(sim, labels, verbose=True)
-    fn_sil_score = lambda intra, inter: (intra - inter) / np.maximum(intra, inter)
+    labels = np.asarray(labels)
+    sim = scipy.sparse.csr_array(sim, copy=False)
 
-    eye_inv = 1 - sparse.eye(cs_max.shape[0])
+    assert batch_size > 0, "batch_size must be greater than zero."
+    assert max_edges_per_batch > 0, "max_edges_per_batch must be greater than zero."
+    assert sim.shape[0] == sim.shape[1], "Similarity matrix must be square."
+    assert labels.ndim == 1, "Labels must be a 1-D array."
+    assert labels.shape[0] == sim.shape[0], "Labels must be the same length as the similarity matrix."
 
-    cs_intra_means = cs_mean.diagonal()
-    cs_inter_maxOfMaxs = (eye_inv * cs_max).max(0)
-    cs_sil = fn_sil_score(cs_intra_means, cs_inter_maxOfMaxs)
-    cs_intra_mins = cs_min.diagonal()
-    cs_intra_maxs = cs_max.diagonal()
+    ## Duplicate CSR coordinates would be counted as distinct sample pairs.
+    ## ROICaT graphs are canonical, but normalize unusual caller input once.
+    ## The copy occurs only on this exceptional path.
+    if not sim.has_canonical_format:
+        sim = sim.copy()
+        sim.sum_duplicates()
+
+    ## Validate stored values in bounded chunks. Comparisons such as
+    ## ``sim < 0`` create another sparse object proportional to the full graph,
+    ## which is unacceptable for billion-edge inputs.
+    has_nan = False
+    has_value_above_one = False
+    for edge_start in range(0, sim.nnz, max_edges_per_batch):
+        values_check = sim.data[edge_start:edge_start + max_edges_per_batch]
+        assert not np.any(values_check < 0), "Similarity matrix must be non-negative."
+        has_nan = has_nan or np.isnan(values_check).any()
+        has_value_above_one = has_value_above_one or np.any(values_check > 1)
+
+    if has_value_above_one:
+        print("Warning: Similarity matrix has values greater than 1.")
+    if has_nan:
+        print("Warning: Similarity matrix has NaNs. Will treat them as 0.")
+
+    ## Symmetry and full-diagonal checks require a transpose or an n-sample
+    ## dense vector. Retain the legacy warnings for modest graphs without
+    ## imposing those whole-graph temporaries on large datasets. Neither
+    ## property is required by the reduction below: asymmetric edges use the
+    ## documented outgoing-edge convention, and self-edges are ignored.
+    if (
+        sim.shape[0] <= batch_size
+        and sim.nnz <= max_edges_per_batch
+        and (sim - sim.T).sum() != 0
+    ):
+        print("Warning: Similarity matrix is not symmetric.")
+    if sim.shape[0] <= batch_size and not np.allclose(sim.diagonal(), 1):
+        print("Warning: Similarity matrix diagonal is not all ones. Self-similarity is treated as one.")
+
+    if _label_encoding is None:
+        labels_unique, labels_inverse, samples_per_cluster = _encode_cluster_labels(
+            labels=labels,
+        )
+    else:
+        labels_unique, labels_inverse, samples_per_cluster = _label_encoding
+    n_clusters = len(labels_unique)
+
+    ## These are the only global accumulators. Everything proportional to the
+    ## number of stored edges is allocated inside one bounded row batch.
+    intra_sums = np.zeros(n_clusters, dtype=np.float64)
+    intra_maxs = np.zeros(n_clusters, dtype=np.float32)
+    intra_mins_stored = np.full(n_clusters, np.inf, dtype=np.float32)
+    n_positive_per_cluster = np.zeros(n_clusters, dtype=np.int64)
+    cs_inter_maxOfMaxs = np.zeros(n_clusters, dtype=np.float32)
+
+    def iter_row_batches():
+        """Yield local CSR intervals bounded by rows and stored edges."""
+        row_start = 0
+        while row_start < sim.shape[0]:
+            row_stop = min(row_start + batch_size, sim.shape[0])
+            edge_limit = int(sim.indptr[row_start]) + max_edges_per_batch
+            row_stop_edges = int(np.searchsorted(
+                sim.indptr,
+                edge_limit,
+                side='right',
+            ) - 1)
+            row_stop = min(row_stop, max(row_start + 1, row_stop_edges))
+            yield row_start, row_stop
+            row_start = row_stop
+
+    for row_start, row_stop in iter_row_batches():
+        edge_start = int(sim.indptr[row_start])
+        edge_stop = int(sim.indptr[row_stop])
+        if edge_start == edge_stop:
+            continue
+        entries_per_row = np.diff(sim.indptr[row_start:row_stop + 1])
+
+        ## Expand row identity only for this batch. Repeating encoded row labels
+        ## directly avoids indexing a second n_samples-long row array.
+        rows_local = np.repeat(
+            np.arange(row_stop - row_start, dtype=np.int64),
+            entries_per_row,
+        )
+        row_clusters = np.repeat(
+            labels_inverse[row_start:row_stop],
+            entries_per_row,
+        )
+        cols = sim.indices[edge_start:edge_stop]
+        col_clusters = labels_inverse[cols]
+        values = sim.data[edge_start:edge_stop].astype(np.float32, copy=False)
+        if has_nan and np.isnan(values).any():
+            values = np.nan_to_num(values, nan=0.0, copy=True)
+
+        ## Intra-cluster metrics exclude self-pairs. Sparse omissions still
+        ## represent similarity zero and therefore contribute to the mean's
+        ## denominator without contributing to its stored-value sum.
+        is_same_cluster = row_clusters == col_clusters
+        is_intra_nonself = is_same_cluster & (
+            cols != rows_local + row_start
+        )
+        intra_clusters_batch = row_clusters[is_intra_nonself]
+        intra_values_batch = values[is_intra_nonself]
+        np.add.at(intra_sums, intra_clusters_batch, intra_values_batch)
+        np.maximum.at(intra_maxs, intra_clusters_batch, intra_values_batch)
+
+        ## A cluster's minimum is nonzero only if every directed non-self pair
+        ## is explicitly stored and positive. Track both the smallest positive
+        ## value and the number of such values to distinguish a real minimum
+        ## from an implicit sparse zero.
+        is_positive = intra_values_batch > 0
+        positive_clusters_batch = intra_clusters_batch[is_positive]
+        np.add.at(n_positive_per_cluster, positive_clusters_batch, 1)
+        np.minimum.at(
+            intra_mins_stored,
+            positive_clusters_batch,
+            intra_values_batch[is_positive],
+        )
+
+        ## The legacy cluster silhouette uses each cluster's largest outgoing
+        ## similarity to any other cluster. This definition also specifies the
+        ## behavior for asymmetric similarity matrices.
+        is_inter = ~is_same_cluster
+        np.maximum.at(
+            cs_inter_maxOfMaxs,
+            row_clusters[is_inter],
+            values[is_inter],
+        )
+
+    n_intra_pairs = samples_per_cluster * (samples_per_cluster - 1)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        cs_intra_means = intra_sums / n_intra_pairs
+
+    cs_intra_mins = np.zeros(n_clusters, dtype=np.float32)
+    has_all_pairs = n_positive_per_cluster == n_intra_pairs
+    cs_intra_mins[has_all_pairs] = np.minimum(
+        intra_mins_stored[has_all_pairs],
+        1.0,
+    )
+
+    with np.errstate(divide='ignore', invalid='ignore'):
+        cs_sil = (
+            (cs_intra_means - cs_inter_maxOfMaxs)
+            / np.maximum(cs_intra_means, cs_inter_maxOfMaxs)
+        )
+    cs_intra_maxs = intra_maxs
     
     return labels_unique, cs_intra_means, cs_intra_mins, cs_intra_maxs, cs_sil
 

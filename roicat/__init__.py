@@ -16,3 +16,4 @@ for pkg in __all__:
     exec('from . import ' + pkg)
 
 from .__main__ import run_pipeline
+from .classification.package import ClassifierPackage, PackageIntegrityError
