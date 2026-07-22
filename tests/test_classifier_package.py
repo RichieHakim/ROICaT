@@ -46,7 +46,7 @@ _IMG_H, _IMG_W = 16, 16
 # ---------------------------------------------------------------------------
 
 def _stub_model_py(tag: str = "A", latent_dim: int = _LATENT_DIM) -> str:
-    return f'''"""Stub model.py — tag={tag}."""
+    return f'''"""Stub model.py - tag={tag}."""
 import torch
 import torch.nn as nn
 import numpy as np
@@ -98,7 +98,10 @@ def _import_stub_module(stub_src: str, module_name: str = "_test_stub_model"):
     """Import the stub model.py from a string under a custom module name."""
     import importlib.util
     import tempfile
-    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False)
+    ## encoding="utf-8" is required: without it Windows uses cp1252, which
+    ## mangles any non-ASCII byte and yields a SyntaxError on import. The stub
+    ## source is kept ASCII-only as well, so the two defenses are redundant.
+    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8")
     tmp.write(stub_src)
     tmp.close()
     spec = importlib.util.spec_from_file_location(module_name, tmp.name)
