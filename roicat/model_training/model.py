@@ -414,7 +414,6 @@ class Simclr_Model_with_PCA(torch.nn.Module):
         """Device of the first registered buffer."""
         return self.pca_weight.device
 
-
 def build_backbone(
     base_model: torch.nn.Module,
     head_pool_method: str,
@@ -476,71 +475,57 @@ def build_backbone(
 
 class Simclr_Model():
     """
-    SimCLR model class
+    SimCLR model container. Holds an inner ``ModelTackOn`` at ``self.model``
+    (a ``torch.nn.Module``); the container itself is not an ``nn.Module``.
 
     Args:
-        filepath_model_load (str):
-            Filepath from which to load a pretrained model
-        base_model (torch.nn.Module):
-            Base torchvision model (or otherwise) to use for the SimCLR model
-        head_pool_method (str):
-            Pooling method to use for the head
-        head_pool_method_kwargs (dict):
-            Pooling method kwargs to use for the head
-        pre_head_fc_sizes (list):
-            List of fully connected layer sizes to be attached before the head
-        post_head_fc_sizes (list):
-            List of fully connected layer sizes to be attached after the head
-        head_nonlinearity (str):
-            Nonlinearity to use after the FC layers
-        head_nonlinearity_kwargs (dict):
-            Nonlinearity kwargs to use after the FC layers
-        block_to_unfreeze (str):
-            Name of the block to unfreeze for training
-        n_block_toInclude (int):
-            Number of blocks to include in the base model
-        image_out_size (int):
-            Size of the output image (for resizing)
-        forward_version (str):
-            Version of the forward pass to use
+        filepath_model_load (str): Removed; raises ``NotImplementedError``.
+        base_model (torch.nn.Module): Pretrained torchvision backbone instance.
+            Mutually exclusive with ``torchvision_model``.
+        torchvision_model (str): Name of a ``torchvision.models`` constructor
+            (e.g. ``"convnext_tiny"``); constructed internally with ``weights=None``.
+            Used so ``arch_kwargs`` is JSON-safe for ``ClassifierPackage``.
+        head_pool_method (str): A ``torch.nn`` pooling class name.
+        head_pool_method_kwargs (dict): Pooling constructor kwargs.
+        pre_head_fc_sizes (list[int]): Pre-head FC layer sizes.
+        post_head_fc_sizes (list[int]): Post-head FC layer sizes.
+        head_nonlinearity (str): A ``torch.nn`` nonlinearity class name.
+        head_nonlinearity_kwargs (dict): Nonlinearity constructor kwargs.
+        block_to_unfreeze (str): First block name to unfreeze for training.
+        n_block_toInclude (int): Blocks to retain from ``base_model``.
+        image_out_size (list[int] | tuple[int,int,int]): ``(C, H, W)`` input tensor shape.
+        forward_version (str): ``"forward_latent"`` or ``"forward_head"``.
+
+    Attributes:
+        model (ModelTackOn): The inner ``nn.Module``.
+        arch_kwargs (dict): JSON-safe dict of constructor kwargs (``torchvision_model``
+            string included; ``base_model`` object excluded).
     """
     def __init__(
             self,
-            filepath_model_load: Optional[torch.nn.Module]=None, # Set filepath to save model
-            base_model: Optional[torch.nn.Module]=None, # Set base model to use
-            head_pool_method: Optional[str]=None, # Set pooling method to use for the head
-            head_pool_method_kwargs: Optional[dict]=None, # Set pooling method kwargs to use for the head
-            pre_head_fc_sizes: Optional[list]=None, # Set the sizes of the FC layers to be attached before the head
-            post_head_fc_sizes: Optional[int]=None, # Set the size of the FC layer to be attached after the head
-            head_nonlinearity: Optional[str]=None, # Set the nonlinearity to use after the head
-            head_nonlinearity_kwargs: Optional[dict]=None, # Set the nonlinearity kwargs to use after the head
-            block_to_unfreeze: Optional[str]=None, # Unfreeze the model at and beyond the unfreeze_point
-            n_block_toInclude: Optional[int]=None, # Set the number of blocks to include in the model
-            image_out_size: Optional[int]=None, # Set the size of the output image
-            forward_version: Optional[str]=None, # Set the version of the forward pass to use
+            filepath_model_load: Optional[torch.nn.Module]=None,
+            base_model: Optional[torch.nn.Module]=None,
+            torchvision_model: Optional[str]=None,
+            head_pool_method: Optional[str]=None,
+            head_pool_method_kwargs: Optional[dict]=None,
+            pre_head_fc_sizes: Optional[list]=None,
+            post_head_fc_sizes: Optional[int]=None,
+            head_nonlinearity: Optional[str]=None,
+            head_nonlinearity_kwargs: Optional[dict]=None,
+            block_to_unfreeze: Optional[str]=None,
+            n_block_toInclude: Optional[int]=None,
+            image_out_size: Optional[list]=None,
+            forward_version: Optional[str]=None,
             ):
-
-        assert filepath_model_load is not None or (
-            base_model is not None and
-            head_pool_method is not None and
-            head_pool_method_kwargs is not None and
-            pre_head_fc_sizes is not None and
-            post_head_fc_sizes is not None and
-            head_nonlinearity is not None and
-            head_nonlinearity_kwargs is not None and
-            block_to_unfreeze is not None and
-            n_block_toInclude is not None and
-            image_out_size is not None and
-            forward_version is not None
-            ), "Either filepath_model_load or every other parameter must be set"
-
-        # If loading model, load it from a checkpoint, otherwise create one from scratch using the other parameters
         if filepath_model_load is not None:
             raise NotImplementedError(
-                "Loading a model via filepath_model_load is no longer supported in Simclr_Model.__init__. "
-                "Build the architecture with from_dict_params(), then load weights with torch.load() + model.load_state_dict()."
+                "Loading via filepath_model_load is removed. Build with kwargs, then torch.load() + model.load_state_dict()."
             )
-        self.create_model(
+        ## Allow base_model to be specified via torchvision_model name (JSON-safe).
+        if base_model is None and torchvision_model is not None:
+            base_model = torchvision.models.__dict__[torchvision_model](weights=None)
+
+        required = dict(
             base_model=base_model,
             head_pool_method=head_pool_method,
             head_pool_method_kwargs=head_pool_method_kwargs,
@@ -551,9 +536,68 @@ class Simclr_Model():
             block_to_unfreeze=block_to_unfreeze,
             n_block_toInclude=n_block_toInclude,
             image_out_size=image_out_size,
-            forward_version=forward_version
-            )
+            forward_version=forward_version,
+        )
+        missing = [k for k, v in required.items() if v is None]
+        if missing:
+            raise ValueError(f"Simclr_Model: missing required kwargs: {missing}")
+
+        self.create_model(**required)
         self.filepath_model_load = filepath_model_load
+
+        ## JSON-safe arch_kwargs for ClassifierPackage round-trip.
+        ## base_model object excluded; torchvision_model string captured if given.
+        self.arch_kwargs = {
+            "torchvision_model": torchvision_model,
+            "head_pool_method": head_pool_method,
+            "head_pool_method_kwargs": head_pool_method_kwargs,
+            "pre_head_fc_sizes": pre_head_fc_sizes,
+            "post_head_fc_sizes": post_head_fc_sizes,
+            "head_nonlinearity": head_nonlinearity,
+            "head_nonlinearity_kwargs": head_nonlinearity_kwargs,
+            "block_to_unfreeze": block_to_unfreeze,
+            "n_block_toInclude": n_block_toInclude,
+            "image_out_size": list(image_out_size),
+            "forward_version": forward_version,
+        }
+
+    def embed(self, patches_np: np.ndarray, device: str = 'cpu') -> np.ndarray:
+        """
+        Preprocess ROI patches and run the forward pass, returning CPU numpy latents.
+
+        Applies the same transform pipeline as ``Dataloader_ROInet``: per-image
+        min-max scaling (eps=1e-9) → bilinear resize to (224, 224) with antialias →
+        tile to 3 channels. Runs ``self.model`` in ``eval()`` with ``torch.no_grad()``.
+
+        Args:
+            patches_np (np.ndarray): ``(N, H, W)`` numeric array.
+            device (str): Torch device string.
+
+        Returns:
+            np.ndarray: ``(N, latent_dim)`` float32 on CPU.
+        """
+        _eps = 1e-9
+        _resize = torchvision.transforms.Resize(
+            size=(224, 224),
+            interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
+            antialias=True,
+        )
+
+        x = torch.as_tensor(patches_np, dtype=torch.float32)  # (N, H, W)
+        if x.shape[0] == 0:
+            ## Empty input → produce empty (N=0, latent_dim) by running a 0-length pass.
+            x = x.reshape(0, 3, 224, 224)
+        else:
+            x_min = x.flatten(1).min(dim=1).values[:, None, None]
+            x_max = x.flatten(1).max(dim=1).values[:, None, None]
+            x = (x - x_min) / (x_max - x_min + _eps)
+            x = torch.stack([_resize(img[None, ...]) for img in x], dim=0)  # (N, 1, 224, 224)
+            x = x.expand(-1, 3, -1, -1)  # (N, 3, 224, 224)
+
+        self.model.eval()
+        self.model.to(device)
+        with torch.no_grad():
+            return self.model(x.to(device)).cpu().numpy().astype(np.float32, copy=False)
 
     @classmethod
     def from_dict_params(
@@ -703,9 +747,12 @@ def make_model(fwd_version: str, **params) -> 'Simclr_Model_with_PCA':
     backbone.forward = backbone.forward_head
 
     pca_size = params['pca_size']
-    return Simclr_Model_with_PCA(
+    net = Simclr_Model_with_PCA(
         backbone=backbone,
         pca_weight=torch.zeros(pca_size, pca_size),
         pca_bias=torch.zeros(pca_size),
     )
+    ## Attach arch_kwargs so ClassifierPackage._pack_embedder can roundtrip them.
+    net.arch_kwargs = dict(params)
+    return net
 

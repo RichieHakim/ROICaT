@@ -2079,6 +2079,176 @@ class Test_roiextractors:
 
 
 ######################################################################################################################################
+###################################################### CLUSTER QUALITY METRICS #######################################################
+######################################################################################################################################
+
+
+class Test_cluster_quality_metrics:
+    """Tests for the sparse edge-reduction implementation."""
+
+    @staticmethod
+    def _legacy_metrics(sim, labels):
+        """Compute the direct cluster-pair reference implementation."""
+        labels_unique, cs_mean, cs_max, cs_min = helpers.compute_cluster_similarity_matrices(
+            s=sim,
+            l=labels,
+            verbose=False,
+        )
+        inter_max = (cs_max * (1 - np.eye(cs_max.shape[0]))).max(axis=0)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            silhouette = (
+                (cs_mean.diagonal() - inter_max)
+                / np.maximum(cs_mean.diagonal(), inter_max)
+            )
+        return (
+            labels_unique,
+            cs_mean.diagonal(),
+            cs_min.diagonal(),
+            cs_max.diagonal(),
+            silhouette,
+        )
+
+    @pytest.mark.parametrize('use_sparse', [False, True])
+    @pytest.mark.parametrize('batch_size,max_edges', [
+        (1, 1),
+        (2, 5),
+        (100, 10_000),
+    ])
+    def test_batched_accumulation_matches_direct_implementation(
+        self,
+        use_sparse,
+        batch_size,
+        max_edges,
+    ):
+        """Every batching mode must preserve the direct metric calculation."""
+        from roicat.tracking.clustering import cluster_quality_metrics
+
+        rng = np.random.default_rng(12)
+        labels = np.array([10, 10, 4, 4, 4, -1, -1, -1])
+        sim = rng.uniform(0, 1, size=(len(labels), len(labels))).astype(np.float32)
+        sim = (sim + sim.T) / 2
+        sim[sim < 0.35] = 0
+        np.fill_diagonal(sim, 0)
+        if use_sparse:
+            sim = scipy.sparse.csr_array(sim)
+
+        expected = self._legacy_metrics(sim=sim, labels=labels)
+        actual = cluster_quality_metrics(
+            sim=sim,
+            labels=labels,
+            batch_size=batch_size,
+            max_edges_per_batch=max_edges,
+        )
+
+        for expected_array, actual_array in zip(expected, actual):
+            np.testing.assert_allclose(
+                actual_array,
+                expected_array,
+                atol=1e-7,
+                equal_nan=True,
+            )
+
+    def test_asymmetric_inter_cluster_max_uses_outgoing_edges(self):
+        """Preserve the legacy axis convention for asymmetric matrices."""
+        from roicat.tracking.clustering import cluster_quality_metrics
+
+        labels = np.array([0, 0, 1, 1])
+        sim = scipy.sparse.csr_array(np.array([
+            [0.0, 0.8, 0.9, 0.0],
+            [0.8, 0.0, 0.0, 0.0],
+            [0.2, 0.0, 0.0, 0.8],
+            [0.0, 0.0, 0.8, 0.0],
+        ], dtype=np.float32))
+
+        _, _, _, _, silhouette = cluster_quality_metrics(
+            sim=sim,
+            labels=labels,
+        )
+
+        np.testing.assert_allclose(
+            silhouette,
+            np.array([-1 / 9, 0.75]),
+            atol=1e-7,
+        )
+
+    def test_handles_logical_shape_larger_than_intp(self):
+        """Large label/sample counts must not create a four-dimensional COO."""
+        from roicat.tracking.clustering import cluster_quality_metrics
+
+        n_samples = 100_000
+        n_clusters = 31_000
+        labels = np.arange(n_samples) % n_clusters
+        sim = scipy.sparse.eye(n_samples, format='csr', dtype=np.float32)
+        logical_size = n_clusters**2 * n_samples**2
+        assert logical_size > np.iinfo(np.intp).max
+
+        metrics = cluster_quality_metrics(sim=sim, labels=labels)
+
+        assert all(metric.shape == (n_clusters,) for metric in metrics)
+
+    def test_compute_quality_metrics_end_to_end(self):
+        """The public method should assemble both sparse metric kernels."""
+        from roicat.tracking.clustering import Clusterer
+
+        labels = np.array([0, 0, 1, 1])
+        sim = scipy.sparse.csr_array(np.array([
+            [0.0, 0.8, 0.2, 0.0],
+            [0.8, 0.0, 0.0, 0.2],
+            [0.2, 0.0, 0.0, 0.7],
+            [0.0, 0.2, 0.7, 0.0],
+        ], dtype=np.float32))
+        dist = sim.copy()
+        dist.data = 1.0 - dist.data
+        clusterer = object.__new__(Clusterer)
+
+        quality_metrics = clusterer.compute_quality_metrics(
+            sim_mat=sim,
+            dist_mat=dist,
+            labels=labels,
+        )
+
+        assert quality_metrics['cluster_labels_unique'] == [0.0, 1.0]
+        assert len(quality_metrics['cluster_silhouette']) == 2
+        assert len(quality_metrics['sample_silhouette']) == len(labels)
+
+    def test_cluster_only_numpy_output_does_not_require_distances(self):
+        """Large-dataset mode should skip all per-sample allocations."""
+        from roicat.tracking.clustering import Clusterer
+
+        labels = np.array([-1, -1, 0, 0, 1, 1], dtype=np.int32)
+        sim = scipy.sparse.eye(len(labels), format='csr', dtype=np.float32)
+        clusterer = object.__new__(Clusterer)
+
+        quality_metrics = clusterer.compute_quality_metrics(
+            sim_mat=sim,
+            labels=labels,
+            include_sample_metrics=False,
+            return_as_numpy=True,
+            cluster_batch_size=2,
+            max_edges_per_batch=2,
+        )
+
+        assert isinstance(quality_metrics, dict)
+        assert isinstance(quality_metrics['cluster_intra_means'], np.ndarray)
+        assert quality_metrics['sample_silhouette'] is None
+        assert quality_metrics['sample_probabilities'] is None
+        assert quality_metrics['hdbscan'] is None
+
+    def test_contiguous_label_encoding_uses_int32_fast_path(self):
+        """Squeezed ROICaT labels should avoid np.unique's int64 inverse."""
+        from roicat.tracking.clustering import _encode_cluster_labels
+
+        labels = np.array([-1, 0, 1, -1, 1], dtype=np.int64)
+
+        unique, inverse, counts = _encode_cluster_labels(labels=labels)
+
+        np.testing.assert_array_equal(unique, np.array([-1, 0, 1]))
+        np.testing.assert_array_equal(inverse, np.array([0, 1, 2, 0, 2]))
+        np.testing.assert_array_equal(counts, np.array([2, 1, 2]))
+        assert inverse.dtype == np.int32
+
+
+######################################################################################################################################
 ##################################################### SILHOUETTE_SAMPLES_SPARSE ######################################################
 ######################################################################################################################################
 
@@ -2110,8 +2280,17 @@ class Test_silhouette_samples_sparse:
         d_csr = scipy.sparse.csr_array(D_sparse_dense)
         return d_csr, D_filled, labels, fill
 
-    def test_matches_sklearn_dense_reference(self):
-        """Sparse silhouette should match sklearn on the densified twin."""
+    @pytest.mark.parametrize('batch_size,max_edges', [
+        (1, 1),
+        (11, 10),
+        (1_000, 1_000_000),
+    ])
+    def test_batched_accumulation_matches_dense_reference(
+        self,
+        batch_size,
+        max_edges,
+    ):
+        """Every batching mode must match the direct dense implementation."""
         import sklearn.metrics
 
         d_csr, D_filled, labels, fill = self._make_sparse_case()
@@ -2119,18 +2298,13 @@ class Test_silhouette_samples_sparse:
             D_filled, labels, metric='precomputed',
         )
         sil_ours = helpers.silhouette_samples_sparse(
-            d_sparse=d_csr, labels=labels, fill_value=fill,
+            d_sparse=d_csr,
+            labels=labels,
+            fill_value=fill,
+            batch_size=batch_size,
+            max_edges_per_batch=max_edges,
         )
         np.testing.assert_allclose(sil_ours, sil_ref, atol=1e-5)
-
-    def test_batched_matches_unbatched(self):
-        """Batching should not change the result."""
-        d_csr, _, labels, fill = self._make_sparse_case()
-        sil_full = helpers.silhouette_samples_sparse(d_csr, labels, fill)
-        sil_batched = helpers.silhouette_samples_sparse(
-            d_csr, labels, fill, batch_size=11,
-        )
-        np.testing.assert_allclose(sil_batched, sil_full, atol=1e-6)
 
     def test_singleton_cluster_returns_zero(self):
         """A sample alone in its cluster should get s=0 by convention."""
@@ -2208,11 +2382,7 @@ class Test_silhouette_samples_sparse:
             D_filled, labels, metric='precomputed',
         )
         sil_ours = helpers.silhouette_samples_sparse(d_with_diag, labels, fill)
-        ## Tolerance bumped slightly: the implementation's own-cluster
-        ## missing-count adjustment is exact when the diagonal is absent
-        ## and off by 1 in the worst case when it's stored as 0 — a
-        ## negligible bias for clusters of meaningful size.
-        np.testing.assert_allclose(sil_ours, sil_ref, atol=1e-2)
+        np.testing.assert_allclose(sil_ours, sil_ref, atol=1e-5)
 
     def test_midscale_parity_with_sklearn(self):
         """Parity at a scale closer to typical ROICaT use (n=2K, K=80)
@@ -2246,6 +2416,51 @@ class Test_silhouette_samples_sparse:
         )
         sil_ours = helpers.silhouette_samples_sparse(d_csr, labels, fill)
         np.testing.assert_allclose(sil_ours, sil_ref, atol=1e-5)
+
+    def test_fully_observed_clusters_are_not_capped_by_fill_value(self):
+        """Fill is irrelevant when every inter-cluster distance is stored."""
+        import sklearn.metrics
+
+        labels = np.array([0, 0, 1, 1])
+        distances = np.array([
+            [0.0, 0.7, 0.8, 0.9],
+            [0.7, 0.0, 0.9, 0.8],
+            [0.8, 0.9, 0.0, 0.6],
+            [0.9, 0.8, 0.6, 0.0],
+        ], dtype=np.float32)
+        d_csr = scipy.sparse.csr_array(distances)
+
+        expected = sklearn.metrics.silhouette_samples(
+            distances,
+            labels,
+            metric='precomputed',
+        )
+        actual = helpers.silhouette_samples_sparse(
+            d_sparse=d_csr,
+            labels=labels,
+            fill_value=0.1,
+        )
+
+        np.testing.assert_allclose(actual, expected, atol=1e-6)
+
+    def test_large_cluster_count_uses_sparse_intermediates(self):
+        """Large sample/cluster products should remain inexpensive when sparse."""
+        n_samples = 100_000
+        n_clusters = 31_000
+        labels = np.arange(n_samples) % n_clusters
+        distances = scipy.sparse.csr_array(
+            (n_samples, n_samples),
+            dtype=np.float32,
+        )
+        assert n_samples * n_clusters > 2**31
+
+        silhouette = helpers.silhouette_samples_sparse(
+            d_sparse=distances,
+            labels=labels,
+            fill_value=1.0,
+        )
+
+        np.testing.assert_array_equal(silhouette, np.zeros(n_samples))
 
 
 ######################################################################################################################################
