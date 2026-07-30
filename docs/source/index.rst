@@ -30,6 +30,8 @@ Contents
 
    inputsAndOutputs
 
+   classifierPackage
+
    roicat
 
 

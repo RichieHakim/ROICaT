@@ -478,6 +478,11 @@ class Simclr_Model():
     SimCLR model container. Holds an inner ``ModelTackOn`` at ``self.model``
     (a ``torch.nn.Module``); the container itself is not an ``nn.Module``.
 
+    This is a *training-time* container. It knows the architecture, not how ROI
+    images should be preprocessed before entering it — that belongs to
+    ``roicat.ROInet.Preprocessor_ROI_images``, which both the embedding path and
+    ``ClassifierPackage.predict`` use.
+
     Args:
         filepath_model_load (str): Removed; raises ``NotImplementedError``.
         base_model (torch.nn.Module): Pretrained torchvision backbone instance.
@@ -560,44 +565,6 @@ class Simclr_Model():
             "image_out_size": list(image_out_size),
             "forward_version": forward_version,
         }
-
-    def embed(self, patches_np: np.ndarray, device: str = 'cpu') -> np.ndarray:
-        """
-        Preprocess ROI patches and run the forward pass, returning CPU numpy latents.
-
-        Applies the same transform pipeline as ``Dataloader_ROInet``: per-image
-        min-max scaling (eps=1e-9) → bilinear resize to (224, 224) with antialias →
-        tile to 3 channels. Runs ``self.model`` in ``eval()`` with ``torch.no_grad()``.
-
-        Args:
-            patches_np (np.ndarray): ``(N, H, W)`` numeric array.
-            device (str): Torch device string.
-
-        Returns:
-            np.ndarray: ``(N, latent_dim)`` float32 on CPU.
-        """
-        _eps = 1e-9
-        _resize = torchvision.transforms.Resize(
-            size=(224, 224),
-            interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
-            antialias=True,
-        )
-
-        x = torch.as_tensor(patches_np, dtype=torch.float32)  # (N, H, W)
-        if x.shape[0] == 0:
-            ## Empty input → produce empty (N=0, latent_dim) by running a 0-length pass.
-            x = x.reshape(0, 3, 224, 224)
-        else:
-            x_min = x.flatten(1).min(dim=1).values[:, None, None]
-            x_max = x.flatten(1).max(dim=1).values[:, None, None]
-            x = (x - x_min) / (x_max - x_min + _eps)
-            x = torch.stack([_resize(img[None, ...]) for img in x], dim=0)  # (N, 1, 224, 224)
-            x = x.expand(-1, 3, -1, -1)  # (N, 3, 224, 224)
-
-        self.model.eval()
-        self.model.to(device)
-        with torch.no_grad():
-            return self.model(x.to(device)).cpu().numpy().astype(np.float32, copy=False)
 
     @classmethod
     def from_dict_params(

@@ -67,6 +67,14 @@ roicat.classification.classifier module
    :undoc-members:
    :show-inheritance:
 
+roicat.classification.package module
+------------------------------------
+
+.. automodule:: roicat.classification.package
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 roicat.pipelines module
 -----------------------
 

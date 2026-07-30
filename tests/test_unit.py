@@ -2568,3 +2568,255 @@ class Test_image_alignment_checker_batching:
         ims = self._make_ims(3, (64, 64), seed=10)
         with pytest.raises(AssertionError):
             iac.score_alignment(ims, batch_size=0, verbose=False)
+
+
+######################################################################################################################################
+########################################################## ROInet ####################################################################
+######################################################################################################################################
+
+
+class _ScaleDynamicRange_original(torch.nn.Module):
+    """
+    Frozen copy of the pre-consolidation ScaleDynamicRange, which reduced over
+    all dims. Used as a reference to prove the per-sample path is unchanged.
+    """
+    def __init__(self, scaler_bounds=(0, 1), epsilon=1e-9):
+        super().__init__()
+        self.range = scaler_bounds[1] - scaler_bounds[0]
+        self.epsilon = epsilon
+
+    def forward(self, tensor):
+        tensor_minSub = tensor - tensor.min()
+        return tensor_minSub * (self.range / (tensor_minSub.max() + self.epsilon))
+
+
+class Test_ScaleDynamicRange:
+    """
+    ScaleDynamicRange reduces over the trailing three dims so that one instance
+    serves both the per-sample DataLoader path and the batched preprocessing
+    path. The per-sample results must not have changed.
+    """
+
+    @staticmethod
+    def _scale_dynamic_range_original(tensor, scaler_bounds=(0, 1), epsilon=1e-9):
+        """The pre-consolidation implementation, which reduced over all dims."""
+        range_ = scaler_bounds[1] - scaler_bounds[0]
+        tensor_minSub = tensor - tensor.min()
+        return tensor_minSub * (range_ / (tensor_minSub.max() + epsilon))
+
+    def test_single_image_bitwise_unchanged(self):
+        """A (n_channels, height, width) input must give bit-identical results."""
+        from roicat.ROInet import ScaleDynamicRange
+        rng = np.random.default_rng(seed=0)
+        for shape in [(1, 36, 36), (1, 12, 20), (3, 8, 8)]:
+            x = torch.as_tensor(rng.random(shape) * 700 - 300, dtype=torch.float32)
+            assert torch.equal(ScaleDynamicRange()(x), self._scale_dynamic_range_original(x)), \
+                f"shape {shape} differs from the original implementation"
+
+    def test_batched_matches_per_image(self):
+        """Each image in a batch is scaled by its own min/max."""
+        from roicat.ROInet import ScaleDynamicRange
+        rng = np.random.default_rng(seed=1)
+        ## Deliberately different dynamic ranges per image
+        x = torch.as_tensor(
+            rng.random((5, 1, 16, 16)) * rng.integers(1, 1000, size=(5, 1, 1, 1)),
+            dtype=torch.float32,
+        )
+        sdr = ScaleDynamicRange()
+        expected = torch.stack([sdr(im) for im in x], dim=0)
+        assert torch.equal(sdr(x), expected)
+
+    def test_output_range(self):
+        from roicat.ROInet import ScaleDynamicRange
+        rng = np.random.default_rng(seed=2)
+        x = torch.as_tensor(rng.random((4, 1, 10, 10)) * 50 + 10, dtype=torch.float32)
+        out = ScaleDynamicRange()(x)
+        np.testing.assert_allclose(out.amin(dim=(-3, -2, -1)).numpy(), np.zeros(4), atol=1e-6)
+        np.testing.assert_allclose(out.amax(dim=(-3, -2, -1)).numpy(), np.ones(4), atol=1e-6)
+
+    def test_jit_scriptable(self):
+        """jit_script_transforms=True is a supported option, so the module must script."""
+        from roicat.ROInet import ScaleDynamicRange
+        scripted = torch.jit.script(ScaleDynamicRange())
+        x = torch.as_tensor(np.random.default_rng(3).random((2, 1, 9, 9)), dtype=torch.float32)
+        assert torch.equal(scripted(x), ScaleDynamicRange()(x))
+
+
+class Test_Preprocessor_ROI_images:
+    """
+    Preprocessor_ROI_images is the single definition of the ROInet preprocessing
+    chain. These tests pin (a) that it reproduces the pre-consolidation
+    DataLoader chain bitwise, and (b) that its config round-trips, since
+    ClassifierPackage serialises it.
+    """
+
+    @staticmethod
+    def _images(n_roi=13, size=36, seed=0):
+        rng = np.random.default_rng(seed=seed)
+        ## Varying per-image dynamic range, to catch batch-wide normalization
+        return (rng.random((n_roi, size, size)) * rng.integers(1, 500, size=(n_roi, 1, 1))).astype(np.float32)
+
+    def test_matches_original_dataloader_chain_bitwise(self):
+        """
+        The batched chain must equal the original per-sample chain
+        (Resizer_ROI_images -> ScaleDynamicRange -> Resize -> TileChannels)
+        bitwise. This is what lets ClassifierPackage.predict and
+        ROInet_embedder.generate_latents agree.
+        """
+        import torchvision
+        from roicat.ROInet import (
+            Preprocessor_ROI_images, Resizer_ROI_images, TileChannels, dataset_simCLR,
+        )
+        images = self._images()
+        um_per_pixel = 1.6365
+
+        ## Original: stage 1 with the default scale-factor lambda, then per-sample
+        ## transforms applied through dataset_simCLR, exactly as before.
+        images_rs_ref = Resizer_ROI_images(verbose=False).resize_ROIs(
+            ROI_images=images, um_per_pixel=um_per_pixel,
+        )
+        transforms_ref = torch.nn.Sequential(
+            _ScaleDynamicRange_original(),
+            torchvision.transforms.Resize(
+                size=(224, 224),
+                interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
+                antialias=True,
+            ),
+            TileChannels(dim=0, n_channels=3),
+        )
+        dataset_ref = dataset_simCLR(
+            X=torch.as_tensor(images_rs_ref, dtype=torch.float32),
+            y=torch.zeros(images_rs_ref.shape[0]),
+            n_transforms=1,
+            transform=transforms_ref,
+            DEVICE='cpu',
+            dtype_X=torch.float32,
+        )
+        out_ref = torch.stack([dataset_ref[ii][0][0] for ii in range(len(dataset_ref))], dim=0)
+
+        ## Consolidated: one preprocessor, batched
+        preprocessor = Preprocessor_ROI_images(verbose=False)
+        images_rs = preprocessor.scale_normalize_images(ROI_images=images, um_per_pixel=um_per_pixel)
+        out = preprocessor.transform_images(ROI_images=images_rs)
+
+        assert np.array_equal(images_rs_ref, images_rs), 'stage 1 (scale normalization) differs'
+        assert torch.equal(out_ref, out), 'stage 2 (tensor transforms) differs'
+
+    def test_to_dict_covers_every_config_arg(self):
+        """
+        to_dict() is built from an explicit key list. If an __init__ arg is added
+        and not listed, to_dict() drops it and from_dict() silently substitutes
+        the default — a packet whose recorded preprocessing differs from the one
+        used at training. Pin the two together.
+        """
+        import inspect
+        from roicat.ROInet import Preprocessor_ROI_images
+        keys_signature = set(inspect.signature(Preprocessor_ROI_images.__init__).parameters) - {'self', 'verbose'}
+        keys_dict = set(Preprocessor_ROI_images(verbose=False).to_dict())
+        assert keys_dict == keys_signature, (
+            f"to_dict() keys {sorted(keys_dict)} != __init__ args {sorted(keys_signature)}. "
+            f"Missing keys would be silently replaced by defaults on from_dict()."
+        )
+
+    def test_serializable_by_richfile(self):
+        """
+        ROInet_embedder holds a preprocessor and pipelines.py saves
+        roinet.__dict__ through RichFile, so this object must be serializable.
+        """
+        import tempfile
+        from roicat.ROInet import Preprocessor_ROI_images
+        preprocessor = Preprocessor_ROI_images(factor_scaleFactor=1.7, verbose=False)
+        with tempfile.TemporaryDirectory() as dir_tmp:
+            path = str(Path(dir_tmp) / 'pp.richfile.zip')
+            util.RichFile_ROICaT(path=path, backend='zip').save({'preprocessor': preprocessor}, overwrite=True)
+            loaded = util.RichFile_ROICaT(path=path).load()
+        assert loaded['preprocessor'].to_dict() == preprocessor.to_dict()
+
+    def test_no_callables_in_dict(self):
+        """
+        Holding a Callable (e.g. a scale-factor closure) would make the object
+        unpicklable and unserializable; the scale factor is two numbers instead.
+        """
+        from roicat.ROInet import Preprocessor_ROI_images
+        preprocessor = Preprocessor_ROI_images(verbose=False)
+        offenders = {k: v for k, v in preprocessor.__dict__.items() if callable(v) and not isinstance(v, torch.nn.Module)}
+        assert offenders == {}, f"Preprocessor_ROI_images holds callables: {sorted(offenders)}"
+
+    def test_config_roundtrip(self):
+        from roicat.ROInet import Preprocessor_ROI_images
+        preprocessor = Preprocessor_ROI_images(
+            factor_scaleFactor=2.4,
+            size_im_reference=48,
+            img_size_out=(112, 112),
+            n_channels_out=1,
+            verbose=False,
+        )
+        config = preprocessor.to_dict()
+        ## Must survive a JSON round trip, since it is stored in a .roicat_classifier packet
+        import json
+        rebuilt = Preprocessor_ROI_images.from_dict(config=json.loads(json.dumps(config)))
+        assert rebuilt.to_dict() == config
+        out = rebuilt.preprocess(ROI_images=self._images(n_roi=2), um_per_pixel=1.0)
+        assert out.shape == (2, 1, 112, 112)
+
+    def test_scale_factor_parameterization_matches_lambda(self):
+        """
+        The two-number parameterization must reproduce the default
+        Resizer_ROI_images lambda, `1.2 * um_per_pixel * (size_im / 36)`.
+        """
+        from roicat.ROInet import Preprocessor_ROI_images, Resizer_ROI_images
+        images = self._images(n_roi=5)
+        out_default = Resizer_ROI_images(verbose=False).resize_ROIs(ROI_images=images, um_per_pixel=2.0)
+        out_param = Preprocessor_ROI_images(verbose=False).scale_normalize_images(
+            ROI_images=images, um_per_pixel=2.0,
+        )
+        assert np.array_equal(out_default, out_param)
+
+    def test_um_per_pixel_changes_output(self):
+        from roicat.ROInet import Preprocessor_ROI_images
+        preprocessor = Preprocessor_ROI_images(verbose=False)
+        images = self._images(n_roi=3)
+        out_a = preprocessor.preprocess(ROI_images=images, um_per_pixel=1.0)
+        out_b = preprocessor.preprocess(ROI_images=images, um_per_pixel=2.0)
+        assert not torch.allclose(out_a, out_b)
+
+    def test_scale_normalize_false_skips_stage_1(self):
+        from roicat.ROInet import Preprocessor_ROI_images
+        preprocessor = Preprocessor_ROI_images(scale_normalize=False, verbose=False)
+        images = self._images(n_roi=3)
+        out_a = preprocessor.preprocess(ROI_images=images, um_per_pixel=1.0)
+        out_b = preprocessor.preprocess(ROI_images=images, um_per_pixel=7.0)
+        assert torch.equal(out_a, out_b)
+        assert np.array_equal(
+            preprocessor.scale_normalize_images(ROI_images=images, um_per_pixel=1.0), images,
+        )
+
+    def test_multiple_sessions_use_own_um_per_pixel(self):
+        from roicat.ROInet import Preprocessor_ROI_images
+        preprocessor = Preprocessor_ROI_images(verbose=False)
+        sessions = [self._images(n_roi=3, seed=0), self._images(n_roi=4, seed=1)]
+        out = preprocessor.preprocess(ROI_images=sessions, um_per_pixel=[1.0, 2.0])
+        assert out.shape == (7, 3, 224, 224)
+        ## Session 0 must match a solo run at its own um_per_pixel
+        out_solo = preprocessor.preprocess(ROI_images=sessions[0], um_per_pixel=1.0)
+        assert torch.equal(out[:3], out_solo)
+
+    def test_empty_input(self):
+        from roicat.ROInet import Preprocessor_ROI_images
+        preprocessor = Preprocessor_ROI_images(verbose=False)
+        out = preprocessor.preprocess(
+            ROI_images=np.zeros((0, 36, 36), dtype=np.float32), um_per_pixel=1.0,
+        )
+        assert out.shape == (0, 3, 224, 224)
+
+    def test_int_um_per_pixel_accepted(self):
+        from roicat.ROInet import Preprocessor_ROI_images
+        preprocessor = Preprocessor_ROI_images(verbose=False)
+        out = preprocessor.preprocess(ROI_images=self._images(n_roi=2), um_per_pixel=2)
+        assert out.shape == (2, 3, 224, 224)
+
+    def test_bad_ndim_raises(self):
+        from roicat.ROInet import Preprocessor_ROI_images
+        preprocessor = Preprocessor_ROI_images(verbose=False)
+        with pytest.raises(ValueError, match='3-D'):
+            preprocessor.transform_images(ROI_images=np.zeros((36, 36), dtype=np.float32))

@@ -49,6 +49,110 @@ import warnings
 
 from . import util, helpers, data_importing
 
+
+def check_ROI_images(ROI_images: np.ndarray, nan_to_num: bool = True) -> None:
+    """
+    Warns about ROI images that will pass through the network but give odd
+    results: NaNs, Infs, and all-zero images.
+
+    Args:
+        ROI_images (np.ndarray):
+            The ROI images to check. Shape: *(n_rois, height, width)*.
+        nan_to_num (bool):
+            If ``False``, NaNs raise instead of warning.
+
+    Raises:
+        ValueError: If NaNs are present and ``nan_to_num`` is ``False``.
+    """
+    if np.any(np.isnan(ROI_images)):
+        if nan_to_num:
+            warnings.warn('ROICaT WARNING: NaNs detected. You should consider removing these before passing to the network. Using nan_to_num arguments.')
+        else:
+            raise ValueError('ROICaT ERROR: NaNs detected. You should consider removing these before passing to the network. Use nan_to_num=True to ignore this error.')
+    if np.any(np.isinf(ROI_images)):
+        warnings.warn('ROICaT WARNING: Infs detected. You should consider removing these before passing to the network.')
+    ## Check if any images in any of the sessions are all zeros
+    if np.any(np.all(ROI_images == 0, axis=(1, 2))):
+        warnings.warn('ROICaT WARNING: Image(s) with all zeros detected. These can pass through the network, but may give weird results.')
+
+
+def scale_normalize_ROI_images(
+    ROI_images: np.ndarray,
+    scale: float,
+    nan_to_num: bool = True,
+    nan_to_num_val: float = 0.0,
+    verbose: bool = False,
+) -> np.ndarray:
+    """
+    Rescales ROI images by an affine transform, so that ROIs occupy a standard
+    fraction of the image frame. **The single implementation of the scale
+    normalization step**; :class:`Resizer_ROI_images` and
+    :class:`Preprocessor_ROI_images` differ only in how they arrive at ``scale``.
+
+    Args:
+        ROI_images (np.ndarray):
+            The ROI images to rescale. Shape: *(n_rois, height, width)*.
+        scale (float):
+            The scale factor. Typically ``1.2 * um_per_pixel * (size_im / 36)``.
+        nan_to_num (bool):
+            Whether to replace NaNs with ``nan_to_num_val``.
+        nan_to_num_val (float):
+            The value to replace NaNs with.
+        verbose (bool):
+            If ``True``, print progress.
+
+    Returns:
+        (np.ndarray):
+            ROI_images_rs (np.ndarray):
+                The rescaled images. Height and width are unchanged.
+    """
+    check_ROI_images(ROI_images=ROI_images, nan_to_num=nan_to_num)
+
+    if nan_to_num:
+        print(f'ROICaT: replacing NaNs with {nan_to_num_val}') if verbose else None
+        ROI_images = np.nan_to_num(ROI_images, nan=nan_to_num_val)
+
+    ## np.stack of an empty list raises; the affine preserves height and width
+    if ROI_images.shape[0] == 0:
+        return ROI_images
+
+    print(f'ROICaT: resizing ROIs') if verbose else None
+    return np.stack([resize_affine(img, scale=scale, clamp_range=True) for img in tqdm(ROI_images, mininterval=5, disable=not verbose)], axis=0)
+    ## Faster but slightly different results
+    # return np.concatenate(
+    #     [resize_images(
+    #         batch,
+    #         scale=scale,
+    #         clamp_range=True,
+    #     ) for batch in tqdm(
+    #         helpers.make_batches(ROI_images, batch_size=10000),
+    #         total=np.ceil(len(ROI_images)/10000),
+    #         mininterval=5,
+    #         unit='images',
+    #         unit_scale=10000,
+    #         disable=not verbose,
+    #     )], axis=0)
+
+
+def plot_resized_comparison(ROI_images_cat: np.ndarray, ROI_images_rs: np.ndarray) -> None:
+    """
+    Plots a comparison of the ROI sizes before and after scale normalization.
+
+    Args:
+        ROI_images_cat (np.ndarray):
+            Array of ROIs before resizing. Shape: *(n_rois, height, width)*.
+        ROI_images_rs (np.ndarray):
+            Array of resized ROIs. Shape: *(n_rois, height, width)*.
+    """
+    fig, axs = plt.subplots(2, 1, figsize=(7, 10))
+    for ax, images, title in zip(axs, (ROI_images_cat, ROI_images_rs), ('ROI sizes raw', 'ROI sizes resized')):
+        ax.plot(np.mean(images > 0, axis=(1, 2)))
+        ax.plot(scipy.signal.savgol_filter(np.mean(images > 0, axis=(1, 2)), 501, 3))
+        ax.set_xlabel('ROI number')
+        ax.set_ylabel('mean npix')
+        ax.set_title(title)
+
+
 class Resizer_ROI_images(util.ROICaT_Module):
     """
     Class for resizing ROIs.
@@ -93,17 +197,7 @@ class Resizer_ROI_images(util.ROICaT_Module):
         self.function_scaleFactor = function_scaleFactor
         
     def _check_ROI_images(self, ROI_images: np.ndarray):
-        ### Check if any NaNs
-        if np.any(np.isnan(ROI_images)):
-            if self.nan_to_num:
-                warnings.warn('ROICaT WARNING: NaNs detected. You should consider removing these before passing to the network. Using nan_to_num arguments.')
-            else:
-                raise ValueError('ROICaT ERROR: NaNs detected. You should consider removing these before passing to the network. Use nan_to_num=True to ignore this error.')
-        if np.any(np.isinf(ROI_images)):
-            warnings.warn('ROICaT WARNING: Infs detected. You should consider removing these before passing to the network.')
-        ## Check if any images in any of the sessions are all zeros
-        if np.any(np.all(ROI_images==0, axis=(1,2))):
-            warnings.warn('ROICaT WARNING: Image(s) with all zeros detected. These can pass through the network, but may give weird results.')
+        check_ROI_images(ROI_images=ROI_images, nan_to_num=self.nan_to_num)
 
     def plot_resized_comparison(self, ROI_images_cat: np.ndarray, ROI_images_rs: np.ndarray):
         """
@@ -116,18 +210,7 @@ class Resizer_ROI_images(util.ROICaT_Module):
             ROI_images_rs (np.ndarray):
                 Array of resized ROIs. Shape should be (nROIs, height, width).
         """
-        fig, axs = plt.subplots(2,1, figsize=(7,10))
-        axs[0].plot(np.mean(ROI_images_cat > 0, axis=(1,2)))
-        axs[0].plot(scipy.signal.savgol_filter(np.mean(ROI_images_cat > 0, axis=(1,2)), 501, 3))
-        axs[0].set_xlabel('ROI number');
-        axs[0].set_ylabel('mean npix');
-        axs[0].set_title('ROI sizes raw')
-
-        axs[1].plot(np.mean(ROI_images_rs > 0, axis=(1,2)))
-        axs[1].plot(scipy.signal.savgol_filter(np.mean(ROI_images_rs > 0, axis=(1,2)), 501, 3))
-        axs[1].set_xlabel('ROI number');
-        axs[1].set_ylabel('mean npix');
-        axs[1].set_title('ROI sizes resized')
+        plot_resized_comparison(ROI_images_cat=ROI_images_cat, ROI_images_rs=ROI_images_rs)
 
     def resize_ROIs(
         self,
@@ -160,31 +243,278 @@ class Resizer_ROI_images(util.ROICaT_Module):
             ],
         )
 
-        self._check_ROI_images(ROI_images)
         assert isinstance(um_per_pixel, (int, float)), f'um_per_pixel should be an int or float, but is {type(um_per_pixel)}'
 
-        if self.nan_to_num:
-            print(f'ROICaT: replacing NaNs with {self.nan_to_num_val}') if self._verbose else None
-            ROI_images = np.nan_to_num(ROI_images, nan=self.nan_to_num_val)
+        return scale_normalize_ROI_images(
+            ROI_images=ROI_images,
+            scale=self.function_scaleFactor(um_per_pixel=float(um_per_pixel), size_im=ROI_images.shape[1]),
+            nan_to_num=self.nan_to_num,
+            nan_to_num_val=self.nan_to_num_val,
+            verbose=self._verbose,
+        )
 
-        scale_forRS = self.function_scaleFactor(um_per_pixel=float(um_per_pixel), size_im=ROI_images.shape[1])
 
-        print(f'ROICaT: resizing ROIs') if self._verbose else None
-        return np.stack([resize_affine(img, scale=scale_forRS, clamp_range=True) for img in tqdm(ROI_images, mininterval=5, disable=not self._verbose)], axis=0)
-        ## Faster but slightly different results
-        # return np.concatenate(
-        #     [resize_images(
-        #         batch, 
-        #         scale=scale_forRS, 
-        #         clamp_range=True,
-        #     ) for batch in tqdm(
-        #         helpers.make_batches(ROI_images, batch_size=self.batch_size), 
-        #         total=np.ceil(len(ROI_images)/self.batch_size), 
-        #         mininterval=5, 
-        #         unit='images',
-        #         unit_scale=self.batch_size,
-        #         disable=not self._verbose,
-        #     )], axis=0)
+class Preprocessor_ROI_images(util.ROICaT_Module):
+    """
+    The complete preprocessing chain that takes raw ROI images to network-ready
+    tensors. **This class is the single definition of that chain.** Every path
+    that feeds ROInet — the DataLoader used by tracking and by the training
+    notebooks, ``ROInet_embedder.embed``, and
+    ``roicat.classification.ClassifierPackage.predict`` — goes through this
+    object, so predict-time preprocessing cannot drift from train-time
+    preprocessing.
+    RH 2026
+
+    The chain has two stages:
+
+    1. **Scale normalization** (numpy, per image): an affine rescale by
+       ``factor_scaleFactor * um_per_pixel * (size_im / size_im_reference)`` so
+       that an ROI occupies a standard fraction of the frame regardless of the
+       optics it was acquired with. Implemented by
+       :func:`scale_normalize_ROI_images`, which :class:`Resizer_ROI_images` also
+       calls. Note that ``um_per_pixel`` is a property of the *data*, not of the
+       model, and so is passed per call — never stored on this object.
+    2. **Tensor transforms** (torch, per image): min-max scale the dynamic range
+       to [0, 1], resize to ``img_size_out``, tile to ``n_channels_out``
+       channels. Exposed as ``self.transforms``, a
+       ``torch.nn.Sequential`` that is safe to apply either to one image
+       *(1, height, width)* or to a whole batch *(n_images, 1, height, width)*
+       with identical per-image results.
+
+    Args:
+        scale_normalize (bool):
+            If ``True``, apply stage 1. Set to ``False`` only to reproduce a
+            pipeline that was trained without scale normalization. (Default is
+            ``True``)
+        factor_scaleFactor (float):
+            Multiplier in the stage-1 scale factor. (Default is *1.2*)
+        size_im_reference (int):
+            Reference image edge length in the stage-1 scale factor. (Default is
+            *36*)
+        img_size_out (Tuple[int, int]):
+            Height and width of the images the network expects. (Default is
+            *(224, 224)*)
+        n_channels_out (int):
+            Number of channels the network expects. (Default is *3*)
+        nan_to_num (bool):
+            Whether to replace NaNs. (Default is ``True``)
+        nan_to_num_val (float):
+            The value to replace NaNs with. (Default is *0.0*)
+        verbose (bool):
+            If ``True``, print out extra information. (Default is ``True``)
+    """
+    def __init__(
+        self,
+        scale_normalize: bool = True,
+        factor_scaleFactor: float = 1.2,
+        size_im_reference: int = 36,
+        img_size_out: Tuple[int, int] = (224, 224),
+        n_channels_out: int = 3,
+        nan_to_num: bool = True,
+        nan_to_num_val: float = 0.0,
+        verbose: bool = True,
+    ):
+        super().__init__()
+
+        if not isinstance(img_size_out, (tuple, list)):
+            raise TypeError(f'img_size_out should be a tuple or list of two ints, but is {type(img_size_out)}')
+        img_size_out = tuple(int(s) for s in img_size_out)
+        if len(img_size_out) != 2:
+            raise ValueError(f'img_size_out should have length 2, but has length {len(img_size_out)}')
+
+        self._verbose = verbose
+        self.scale_normalize = scale_normalize
+        self.factor_scaleFactor = factor_scaleFactor
+        self.size_im_reference = size_im_reference
+        self.img_size_out = img_size_out
+        self.n_channels_out = n_channels_out
+        self.nan_to_num = nan_to_num
+        self.nan_to_num_val = nan_to_num_val
+
+        ## Store parameter (but not data) args as attributes. This dict IS the
+        ## serialized config: see to_dict / from_dict.
+        self.params['__init__'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=[
+                'scale_normalize',
+                'factor_scaleFactor',
+                'size_im_reference',
+                'img_size_out',
+                'n_channels_out',
+                'nan_to_num',
+                'nan_to_num_val',
+            ],
+        )
+
+        ## Stage 2. Applied per-sample by dataset_simCLR and batched by
+        ## transform_images; both give identical per-image results.
+        self.transforms = torch.nn.Sequential(
+            ScaleDynamicRange(scaler_bounds=(0, 1)),
+            torchvision.transforms.Resize(
+                size=img_size_out,
+                interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
+                antialias=True,
+            ),
+            TileChannels(dim=-3, n_channels=n_channels_out),
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Returns the JSON-safe config of this preprocessor.
+
+        Returns:
+            (Dict[str, Any]):
+                config (Dict[str, Any]):
+                    Keyword arguments sufficient to rebuild this object via
+                    :meth:`from_dict`.
+        """
+        out = dict(self.params['__init__'])
+        out['img_size_out'] = list(out['img_size_out'])  ## JSON has no tuples
+        return out
+
+    @classmethod
+    def from_dict(cls, config: Dict[str, Any], verbose: bool = False) -> 'Preprocessor_ROI_images':
+        """
+        Rebuilds a preprocessor from the output of :meth:`to_dict`.
+
+        Args:
+            config (Dict[str, Any]):
+                Config dict from :meth:`to_dict`.
+            verbose (bool):
+                If ``True``, print out extra information. Not part of the
+                config, since it does not affect the output. (Default is
+                ``False``)
+
+        Returns:
+            (Preprocessor_ROI_images):
+                preprocessor (Preprocessor_ROI_images):
+                    A preprocessor with the given config.
+
+        Raises:
+            TypeError: If ``config`` contains unexpected keys.
+        """
+        return cls(**config, verbose=verbose)
+
+    def get_scaleFactor(self, um_per_pixel: float, size_im: int) -> float:
+        """
+        The stage-1 scale factor: ``factor_scaleFactor * um_per_pixel * (size_im
+        / size_im_reference)``. Parameterized by two numbers rather than held as
+        a ``Callable``, so that this object stays JSON-serializable (see
+        :meth:`to_dict`) and picklable.
+
+        Args:
+            um_per_pixel (float):
+                Micrometers per pixel of the images being passed in.
+            size_im (int):
+                Edge length of the images being passed in.
+
+        Returns:
+            (float):
+                scale (float):
+                    The factor to rescale the images by.
+        """
+        return self.factor_scaleFactor * float(um_per_pixel) * (size_im / self.size_im_reference)
+
+    def scale_normalize_images(
+        self,
+        ROI_images: Union[np.ndarray, List[np.ndarray]],
+        um_per_pixel: Union[float, List[float]],
+    ) -> np.ndarray:
+        """
+        Stage 1: rescale ROI images so that ROIs occupy a standard fraction of
+        the frame. Sessions are resized with their own ``um_per_pixel`` and then
+        concatenated.
+
+        Args:
+            ROI_images (Union[np.ndarray, List[np.ndarray]]):
+                Either one array of shape *(n_rois, height, width)* or a list of
+                such arrays, one per session.
+            um_per_pixel (Union[float, List[float]]):
+                Micrometers per pixel of the images being passed in. A float, or
+                one float per session.
+
+        Returns:
+            (np.ndarray):
+                ROI_images_rs (np.ndarray):
+                    The rescaled images, concatenated over sessions. Shape:
+                    *(n_rois_total, height, width)*.
+        """
+        ## Accept a single array (one session) without the list-wrapping warning
+        ROI_images = [ROI_images,] if isinstance(ROI_images, np.ndarray) else ROI_images
+        ROI_images = data_importing.Data_roicat._fix_ROI_images(ROI_images=ROI_images)
+        ## Cast to float first: _fix_um_per_pixel rejects ints
+        um_per_pixel = float(um_per_pixel) if isinstance(um_per_pixel, (int, float)) else [float(u) for u in um_per_pixel]
+        um_per_pixel = data_importing.Data_roicat._fix_um_per_pixel(um_per_pixel=um_per_pixel, n_sessions=len(ROI_images))
+
+        if not self.scale_normalize:
+            ## Preserve the NaN handling that stage 1 would otherwise have done
+            images_cat = np.concatenate(ROI_images, axis=0)
+            check_ROI_images(ROI_images=images_cat, nan_to_num=self.nan_to_num)
+            return np.nan_to_num(images_cat, nan=self.nan_to_num_val) if self.nan_to_num else images_cat
+
+        print(f'Starting Image Resizer') if self._verbose else None
+        ## Each session gets its own scale factor, from its own um_per_pixel
+        return np.concatenate([
+            scale_normalize_ROI_images(
+                ROI_images=ROI_images[ii],
+                scale=self.get_scaleFactor(um_per_pixel=um_per_pixel[ii], size_im=ROI_images[ii].shape[1]),
+                nan_to_num=self.nan_to_num,
+                nan_to_num_val=self.nan_to_num_val,
+                verbose=self._verbose,
+            ) for ii in range(len(ROI_images))
+        ], axis=0)
+
+    def transform_images(self, ROI_images: Union[np.ndarray, torch.Tensor]) -> torch.Tensor:
+        """
+        Stage 2: min-max scale, resize, and tile channels for a batch of images.
+
+        Args:
+            ROI_images (Union[np.ndarray, torch.Tensor]):
+                Images of shape *(n_rois, height, width)*.
+
+        Returns:
+            (torch.Tensor):
+                images_transformed (torch.Tensor):
+                    Shape: *(n_rois, n_channels_out, *img_size_out)*. dtype:
+                    ``torch.float32``.
+        """
+        x = torch.as_tensor(ROI_images, dtype=torch.float32)  # (n_rois, height, width)
+        if x.ndim != 3:
+            raise ValueError(f'ROI_images should be 3-D (n_rois, height, width), but has ndim={x.ndim}')
+        if x.shape[0] == 0:
+            ## Skip the transforms: torchvision resize of an empty batch is not well defined
+            return x.reshape(0, self.n_channels_out, *self.img_size_out)
+        return self.transforms(x[:, None, ...])  # (n_rois, 1, h, w) -> (n_rois, n_channels_out, *img_size_out)
+
+    def preprocess(
+        self,
+        ROI_images: Union[np.ndarray, List[np.ndarray]],
+        um_per_pixel: Union[float, List[float]],
+    ) -> torch.Tensor:
+        """
+        Runs the full chain: stage 1 then stage 2.
+
+        Args:
+            ROI_images (Union[np.ndarray, List[np.ndarray]]):
+                Either one array of shape *(n_rois, height, width)* or a list of
+                such arrays, one per session.
+            um_per_pixel (Union[float, List[float]]):
+                Micrometers per pixel of the images being passed in. A float, or
+                one float per session.
+
+        Returns:
+            (torch.Tensor):
+                images_preprocessed (torch.Tensor):
+                    Network-ready images. Shape: *(n_rois_total,
+                    n_channels_out, *img_size_out)*.
+        """
+        return self.transform_images(ROI_images=self.scale_normalize_images(
+            ROI_images=ROI_images,
+            um_per_pixel=um_per_pixel,
+        ))
+
+    def __repr__(self):
+        return f"Preprocessor_ROI_images({self.to_dict()})"
 
 
 class Dataloader_ROInet(util.ROICaT_Module):
@@ -279,15 +609,12 @@ class Dataloader_ROInet(util.ROICaT_Module):
             assert isinstance(img_size_out, int), f'img_size_out should be a tuple or list, but is {type(img_size_out)}'
             img_size_out = (img_size_out, img_size_out)
 
-        transforms = torch.nn.Sequential(
-            ScaleDynamicRange(scaler_bounds=(0,1)),
-            torchvision.transforms.Resize(
-                size=img_size_out,
-                interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
-                antialias=True,
-            ),
-            TileChannels(dim=0, n_channels=3),
-        ) if transforms is None else transforms
+        ## Default transforms come from Preprocessor_ROI_images so that the chain is
+        ## defined in exactly one place (see Preprocessor_ROI_images stage 2).
+        transforms = Preprocessor_ROI_images(
+            img_size_out=img_size_out,
+            verbose=False,
+        ).transforms if transforms is None else transforms
 
         if jit_script_transforms:
             if numWorkers_dataloader > 0:
@@ -306,6 +633,12 @@ class Dataloader_ROInet(util.ROICaT_Module):
                 dtype_X=torch.float32,
             )
         print(f'Defined dataset') if self._verbose else None
+        ## torch's DataLoader rejects prefetch_factor and persistent_workers when
+        ## num_workers==0, so only pass them when there are workers.
+        kwargs_workers = {
+            'persistent_workers': persistentWorkers_dataloader,
+            'prefetch_factor': prefetchFactor_dataloader,
+        } if numWorkers_dataloader > 0 else {}
         self.dataloader = torch.utils.data.DataLoader(
                 self.dataset,
                 batch_size=batchSize_dataloader,
@@ -313,8 +646,7 @@ class Dataloader_ROInet(util.ROICaT_Module):
                 drop_last=drop_last_dataloader,
                 pin_memory=pinMemory_dataloader,
                 num_workers=numWorkers_dataloader,
-                persistent_workers=persistentWorkers_dataloader,
-                prefetch_factor=prefetchFactor_dataloader,
+                **kwargs_workers,
         )
         print(f'Defined dataloader') if self._verbose else None
 
@@ -464,6 +796,11 @@ class ROInet_embedder(util.ROICaT_Module):
         import model
         print(f"Imported model from {paths_networkFiles['model']}") if self._verbose else None
 
+        ## Everything needed to rebuild this network from the bundle alone. Read by
+        ## roicat.classification.ClassifierPackage when packing this embedder.
+        self.filepath_model_py = str(paths_networkFiles['model'])
+        self.forward_pass_version = forward_pass_version
+
         with open(paths_networkFiles['params']) as f:
             self.params_model = json.load(f)
             print(f"Loaded params_model from {paths_networkFiles['params']}") if self._verbose else None
@@ -476,7 +813,7 @@ class ROInet_embedder(util.ROICaT_Module):
         self.net.eval()
 
         self.net.load_state_dict(torch.load(
-            f=paths_networkFiles['state_dict'], 
+            f=paths_networkFiles['state_dict'],
             map_location=torch.device(self._device),
             weights_only=True,
         ))
@@ -484,6 +821,14 @@ class ROInet_embedder(util.ROICaT_Module):
 
         self.net = self.net.to(self._device)
         print(f'Loaded network onto device {self._device}') if self._verbose else None
+
+    @property
+    def arch_kwargs(self) -> Dict[str, Any]:
+        """
+        The bundle's ``params.json`` contents, verbatim. Passed back to the
+        bundled ``model.py``'s ``make_model`` to rebuild this architecture.
+        """
+        return dict(self.params_model)
 
     def __repr__(self):
         device = self._device if hasattr(self, '_device') else '?'
@@ -595,26 +940,23 @@ class ROInet_embedder(util.ROICaT_Module):
             ],
         )    
 
-        if resize_ROI_images:
-            print(f'Starting Image Resizer') if self._verbose else None
-            roi_resizer = Resizer_ROI_images(
-                nan_to_num=nan_to_num,
-                nan_to_num_val=nan_to_num_val,
-                verbose=False,
-            )
-            self.ROI_images_rs = np.concatenate([
-                roi_resizer.resize_ROIs(
-                    ROI_images=ROI_images[ii], 
-                    um_per_pixel=um_per_pixel[ii],
-                ) for ii in range(len(ROI_images))
-            ], axis=0)
-
-            roi_resizer.plot_resized_comparison(
-                ROI_images_cat=np.concatenate(ROI_images, axis=0),
-                ROI_images_rs=self.ROI_images_rs,
-            ) if pref_plot else None
-        else:
-            self.ROI_images_rs = np.concatenate(ROI_images, axis=0)
+        ## The preprocessor owns the whole chain and is the object to hand to
+        ## ClassifierPackage so that inference reuses this exact configuration.
+        self.preprocessor = Preprocessor_ROI_images(
+            scale_normalize=resize_ROI_images,
+            img_size_out=img_size_out,
+            nan_to_num=nan_to_num,
+            nan_to_num_val=nan_to_num_val,
+            verbose=self._verbose,
+        )
+        self.ROI_images_rs = self.preprocessor.scale_normalize_images(
+            ROI_images=ROI_images,
+            um_per_pixel=um_per_pixel,
+        )
+        plot_resized_comparison(
+            ROI_images_cat=np.concatenate(ROI_images, axis=0),
+            ROI_images_rs=self.ROI_images_rs,
+        ) if pref_plot else None
 
         print(f'Creating dataloader') if self._verbose else None
         dataloader_generator = Dataloader_ROInet(
@@ -624,7 +966,7 @@ class ROInet_embedder(util.ROICaT_Module):
             numWorkers_dataloader=numWorkers_dataloader,
             persistentWorkers_dataloader=persistentWorkers_dataloader,
             prefetchFactor_dataloader=prefetchFactor_dataloader,
-            transforms=transforms,
+            transforms=self.preprocessor.transforms if transforms is None else transforms,
             n_transforms=1,
             img_size_out=img_size_out,
             jit_script_transforms=jit_script_transforms,
@@ -658,7 +1000,84 @@ class ROInet_embedder(util.ROICaT_Module):
         torch.cuda.empty_cache()
         gc.collect()
         torch.cuda.empty_cache()
-        
+
+        return self.latents
+
+    def embed(
+        self,
+        ROI_images: Union[np.ndarray, List[np.ndarray]],
+        um_per_pixel: Union[float, List[float]],
+        batch_size: int = 256,
+        device: Optional[str] = None,
+        preprocessor: Optional[Preprocessor_ROI_images] = None,
+    ) -> torch.Tensor:
+        """
+        Preprocesses ROI images and runs them through the network in one call,
+        returning latents. Equivalent to ``generate_dataloader()`` followed by
+        ``generate_latents()``, but batched in memory rather than through a
+        DataLoader, so it needs no worker processes and never materializes the
+        whole *(n_rois, 3, 224, 224)* tensor.
+
+        Args:
+            ROI_images (Union[np.ndarray, List[np.ndarray]]):
+                Either one array of shape *(n_rois, height, width)* or a list of
+                such arrays, one per session.
+            um_per_pixel (Union[float, List[float]]):
+                Micrometers per pixel **of the images being passed in**. A float,
+                or one float per session. This is a property of the data, so it
+                must be given for every call.
+            batch_size (int):
+                Number of ROIs preprocessed and passed through the network at a
+                time. (Default is *256*)
+            device (Optional[str]):
+                Torch device to run on. If ``None``, the device given at
+                initialization is used.
+            preprocessor (Optional[Preprocessor_ROI_images]):
+                Preprocessor to use. If ``None``, the one built by a previous
+                call to ``generate_dataloader`` is reused, or a default one is
+                built.
+
+        Returns:
+            (torch.Tensor):
+                latents (torch.Tensor):
+                    Latents for each ROI, on the CPU. Shape: *(n_rois_total,
+                    n_features)*, or *(0, 0)* if no ROIs were given. Also stored
+                    as ``self.latents``, as ``generate_latents`` does.
+        """
+        if preprocessor is None:
+            preprocessor = getattr(self, 'preprocessor', None)
+        if preprocessor is None:
+            preprocessor = Preprocessor_ROI_images(verbose=self._verbose)
+        self.preprocessor = preprocessor
+
+        device = self._device if device is None else device
+        if batch_size < 1:
+            raise ValueError(f'batch_size should be >= 1, but is {batch_size}')
+
+        ## Stage 1 for all images at once (it is a numpy op on small images), then
+        ## stage 1 output is chunked through stage 2 + the network.
+        ROI_images_rs = preprocessor.scale_normalize_images(
+            ROI_images=ROI_images,
+            um_per_pixel=um_per_pixel,
+        )  # (n_rois_total, height, width)
+
+        self.net.to(device).eval()
+        latents = []
+        with torch.no_grad():
+            for i_start in tqdm(
+                range(0, ROI_images_rs.shape[0], batch_size),
+                mininterval=5,
+                disable=not self._verbose,
+                unit='batch',
+            ):
+                images = preprocessor.transform_images(
+                    ROI_images=ROI_images_rs[i_start : i_start + batch_size],
+                )  # (n_batch, n_channels_out, *img_size_out)
+                latents.append(self.net(images.to(device)).detach().cpu())
+                del images
+
+        self.latents = torch.cat(latents, dim=0) if len(latents) > 0 else torch.empty((0, 0))
+        helpers.clear_gpu_cache()
         return self.latents
 
 
@@ -1198,16 +1617,22 @@ class Unsqueeze(Module):
 
 class ScaleDynamicRange(Module):
     """
-    Min-max scaling of the input tensor.
+    Min-max scaling of the input tensor, independently per image.
     RH 2021
+
+    Reduces over the trailing three dimensions *(n_channels, height, width)*, so
+    the same module gives identical results whether it is applied to a single
+    image *(n_channels, height, width)* or to a batch *(n_images, n_channels,
+    height, width)*. **This is what allows one transform chain to serve both the
+    per-sample DataLoader path and the batched
+    ``Preprocessor_ROI_images.transform_images`` path.**
     """
     def __init__(self, scaler_bounds=(0,1), epsilon=1e-9):
         """
         Initializes the class.
         Args:
             scaler_bounds (tuple):
-                The bounds of how much to multiply the image by
-                 prior to adding the Poisson noise.
+                The bounds to scale the dynamic range of each image to.
              epsilon (float):
                  Value to add to the denominator when normalizing.
         """
@@ -1217,10 +1642,13 @@ class ScaleDynamicRange(Module):
         self.range = scaler_bounds[1] - scaler_bounds[0]
 
         self.epsilon = epsilon
+        ## List (not tuple) of dims for torch.jit.script compatibility
+        self.dims_reduce = [-3, -2, -1]
 
     def forward(self, tensor):
-        tensor_minSub = tensor - tensor.min()
-        return tensor_minSub * (self.range / (tensor_minSub.max()+self.epsilon))
+        ## Reduce over (n_channels, height, width); leading dims (if any) are batch dims
+        tensor_minSub = tensor - torch.amin(tensor, dim=self.dims_reduce, keepdim=True)
+        return tensor_minSub * (self.range / (torch.amax(tensor_minSub, dim=self.dims_reduce, keepdim=True) + self.epsilon))
     def __repr__(self):
         return f"ScaleDynamicRange(scaler_bounds={self.bounds})"
 

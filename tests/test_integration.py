@@ -56,6 +56,15 @@ EXPLICIT_DENYLIST_PATHS = {
     ('roinet', 'transforms'),
     ('roinet', 'dataset'),
     ('roinet', 'dataloader'),
+    ## Provenance recorded by ROInet_embedder, not pipeline output. `preprocessor`
+    ## is the Preprocessor_ROI_images config object and `filepath_model_py` is a
+    ## machine-specific path into the downloaded network bundle, so neither is
+    ## comparable against a golden file produced on another machine. The
+    ## preprocessing they describe is already covered by `roinet.params` and by
+    ## `roinet.ROI_images_rs`, which IS compared.
+    ('roinet', 'preprocessor'),
+    ('roinet', 'filepath_model_py'),
+    ('roinet', 'forward_pass_version'),
     ('swt', 'swt'),
 }
 
