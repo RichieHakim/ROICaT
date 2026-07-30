@@ -30,6 +30,7 @@ from pathlib import Path
 import json
 import os
 import hashlib
+import importlib.util
 import PIL
 import multiprocessing as mp
 from functools import partial
@@ -651,6 +652,54 @@ class Dataloader_ROInet(util.ROICaT_Module):
         print(f'Defined dataloader') if self._verbose else None
 
 
+def import_model_py_from_bundle(filepath_model_py: Union[str, Path]):
+    """
+    Imports a network bundle's ``model.py`` by path, under a name derived from its
+    own bytes.
+
+    A plain ``import model`` would let the **first** bundle loaded in a process
+    serve every later one out of ``sys.modules['model']``, so a second embedder
+    would build its network from the first bundle's code while carrying its own
+    ``params.json`` and weights. Nothing raises when that happens: ``load_state_dict``
+    succeeds whenever the two files produce matching parameter names, which is the
+    case for successive releases of the same architecture. The bare name also
+    collides with any user module already registered as ``model``. This is the same
+    technique :meth:`roicat.classification.package.ClassifierPackage._unpack_embedder`
+    uses to load a packet's bundled ``model.py``, differing in one respect: the name
+    keys on the bytes rather than on a tempdir's lifetime, so the same bundle
+    imported twice returns the same module object, and a process holding one embedder
+    sees exactly what it saw before this function existed.
+
+    Args:
+        filepath_model_py (Union[str, Path]):
+            Path to the bundle's ``model.py``.
+
+    Returns:
+        (module):
+            module (module):
+                The imported module, also registered in ``sys.modules`` under
+                ``roicat_roinet_<sha256[:12]>``.
+    """
+    filepath_model_py = str(filepath_model_py)
+    sha = hashlib.sha256(Path(filepath_model_py).read_bytes()).hexdigest()[:12]
+    name_module = f"roicat_roinet_{sha}"
+    ## The name is derived from the file's bytes, so a cache hit is the same code by
+    ## construction and two distinct bundles can never land in the same slot.
+    if name_module in sys.modules:
+        return sys.modules[name_module]
+
+    spec_import = importlib.util.spec_from_file_location(name_module, filepath_model_py)
+    module_model = importlib.util.module_from_spec(spec_import)
+    ## Insert before exec so any internal pickle/torch references resolve.
+    sys.modules[name_module] = module_model
+    try:
+        spec_import.loader.exec_module(module_model)
+    except Exception:
+        sys.modules.pop(name_module, None)
+        raise
+    return module_model
+
+
 class ROInet_embedder(util.ROICaT_Module):
     """
     Class for loading the ROInet model, preparing data for it, and running it.
@@ -791,9 +840,9 @@ class ROInet_embedder(util.ROICaT_Module):
         paths_networkFiles['model'] = [p for p in paths_extracted if names_networkFiles['model'] in str(Path(p).name)][0]
         paths_networkFiles['state_dict'] = [p for p in paths_extracted if names_networkFiles['state_dict'] in str(Path(p).name)][0]
 
-        ## Import network files
-        sys.path.append(str(Path(paths_networkFiles['model']).parent.resolve()))
-        import model
+        ## Import network files. By path under a bytes-derived module name, so a second
+        ## embedder built in this process does not get handed this bundle's code.
+        model = import_model_py_from_bundle(filepath_model_py=paths_networkFiles['model'])
         print(f"Imported model from {paths_networkFiles['model']}") if self._verbose else None
 
         ## Everything needed to rebuild this network from the bundle alone. Read by
@@ -898,7 +947,11 @@ class ROInet_embedder(util.ROICaT_Module):
                 The transforms to use for the DataLoader. If ``None``, the
                 function will only scale dynamic range (to 0-1), resize (to
                 img_size_out dimensions), and tile channels (to 3) as a minimum
-                to pass images through the network. (Default is ``None``)
+                to pass images through the network. A non-``None`` value replaces
+                ``self.preprocessor``'s chain for this DataLoader only, which makes
+                the resulting latents unpackable: see
+                :class:`~roicat.classification.package.ClassifierPackage`. (Default is
+                ``None``)
             img_size_out (Tuple[int, int]): 
                 The image output dimensions of DataLoader if transforms is
                 ``None``. (Default is *(224, 224)*)
@@ -978,6 +1031,10 @@ class ROInet_embedder(util.ROICaT_Module):
         self.transforms = dataloader_generator.transforms
         self.dataset = dataloader_generator.dataset
         self.dataloader = dataloader_generator.dataloader
+        ## A caller-supplied chain bypasses self.preprocessor, which is the only
+        ## thing a ClassifierPackage can store. Recorded so that packing refuses
+        ## rather than silently preprocessing inference images a different way.
+        self._transforms_custom = transforms is not None
         return self.ROI_images_rs
 
     def generate_latents(self) -> torch.Tensor:

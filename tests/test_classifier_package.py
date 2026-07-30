@@ -9,10 +9,12 @@ The stub does not implement preprocessing: the packet owns that, via
 ``roicat.ROInet.Preprocessor_ROI_images``. Classes are dispatched by *name*, so
 the stub is named exactly as the real class is.
 
-Runtime: ~3.5 min on CPU, dominated by one skl2onnx conversion per packet.
+Runtime: ~17 min on CPU, dominated by one skl2onnx conversion per packet and by
+the clean-subprocess tests against the real bundled ``model.py``. Run it in the
+background rather than waiting on it.
 """
 
-from typing import Optional  ## typing
+from typing import Optional, Sequence  ## typing
 
 import json
 import os
@@ -35,6 +37,9 @@ from roicat.classification.package import (
     _SCHEMA_VERSION,
     _MEMBER_ORDER,
     _SUFFIX,
+    _classes_json_safe,
+    _class_values_to_label_ids,
+    _check_transforms_packable,
 )
 
 
@@ -158,17 +163,35 @@ def _make_stub_embedder_roinet(tag: str, tmp_path: Path, with_preprocessor: bool
     return embedder
 
 
-def _make_fitted_classifier(latent_dim: int = _LATENT_DIM) -> Auto_LogisticRegression:
-    """Build an Auto_LogisticRegression with a manually-fitted sklearn model."""
+def _make_fitted_classifier(
+    latent_dim: int = _LATENT_DIM,
+    classes: Sequence = (0, 1),
+) -> Auto_LogisticRegression:
+    """
+    Build an Auto_LogisticRegression with a manually-fitted sklearn model.
+
+    Args:
+        classes (Sequence):
+            The distinct values to put in ``y``, in ascending order, so that
+            ``model_best.classes_`` equals them. Non-contiguous values such as
+            ``(0, 2)`` arise whenever a class is absent from the training data.
+            ``_N_SAMPLES`` is split evenly, so a count that does not divide it
+            (3 classes into 40) trains on the remainder-truncated rows.
+    """
     import sklearn.linear_model
     rng = np.random.default_rng(seed=0)
+    ## float32: ClassifierPackage refuses any other dtype, because skl2onnx exports the
+    ## input type from X and its ZipMap operator rejects tensor(double).
     X = rng.standard_normal((_N_SAMPLES, latent_dim)).astype(np.float32)
-    y = np.array([0] * (_N_SAMPLES // 2) + [1] * (_N_SAMPLES // 2), dtype=np.int64)
+    n_per = _N_SAMPLES // len(classes)
+    y = np.array([c for c in classes for _ in range(n_per)], dtype=np.int64)
+    X = X[: y.shape[0]]
+    label_names = [f"class_{i}" for i in range(len(classes))]
 
     clf = Auto_LogisticRegression(
         X=X, y=y,
         params_LogisticRegression={"C": 1.0, "penalty": "l2", "solver": "lbfgs", "max_iter": 200},
-        label_names=["class_0", "class_1"],
+        label_names=list(label_names),
         verbose=False,
     )
     sklearn_lr = sklearn.linear_model.LogisticRegression(
@@ -828,6 +851,18 @@ class TestInitValidation:
         with pytest.raises(ValueError, match="features but the classifier was fit on"):
             ClassifierPackage(**self._kwargs(tmp_path, classifier=clf))
 
+    def test_classifier_X_float64_refused(self, tmp_path):
+        """
+        ``save_model`` derives the ONNX input type from ``classifier.X``, so a float64
+        X exports a ``tensor(double)`` graph and skl2onnx's ZipMap refuses it. Nothing
+        constructs a session at pack time, so without this check the packet saves on
+        the training machine and can never be loaded on the inference machine.
+        """
+        clf = _make_fitted_classifier()
+        clf.X = np.asarray(clf.X, dtype=np.float64)
+        with pytest.raises(TypeError, match="float32-only"):
+            ClassifierPackage(**self._kwargs(tmp_path, classifier=clf))
+
     def test_preprocessor_output_shape_incompatible_with_embedder(self, tmp_path):
         """A preprocessor emitting a shape the network cannot accept fails at pack time."""
         preprocessor = Preprocessor_ROI_images(img_size_out=(64, 64), verbose=False)
@@ -879,6 +914,248 @@ class TestPredict:
         loaded = ClassifierPackage.load(filepath)
         with pytest.raises(TypeError):
             loaded.predict(_roi_images())
+
+
+# ---------------------------------------------------------------------------
+# Tests — class values vs label_names positions
+# ---------------------------------------------------------------------------
+
+def _pkg_with_classes(classes, tag, tmp_path):
+    """Pack a classifier fit on the given class values."""
+    pkg = ClassifierPackage(
+        classifier=_make_fitted_classifier(classes=classes),
+        embedder=_make_stub_embedder_roinet(tag=tag, tmp_path=tmp_path),
+        label_names=[f"class_{i}" for i in range(len(classes))],
+        size_images_in=(_IMG_H, _IMG_W),
+        um_per_pixel_training=_UM_PER_PIXEL,
+    )
+    return pkg, str(tmp_path / f"cls_{tag}{_SUFFIX}")
+
+
+class TestClassOrdering:
+    """
+    The ONNX classifier emits class *values*; ``label_names`` is indexed by
+    *position*. They coincide only when the values are ``0..n_classes-1``.
+    """
+
+    def test_classes_recorded_and_round_tripped(self, tmp_path):
+        pkg, filepath = _pkg_with_classes(classes=(0, 2), tag="cA", tmp_path=tmp_path)
+        assert pkg.classes == [0, 2]
+        pkg.save(filepath)
+        with zipfile.ZipFile(filepath) as zf:
+            metadata = json.loads(zf.read("metadata.json"))
+        assert metadata["classes"] == [0, 2]
+        assert ClassifierPackage.load(filepath).classes == [0, 2]
+
+    @pytest.mark.parametrize("classes", [(0, 1), (0, 2), (1, 2), (-1, 5), (0, 2, 5)])
+    def test_predict_returns_positions_not_class_values(self, classes, tmp_path):
+        """
+        With classes (0, 2) the ONNX label output is 0 or 2, so the old cast made
+        ``label_names[2]`` an IndexError. label_ids must stay in range(n_classes).
+
+        ``(0, 2, 5)`` is the only non-binary case. With two classes ``probs.argmax(1)``
+        has two outcomes and can only detect a column transposition, so the
+        cross-check below barely constrains the mapping; a middle class is where a
+        translation bug hides.
+        """
+        tag = "cB" + "_".join(str(c) for c in classes)
+        pkg, filepath = _pkg_with_classes(classes=classes, tag=tag, tmp_path=tmp_path)
+        pkg.save(filepath)
+        loaded = ClassifierPackage.load(filepath)
+        label_ids, probs = loaded.predict(roi_images=_roi_images(), um_per_pixel=_UM_PER_PIXEL)
+
+        assert label_ids.dtype == np.int64
+        assert label_ids.min() >= 0 and label_ids.max() < len(classes)
+        ## Every id must name something.
+        assert all(loaded.label_names[int(i)] for i in label_ids)
+        ## probs columns are in class order, so argmax is an independent derivation
+        ## of the same positions.
+        np.testing.assert_array_equal(label_ids, probs.argmax(axis=1))
+
+    def test_unmapped_class_value_raises(self):
+        with pytest.raises(ValueError, match="not among the packet's classes"):
+            _class_values_to_label_ids(values=np.array([0, 7]), classes=[0, 2])
+
+    def test_classes_json_safe_rejects_unstorable(self):
+        with pytest.raises(TypeError, match="cannot be stored"):
+            _classes_json_safe(np.array([{"a": 1}, {"b": 2}], dtype=object))
+
+    def test_classes_json_safe_converts_numpy_scalars(self):
+        out = _classes_json_safe(np.array([0, 2], dtype=np.int64))
+        assert out == [0, 2]
+        assert all(type(c) is int for c in out)
+
+    def test_load_raises_when_classes_and_label_names_disagree(self, pkg_factory, tmp_path):
+        pkg, filepath = pkg_factory()
+        pkg.save(filepath)
+
+        def _edit(metadata):
+            metadata["classes"] = [0, 1, 2]
+            return metadata
+
+        bad = _rewrite_packet(filepath, tmp_path, f"nclass{_SUFFIX}", fn_edit_metadata=_edit)
+        with pytest.raises(PackageIntegrityError, match="label_names"):
+            ClassifierPackage.load(bad)
+
+    def test_load_refuses_permuted_classes(self, pkg_factory, tmp_path):
+        """
+        A permutation is the dangerous edit: right length, and ``probs`` stays
+        bit-identical while every ``label_id`` moves, so the packet contradicts
+        itself with no other symptom. ``metadata.json`` holds the hashes and so has
+        none of its own, which is what makes the edit reachable. sklearn's
+        ``classes_`` is ``np.unique(y)`` and is always ascending, so this is
+        checkable at load.
+        """
+        pkg, filepath = pkg_factory()
+        pkg.save(filepath)
+
+        def _edit(metadata):
+            metadata["classes"] = list(reversed(metadata["classes"]))
+            return metadata
+
+        bad = _rewrite_packet(filepath, tmp_path, f"perm{_SUFFIX}", fn_edit_metadata=_edit)
+        with pytest.raises(PackageIntegrityError, match="not ascending"):
+            ClassifierPackage.load(bad)
+
+    def test_load_refuses_duplicate_classes(self, pkg_factory, tmp_path):
+        """
+        Duplicates collapse the lookup, so one position becomes unreachable and the
+        other class value raises from inside ``predict`` — an error that arrives at
+        inference time blaming the classifier for a metadata defect.
+        """
+        pkg, filepath = pkg_factory()
+        pkg.save(filepath)
+
+        def _edit(metadata):
+            metadata["classes"] = [metadata["classes"][0]] * len(metadata["classes"])
+            return metadata
+
+        bad = _rewrite_packet(filepath, tmp_path, f"dupe{_SUFFIX}", fn_edit_metadata=_edit)
+        with pytest.raises(PackageIntegrityError, match="contain duplicates"):
+            ClassifierPackage.load(bad)
+
+    def test_load_refuses_empty_classes(self, pkg_factory, tmp_path):
+        """``label_names`` is emptied too, so the length check cannot fire first."""
+        pkg, filepath = pkg_factory()
+        pkg.save(filepath)
+
+        def _edit(metadata):
+            metadata["classes"] = []
+            metadata["label_names"] = []
+            return metadata
+
+        bad = _rewrite_packet(filepath, tmp_path, f"noclass{_SUFFIX}", fn_edit_metadata=_edit)
+        with pytest.raises(PackageIntegrityError, match="records no classes"):
+            ClassifierPackage.load(bad)
+
+    def test_load_refuses_version_2_packet(self, pkg_factory, tmp_path):
+        """
+        A packet in the pre-``classes`` layout must be refused at the version
+        check, not crash with a KeyError deeper in load(). Version-2 packets were
+        never released but were built during development.
+        """
+        pkg, filepath = pkg_factory()
+        pkg.save(filepath)
+
+        def _edit(metadata):
+            metadata["schema_version"] = 2
+            metadata.pop("classes", None)  ## as the version-2 writer left it
+            return metadata
+
+        old = _rewrite_packet(filepath, tmp_path, f"v2{_SUFFIX}", fn_edit_metadata=_edit)
+        with pytest.raises(PackageIntegrityError, match="Rebuild the packet"):
+            ClassifierPackage.load(old)
+
+
+# ---------------------------------------------------------------------------
+# Tests — custom transforms bypass the preprocessor
+# ---------------------------------------------------------------------------
+
+class TestCustomTransforms:
+    """
+    ``generate_dataloader(transforms=...)`` feeds the DataLoader a chain that
+    ``embedder.preprocessor`` does not describe. A packet can only store the
+    preprocessor, so packing such an embedder must be refused.
+    """
+
+    def test_pack_refuses_custom_transforms(self, tmp_path):
+        embedder = _make_stub_embedder_roinet(tag="ctA", tmp_path=tmp_path)
+        embedder._transforms_custom = True
+        with pytest.raises(ValueError, match="generate_dataloader\\(transforms="):
+            ClassifierPackage(
+                classifier=_make_fitted_classifier(),
+                embedder=embedder,
+                label_names=["class_0", "class_1"],
+                size_images_in=(_IMG_H, _IMG_W),
+            )
+
+    def test_pack_refuses_even_with_explicit_preprocessor(self, tmp_path):
+        """
+        Passing a preprocessor by hand does not help: Preprocessor_ROI_images is a
+        fixed chain, so it cannot represent an arbitrary callable either way.
+        """
+        embedder = _make_stub_embedder_roinet(tag="ctB", tmp_path=tmp_path)
+        embedder._transforms_custom = True
+        with pytest.raises(ValueError, match="generate_dataloader\\(transforms="):
+            ClassifierPackage(
+                classifier=_make_fitted_classifier(),
+                embedder=embedder,
+                label_names=["class_0", "class_1"],
+                size_images_in=(_IMG_H, _IMG_W),
+                preprocessor=Preprocessor_ROI_images(img_size_out=_IMG_SIZE_OUT, verbose=False),
+            )
+
+    @pytest.mark.parametrize("value", [False, None])
+    def test_pack_allows_default_transforms(self, value, tmp_path):
+        """An absent flag (older embedder objects) and False both mean 'no bypass'."""
+        embedder = _make_stub_embedder_roinet(tag=f"ctC{value}", tmp_path=tmp_path)
+        if value is not None:
+            embedder._transforms_custom = value
+        pkg = ClassifierPackage(
+            classifier=_make_fitted_classifier(),
+            embedder=embedder,
+            label_names=["class_0", "class_1"],
+            size_images_in=(_IMG_H, _IMG_W),
+        )
+        assert pkg.label_names == ["class_0", "class_1"]
+
+    def test_generate_dataloader_sets_and_clears_the_flag(self):
+        """
+        The real producer joined to the packet-side consumer, both directions.
+
+        Every test above sets ``_transforms_custom`` by hand on a stub, so nothing
+        would notice if the real ``ROInet_embedder`` stopped setting it.
+        ``__init__`` is bypassed with ``object.__new__`` because it downloads a
+        ~100 MB network bundle; ``generate_dataloader`` never touches ``self.net``
+        and needs only ``self.params`` and ``self._verbose``, so it runs offline
+        and in CI.
+        """
+        embedder = object.__new__(roicat.ROInet.ROInet_embedder)
+        embedder.params = {}
+        embedder._verbose = False
+        kwargs = dict(
+            ROI_images=[_roi_images()],
+            um_per_pixel=_UM_PER_PIXEL,
+            batchSize_dataloader=4,
+            numWorkers_dataloader=0,
+            persistentWorkers_dataloader=False,
+            img_size_out=_IMG_SIZE_OUT,
+        )
+
+        transforms_custom = torch.nn.Sequential(torch.nn.Identity())
+        embedder.generate_dataloader(transforms=transforms_custom, **kwargs)
+        assert embedder._transforms_custom is True
+        assert embedder.transforms is transforms_custom
+        with pytest.raises(ValueError, match="generate_dataloader\\(transforms="):
+            _check_transforms_packable(embedder)
+
+        ## Re-running without the argument is the first of the three documented steps
+        ## out of the refusal. Same object, so a flag left stale from the call above
+        ## shows up here.
+        embedder.generate_dataloader(**kwargs)
+        assert embedder._transforms_custom is False
+        assert embedder.transforms is embedder.preprocessor.transforms
+        _check_transforms_packable(embedder)
 
 
 # ---------------------------------------------------------------------------
@@ -956,6 +1233,51 @@ class TestNamespaceIsolation:
         ## The tags survived the separate namespaces.
         assert sys.modules[loaded_a._module_name]._TAG == "A1"
         assert sys.modules[loaded_b._module_name]._TAG == "B2"
+
+
+class TestBundleModuleIsolation:
+    def test_two_bundles_get_different_modules(self, tmp_path):
+        """
+        Two ROInet bundles in one process must not share a ``model.py`` module.
+
+        This tests ``roicat.ROInet.import_model_py_from_bundle`` rather than
+        ``ROInet_embedder`` itself: the class's ``__init__`` downloads a ~100 MB
+        bundle, and this helper is the whole of the import it performs. The old code
+        was ``sys.path.append`` + ``import model``, so the second embedder built in a
+        process got the *first* bundle's ``make_model`` back out of
+        ``sys.modules['model']``, built that network, and loaded its own weights into
+        it — no error, and the packet then shipped one bundle's ``model.py`` beside
+        another's forward pass.
+        """
+        _, filepath_a = _write_and_import(
+            src=_stub_model_py_makemodel(tag="bundleA"),
+            module_name="_bundle_a",
+            tmp_path=tmp_path,
+        )
+        _, filepath_b = _write_and_import(
+            src=_stub_model_py_makemodel(tag="bundleB"),
+            module_name="_bundle_b",
+            tmp_path=tmp_path,
+        )
+
+        imported_a = roicat.ROInet.import_model_py_from_bundle(filepath_model_py=filepath_a)
+        imported_b = roicat.ROInet.import_model_py_from_bundle(filepath_model_py=filepath_b)
+
+        assert imported_a is not imported_b
+        assert imported_a.__name__ != imported_b.__name__
+        assert imported_a._TAG == "bundleA"
+        assert imported_b._TAG == "bundleB"
+        ## The tag is carried by the network each bundle builds, which is what an
+        ## embedder holds and a packet is built from.
+        assert imported_a.make_model(fwd_version="head").tag == "bundleA"
+        assert imported_b.make_model(fwd_version="head").tag == "bundleB"
+
+        ## The module name is derived from the file's bytes, so the same bundle
+        ## imported twice is the same object — one embedder in a process behaves
+        ## exactly as it did under the old bare import.
+        assert roicat.ROInet.import_model_py_from_bundle(filepath_model_py=filepath_a) is imported_a
+        assert sys.modules[imported_a.__name__]._TAG == "bundleA"
+        assert sys.modules[imported_b.__name__]._TAG == "bundleB"
 
 
 # ---------------------------------------------------------------------------

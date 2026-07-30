@@ -91,12 +91,15 @@ _MEMBER_ORDER = (
 ## path: a mismatch means the file was written by a different ROICaT, and load()
 ## refuses it rather than guessing.
 ##
-## Version 1 is the layout that predates ``preprocessing['preprocessor']``,
-## per-member SHA-256, and ``embedder_identity``. Its files are NOT loadable here.
-## The number must stay ahead of 1 for that refusal to happen at the version check
-## rather than as a bare KeyError deeper in load(); dev-built version-1 packets do
-## exist even though none were ever released.
-_SCHEMA_VERSION = 2
+## Superseded layouts, none of them loadable here. The number must stay ahead of
+## all of them so that the refusal happens at the version check rather than as a
+## bare KeyError deeper in load(). No version was ever released, but dev-built
+## packets of each exist.
+##   1: predates ``preprocessing['preprocessor']``, per-member SHA-256, and
+##      ``embedder_identity``.
+##   2: predates ``metadata['classes']``, without which ``predict`` cannot map the
+##      classifier's class values onto ``label_names`` positions.
+_SCHEMA_VERSION = 3
 _DEFAULT_BATCH_SIZE = 256
 
 ## How to rebuild an embedder's inner nn.Module from the ``model.py`` bundled in
@@ -319,6 +322,116 @@ def _check_latents_provenance(embedder, classifier) -> None:
         )
 
 
+def _classes_json_safe(classes) -> List[Any]:
+    """
+    Converts an sklearn ``classes_`` array to a JSON-safe list, order preserved.
+
+    The order is what matters: it is simultaneously the order of ``label_names``,
+    the order of the ONNX probability columns, and the mapping the ONNX label
+    output has to be inverted through. See ``_class_values_to_label_ids``.
+
+    Args:
+        classes:
+            ``classifier.model_best.classes_``, or any 1-D sequence of the class
+            values the classifier was fit on.
+
+    Returns:
+        (List[Any]):
+            classes (List[Any]):
+                The same values as built-in Python scalars.
+
+    Raises:
+        TypeError: If a class value has no JSON equivalent.
+    """
+    out = []
+    for c in np.asarray(classes).reshape(-1).tolist():
+        if not isinstance(c, (int, float, str, bool)):
+            raise TypeError(
+                f"Class value {c!r} of type {type(c).__name__} cannot be stored in a "
+                f"packet. Fit the classifier on int or str labels."
+            )
+        out.append(c)
+    return out
+
+
+def _class_values_to_label_ids(values, classes: List[Any]) -> np.ndarray:
+    """
+    Maps classifier output values onto positions in ``label_names``.
+
+    The ONNX classifier emits *class values* — whatever was in ``y`` — not
+    positions. Those coincide only when the values happen to be ``0..n_classes-1``.
+    A class that is absent from the training data (``classes_ == [0, 2]``) or a
+    1-based labelling scheme breaks the coincidence silently.
+
+    Args:
+        values:
+            Class values as returned by the ONNX classifier. Shape: *(n,)*.
+        classes (List[Any]):
+            The packet's recorded class ordering, from :func:`_classes_json_safe`.
+
+    Returns:
+        (np.ndarray):
+            label_ids (np.ndarray):
+                Positions into ``classes`` / ``label_names``. Shape: *(n,)*.
+                dtype: ``int64``.
+
+    Raises:
+        ValueError: If a returned value is not one of the recorded classes.
+    """
+    lookup = {c: i for i, c in enumerate(classes)}
+    values = np.asarray(values).reshape(-1).tolist()
+    out = np.empty(len(values), dtype=np.int64)
+    for i, v in enumerate(values):
+        if v not in lookup:
+            raise ValueError(
+                f"The classifier returned class value {v!r}, which is not among the "
+                f"packet's classes {classes!r}. The packet's metadata does not describe "
+                f"its own classifier."
+            )
+        out[i] = lookup[v]
+    return out
+
+
+def _check_transforms_packable(embedder) -> None:
+    """
+    Refuses an embedder whose training images went through a transform chain the
+    packet cannot reproduce.
+
+    ``ROInet_embedder.generate_dataloader(transforms=...)`` hands a caller-supplied
+    chain to the DataLoader while leaving ``embedder.preprocessor`` holding the
+    default chain. A packet serialises the preprocessor, so it would embed
+    inference images differently from the training images and return wrong labels
+    with no error. There is no way to store the chain instead:
+    :class:`~roicat.ROInet.Preprocessor_ROI_images` is a fixed sequence configured
+    by a handful of keyword arguments, not an arbitrary callable.
+
+    The flag reflects the last ``generate_dataloader`` call only. ``embed()`` takes
+    no ``transforms`` argument and always goes through the preprocessor, but it does
+    not clear the flag either, so ``generate_dataloader(transforms=...)`` followed by
+    ``embed()`` is refused even though that path was safe. Refusal is the direction
+    to err in here.
+
+    Args:
+        embedder:
+            The embedder being packed.
+
+    Raises:
+        ValueError: If the embedder was driven with custom transforms.
+    """
+    if getattr(embedder, "_transforms_custom", False):
+        raise ValueError(
+            "This embedder's dataloader was built with generate_dataloader(transforms=...), "
+            "so the images the classifier was trained on did not go through "
+            "embedder.preprocessor. A packet can only store the preprocessor, so it would "
+            "preprocess inference images differently and predict wrong labels silently. "
+            "To recover: re-run generate_dataloader() without the transforms argument, then "
+            "generate_latents(), then refit the classifier. Clearing the flag alone leaves the "
+            "classifier fit on latents from the custom chain, and the packet then builds with "
+            "the wrong preprocessor. Or configure the preprocessing through "
+            "Preprocessor_ROI_images arguments instead."
+        )
+
+
 def _check_latent_dim(module_embedder, preprocessor, n_features_classifier: int) -> int:
     """
     Checks that the embedder's output width equals the classifier's input width,
@@ -385,6 +498,19 @@ def _validate_classifier_package_inputs(classifier, label_names, preprocessor, s
         raise TypeError(f"classifier must be Auto_LogisticRegression, got {type(classifier).__name__}.")
     if getattr(classifier, "model_best", None) is None:
         raise RuntimeError("classifier.model_best is None — call classifier.fit() before packing.")
+
+    ## Auto_LogisticRegression.save_model derives the ONNX input type from classifier.X,
+    ## so a float64 X exports a tensor(double) graph, which skl2onnx's ZipMap operator
+    ## refuses. Nothing constructs a session at pack time, so such a packet saves
+    ## cleanly here and can never be loaded on the inference machine. Fail at pack time.
+    dtype_X = np.asarray(classifier.X).dtype
+    if dtype_X != np.float32:
+        raise TypeError(
+            f"classifier.X has dtype {dtype_X}, but the ONNX export path is float32-only. "
+            f"A packet built from it would save without error and then fail to load with "
+            f"'Type tensor(double) ... of operator (ZipMap) is invalid'. Refit the classifier "
+            f"on X=np.asarray(latents, dtype=np.float32)."
+        )
 
     if not isinstance(label_names, (list, tuple)):
         raise TypeError(f"label_names must be list[str], got {type(label_names).__name__}.")
@@ -474,7 +600,11 @@ class ClassifierPackage:
             Must be one of the kinds in ``_EMBEDDER_KINDS`` — currently only
             ``roicat.ROInet.ROInet_embedder``.
         label_names (List[str]):
-            Class names in ``classifier.model_best.classes_`` order.
+            Class names in ``classifier.model_best.classes_`` order. The class
+            values themselves are recorded alongside as ``self.classes``, so
+            ``predict`` can return positions in this list whatever the values
+            were — a classifier fit on ``y`` values ``[0, 2]`` still yields
+            ``label_ids`` in ``{0, 1}``.
         size_images_in (Tuple[int, int]):
             *(height, width)* of the raw ROI images used at training time, before
             any preprocessing. ``predict`` requires the same size.
@@ -488,11 +618,14 @@ class ClassifierPackage:
             classified may have a different resolution.
 
     Raises:
-        TypeError: Wrong type for any input.
+        TypeError: Wrong type for any input, including a ``classifier.X`` that is not
+            ``float32`` — the ONNX export path cannot produce a loadable graph from it.
         ValueError: Inconsistent label names or image sizes; an embedder whose
             latent width disagrees with the classifier's input width; or an
             embedder whose ``.latents`` are comparable to ``classifier.X`` but
-            differ, meaning the classifier was trained on a different network.
+            differ, meaning the classifier was trained on a different network; or
+            an embedder driven with ``generate_dataloader(transforms=...)``, whose
+            preprocessing a packet cannot reproduce.
         RuntimeError: Classifier not fitted.
     """
 
@@ -519,6 +652,9 @@ class ClassifierPackage:
             preprocessor=preprocessor,
             size_images_in=size_images_in,
         )
+        ## The preprocessor is only a faithful record of training-time preprocessing
+        ## if nothing bypassed it.
+        _check_transforms_packable(embedder)
         ## Fail at pack time, not at load time, if the embedder cannot be rebuilt
         self._module_embedder, self._spec_embedder, self._filepath_model_py = _resolve_embedder(embedder)
         self.latent_dim = _check_latent_dim(
@@ -536,6 +672,10 @@ class ClassifierPackage:
         self.classifier = classifier
         self.embedder = embedder
         self.label_names = list(label_names)
+        ## The class values the classifier emits, in the order label_names is in.
+        ## Recorded because predict() has to invert this mapping; see
+        ## _class_values_to_label_ids.
+        self.classes = _classes_json_safe(classifier.model_best.classes_)
         self.preprocessor = preprocessor
         self.preprocessing = {
             "preprocessor": preprocessor.to_dict(),
@@ -588,6 +728,7 @@ class ClassifierPackage:
             "schema_version": _SCHEMA_VERSION,
             "roicat_version": roicat.__version__,
             "label_names": list(self.label_names),
+            "classes": list(self.classes),
             "latent_dim": self.latent_dim,
             "embedder": dict(self._spec_embedder),
             "embedder_identity": dict(self.embedder_identity),
@@ -629,8 +770,9 @@ class ClassifierPackage:
             FileNotFoundError: missing file.
             PackageIntegrityError: schema mismatch (including a packet written in
                 the version-1 layout), a SHA-256 mismatch on any member, a member
-                with no recorded SHA-256, or a latent dimension that disagrees with
-                the classifier's input.
+                with no recorded SHA-256, a recorded ``classes`` list that is empty,
+                duplicated, not ascending, or a different length from ``label_names``,
+                or a latent dimension that disagrees with the classifier's input.
             KeyError: missing required zip member.
         """
         path = Path(path)
@@ -674,6 +816,35 @@ class ClassifierPackage:
             _check_sha256(member_name, data, sha256_expected[member_name])
 
         label_names = list(metadata["label_names"])
+        classes = list(metadata["classes"])
+        if len(classes) != len(label_names):
+            raise PackageIntegrityError(
+                f"Packet has {len(classes)} classes but {len(label_names)} label_names. "
+                f"The two are the same list read two ways and must be the same length."
+            )
+        ## metadata.json is the one member with no SHA-256 (it holds the hashes), so
+        ## `classes` is freely editable after the fact. sklearn's classes_ is np.unique(y)
+        ## and is therefore non-empty, unique and ascending; predict now depends on all
+        ## three, since the ONNX probability columns come out in classes_ order and are
+        ## read as label_names order.
+        if len(classes) == 0:
+            raise PackageIntegrityError(
+                "Packet records no classes. A fitted classifier always has at least two, so "
+                "this packet's metadata does not describe its own classifier."
+            )
+        if len(set(classes)) != len(classes):
+            raise PackageIntegrityError(
+                f"Packet's classes {classes!r} contain duplicates. sklearn's classes_ is "
+                f"np.unique(y) and cannot, so this packet's metadata does not describe its own "
+                f"classifier; two class values would map onto one label_names position."
+            )
+        if classes != sorted(classes):
+            raise PackageIntegrityError(
+                f"Packet's classes {classes!r} are not ascending. sklearn's classes_ always is, "
+                f"and predict relies on it: the ONNX probability columns come out in that order "
+                f"and are read as label_names order. A permuted list mislabels every prediction "
+                f"without any other symptom."
+            )
         preprocessing = json.loads(bytes_preprocessing)
         preprocessor = Preprocessor_ROI_images.from_dict(config=preprocessing["preprocessor"])
 
@@ -684,28 +855,36 @@ class ClassifierPackage:
             spec=metadata["embedder"],
             device=device,
         )
-        onnx_model = ONNX_model_sklearnLogisticRegression(path_or_bytes=bytes_classifier)
-
-        ## The embedder/classifier pairing was verified by a forward pass at pack
-        ## time (see _check_latent_dim). Here we only confirm that the rebuilt
-        ## embedder still produces what the packet claims, and that the recorded
-        ## width agrees with the classifier's input.
-        latent_dim = metadata["latent_dim"]
-        dim_onnx = onnx_model.session.get_inputs()[0].shape[-1]
-        if isinstance(dim_onnx, int) and dim_onnx != latent_dim:
-            raise PackageIntegrityError(
-                f"latent_dim mismatch: metadata says {latent_dim}, but the ONNX classifier "
-                f"expects {dim_onnx} features. The packet's embedder and classifier were not "
-                f"built together."
-            )
+        ## _unpack_embedder registers the bundled module in sys.modules and unwinds
+        ## only its own failures. Everything below can still raise, so a failed load
+        ## would otherwise leave the module name behind for the life of the process.
         try:
-            _check_latent_dim(
-                module_embedder=module_embedder,
-                preprocessor=preprocessor,
-                n_features_classifier=latent_dim,
-            )
-        except (ValueError, RuntimeError) as e:
-            raise PackageIntegrityError(f"Rebuilt embedder does not match the packet: {e}") from e
+            onnx_model = ONNX_model_sklearnLogisticRegression(path_or_bytes=bytes_classifier)
+
+            ## The embedder/classifier pairing was verified by a forward pass at pack
+            ## time (see _check_latent_dim). Here we only confirm that the rebuilt
+            ## embedder still produces what the packet claims, and that the recorded
+            ## width agrees with the classifier's input.
+            latent_dim = metadata["latent_dim"]
+            dim_onnx = onnx_model.session.get_inputs()[0].shape[-1]
+            if isinstance(dim_onnx, int) and dim_onnx != latent_dim:
+                raise PackageIntegrityError(
+                    f"latent_dim mismatch: metadata says {latent_dim}, but the ONNX classifier "
+                    f"expects {dim_onnx} features. The packet's embedder and classifier were not "
+                    f"built together."
+                )
+            try:
+                _check_latent_dim(
+                    module_embedder=module_embedder,
+                    preprocessor=preprocessor,
+                    n_features_classifier=latent_dim,
+                )
+            except (ValueError, RuntimeError) as e:
+                raise PackageIntegrityError(f"Rebuilt embedder does not match the packet: {e}") from e
+        except Exception:
+            sys.modules.pop(module_name, None)
+            tmpdir.cleanup()
+            raise
 
         obj = object.__new__(cls)
         obj.classifier = None  # not reconstructed from ONNX; use _onnx_model directly
@@ -714,6 +893,7 @@ class ClassifierPackage:
         obj._spec_embedder = dict(metadata["embedder"])
         obj._filepath_model_py = None
         obj.label_names = label_names
+        obj.classes = classes
         obj.preprocessor = preprocessor
         obj.preprocessing = preprocessing
         obj.latent_dim = latent_dim
@@ -775,14 +955,16 @@ class ClassifierPackage:
         Returns:
             (Tuple[np.ndarray, np.ndarray]):
                 label_ids (np.ndarray):
-                    Predicted class indices into ``label_names``. Shape:
-                    *(n_rois,)*. dtype: ``int64``.
+                    Predicted class indices into ``label_names``, always in
+                    ``range(n_classes)`` regardless of the class values the
+                    classifier was fit on. Shape: *(n_rois,)*. dtype: ``int64``.
                 probs (np.ndarray):
-                    Class probabilities. Shape: *(n_rois, n_classes)*. dtype:
-                    ``float32``.
+                    Class probabilities, columns in ``label_names`` order. Shape:
+                    *(n_rois, n_classes)*. dtype: ``float32``.
 
         Raises:
-            ValueError: Bad ndim, height/width mismatch, or bad batch_size.
+            ValueError: Bad ndim, height/width mismatch, bad batch_size, or a
+                classifier output that is not one of the packet's classes.
         """
         if roi_images.ndim != 3:
             raise ValueError(f"roi_images must be 3-D (n_rois, height, width), got ndim={roi_images.ndim}.")
@@ -819,8 +1001,10 @@ class ClassifierPackage:
                     um_per_pixel=um_per_pixel,
                 )  # (n_chunk, n_channels_out, *img_size_out)
                 latents = self._module_embedder(images.to(dev)).cpu().numpy().astype(np.float32, copy=False)  # (n_chunk, latent_dim)
-                label_ids, probs = onnx_model(latents)
-                labels_chunks.append(np.asarray(label_ids, dtype=np.int64))
+                class_values, probs = onnx_model(latents)
+                ## ONNX returns class values, not positions. probs columns are already
+                ## in class order, and so already aligned to label_names.
+                labels_chunks.append(_class_values_to_label_ids(values=class_values, classes=self.classes))
                 probs_chunks.append(np.asarray(probs, dtype=np.float32))
                 del images, latents
         return np.concatenate(labels_chunks, axis=0), np.concatenate(probs_chunks, axis=0)

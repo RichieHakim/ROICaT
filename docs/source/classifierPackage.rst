@@ -16,8 +16,9 @@ Contents
 - **preprocessing:** Raw ROI image size, ``forward_pass_version``, and the
   ``um_per_pixel`` of the training data.
 - **label_names:** Class names corresponding to the classifier's output indices.
-- **metadata:** The network's identity (see below), a SHA-256 for every other
-  member, a schema version, and the ROICaT version that wrote the file.
+- **metadata:** The network's identity (see below), the classifier's class values
+  in ``label_names`` order, a SHA-256 for every other member, a schema version,
+  and the ROICaT version that wrote the file.
 
 The embedder's ``model.py`` travels with its weights, so packets keep loading
 after ROICaT's own network definitions change. File size is dominated by the
@@ -48,11 +49,10 @@ Every packet records the network it holds:
 loaded rather than what was requested. ``release`` is ``'unknown'`` for a network
 that is not one of ROICaT's published releases, which is not an error.
 
-This matters because a classifier is only valid with the network it was trained
-on, and the number of features alone does not identify a network: the tracking
-release emits 256 features at ``forward_pass_version='head'`` but 128 at
-``'latent'``, the same as the classification release. Recording the identity makes
-the network visible; checking the feature count cannot.
+A classifier is only valid with the network it was trained on, and the number of
+features alone does not identify a network: the tracking release emits 256
+features at ``forward_pass_version='head'`` but 128 at ``'latent'``, the same as
+the classification release.
 
 -------
 
@@ -87,6 +87,17 @@ when it is loaded.
 Only :class:`~roicat.ROInet.ROInet_embedder` can be packed. To deploy a network
 you trained yourself, publish it as a bundle (``model.py`` + ``params.json`` +
 weights) and load it through :class:`~roicat.ROInet.ROInet_embedder`.
+
+An embedder driven with ``generate_dataloader(transforms=...)`` cannot be packed.
+A custom chain replaces the packet's own preprocessing without being recorded
+anywhere, so packing raises instead of silently recording the wrong configuration.
+Configure preprocessing through
+:class:`~roicat.ROInet.Preprocessor_ROI_images` arguments instead.
+
+Recovering from the refusal takes three steps: re-run ``generate_dataloader()``
+without the argument, then ``generate_latents()``, then refit the classifier.
+Clearing the flag alone leaves the classifier fit on latents from the custom
+chain, and the packet then builds with the wrong preprocessor recorded.
 
 -------
 
@@ -155,6 +166,12 @@ On any machine and any dataset. See the `B3 notebook
        um_per_pixel=data.um_per_pixel[0],                   ## resolution of THESE images
    )
    labels = [packet.label_names[i] for i in label_ids]
+
+``label_ids`` are positions in ``label_names``, always in ``range(n_classes)``.
+They are not the class values the classifier was fit on, which need not be
+``0, 1, 2, ...`` — training data in which one class never appears gives
+``classes_ == [0, 2]``. The packet records the class values so ``predict`` can
+translate. ``probs`` columns are in the same order.
 
 ``um_per_pixel`` describes the data being classified and is required on every
 call; it does not have to match the training data's resolution.
