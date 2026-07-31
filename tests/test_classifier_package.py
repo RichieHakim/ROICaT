@@ -20,6 +20,7 @@ import json
 import os
 import subprocess
 import sys
+import warnings
 import zipfile
 from pathlib import Path
 
@@ -177,6 +178,7 @@ def _make_fitted_classifier(
             ``(0, 2)`` arise whenever a class is absent from the training data.
             ``_N_SAMPLES`` is split evenly, so a count that does not divide it
             (3 classes into 40) trains on the remainder-truncated rows.
+            The dtype is left to numpy, so string classes are usable here too.
     """
     import sklearn.linear_model
     rng = np.random.default_rng(seed=0)
@@ -184,18 +186,18 @@ def _make_fitted_classifier(
     ## input type from X and its ZipMap operator rejects tensor(double).
     X = rng.standard_normal((_N_SAMPLES, latent_dim)).astype(np.float32)
     n_per = _N_SAMPLES // len(classes)
-    y = np.array([c for c in classes for _ in range(n_per)], dtype=np.int64)
+    y = np.array([c for c in classes for _ in range(n_per)])
     X = X[: y.shape[0]]
     label_names = [f"class_{i}" for i in range(len(classes))]
 
     clf = Auto_LogisticRegression(
         X=X, y=y,
-        params_LogisticRegression={"C": 1.0, "penalty": "l2", "solver": "lbfgs", "max_iter": 200},
+        params_LogisticRegression={"C": 1.0, "l1_ratio": 0.0, "solver": "lbfgs", "max_iter": 200},
         label_names=list(label_names),
         verbose=False,
     )
     sklearn_lr = sklearn.linear_model.LogisticRegression(
-        C=1.0, penalty="l2", solver="lbfgs", max_iter=200,
+        C=1.0, l1_ratio=0.0, solver="lbfgs", max_iter=200,
         class_weight=clf.class_weight,
     )
     sklearn_lr.fit(X, y)
@@ -947,21 +949,31 @@ class TestClassOrdering:
         assert metadata["classes"] == [0, 2]
         assert ClassifierPackage.load(filepath).classes == [0, 2]
 
-    @pytest.mark.parametrize("classes", [(0, 1), (0, 2), (1, 2), (-1, 5), (0, 2, 5)])
+    @pytest.mark.parametrize(
+        "classes", [(0, 1), (0, 2), (1, 2), (-1, 5), (0, 2, 5), ("bad", "good", "ugly")],
+    )
     def test_predict_returns_positions_not_class_values(self, classes, tmp_path):
         """
         With classes (0, 2) the ONNX label output is 0 or 2, so the old cast made
         ``label_names[2]`` an IndexError. label_ids must stay in range(n_classes).
 
-        ``(0, 2, 5)`` is the only non-binary case. With two classes ``probs.argmax(1)``
-        has two outcomes and can only detect a column transposition, so the
-        cross-check below barely constrains the mapping; a middle class is where a
-        translation bug hides.
+        ``(0, 2, 5)`` is the only non-binary numeric case. With two classes
+        ``probs.argmax(1)`` has two outcomes and can only detect a column
+        transposition, so the cross-check below barely constrains the mapping; a
+        middle class is where a translation bug hides.
+
+        ``("bad", "good", "ugly")`` is the string case. skl2onnx exports a
+        ``tensor(string)`` label output rather than int64, and the dict lookup in
+        ``_class_values_to_label_ids`` only hits because onnxruntime materializes it
+        as Python ``str`` and not ``bytes`` — measured, and pinned here. ASCII labels
+        also keep ``np.unique``'s lexicographic order equal to the ascending order
+        ``load()`` checks for.
         """
         tag = "cB" + "_".join(str(c) for c in classes)
         pkg, filepath = _pkg_with_classes(classes=classes, tag=tag, tmp_path=tmp_path)
         pkg.save(filepath)
         loaded = ClassifierPackage.load(filepath)
+        assert loaded.classes == list(classes)
         label_ids, probs = loaded.predict(roi_images=_roi_images(), um_per_pixel=_UM_PER_PIXEL)
 
         assert label_ids.dtype == np.int64
@@ -1159,7 +1171,7 @@ class TestCustomTransforms:
 
 
 # ---------------------------------------------------------------------------
-# Tests — Auto_LogisticRegression label_names
+# Tests — Auto_LogisticRegression: label_names, default params, string labels
 # ---------------------------------------------------------------------------
 
 class TestAutoLR:
@@ -1202,6 +1214,68 @@ class TestAutoLR:
                 label_names=[0, 1],
                 verbose=False,
             )
+
+    def test_default_params_emit_no_sklearn_warnings(self):
+        """
+        The default ``params_LogisticRegression`` must not use anything scikit-learn
+        has deprecated. ``penalty`` is removed in 1.10 and ``l1_ratio=None`` becomes
+        an error there, so a surviving FutureWarning on the default path is a
+        countdown to a hard break, not cosmetic noise.
+
+        ``simplefilter("always")`` is required: Python's per-module
+        ``__warningregistry__`` deduplicates a FutureWarning after its first
+        emission, so a later test run would read as falsely clean. Warnings are
+        filtered to sklearn-originating ones so third-party noise cannot make this
+        flaky.
+        """
+        rng = np.random.default_rng(seed=7)
+        X = rng.standard_normal((30, 4)).astype(np.float32)
+        y = np.array([0] * 15 + [1] * 15, dtype=np.int64)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            ## params_LogisticRegression deliberately left at its default — that is the
+            ## thing under test. Only the convergence budget is shrunk.
+            clf = Auto_LogisticRegression(
+                X=X, y=y,
+                kwargs_convergence={"n_patience": 3, "tol_frac": 0.05, "max_trials": 4, "max_duration": 60},
+                verbose=False,
+            )
+            clf.fit()
+        offenders = [
+            f"{w.category.__name__}: {w.message}"
+            for w in caught
+            if "sklearn" in str(w.filename) and issubclass(w.category, (FutureWarning, UserWarning))
+        ]
+        assert offenders == [], "scikit-learn warned on the default params:\n" + "\n".join(offenders)
+
+    def test_string_y_fits(self):
+        """
+        Regression test for the ``sample_weight`` dtype fix in
+        ``Autotuner_regression.__init__``; the mechanism is documented there.
+
+        This has to call ``fit()`` — that is where the old dtype blew up, and
+        ``_make_fitted_classifier`` hand-fits its sklearn model rather than going
+        through ``fit()``, so the packet tests do not reach this path.
+        """
+        rng = np.random.default_rng(seed=3)
+        classes = ["bad", "good", "ugly"]
+        n_per = 20
+        X = rng.standard_normal((n_per * len(classes), 6)).astype(np.float32)
+        y = np.array([c for c in classes for _ in range(n_per)])
+        ## Offset one feature per class so the problem is separable and the fit is
+        ## not degenerate.
+        for ii, c in enumerate(classes):
+            X[y == c, ii] += 3.0
+
+        clf = Auto_LogisticRegression(
+            X=X, y=y,
+            kwargs_convergence={"n_patience": 5, "tol_frac": 0.05, "max_trials": 8, "max_duration": 60},
+            verbose=False,
+        )
+        assert np.asarray(clf.sample_weight).dtype == np.float64
+        assert clf.label_names == classes
+        model_best, _ = clf.fit()
+        assert model_best.classes_.tolist() == classes
 
 
 # ---------------------------------------------------------------------------

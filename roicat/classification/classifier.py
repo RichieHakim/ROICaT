@@ -89,8 +89,8 @@ class Autotuner_regression(util.ROICaT_Module):
         .. code-block:: python
     
             params = {
-                'C':             {'type': 'real',        'kwargs': {'log': True, 'low': 1e-4, 'high': 1e4}},
-                'penalty':       {'type': 'categorical', 'kwargs': {'choices': ['l1', 'l2']}},
+                'C':      {'type': 'real',        'kwargs': {'log': True, 'low': 1e-4, 'high': 1e4}},
+                'solver': {'type': 'categorical', 'kwargs': {'choices': ['lbfgs', 'newton-cg']}},
             }
     """
     def __init__(
@@ -122,7 +122,10 @@ class Autotuner_regression(util.ROICaT_Module):
         self.X = X  ## shape (n_samples, n_features)
         self.y = y  ## shape (n_samples,)
         self.model_class = model_class  ## sklearn estimator class
-        self.sample_weight = sample_weight if sample_weight is not None else np.ones_like(self.y)
+        ## Uniform weights must be float regardless of y's dtype. np.ones_like(y) would
+        ## inherit it: int64 for integer labels, and the character '1' for string labels,
+        ## which dies deep inside log_loss -> np.average with an unreadable TypeError.
+        self.sample_weight = sample_weight if sample_weight is not None else np.ones(len(self.y), dtype=np.float64)
         self.cv = cv  ## sklearn cross-validator object with split method
 
         ## Set optuna variables
@@ -417,7 +420,11 @@ class Auto_LogisticRegression(Autotuner_regression):
                 * **not** a ``list``: The parameter is fixed to the given value. \n
             See `LogisticRegression
             <https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.LogisticRegression.html>`_
-            for a full list of arguments.
+            for a full list of arguments. Note that ``'l1_ratio'`` and
+            ``'solver'`` have to be compatible: ``'lbfgs'`` and ``'newton-cg'``
+            accept only ``l1_ratio=0.0`` (ridge), and any intermediate value
+            requires ``'saga'``. So a swept ``'l1_ratio'`` means
+            ``'solver': 'saga'``.
         n_startup (int):
             Number of startup trials. (Default is *15*)
         kwargs_convergence (Dict[str, Union[int, float]]):
@@ -466,20 +473,23 @@ class Auto_LogisticRegression(Autotuner_regression):
                 y, 
                 params_LogisticRegression={
                     'C': 1e-14,
-                    'penalty': 'l2',
+                    'l1_ratio': 0.0,
                     'solver': 'lbfgs',
                 },
             )
 
-            ## Initialize with TUNING 'C', 'penalty', and 'l1_ratio'. 'solver' is fixed.
+            ## Initialize with TUNING 'C' and 'l1_ratio'. 'solver' is fixed.
+            ## 'l1_ratio' sweeps the full ridge (0.0) to lasso (1.0) range, so
+            ## 'solver' must be 'saga' -- the only solver that accepts elastic net.
+            ## 'saga' also needs more than sklearn's default 100 iterations.
             autoclassifier = Auto_LogisticRegression(
                 X,
                 y,
                 params_LogisticRegression={
                     'C': [1e-14, 1e3],
-                    'penalty': ['l1', 'l2', 'elasticnet'],
                     'l1_ratio': [0.0, 1.0],
-                    'solver': 'lbfgs',
+                    'solver': 'saga',
+                    'max_iter': 1000,
                 },
             )
     """
@@ -490,13 +500,11 @@ class Auto_LogisticRegression(Autotuner_regression):
         y: np.ndarray,
         params_LogisticRegression: Dict = {
             'C': [1e-14, 1e3],
-            'penalty': 'l2',
             'fit_intercept': True,
             'solver': 'lbfgs',
             'max_iter': 1000,
             'tol': 0.0001,
-            'n_jobs': None,
-            'l1_ratio': None,
+            'l1_ratio': 0.0,
             'warm_start': False,
         },
         n_startup: int = 15,
