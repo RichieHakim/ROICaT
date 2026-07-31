@@ -77,8 +77,10 @@ class Autotuner_regression(util.ROICaT_Module):
                 * ``'max_trials'`` (int): The maximum number of trials to run.
                 * ``'max_duration'`` (int): The maximum duration of the
                   optimization in seconds. \n
-        sample_weight (Optional[np.ndarray]):
-            Weights for the samples, equal to ones_like(y) if None.
+        sample_weight (Optional[Union[List[float], np.ndarray]]):
+            Per-sample weights, one entry per row of ``X``. Used by ``fn_loss``
+            on each cross-validation split. Uniform if ``None``.
+            Shape: *(n_samples,)*
         catch_convergence_warnings (bool):
             If ``True``, ignore ConvergenceWarning during model fitting.
         verbose (bool):
@@ -109,12 +111,19 @@ class Autotuner_regression(util.ROICaT_Module):
             'max_trials': 350,
             'max_duration': 60*10,
         }, 
-        sample_weight: Optional[Any] = None, 
+        sample_weight: Optional[Union[List[float], np.ndarray]] = None,
         catch_convergence_warnings: bool = True,
         verbose=True,
     ):
         """
         Initializes the AutotunerRegression with the given model class, parameters, data, and settings.
+
+        Raises:
+            TypeError:
+                If ``sample_weight`` is a class-weight spec (a ``str`` like
+                ``'balanced'``, or a ``dict``) rather than a per-sample array.
+            ValueError:
+                If ``sample_weight`` does not have one entry per sample in ``y``.
         """
         super().__init__()
         
@@ -122,10 +131,28 @@ class Autotuner_regression(util.ROICaT_Module):
         self.X = X  ## shape (n_samples, n_features)
         self.y = y  ## shape (n_samples,)
         self.model_class = model_class  ## sklearn estimator class
+        ## Sample weights: one weight per row of X, indexed by the CV split in _objective.
         ## Uniform weights must be float regardless of y's dtype. np.ones_like(y) would
         ## inherit it: int64 for integer labels, and the character '1' for string labels,
         ## which dies deep inside log_loss -> np.average with an unreadable TypeError.
-        self.sample_weight = sample_weight if sample_weight is not None else np.ones(len(self.y), dtype=np.float64)
+        if sample_weight is None:
+            self.sample_weight = np.ones(len(self.y), dtype=np.float64)  ## shape (n_samples,)
+        elif isinstance(sample_weight, (str, dict)):
+            ## A class-weight spec ('balanced', or {class: weight}) is a different argument.
+            ## Without this, np.asarray('balanced', dtype=np.float64) raises a numpy message
+            ## that names neither the argument nor the fix.
+            raise TypeError(
+                f"sample_weight must be a per-sample array of length {len(self.y)}, not a "
+                f"class-weight spec ({type(sample_weight).__name__} {sample_weight!r}). "
+                f"For class-based weighting, use the estimator's class_weight argument "
+                f"instead; Auto_LogisticRegression's already defaults to 'balanced'."
+            )
+        else:
+            self.sample_weight = np.asarray(sample_weight, dtype=np.float64).reshape(-1)  ## shape (n_samples,)
+            if len(self.sample_weight) != len(self.y):
+                raise ValueError(
+                    f"sample_weight has length {len(self.sample_weight)}, but y has length {len(self.y)}."
+                )
         self.cv = cv  ## sklearn cross-validator object with split method
 
         ## Set optuna variables
@@ -450,10 +477,13 @@ class Auto_LogisticRegression(Autotuner_regression):
             Weights associated with classes in the form of a dictionary or
             string. If given "balanced", class weights will be calculated.
             (Default is "balanced")
-        sample_weight (Optional[List[float]]):
-            Sample weights. See `LogisticRegression
-            <https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.LogisticRegression.html>`_
-            for more details.
+        sample_weight (Optional[Union[List[float], np.ndarray]]):
+            Per-sample weights, one entry per row of ``X``. These weight the
+            cross-validation loss that optuna minimizes and the metrics from
+            ``evaluate_model``; they are **not** passed to
+            ``LogisticRegression.fit``. Uniform if ``None``. For weighting by
+            class rather than by sample, use ``class_weight`` instead.
+            Shape: *(n_samples,)*
         cv (Optional[sklearn.model_selection._split.BaseCrossValidator]):
             A Scikit-Learn cross-validator class.
             If not ``None``, then must have: \n
@@ -518,7 +548,7 @@ class Auto_LogisticRegression(Autotuner_regression):
         penalty_testTrainRatio: float = 1.0,
         test_size: float = 0.3,
         class_weight: Optional[Union[Dict[str, float], str]] = 'balanced',
-        sample_weight: Optional[List[float]] = None,
+        sample_weight: Optional[Union[List[float], np.ndarray]] = None,
         cv: Optional[sklearn.model_selection._split.BaseCrossValidator] = None,
         label_names: Optional[List[str]] = None,
         verbose: bool = True,
@@ -557,10 +587,6 @@ class Auto_LogisticRegression(Autotuner_regression):
             classes=self.classes,
         )
         self.class_weight = {c: cw for c, cw in zip(self.classes, class_weight)}
-        self.sample_weight = sklearn.utils.class_weight.compute_sample_weight(
-            class_weight=sample_weight,
-            y=y,
-        )
 
         ## Prepare the loss function
         self.fn_loss = LossFunction_CrossEntropy_CV(
@@ -580,16 +606,20 @@ class Auto_LogisticRegression(Autotuner_regression):
         ## Prepare dynamic kwargs for optuna
         params_OptunaSuggest = {key: val for key, val in params_LogisticRegression.items() if isinstance(val, list)==True}
         ### Make a mapping from sklearn LogisticRegression kwargs to optuna suggest types and kwargs
+        ### Booleans are 'categorical': [True, False] becomes 'choices'. They were 'real'
+        ### with a {'bool': True} kwarg that suggest_float has no such argument for.
+        ### Note that 'warm_start' has no effect either way -- every estimator here is built
+        ### fresh and fit exactly once (in _objective, and again on the full data in fit).
         params = {
             'C':             {'type': 'real',        'kwargs': {'log': True} },
             'penalty':       {'type': 'categorical', 'kwargs': {}            },
-            'fit_intercept': {'type': 'real',        'kwargs': {'bool': True}},
+            'fit_intercept': {'type': 'categorical', 'kwargs': {}            },
             'solver':        {'type': 'categorical', 'kwargs': {}            },
             'max_iter':      {'type': 'int',         'kwargs': {'log': True} },
             'tol':           {'type': 'real',        'kwargs': {'log': True} },
             'n_jobs':        {'type': 'int',         'kwargs': {'log': True} },
             'l1_ratio':      {'type': 'real',        'kwargs': {'log': False}},
-            'warm_start':    {'type': 'real',        'kwargs': {'bool': True}},
+            'warm_start':    {'type': 'categorical', 'kwargs': {}            },
         }
         ### Prune mapping to only include params in params_OptunaSuggest
         params = {key: val for key, val in params.items() if key in params_OptunaSuggest.keys()}
@@ -622,6 +652,7 @@ class Auto_LogisticRegression(Autotuner_regression):
             n_jobs_optuna=n_jobs_optuna,
             cv=self.cv,
             fn_loss=self.fn_loss,
+            sample_weight=sample_weight,
             catch_convergence_warnings=True,
             verbose=verbose,
         )

@@ -1277,6 +1277,90 @@ class TestAutoLR:
         model_best, _ = clf.fit()
         assert model_best.classes_.tolist() == classes
 
+    def test_sample_weight_round_trips(self):
+        """
+        ``Auto_LogisticRegression`` used to compute ``self.sample_weight`` and then let
+        ``super().__init__()`` overwrite it with uniform ones, so a caller's weights
+        silently never reached the optuna loss or ``evaluate_model``.
+
+        A Python ``list`` is passed on purpose. ``_objective`` does
+        ``self.sample_weight[idx_train]`` with an integer array, which a bare list cannot
+        do, so calling ``fit()`` pins storage, float64 conversion, and indexability at
+        once. The weights are non-uniform because uniform ones are indistinguishable
+        from the bug.
+        """
+        rng = np.random.default_rng(seed=11)
+        n_samples = 40
+        X = rng.standard_normal((n_samples, 5)).astype(np.float32)
+        y = np.array([0] * (n_samples // 2) + [1] * (n_samples // 2), dtype=np.int64)
+        sample_weight = [0.25 if ii % 2 == 0 else 4.0 for ii in range(n_samples)]
+
+        clf = Auto_LogisticRegression(
+            X=X, y=y,
+            sample_weight=sample_weight,
+            kwargs_convergence={"n_patience": 3, "tol_frac": 0.05, "max_trials": 4, "max_duration": 60},
+            verbose=False,
+        )
+        assert isinstance(clf.sample_weight, np.ndarray)
+        assert clf.sample_weight.dtype == np.float64
+        assert np.array_equal(clf.sample_weight, np.asarray(sample_weight))
+        ## fit() is where _objective indexes sample_weight with the CV split's integer
+        ## array, and where the weights reach the loss. A stored list would raise there.
+        clf.fit()
+        assert len(clf.loss_running) > 0
+
+    @pytest.mark.parametrize(
+        "sample_weight, error, match",
+        [
+            (np.ones(19, dtype=np.float64), ValueError, "sample_weight"),
+            ("balanced", TypeError, "class_weight"),
+            ({0: 1.0, 1: 2.0}, TypeError, "class_weight"),
+        ],
+    )
+    def test_sample_weight_bad_input_raises(self, sample_weight, error, match):
+        """
+        A class-weight spec (``'balanced'`` or a dict) is a different argument, and the
+        error has to name it — otherwise ``np.asarray(..., dtype=np.float64)`` raises a
+        numpy message that mentions neither the argument nor the fix.
+        """
+        rng = np.random.default_rng(seed=12)
+        X = rng.standard_normal((20, 3)).astype(np.float32)
+        y = np.array([0, 1] * 10, dtype=np.int64)
+        with pytest.raises(error, match=match):
+            Auto_LogisticRegression(
+                X=X, y=y,
+                sample_weight=sample_weight,
+                verbose=False,
+            )
+
+    def test_tuning_fit_intercept_completes(self):
+        """
+        ``'fit_intercept'`` was typed ``'real'`` with a ``{'bool': True}`` kwarg, which
+        ``trial.suggest_float`` rejects, so tuning it died on trial 0.
+
+        The default ``params_LogisticRegression`` is read off the signature and only
+        ``'fit_intercept'`` is changed: overriding the dict wholesale would silently drop
+        ROICaT's ``'max_iter': 1000`` and ``'l1_ratio': 0.0`` back to sklearn's
+        deprecated defaults, which is a different failure.
+        """
+        import inspect
+
+        params = dict(inspect.signature(Auto_LogisticRegression).parameters["params_LogisticRegression"].default)
+        params["fit_intercept"] = [True, False]
+
+        rng = np.random.default_rng(seed=14)
+        X = rng.standard_normal((30, 4)).astype(np.float32)
+        y = np.array([0] * 15 + [1] * 15, dtype=np.int64)
+        clf = Auto_LogisticRegression(
+            X=X, y=y,
+            params_LogisticRegression=params,
+            kwargs_convergence={"n_patience": 3, "tol_frac": 0.05, "max_trials": 6, "max_duration": 60},
+            verbose=False,
+        )
+        model_best, params_best = clf.fit()
+        assert isinstance(params_best["fit_intercept"], bool)
+        assert model_best.fit_intercept == params_best["fit_intercept"]
+
 
 # ---------------------------------------------------------------------------
 # Tests — namespace isolation across multiple packets in one process
