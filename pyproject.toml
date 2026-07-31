@@ -13,23 +13,38 @@ requires-python = ">=3.11, <3.13"
 authors = [{name = "Richard Hakim"}]
 keywords = ["neuroscience", "neuroimaging", "machine learning", "deep learning"]
 
+## Two parallel families of extras, plus one for development.
+##
+##   core / classification / tracking / all
+##       Exact versions. What the docs, the notebooks and CI install, and what
+##       anyone reproducing published results should use.
+##
+##   core_latest / classification_latest / tracking_latest / all_latest
+##       Same packages, no version constraints. For packages that depend on
+##       ROICaT: a pinned dependency propagates its pins to everything
+##       downstream, which is usually not resolvable alongside the downstream
+##       package's own requirements.
+##
+##   dev
+##       Testing and notebook tooling. Not needed to use the library.
+##
+## tests/test_pyproject_extras.py asserts the two families name the same
+## packages, so they cannot drift apart.
 [project.optional-dependencies]
 core = [
-    "jupyter==1.1.1",
     "matplotlib==3.11.1",
     "mat73==0.65",
     "natsort==8.4.0",
     "numpy==2.4.6",
     "optuna==4.9.0",
+    "pandas==3.0.3",
     "Pillow==12.3.0",
-    "pytest==9.1.1",
     "PyYAML==6.0.3",
     "scikit-learn==1.9.0",
     "scipy==1.17.1",
     "seaborn==0.13.2",
     "sparse==0.19.0",
     "tqdm==4.70.0",
-    "xxhash==3.8.1",
     "torch==2.13.0",
     "torchvision==0.28.0",
     "psutil==7.2.2",
@@ -61,24 +76,22 @@ all = [
     "roicat[core,classification,tracking]",
     "onnx2torch==1.5.15",
     "scikit-image==0.26.0",
-    "selenium==4.46.0",
 ]
-all_latest = [
-    "jupyter",
+
+core_latest = [
     "matplotlib",
     "mat73",
     "natsort",
     "numpy",
     "optuna",
+    "pandas",
     "Pillow",
-    "pytest",
     "PyYAML",
     "scikit-learn",
     "scipy",
     "seaborn",
     "sparse",
     "tqdm",
-    "xxhash",
     "torch",
     "torchvision",
     "psutil",
@@ -87,21 +100,47 @@ all_latest = [
     "onnx",
     "onnxruntime",
     "richfile",
+    "sparse_convolution",
+]
+classification_latest = [
+    "roicat[core_latest]",
     "umap-learn",
     "bokeh",
     "holoviews[recommended]",
     "jupyter-bokeh",
+]
+tracking_latest = [
+    "roicat[core_latest]",
     "opencv-contrib-python-headless",
-    "fast-hdbscan==0.3.2",
+    "fast-hdbscan",
     "kymatio",
     "kornia",
     "romatch-roicat[fused-local-corr]; sys_platform == 'linux'",
     "romatch-roicat; sys_platform != 'linux'",
+    "roiextractors",
+]
+all_latest = [
+    "roicat[core_latest,classification_latest,tracking_latest]",
     "onnx2torch",
     "scikit-image",
+]
+
+## Running the test suite and the notebooks. `pytest` is here rather than in
+## `core` so that a package depending on ROICaT does not inherit a pinned test
+## runner it must then match.
+dev = [
+    "roicat[all]",
+    "jupyter==1.1.1",
+    "pytest==9.1.1",
+    "selenium==4.46.0",
+    "xxhash==3.8.1",
+]
+dev_latest = [
+    "roicat[all_latest]",
+    "jupyter",
+    "pytest",
     "selenium",
-    "roiextractors==0.9.0",
-    "sparse_convolution",
+    "xxhash",
 ]
 
 [project.scripts]

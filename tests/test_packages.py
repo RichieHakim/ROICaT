@@ -13,6 +13,7 @@ PACKAGES = [
     'onnx',
     'onnxruntime',
     'optuna',
+    'pandas',
     'psutil',
     'pytest',
     'scipy',
@@ -29,7 +30,7 @@ PACKAGES = [
     'holoviews',
     'jupyter_bokeh',
     'umap',
-    'hdbscan',
+    'fast_hdbscan',
     'kymatio',
 ]
 
@@ -45,7 +46,7 @@ def test_internal_package_tests():
 
     ## List of packages to test
     packages = [
-        'hdbscan',
+        'fast_hdbscan',
         'umap',
         'optuna',
         'cv2',
