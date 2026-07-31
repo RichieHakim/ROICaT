@@ -1,4 +1,4 @@
-__version__ = '1.7.5'
+__version__ = '1.7.6'
 
 __all__ = [
     'classification',
@@ -16,3 +16,4 @@ for pkg in __all__:
     exec('from . import ' + pkg)
 
 from .__main__ import run_pipeline
+from .classification.package import ClassifierPackage, PackageIntegrityError

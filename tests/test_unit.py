@@ -2079,6 +2079,176 @@ class Test_roiextractors:
 
 
 ######################################################################################################################################
+###################################################### CLUSTER QUALITY METRICS #######################################################
+######################################################################################################################################
+
+
+class Test_cluster_quality_metrics:
+    """Tests for the sparse edge-reduction implementation."""
+
+    @staticmethod
+    def _legacy_metrics(sim, labels):
+        """Compute the direct cluster-pair reference implementation."""
+        labels_unique, cs_mean, cs_max, cs_min = helpers.compute_cluster_similarity_matrices(
+            s=sim,
+            l=labels,
+            verbose=False,
+        )
+        inter_max = (cs_max * (1 - np.eye(cs_max.shape[0]))).max(axis=0)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            silhouette = (
+                (cs_mean.diagonal() - inter_max)
+                / np.maximum(cs_mean.diagonal(), inter_max)
+            )
+        return (
+            labels_unique,
+            cs_mean.diagonal(),
+            cs_min.diagonal(),
+            cs_max.diagonal(),
+            silhouette,
+        )
+
+    @pytest.mark.parametrize('use_sparse', [False, True])
+    @pytest.mark.parametrize('batch_size,max_edges', [
+        (1, 1),
+        (2, 5),
+        (100, 10_000),
+    ])
+    def test_batched_accumulation_matches_direct_implementation(
+        self,
+        use_sparse,
+        batch_size,
+        max_edges,
+    ):
+        """Every batching mode must preserve the direct metric calculation."""
+        from roicat.tracking.clustering import cluster_quality_metrics
+
+        rng = np.random.default_rng(12)
+        labels = np.array([10, 10, 4, 4, 4, -1, -1, -1])
+        sim = rng.uniform(0, 1, size=(len(labels), len(labels))).astype(np.float32)
+        sim = (sim + sim.T) / 2
+        sim[sim < 0.35] = 0
+        np.fill_diagonal(sim, 0)
+        if use_sparse:
+            sim = scipy.sparse.csr_array(sim)
+
+        expected = self._legacy_metrics(sim=sim, labels=labels)
+        actual = cluster_quality_metrics(
+            sim=sim,
+            labels=labels,
+            batch_size=batch_size,
+            max_edges_per_batch=max_edges,
+        )
+
+        for expected_array, actual_array in zip(expected, actual):
+            np.testing.assert_allclose(
+                actual_array,
+                expected_array,
+                atol=1e-7,
+                equal_nan=True,
+            )
+
+    def test_asymmetric_inter_cluster_max_uses_outgoing_edges(self):
+        """Preserve the legacy axis convention for asymmetric matrices."""
+        from roicat.tracking.clustering import cluster_quality_metrics
+
+        labels = np.array([0, 0, 1, 1])
+        sim = scipy.sparse.csr_array(np.array([
+            [0.0, 0.8, 0.9, 0.0],
+            [0.8, 0.0, 0.0, 0.0],
+            [0.2, 0.0, 0.0, 0.8],
+            [0.0, 0.0, 0.8, 0.0],
+        ], dtype=np.float32))
+
+        _, _, _, _, silhouette = cluster_quality_metrics(
+            sim=sim,
+            labels=labels,
+        )
+
+        np.testing.assert_allclose(
+            silhouette,
+            np.array([-1 / 9, 0.75]),
+            atol=1e-7,
+        )
+
+    def test_handles_logical_shape_larger_than_intp(self):
+        """Large label/sample counts must not create a four-dimensional COO."""
+        from roicat.tracking.clustering import cluster_quality_metrics
+
+        n_samples = 100_000
+        n_clusters = 31_000
+        labels = np.arange(n_samples) % n_clusters
+        sim = scipy.sparse.eye(n_samples, format='csr', dtype=np.float32)
+        logical_size = n_clusters**2 * n_samples**2
+        assert logical_size > np.iinfo(np.intp).max
+
+        metrics = cluster_quality_metrics(sim=sim, labels=labels)
+
+        assert all(metric.shape == (n_clusters,) for metric in metrics)
+
+    def test_compute_quality_metrics_end_to_end(self):
+        """The public method should assemble both sparse metric kernels."""
+        from roicat.tracking.clustering import Clusterer
+
+        labels = np.array([0, 0, 1, 1])
+        sim = scipy.sparse.csr_array(np.array([
+            [0.0, 0.8, 0.2, 0.0],
+            [0.8, 0.0, 0.0, 0.2],
+            [0.2, 0.0, 0.0, 0.7],
+            [0.0, 0.2, 0.7, 0.0],
+        ], dtype=np.float32))
+        dist = sim.copy()
+        dist.data = 1.0 - dist.data
+        clusterer = object.__new__(Clusterer)
+
+        quality_metrics = clusterer.compute_quality_metrics(
+            sim_mat=sim,
+            dist_mat=dist,
+            labels=labels,
+        )
+
+        assert quality_metrics['cluster_labels_unique'] == [0.0, 1.0]
+        assert len(quality_metrics['cluster_silhouette']) == 2
+        assert len(quality_metrics['sample_silhouette']) == len(labels)
+
+    def test_cluster_only_numpy_output_does_not_require_distances(self):
+        """Large-dataset mode should skip all per-sample allocations."""
+        from roicat.tracking.clustering import Clusterer
+
+        labels = np.array([-1, -1, 0, 0, 1, 1], dtype=np.int32)
+        sim = scipy.sparse.eye(len(labels), format='csr', dtype=np.float32)
+        clusterer = object.__new__(Clusterer)
+
+        quality_metrics = clusterer.compute_quality_metrics(
+            sim_mat=sim,
+            labels=labels,
+            include_sample_metrics=False,
+            return_as_numpy=True,
+            cluster_batch_size=2,
+            max_edges_per_batch=2,
+        )
+
+        assert isinstance(quality_metrics, dict)
+        assert isinstance(quality_metrics['cluster_intra_means'], np.ndarray)
+        assert quality_metrics['sample_silhouette'] is None
+        assert quality_metrics['sample_probabilities'] is None
+        assert quality_metrics['hdbscan'] is None
+
+    def test_contiguous_label_encoding_uses_int32_fast_path(self):
+        """Squeezed ROICaT labels should avoid np.unique's int64 inverse."""
+        from roicat.tracking.clustering import _encode_cluster_labels
+
+        labels = np.array([-1, 0, 1, -1, 1], dtype=np.int64)
+
+        unique, inverse, counts = _encode_cluster_labels(labels=labels)
+
+        np.testing.assert_array_equal(unique, np.array([-1, 0, 1]))
+        np.testing.assert_array_equal(inverse, np.array([0, 1, 2, 0, 2]))
+        np.testing.assert_array_equal(counts, np.array([2, 1, 2]))
+        assert inverse.dtype == np.int32
+
+
+######################################################################################################################################
 ##################################################### SILHOUETTE_SAMPLES_SPARSE ######################################################
 ######################################################################################################################################
 
@@ -2110,8 +2280,17 @@ class Test_silhouette_samples_sparse:
         d_csr = scipy.sparse.csr_array(D_sparse_dense)
         return d_csr, D_filled, labels, fill
 
-    def test_matches_sklearn_dense_reference(self):
-        """Sparse silhouette should match sklearn on the densified twin."""
+    @pytest.mark.parametrize('batch_size,max_edges', [
+        (1, 1),
+        (11, 10),
+        (1_000, 1_000_000),
+    ])
+    def test_batched_accumulation_matches_dense_reference(
+        self,
+        batch_size,
+        max_edges,
+    ):
+        """Every batching mode must match the direct dense implementation."""
         import sklearn.metrics
 
         d_csr, D_filled, labels, fill = self._make_sparse_case()
@@ -2119,18 +2298,13 @@ class Test_silhouette_samples_sparse:
             D_filled, labels, metric='precomputed',
         )
         sil_ours = helpers.silhouette_samples_sparse(
-            d_sparse=d_csr, labels=labels, fill_value=fill,
+            d_sparse=d_csr,
+            labels=labels,
+            fill_value=fill,
+            batch_size=batch_size,
+            max_edges_per_batch=max_edges,
         )
         np.testing.assert_allclose(sil_ours, sil_ref, atol=1e-5)
-
-    def test_batched_matches_unbatched(self):
-        """Batching should not change the result."""
-        d_csr, _, labels, fill = self._make_sparse_case()
-        sil_full = helpers.silhouette_samples_sparse(d_csr, labels, fill)
-        sil_batched = helpers.silhouette_samples_sparse(
-            d_csr, labels, fill, batch_size=11,
-        )
-        np.testing.assert_allclose(sil_batched, sil_full, atol=1e-6)
 
     def test_singleton_cluster_returns_zero(self):
         """A sample alone in its cluster should get s=0 by convention."""
@@ -2208,11 +2382,7 @@ class Test_silhouette_samples_sparse:
             D_filled, labels, metric='precomputed',
         )
         sil_ours = helpers.silhouette_samples_sparse(d_with_diag, labels, fill)
-        ## Tolerance bumped slightly: the implementation's own-cluster
-        ## missing-count adjustment is exact when the diagonal is absent
-        ## and off by 1 in the worst case when it's stored as 0 — a
-        ## negligible bias for clusters of meaningful size.
-        np.testing.assert_allclose(sil_ours, sil_ref, atol=1e-2)
+        np.testing.assert_allclose(sil_ours, sil_ref, atol=1e-5)
 
     def test_midscale_parity_with_sklearn(self):
         """Parity at a scale closer to typical ROICaT use (n=2K, K=80)
@@ -2246,6 +2416,51 @@ class Test_silhouette_samples_sparse:
         )
         sil_ours = helpers.silhouette_samples_sparse(d_csr, labels, fill)
         np.testing.assert_allclose(sil_ours, sil_ref, atol=1e-5)
+
+    def test_fully_observed_clusters_are_not_capped_by_fill_value(self):
+        """Fill is irrelevant when every inter-cluster distance is stored."""
+        import sklearn.metrics
+
+        labels = np.array([0, 0, 1, 1])
+        distances = np.array([
+            [0.0, 0.7, 0.8, 0.9],
+            [0.7, 0.0, 0.9, 0.8],
+            [0.8, 0.9, 0.0, 0.6],
+            [0.9, 0.8, 0.6, 0.0],
+        ], dtype=np.float32)
+        d_csr = scipy.sparse.csr_array(distances)
+
+        expected = sklearn.metrics.silhouette_samples(
+            distances,
+            labels,
+            metric='precomputed',
+        )
+        actual = helpers.silhouette_samples_sparse(
+            d_sparse=d_csr,
+            labels=labels,
+            fill_value=0.1,
+        )
+
+        np.testing.assert_allclose(actual, expected, atol=1e-6)
+
+    def test_large_cluster_count_uses_sparse_intermediates(self):
+        """Large sample/cluster products should remain inexpensive when sparse."""
+        n_samples = 100_000
+        n_clusters = 31_000
+        labels = np.arange(n_samples) % n_clusters
+        distances = scipy.sparse.csr_array(
+            (n_samples, n_samples),
+            dtype=np.float32,
+        )
+        assert n_samples * n_clusters > 2**31
+
+        silhouette = helpers.silhouette_samples_sparse(
+            d_sparse=distances,
+            labels=labels,
+            fill_value=1.0,
+        )
+
+        np.testing.assert_array_equal(silhouette, np.zeros(n_samples))
 
 
 ######################################################################################################################################
@@ -2353,3 +2568,255 @@ class Test_image_alignment_checker_batching:
         ims = self._make_ims(3, (64, 64), seed=10)
         with pytest.raises(AssertionError):
             iac.score_alignment(ims, batch_size=0, verbose=False)
+
+
+######################################################################################################################################
+########################################################## ROInet ####################################################################
+######################################################################################################################################
+
+
+class _ScaleDynamicRange_original(torch.nn.Module):
+    """
+    Frozen copy of the pre-consolidation ScaleDynamicRange, which reduced over
+    all dims. Used as a reference to prove the per-sample path is unchanged.
+    """
+    def __init__(self, scaler_bounds=(0, 1), epsilon=1e-9):
+        super().__init__()
+        self.range = scaler_bounds[1] - scaler_bounds[0]
+        self.epsilon = epsilon
+
+    def forward(self, tensor):
+        tensor_minSub = tensor - tensor.min()
+        return tensor_minSub * (self.range / (tensor_minSub.max() + self.epsilon))
+
+
+class Test_ScaleDynamicRange:
+    """
+    ScaleDynamicRange reduces over the trailing three dims so that one instance
+    serves both the per-sample DataLoader path and the batched preprocessing
+    path. The per-sample results must not have changed.
+    """
+
+    @staticmethod
+    def _scale_dynamic_range_original(tensor, scaler_bounds=(0, 1), epsilon=1e-9):
+        """The pre-consolidation implementation, which reduced over all dims."""
+        range_ = scaler_bounds[1] - scaler_bounds[0]
+        tensor_minSub = tensor - tensor.min()
+        return tensor_minSub * (range_ / (tensor_minSub.max() + epsilon))
+
+    def test_single_image_bitwise_unchanged(self):
+        """A (n_channels, height, width) input must give bit-identical results."""
+        from roicat.ROInet import ScaleDynamicRange
+        rng = np.random.default_rng(seed=0)
+        for shape in [(1, 36, 36), (1, 12, 20), (3, 8, 8)]:
+            x = torch.as_tensor(rng.random(shape) * 700 - 300, dtype=torch.float32)
+            assert torch.equal(ScaleDynamicRange()(x), self._scale_dynamic_range_original(x)), \
+                f"shape {shape} differs from the original implementation"
+
+    def test_batched_matches_per_image(self):
+        """Each image in a batch is scaled by its own min/max."""
+        from roicat.ROInet import ScaleDynamicRange
+        rng = np.random.default_rng(seed=1)
+        ## Deliberately different dynamic ranges per image
+        x = torch.as_tensor(
+            rng.random((5, 1, 16, 16)) * rng.integers(1, 1000, size=(5, 1, 1, 1)),
+            dtype=torch.float32,
+        )
+        sdr = ScaleDynamicRange()
+        expected = torch.stack([sdr(im) for im in x], dim=0)
+        assert torch.equal(sdr(x), expected)
+
+    def test_output_range(self):
+        from roicat.ROInet import ScaleDynamicRange
+        rng = np.random.default_rng(seed=2)
+        x = torch.as_tensor(rng.random((4, 1, 10, 10)) * 50 + 10, dtype=torch.float32)
+        out = ScaleDynamicRange()(x)
+        np.testing.assert_allclose(out.amin(dim=(-3, -2, -1)).numpy(), np.zeros(4), atol=1e-6)
+        np.testing.assert_allclose(out.amax(dim=(-3, -2, -1)).numpy(), np.ones(4), atol=1e-6)
+
+    def test_jit_scriptable(self):
+        """jit_script_transforms=True is a supported option, so the module must script."""
+        from roicat.ROInet import ScaleDynamicRange
+        scripted = torch.jit.script(ScaleDynamicRange())
+        x = torch.as_tensor(np.random.default_rng(3).random((2, 1, 9, 9)), dtype=torch.float32)
+        assert torch.equal(scripted(x), ScaleDynamicRange()(x))
+
+
+class Test_Preprocessor_ROI_images:
+    """
+    Preprocessor_ROI_images is the single definition of the ROInet preprocessing
+    chain. These tests pin (a) that it reproduces the pre-consolidation
+    DataLoader chain bitwise, and (b) that its config round-trips, since
+    ClassifierPackage serialises it.
+    """
+
+    @staticmethod
+    def _images(n_roi=13, size=36, seed=0):
+        rng = np.random.default_rng(seed=seed)
+        ## Varying per-image dynamic range, to catch batch-wide normalization
+        return (rng.random((n_roi, size, size)) * rng.integers(1, 500, size=(n_roi, 1, 1))).astype(np.float32)
+
+    def test_matches_original_dataloader_chain_bitwise(self):
+        """
+        The batched chain must equal the original per-sample chain
+        (Resizer_ROI_images -> ScaleDynamicRange -> Resize -> TileChannels)
+        bitwise. This is what lets ClassifierPackage.predict and
+        ROInet_embedder.generate_latents agree.
+        """
+        import torchvision
+        from roicat.ROInet import (
+            Preprocessor_ROI_images, Resizer_ROI_images, TileChannels, dataset_simCLR,
+        )
+        images = self._images()
+        um_per_pixel = 1.6365
+
+        ## Original: stage 1 with the default scale-factor lambda, then per-sample
+        ## transforms applied through dataset_simCLR, exactly as before.
+        images_rs_ref = Resizer_ROI_images(verbose=False).resize_ROIs(
+            ROI_images=images, um_per_pixel=um_per_pixel,
+        )
+        transforms_ref = torch.nn.Sequential(
+            _ScaleDynamicRange_original(),
+            torchvision.transforms.Resize(
+                size=(224, 224),
+                interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
+                antialias=True,
+            ),
+            TileChannels(dim=0, n_channels=3),
+        )
+        dataset_ref = dataset_simCLR(
+            X=torch.as_tensor(images_rs_ref, dtype=torch.float32),
+            y=torch.zeros(images_rs_ref.shape[0]),
+            n_transforms=1,
+            transform=transforms_ref,
+            DEVICE='cpu',
+            dtype_X=torch.float32,
+        )
+        out_ref = torch.stack([dataset_ref[ii][0][0] for ii in range(len(dataset_ref))], dim=0)
+
+        ## Consolidated: one preprocessor, batched
+        preprocessor = Preprocessor_ROI_images(verbose=False)
+        images_rs = preprocessor.scale_normalize_images(ROI_images=images, um_per_pixel=um_per_pixel)
+        out = preprocessor.transform_images(ROI_images=images_rs)
+
+        assert np.array_equal(images_rs_ref, images_rs), 'stage 1 (scale normalization) differs'
+        assert torch.equal(out_ref, out), 'stage 2 (tensor transforms) differs'
+
+    def test_to_dict_covers_every_config_arg(self):
+        """
+        to_dict() is built from an explicit key list. If an __init__ arg is added
+        and not listed, to_dict() drops it and from_dict() silently substitutes
+        the default — a packet whose recorded preprocessing differs from the one
+        used at training. Pin the two together.
+        """
+        import inspect
+        from roicat.ROInet import Preprocessor_ROI_images
+        keys_signature = set(inspect.signature(Preprocessor_ROI_images.__init__).parameters) - {'self', 'verbose'}
+        keys_dict = set(Preprocessor_ROI_images(verbose=False).to_dict())
+        assert keys_dict == keys_signature, (
+            f"to_dict() keys {sorted(keys_dict)} != __init__ args {sorted(keys_signature)}. "
+            f"Missing keys would be silently replaced by defaults on from_dict()."
+        )
+
+    def test_serializable_by_richfile(self):
+        """
+        ROInet_embedder holds a preprocessor and pipelines.py saves
+        roinet.__dict__ through RichFile, so this object must be serializable.
+        """
+        import tempfile
+        from roicat.ROInet import Preprocessor_ROI_images
+        preprocessor = Preprocessor_ROI_images(factor_scaleFactor=1.7, verbose=False)
+        with tempfile.TemporaryDirectory() as dir_tmp:
+            path = str(Path(dir_tmp) / 'pp.richfile.zip')
+            util.RichFile_ROICaT(path=path, backend='zip').save({'preprocessor': preprocessor}, overwrite=True)
+            loaded = util.RichFile_ROICaT(path=path).load()
+        assert loaded['preprocessor'].to_dict() == preprocessor.to_dict()
+
+    def test_no_callables_in_dict(self):
+        """
+        Holding a Callable (e.g. a scale-factor closure) would make the object
+        unpicklable and unserializable; the scale factor is two numbers instead.
+        """
+        from roicat.ROInet import Preprocessor_ROI_images
+        preprocessor = Preprocessor_ROI_images(verbose=False)
+        offenders = {k: v for k, v in preprocessor.__dict__.items() if callable(v) and not isinstance(v, torch.nn.Module)}
+        assert offenders == {}, f"Preprocessor_ROI_images holds callables: {sorted(offenders)}"
+
+    def test_config_roundtrip(self):
+        from roicat.ROInet import Preprocessor_ROI_images
+        preprocessor = Preprocessor_ROI_images(
+            factor_scaleFactor=2.4,
+            size_im_reference=48,
+            img_size_out=(112, 112),
+            n_channels_out=1,
+            verbose=False,
+        )
+        config = preprocessor.to_dict()
+        ## Must survive a JSON round trip, since it is stored in a .roicat_classifier packet
+        import json
+        rebuilt = Preprocessor_ROI_images.from_dict(config=json.loads(json.dumps(config)))
+        assert rebuilt.to_dict() == config
+        out = rebuilt.preprocess(ROI_images=self._images(n_roi=2), um_per_pixel=1.0)
+        assert out.shape == (2, 1, 112, 112)
+
+    def test_scale_factor_parameterization_matches_lambda(self):
+        """
+        The two-number parameterization must reproduce the default
+        Resizer_ROI_images lambda, `1.2 * um_per_pixel * (size_im / 36)`.
+        """
+        from roicat.ROInet import Preprocessor_ROI_images, Resizer_ROI_images
+        images = self._images(n_roi=5)
+        out_default = Resizer_ROI_images(verbose=False).resize_ROIs(ROI_images=images, um_per_pixel=2.0)
+        out_param = Preprocessor_ROI_images(verbose=False).scale_normalize_images(
+            ROI_images=images, um_per_pixel=2.0,
+        )
+        assert np.array_equal(out_default, out_param)
+
+    def test_um_per_pixel_changes_output(self):
+        from roicat.ROInet import Preprocessor_ROI_images
+        preprocessor = Preprocessor_ROI_images(verbose=False)
+        images = self._images(n_roi=3)
+        out_a = preprocessor.preprocess(ROI_images=images, um_per_pixel=1.0)
+        out_b = preprocessor.preprocess(ROI_images=images, um_per_pixel=2.0)
+        assert not torch.allclose(out_a, out_b)
+
+    def test_scale_normalize_false_skips_stage_1(self):
+        from roicat.ROInet import Preprocessor_ROI_images
+        preprocessor = Preprocessor_ROI_images(scale_normalize=False, verbose=False)
+        images = self._images(n_roi=3)
+        out_a = preprocessor.preprocess(ROI_images=images, um_per_pixel=1.0)
+        out_b = preprocessor.preprocess(ROI_images=images, um_per_pixel=7.0)
+        assert torch.equal(out_a, out_b)
+        assert np.array_equal(
+            preprocessor.scale_normalize_images(ROI_images=images, um_per_pixel=1.0), images,
+        )
+
+    def test_multiple_sessions_use_own_um_per_pixel(self):
+        from roicat.ROInet import Preprocessor_ROI_images
+        preprocessor = Preprocessor_ROI_images(verbose=False)
+        sessions = [self._images(n_roi=3, seed=0), self._images(n_roi=4, seed=1)]
+        out = preprocessor.preprocess(ROI_images=sessions, um_per_pixel=[1.0, 2.0])
+        assert out.shape == (7, 3, 224, 224)
+        ## Session 0 must match a solo run at its own um_per_pixel
+        out_solo = preprocessor.preprocess(ROI_images=sessions[0], um_per_pixel=1.0)
+        assert torch.equal(out[:3], out_solo)
+
+    def test_empty_input(self):
+        from roicat.ROInet import Preprocessor_ROI_images
+        preprocessor = Preprocessor_ROI_images(verbose=False)
+        out = preprocessor.preprocess(
+            ROI_images=np.zeros((0, 36, 36), dtype=np.float32), um_per_pixel=1.0,
+        )
+        assert out.shape == (0, 3, 224, 224)
+
+    def test_int_um_per_pixel_accepted(self):
+        from roicat.ROInet import Preprocessor_ROI_images
+        preprocessor = Preprocessor_ROI_images(verbose=False)
+        out = preprocessor.preprocess(ROI_images=self._images(n_roi=2), um_per_pixel=2)
+        assert out.shape == (2, 3, 224, 224)
+
+    def test_bad_ndim_raises(self):
+        from roicat.ROInet import Preprocessor_ROI_images
+        preprocessor = Preprocessor_ROI_images(verbose=False)
+        with pytest.raises(ValueError, match='3-D'):
+            preprocessor.transform_images(ROI_images=np.zeros((36, 36), dtype=np.float32))

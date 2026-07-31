@@ -1166,6 +1166,29 @@ class RichFile_ROICaT(rf.RichFile):
         ## SIMILARITY METRIC (dataclass → JSON)
         from .tracking.similarity_graph import SimilarityMetric
 
+        ## ROICaT PREPROCESSOR
+        ## Registered because ROInet_embedder holds one, and pipelines.py saves
+        ## roinet.__dict__. Stored as its JSON config, which also makes the exact
+        ## preprocessing used by a run legible in the saved results.
+        from .ROInet import Preprocessor_ROI_images
+
+        def save_preprocessor_roi_images(
+            obj: 'Preprocessor_ROI_images',
+            path: Union[str, Path],
+            **kwargs,
+        ) -> None:
+            """Saves a Preprocessor_ROI_images as JSON via to_dict()."""
+            with open(path, 'w') as f:
+                json.dump(obj.to_dict(), f, indent=2)
+
+        def load_preprocessor_roi_images(
+            path: Union[str, Path],
+            **kwargs,
+        ) -> 'Preprocessor_ROI_images':
+            """Loads a Preprocessor_ROI_images from its JSON config."""
+            with open(path, 'r') as f:
+                return Preprocessor_ROI_images.from_dict(json.load(f))
+
         def save_similarity_metric(
             obj: SimilarityMetric,
             path: Union[str, Path],
@@ -1340,6 +1363,15 @@ class RichFile_ROICaT(rf.RichFile):
                 "function_load":      load_similarity_metric,
                 "function_save":      save_similarity_metric,
                 "object_class":       SimilarityMetric,
+                "suffix":             "json",
+                "library":            "roicat",
+                "versions_supported": [],
+            },
+            {
+                "type_name":          "preprocessor_roi_images",
+                "function_load":      load_preprocessor_roi_images,
+                "function_save":      save_preprocessor_roi_images,
+                "object_class":       Preprocessor_ROI_images,
                 "suffix":             "json",
                 "library":            "roicat",
                 "versions_supported": [],

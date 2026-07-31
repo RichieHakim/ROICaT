@@ -75,6 +75,7 @@ roicat --pipeline tracking --path_params /path/to/params.yaml --dir_data /folder
   classifier](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/classification/B2_classifier_train_interactive.ipynb)
 - [Interactive notebook - Inference with
   classifier](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/classification/B3_classifier_inference_interactive.ipynb)
+- [Deploying a trained classifier](https://roicat.readthedocs.io/en/latest/classifierPackage.html)
 
 **OTHER:** 
 - [Custom data importing
