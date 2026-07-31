@@ -120,6 +120,12 @@ def test_import_time_dependencies_are_declared():
     Every package ``import roicat`` needs before any user code runs must be in
     the ``all`` extra. ``pandas`` was missing for a long time and worked only
     because seaborn happened to pull it in.
+
+    The list below describes the *current* import structure, in which
+    ``roicat/__init__.py`` eagerly imports every submodule. If those imports are
+    ever made lazy, fewer packages will be needed at import time and entries
+    here should be removed -- a failure after such a change means the list is
+    stale, not that the change was wrong.
     """
     ## Third-party modules imported at module scope somewhere in the chain that
     ## `import roicat` walks, mapped to the distribution that provides them.

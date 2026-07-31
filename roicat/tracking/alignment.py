@@ -1595,7 +1595,7 @@ class ImageRegistrationMethod:
 
 
 @functools.lru_cache(maxsize=1)
-def _fused_local_corr_available(verbose: bool = True) -> bool:
+def _reason_fused_local_corr_unavailable() -> Optional[str]:
     """
     Checks whether RoMa's fused local-correlation kernel can actually be loaded.
 
@@ -1608,27 +1608,19 @@ def _fused_local_corr_available(verbose: bool = True) -> bool:
     assumes the kernel is present and the ImportError surfaces several frames
     down inside the matcher, at match time rather than at construction.
 
-    Args:
-        verbose (bool):
-            Whether to warn when the kernel is unavailable.
-            (Default is ``True``)
+    Cached, and deliberately takes no arguments: the answer is a property of the
+    installation, and the caller decides whether to say anything about it.
 
     Returns:
-        (bool):
-            ``True`` if ``import local_corr`` succeeds.
+        (Optional[str]):
+            ``None`` if ``import local_corr`` succeeds, otherwise the reason it
+            did not.
     """
     try:
         import local_corr  ## noqa: F401
-        return True
+        return None
     except ImportError as e:
-        if verbose:
-            warnings.warn(
-                f"RoMa's fused local correlation kernel is unavailable, so the slower "
-                f"pure-PyTorch path will be used. Reason: {e}. The kernel is provided by "
-                f"the 'fused-local-corr' package and needs x86_64 Linux with the CUDA "
-                f"runtime libraries present."
-            )
-        return False
+        return str(e)
 
 
 class RoMa(ImageRegistrationMethod):
@@ -1767,7 +1759,15 @@ class RoMa(ImageRegistrationMethod):
 
         ## Decided here rather than left to romatch, which only checks the
         ## platform and would let a Linux machine without the kernel through.
-        use_custom_corr = _fused_local_corr_available(verbose=verbose)
+        reason_no_corr = _reason_fused_local_corr_unavailable()
+        use_custom_corr = reason_no_corr is None
+        if (reason_no_corr is not None) and verbose:
+            warnings.warn(
+                f"RoMa's fused local correlation kernel is unavailable, so the slower "
+                f"pure-PyTorch path will be used. Reason: {reason_no_corr}. The kernel is "
+                f"provided by the 'fused-local-corr' package and needs x86_64 Linux with "
+                f"the CUDA runtime libraries present."
+            )
 
         if model_type == 'outdoor':
             self.model = roma_outdoor(device=device, weights=weights, dinov2_weights=weights_dinov2, use_custom_corr=use_custom_corr)
