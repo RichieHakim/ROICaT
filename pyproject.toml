@@ -68,8 +68,12 @@ tracking = [
     "fast-hdbscan==0.3.2",
     "kymatio==0.3.0",
     "kornia==0.8.3",
-    "romatch-roicat[fused-local-corr]>=0.1.2.post1; sys_platform == 'linux'",
-    "romatch-roicat>=0.1.2.post1; sys_platform != 'linux'",
+    ## The 'fused-local-corr' extra publishes x86_64 Linux wheels only, with no
+    ## source distribution, so on ARM Linux the requirement cannot resolve at
+    ## all and the whole install fails. Ask for it only where it exists; RoMa
+    ## runs without it, more slowly.
+    "romatch-roicat[fused-local-corr]>=0.1.2.post1; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "romatch-roicat>=0.1.2.post1; sys_platform != 'linux' or platform_machine != 'x86_64'",
     "roiextractors==0.9.0",
 ]
 all = [
@@ -115,8 +119,8 @@ tracking_latest = [
     "fast-hdbscan",
     "kymatio",
     "kornia",
-    "romatch-roicat[fused-local-corr]; sys_platform == 'linux'",
-    "romatch-roicat; sys_platform != 'linux'",
+    "romatch-roicat[fused-local-corr]; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "romatch-roicat; sys_platform != 'linux' or platform_machine != 'x86_64'",
     "roiextractors",
 ]
 all_latest = [

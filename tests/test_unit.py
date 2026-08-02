@@ -2820,3 +2820,48 @@ class Test_Preprocessor_ROI_images:
         preprocessor = Preprocessor_ROI_images(verbose=False)
         with pytest.raises(ValueError, match='3-D'):
             preprocessor.transform_images(ROI_images=np.zeros((36, 36), dtype=np.float32))
+
+
+class Test_reason_fused_local_corr_unavailable:
+    """
+    The helper that decides whether RoMa is given its fused correlation kernel.
+
+    Every test clears the cache on both sides. The helper is ``lru_cache``d, so
+    without that the answer depends on which test ran first, and a cached answer
+    derived from a patched ``sys.modules`` would leak into the rest of the run.
+    """
+
+    @staticmethod
+    def _fn():
+        from roicat.tracking.alignment import _reason_fused_local_corr_unavailable
+        return _reason_fused_local_corr_unavailable
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        self._fn().cache_clear()
+        yield
+        self._fn().cache_clear()
+
+    def test_returns_none_when_kernel_imports(self, monkeypatch):
+        import sys, types
+        monkeypatch.setitem(sys.modules, 'local_corr', types.ModuleType('local_corr'))
+        assert self._fn()() is None
+
+    def test_returns_reason_when_kernel_missing(self, monkeypatch):
+        import sys
+        ## A None entry in sys.modules makes `import local_corr` raise ImportError,
+        ## which is the same failure a machine without the package produces.
+        monkeypatch.setitem(sys.modules, 'local_corr', None)
+        reason = self._fn()()
+        assert isinstance(reason, str) and reason
+
+    def test_answer_is_cached(self, monkeypatch):
+        import sys, types
+        monkeypatch.setitem(sys.modules, 'local_corr', types.ModuleType('local_corr'))
+        assert self._fn()() is None
+        ## The installation cannot change mid-process, so the second call must
+        ## not re-probe even though the module is now unimportable.
+        monkeypatch.setitem(sys.modules, 'local_corr', None)
+        assert self._fn()() is None
+        self._fn().cache_clear()
+        assert isinstance(self._fn()(), str)
