@@ -47,8 +47,10 @@ jobs:
           "3.13",
         ]
         extra: [
-          all,
-          all_latest,
+          ## `dev` and `dev_latest` are `all` / `all_latest` plus the test
+          ## tooling, so the matrix still covers both dependency families.
+          dev,
+          dev_latest,
         ]
 
     steps:
