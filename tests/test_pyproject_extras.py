@@ -156,3 +156,82 @@ def test_import_time_dependencies_are_declared():
     assert not missing, (
         f'Imported at import time but not declared in the "all" extra: {missing}'
     )
+
+
+######################################################################################################################################
+######################################################## PYTHON VERSIONS #############################################################
+######################################################################################################################################
+
+PATH_BUILD_YML = Path(__file__).resolve().parent.parent / '.github' / 'workflows' / 'build.yml'
+
+## Candidate minor versions to ask `requires-python` about. Wide enough that the
+## range does not need revisiting when Python moves on.
+VERSIONS_CANDIDATE = [f'3.{n}' for n in range(8, 30)]
+
+
+def _versions_supported():
+    """
+    Returns:
+        (set): the ``3.x`` strings that ``requires-python`` admits.
+    """
+    from packaging.specifiers import SpecifierSet
+
+    if not PATH_PYPROJECT.exists():
+        pytest.skip(f'pyproject.toml not found at {PATH_PYPROJECT}; not a source checkout.')
+    with open(PATH_PYPROJECT, 'rb') as f:
+        spec = SpecifierSet(tomllib.load(f)['project']['requires-python'])
+    return {v for v in VERSIONS_CANDIDATE if spec.contains(v)}
+
+
+def _versions_tested():
+    """
+    Returns:
+        (set): the ``3.x`` strings in the CI build matrix. Commented-out entries
+        are not included -- YAML drops them, which is the intended reading.
+    """
+    import yaml
+
+    if not PATH_BUILD_YML.exists():
+        pytest.skip(f'build.yml not found at {PATH_BUILD_YML}; not a source checkout.')
+    with open(PATH_BUILD_YML, 'r') as f:
+        workflow = yaml.safe_load(f)
+    return {str(v) for v in workflow['jobs']['build']['strategy']['matrix']['python-version']}
+
+
+def test_ci_tests_every_supported_python():
+    """
+    The versions CI runs and the versions ``requires-python`` admits must match.
+
+    Drift in either direction is a problem. A version admitted but not tested is
+    a support claim with nothing behind it; a version tested but not admitted
+    means the install step in that job cannot have run at all, so the job proves
+    nothing while still reporting green. 3.13 spent months commented out of the
+    matrix while the README said it was unsupported and nothing checked either.
+    """
+    supported, tested = _versions_supported(), _versions_tested()
+    assert supported == tested, (
+        f"requires-python admits {sorted(supported)} but CI runs {sorted(tested)}. "
+        f"Only in requires-python: {sorted(supported - tested)}. "
+        f"Only in CI: {sorted(tested - supported)}."
+    )
+
+
+def test_readme_states_the_supported_pythons():
+    """
+    The README's Requirements line is what users actually read, so it must name
+    every supported version and nothing else.
+    """
+    path_readme = Path(__file__).resolve().parent.parent / 'README.md'
+    if not path_readme.exists():
+        pytest.skip(f'README.md not found at {path_readme}; not a source checkout.')
+    line = next(
+        (l for l in path_readme.read_text(encoding='utf-8').splitlines() if '**Python' in l),
+        None,
+    )
+    assert line is not None, "No '**Python ...**' requirements line found in README.md."
+
+    named = set(re.findall(r'3\.\d+', line))
+    assert named == _versions_supported(), (
+        f"README requirements line names {sorted(named)}: {line.strip()!r}, "
+        f"but requires-python admits {sorted(_versions_supported())}."
+    )
