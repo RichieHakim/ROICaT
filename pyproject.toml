@@ -9,7 +9,7 @@ description = "A library for classifying and tracking ROIs."
 readme = "README.md"
 license = "GPL-3.0-only"
 license-files = ["LICENSE.md"]
-requires-python = ">=3.11, <3.13"
+requires-python = ">=3.11, <3.14"
 authors = [{name = "Richard Hakim"}]
 keywords = ["neuroscience", "neuroimaging", "machine learning", "deep learning"]
 
