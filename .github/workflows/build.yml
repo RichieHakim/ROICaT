@@ -44,11 +44,13 @@ jobs:
           # "3.10",
           "3.11",
           "3.12",
-          # "3.13",  ## Many scientific deps lack py3.13 wheels (hdbscan, kymatio, onnx2torch)
+          "3.13",
         ]
         extra: [
-          all,
-          all_latest,
+          ## `dev` and `dev_latest` are `all` / `all_latest` plus the test
+          ## tooling, so the matrix still covers both dependency families.
+          dev,
+          dev_latest,
         ]
 
     steps:

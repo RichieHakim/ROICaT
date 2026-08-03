@@ -1594,6 +1594,35 @@ class ImageRegistrationMethod:
         raise NotImplementedError(f"Method _forward_rigid not implemented for {self.__class__.__name__}.")
 
 
+@functools.lru_cache(maxsize=1)
+def _reason_fused_local_corr_unavailable() -> Optional[str]:
+    """
+    Checks whether RoMa's fused local-correlation kernel can actually be loaded.
+
+    The kernel lives in a separate package, ``fused-local-corr``, which romatch
+    declares as an optional extra. Two things can leave it unusable on a machine
+    that romatch believes is fine: it publishes x86_64 Linux wheels only, and
+    even where it installs it is a compiled extension linked against the CUDA
+    runtime, so it fails to load wherever the CUDA libraries are absent.
+    romatch's own check looks at the platform alone, so on any Linux box it
+    assumes the kernel is present and the ImportError surfaces several frames
+    down inside the matcher, at match time rather than at construction.
+
+    Cached, and deliberately takes no arguments: the answer is a property of the
+    installation, and the caller decides whether to say anything about it.
+
+    Returns:
+        (Optional[str]):
+            ``None`` if ``import local_corr`` succeeds, otherwise the reason it
+            did not.
+    """
+    try:
+        import local_corr  ## noqa: F401
+        return None
+    except ImportError as e:
+        return str(e)
+
+
 class RoMa(ImageRegistrationMethod):
     """
     RoMa-based image registration method.
@@ -1728,10 +1757,22 @@ class RoMa(ImageRegistrationMethod):
             fallback_weight_urls=fallback_weight_urls["dinov2"],
         )
 
+        ## Decided here rather than left to romatch, which only checks the
+        ## platform and would let a Linux machine without the kernel through.
+        reason_no_corr = _reason_fused_local_corr_unavailable()
+        use_custom_corr = reason_no_corr is None
+        if (reason_no_corr is not None) and verbose:
+            warnings.warn(
+                f"RoMa's fused local correlation kernel is unavailable, so the slower "
+                f"pure-PyTorch path will be used. Reason: {reason_no_corr}. The kernel is "
+                f"provided by the 'fused-local-corr' package and needs x86_64 Linux with "
+                f"the CUDA runtime libraries present."
+            )
+
         if model_type == 'outdoor':
-            self.model = roma_outdoor(device=device, weights=weights, dinov2_weights=weights_dinov2)
+            self.model = roma_outdoor(device=device, weights=weights, dinov2_weights=weights_dinov2, use_custom_corr=use_custom_corr)
         elif model_type == 'indoor':
-            self.model = roma_indoor(device=device, weights=weights, dinov2_weights=weights_dinov2)
+            self.model = roma_indoor(device=device, weights=weights, dinov2_weights=weights_dinov2, use_custom_corr=use_custom_corr)
     
     def _match(
         self,
