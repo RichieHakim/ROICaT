@@ -94,7 +94,7 @@ installation process, please make a [github
 issue](https://github.com/RichieHakim/ROICaT/issues) with the error.
 
 ### 0. Requirements
-- **Python 3.11 or 3.12** (3.13 is not yet supported).
+- **Python 3.11, 3.12, or 3.13**.
 - [Anaconda](https://www.anaconda.com/distribution/) or
   [Miniconda](https://docs.conda.io/en/latest/miniconda.html).
 - The below commands should be run in the terminal (Mac/Linux) or Anaconda
@@ -214,7 +214,7 @@ sudo docker run -it -p 7860:7860 --platform=linux/amd64 --shm-size=10g registry.
 - [ ] Spruce up training code
 - [x] Switch off pickling optuna save file
 - [ ] Try training on cellpose datasets
-- [ ] Python 3.13
+- [x] Python 3.13
 #### other:
 - [ ] Write the paper
 - [ ] Make tweet about it
