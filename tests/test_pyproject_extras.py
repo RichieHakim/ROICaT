@@ -277,6 +277,29 @@ def test_no_extra_declares_a_notebook_environment(extra):
     )
 
 
+@pytest.mark.parametrize('extra', ['classification', 'classification_latest', 'all', 'all_latest'])
+def test_classification_declares_the_bokeh_widget_renderer(extra):
+    """
+    `jupyter-bokeh` must stay declared wherever the drawing notebook's plots are.
+
+    Its name makes it look like notebook-environment tooling, and it was removed
+    once on that basis. This pins why it is not.
+    `visualization.select_region_scatterPlot` calls `hv.extension('bokeh')`,
+    holoviews calls `pn.extension()` (holoviews/util/__init__.py), and panel's
+    `config._detect_comms` imports `jupyter_bokeh` when it detects Colab or
+    VSCode -- warning that interactive output will not render without it. In
+    plain JupyterLab it genuinely is not needed, but
+    `A1_classify_by_drawingSelection.ipynb` carries a Colab badge in the README
+    and installs `roicat[classification]` in its own Colab cell, so dropping it
+    breaks a workflow ROICaT advertises.
+    """
+    extras = _load_extras()
+    assert 'jupyter-bokeh' in _resolve(extras, extra), (
+        f"extra '{extra}' no longer declares jupyter-bokeh; the drawing notebook "
+        'will not render interactively in Colab or VSCode.'
+    )
+
+
 def test_documented_notebook_paths_exist():
     """
     Every notebook path named in the README, the docs, or a notebook's own
