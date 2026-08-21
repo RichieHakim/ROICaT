@@ -1292,7 +1292,7 @@ class RichFile_ROICaT(rf.RichFile):
                 "function_save":      save_repr,
                 "object_class":       Model_SWT,
                 "suffix":             "swt",
-                "library":            "onnx2torch",
+                "library":            "roicat",
                 "versions_supported": [],
             },
             {

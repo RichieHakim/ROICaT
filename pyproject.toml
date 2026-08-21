@@ -78,7 +78,6 @@ tracking = [
 ]
 all = [
     "roicat[core,classification,tracking]",
-    "onnx2torch==1.5.15",
     "scikit-image==0.26.0",
 ]
 
@@ -125,7 +124,6 @@ tracking_latest = [
 ]
 all_latest = [
     "roicat[core_latest,classification_latest,tracking_latest]",
-    "onnx2torch",
     "scikit-image",
 ]
 
