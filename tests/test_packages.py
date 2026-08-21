@@ -5,7 +5,6 @@ PACKAGES = [
     'PIL',
     'cpuinfo',
     'cv2',
-    'jupyter',
     'mat73',
     'matplotlib',
     'natsort',

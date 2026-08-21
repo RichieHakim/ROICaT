@@ -7,7 +7,7 @@ Inputs
 - **Suite2p output files:** ``stat.npy`` and ``ops.npy`` files only.
 - **Other data formats:** Support for formats like CaImAn, custom ROIs, etc.,
   can be facilitated through a custom data importing notebook found `here
-  <https://github.com/RichieHakim/ROICaT/blob/main/notebooks/jupyter/other/demo_data_importing.ipynb>`_.
+  <https://github.com/RichieHakim/ROICaT/blob/main/notebooks/other/demo_data_importing.ipynb>`_.
 
 -------
 

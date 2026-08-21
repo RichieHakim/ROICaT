@@ -120,12 +120,18 @@ documentation.
 <br>
 **Note on opencv:** The headless version of opencv is installed by default. If
 the regular version is already installed, you will need to uninstall it first.
+<br>
+**Note on notebooks:** ROICaT installs the libraries the notebooks *use*, but
+not a notebook environment to run them in, since setups vary too much for one
+choice to suit everyone. To run the notebooks, install whichever you prefer into
+the same environment, for example `pip install jupyterlab` or
+`pip install notebook`.
 
 ### 3. Clone the repo to get the notebooks
 ```
 git clone https://github.com/RichieHakim/ROICaT
 ```
-Then, navigate to the `ROICaT/notebooks/jupyter` directory to run the notebooks.
+Then, navigate to the `ROICaT/notebooks` directory to run the notebooks.
 
 
 # Quick Start

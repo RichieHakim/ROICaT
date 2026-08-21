@@ -235,3 +235,71 @@ def test_readme_states_the_supported_pythons():
         f"README requirements line names {sorted(named)}: {line.strip()!r}, "
         f"but requires-python admits {sorted(_versions_supported())}."
     )
+
+
+## Packages that *are* a notebook environment: a kernel to execute cells, or a
+## server/UI to open them in. ROICaT deliberately ships none of these, because
+## notebook setups vary too much for one choice to suit everyone -- users bring
+## their own.
+##
+## The line is between an environment and a library. Rendering packages are not
+## on this list even when their names say "jupyter": `jupyter-bokeh` is part of
+## ROICaT's plotting stack (it is what renders bokeh output as a widget), so it
+## is a declared dependency like bokeh and holoviews. What it pulls in
+## transitively -- ipywidgets, and IPython -- is a consequence of that choice,
+## not a notebook environment ROICaT is providing.
+DISTS_NOTEBOOK_ENVIRONMENT = {
+    'jupyter',
+    'jupyterlab',
+    'notebook',
+    'jupyter-server',
+    'ipykernel',
+}
+
+
+@pytest.mark.parametrize('extra', sorted(set(PAIRS_EXTRAS) | set(PAIRS_EXTRAS.values())))
+def test_no_extra_declares_a_notebook_environment(extra):
+    """
+    No extra should install a notebook stack.
+
+    `jupyter` sat in the `dev` extra used by nothing: `tests/test_interactive.py`
+    drives bokeh's own server via selenium, not a kernel. Meanwhile no extra
+    provided an actual kernel or server, so following the README literally left a
+    user unable to open the notebooks it points them at -- enough notebook
+    machinery to be load-bearing by accident, not enough to be useful.
+    """
+    extras = _load_extras()
+    declared = _resolve(extras, extra)
+    offenders = sorted(declared & DISTS_NOTEBOOK_ENVIRONMENT)
+    assert not offenders, (
+        f"extra '{extra}' declares notebook-environment packages {offenders}. "
+        'ROICaT does not provide a notebook environment; users install their own.'
+    )
+
+
+def test_documented_notebook_paths_exist():
+    """
+    Every notebook path named in the README, the docs, or a notebook's own
+    cross-links must exist.
+
+    The README told users to `cd` into `ROICaT/notebooks/jupyter`, a directory
+    deleted in 790ba8a, and several notebooks linked to a
+    `demo_custom_data_importing.ipynb` that has never existed. Both are invisible
+    to every other test, because nothing imports a markdown link.
+    """
+    root = PATH_PYPROJECT.parent
+    if not (root / 'notebooks').is_dir():
+        pytest.skip('notebooks/ not present; not a source checkout.')
+
+    sources = [root / 'README.md']
+    sources += sorted((root / 'docs').rglob('*.rst')) if (root / 'docs').is_dir() else []
+    sources += sorted((root / 'notebooks').rglob('*.ipynb'))
+
+    missing = []
+    for path in sources:
+        text = path.read_text(encoding='utf-8', errors='ignore')
+        ## Any reference to a path under notebooks/, with or without a URL prefix.
+        for ref in set(re.findall(r'notebooks/[A-Za-z0-9_./\- ]*?\.ipynb', text)):
+            if not (root / ref).exists():
+                missing.append(f'{path.relative_to(root)} -> {ref}')
+    assert not missing, f'Documented notebook paths that do not exist: {sorted(missing)}'
