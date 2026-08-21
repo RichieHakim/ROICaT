@@ -289,6 +289,29 @@ def flatten_dict(d: MutableMapping, parent_key: str = '', sep: str ='.') -> Muta
             items.append((new_key, v))
     return dict(items)
 
+def display_or_print(obj: Any) -> None:
+    """
+    Shows ``obj`` using IPython's rich display when IPython is importable, and
+    falls back to ``print`` when it is not.
+
+    IPython is not a ROICaT dependency. It arrives transitively with Jupyter,
+    which only the notebook-facing extras pull in, so it is absent from a
+    plain ``roicat[tracking]`` install. Importing it at module scope is
+    therefore not safe; this wrapper keeps the nicer notebook rendering
+    without making a headless install impossible.
+
+    Args:
+        obj (Any):
+            Object to display.
+    """
+    try:
+        from IPython.display import display
+    except ImportError:
+        print(obj)
+    else:
+        display(obj)
+
+
 ## parameter dictionary helpers ##
 
 def fill_in_dict(

@@ -2865,3 +2865,92 @@ class Test_reason_fused_local_corr_unavailable:
         assert self._fn()() is None
         self._fn().cache_clear()
         assert isinstance(self._fn()(), str)
+
+
+######################################################################################################################################
+###################################################### OPTIONAL IPYTHON ##############################################################
+######################################################################################################################################
+
+
+class Test_ipython_is_optional:
+    """
+    ``roicat/pipelines.py`` imported ``IPython.display.display`` at module
+    scope, and ``roicat/__init__.py`` imports ``pipelines``, so ``import
+    roicat`` required IPython. IPython is in no extra -- it arrives only
+    transitively with Jupyter -- so a plain ``roicat[tracking]`` install could
+    not import the package at all. CI missed it because the `dev` extra
+    installs jupyter.
+    """
+
+    def test_no_module_scope_ipython_import_anywhere_in_roicat(self):
+        """Static guard: IPython may be imported inside a function, never at
+        module scope, since module scope runs on `import roicat`."""
+        import ast
+        import roicat
+
+        root = Path(roicat.__file__).parent
+        offenders = []
+        for path in sorted(root.rglob('*.py')):
+            tree = ast.parse(path.read_text(), filename=str(path))
+            for node in tree.body:  ## module scope only, not nested scopes
+                names = []
+                if isinstance(node, ast.Import):
+                    names = [a.name for a in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    names = [node.module or '']
+                if any(n == 'IPython' or n.startswith('IPython.') for n in names):
+                    offenders.append(f'{path.relative_to(root)}:{node.lineno}')
+        assert not offenders, (
+            'IPython imported at module scope (breaks `import roicat` without '
+            f'IPython installed): {offenders}'
+        )
+
+    def test_import_roicat_succeeds_without_ipython(self):
+        """The end-to-end check: a fresh interpreter that cannot import
+        IPython must still be able to import roicat."""
+        import subprocess
+        import sys
+        import textwrap
+
+        script = textwrap.dedent(
+            '''
+            import sys
+            from importlib.abc import MetaPathFinder
+
+            class _BlockIPython(MetaPathFinder):
+                """Make IPython unimportable, as it is on a tracking-only install."""
+                def find_spec(self, fullname, path=None, target=None):
+                    if fullname == 'IPython' or fullname.startswith('IPython.'):
+                        raise ImportError(f'blocked for test: {fullname}')
+                    return None
+
+            sys.meta_path.insert(0, _BlockIPython())
+            for name in list(sys.modules):
+                if name == 'IPython' or name.startswith('IPython.'):
+                    del sys.modules[name]
+
+            import roicat
+            import roicat.pipelines
+            print('IMPORT_OK')
+            '''
+        )
+        result = subprocess.run(
+            [sys.executable, '-c', script],
+            capture_output=True, text=True, timeout=600,
+        )
+        assert 'IMPORT_OK' in result.stdout, (
+            f'importing roicat without IPython failed:\n'
+            f'--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}'
+        )
+
+    def test_display_or_print_falls_back_to_print(self, monkeypatch, capsys):
+        """Without IPython the helper must still show the object."""
+        import sys
+
+        ## A None entry in sys.modules makes the import raise ImportError, the
+        ## same failure a machine without IPython produces.
+        monkeypatch.setitem(sys.modules, 'IPython', None)
+        monkeypatch.setitem(sys.modules, 'IPython.display', None)
+
+        helpers.display_or_print({'a': 1})
+        assert 'a' in capsys.readouterr().out

@@ -2,7 +2,6 @@
 from pathlib import Path
 import copy
 import tempfile
-from IPython.display import display
 import time
 
 # import matplotlib.pyplot as plt
@@ -46,7 +45,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
     ## Prepare params
     defaults = util.get_default_parameters(pipeline='tracking')
     params = helpers.prepare_params(params, defaults, verbose=True)
-    display(params)
+    helpers.display_or_print(params)
 
     ## Prepare state variables
     VERBOSE = params['general']['verbose']
