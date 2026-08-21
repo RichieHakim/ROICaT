@@ -2931,3 +2931,55 @@ class Test_richfile_type_registry:
         dependency, so no type should claim to come from it."""
         offenders = [p['type_name'] for p in self._registered_properties() if p['library'] == 'onnx2torch']
         assert not offenders, f'types still attributed to onnx2torch: {offenders}'
+#################################################### OPTIONAL FAST_HDBSCAN ###########################################################
+######################################################################################################################################
+
+
+class Test_fast_hdbscan_is_optional:
+    """
+    RichFile_ROICaT.__init__ imported fast_hdbscan unguarded, purely to name
+    the object_class of one registered type. fast_hdbscan ships with the
+    `tracking` extras only, so on a classification-only install the class
+    could not be constructed at all -- meaning nothing could be saved or
+    loaded, not just HDBSCAN objects.
+
+    The registration was already written to be skipped when the class is
+    unavailable; only the guard around the import was missing.
+    """
+
+    @staticmethod
+    def _type_names(rf_obj):
+        return {p['type_name'] for p in rf_obj.type_lookup.properties}
+
+    def test_constructs_without_fast_hdbscan(self, monkeypatch):
+        """The regression: constructing RichFile_ROICaT must not require a
+        tracking-only dependency."""
+        import sys
+
+        ## A None entry in sys.modules makes the import raise ImportError, the
+        ## same failure a machine without fast_hdbscan produces.
+        monkeypatch.setitem(sys.modules, 'fast_hdbscan', None)
+        rf_obj = util.RichFile_ROICaT()
+        assert 'hdbscan' not in self._type_names(rf_obj), (
+            'the hdbscan type should be skipped when fast_hdbscan is unavailable'
+        )
+
+    def test_save_and_load_still_work_without_fast_hdbscan(self, tmp_path, monkeypatch):
+        """Skipping one type must not cost the user everything else."""
+        import sys
+
+        monkeypatch.setitem(sys.modules, 'fast_hdbscan', None)
+        payload = {'array': np.arange(5), 'scalar': 3, 'text': 'hello'}
+        path = str(Path(tmp_path) / 'payload.richfile')
+        util.RichFile_ROICaT(path=path, backend='directory').save(payload, overwrite=True)
+        loaded = util.RichFile_ROICaT(path=path).load()
+
+        np.testing.assert_array_equal(loaded['array'], payload['array'])
+        assert loaded['scalar'] == payload['scalar']
+        assert loaded['text'] == payload['text']
+
+    def test_hdbscan_type_is_registered_when_available(self):
+        """The guard must not quietly disable the type for tracking installs,
+        which is the case that actually needs it."""
+        pytest.importorskip('fast_hdbscan')
+        assert 'hdbscan' in self._type_names(util.RichFile_ROICaT())

@@ -956,8 +956,17 @@ class RichFile_ROICaT(rf.RichFile):
                 return f.read()
 
         ## HDBSCAN OBJECT (fast_hdbscan or legacy)
-        import fast_hdbscan
-        _hdbscan_class = fast_hdbscan.HDBSCAN
+        ## fast_hdbscan is installed by the `tracking` extras only. Without it
+        ## there can be no HDBSCAN object to serialize in the first place, so
+        ## the type is left unregistered (the registration below is already
+        ## written to be conditional on this) instead of failing here -- an
+        ## unguarded import made RichFile_ROICaT unconstructable on a
+        ## classification-only install, so nothing could be saved or loaded.
+        try:
+            import fast_hdbscan
+            _hdbscan_class = fast_hdbscan.HDBSCAN
+        except ImportError:
+            _hdbscan_class = None
 
         def save_hdbscan(
             obj,
