@@ -955,6 +955,68 @@ class RichFile_ROICaT(rf.RichFile):
             with open(path, 'r') as f:
                 return f.read()
 
+        ## SWT MODEL
+        def save_model_swt(
+            obj: 'Model_SWT',
+            path: Union[str, Path],
+            **kwargs,
+        ) -> None:
+            """
+            Saves a Model_SWT as JSON describing the wrapped Scattering2D.
+
+            The transform is analytic, so its constructor arguments are a
+            complete record of it -- there are no learned weights to store.
+            Anything that is not a kymatio-backed Model_SWT falls back to the
+            historical repr record rather than failing the whole save.
+            """
+            try:
+                d = obj.to_dict()
+            except Exception as e:
+                warnings.warn(
+                    f"Could not describe {type(obj).__name__} as JSON "
+                    f"({type(e).__name__}: {e}). Saving its repr instead; this "
+                    "object will not reload as a model."
+                )
+                save_repr(obj=obj, path=path, **kwargs)
+                return
+            with open(path, 'w') as f:
+                json.dump(d, f, indent=2)
+
+        def load_model_swt(
+            path: Union[str, Path],
+            **kwargs,
+        ) -> object:
+            """
+            Loads a Model_SWT saved by ``save_model_swt``.
+
+            Returns a rebuilt ``Model_SWT`` for files written by this version.
+            Files written before JSON serialization existed hold a repr string
+            and are returned as that string, exactly as they were before. If a
+            rebuild is not possible here (e.g. kymatio is not installed), the
+            saved parameter dict is returned with a warning -- loading never
+            raises on account of this type, since it never used to.
+            """
+            with open(path, 'r') as f:
+                contents = f.read()
+
+            try:
+                d = json.loads(contents)
+            except json.JSONDecodeError:
+                return contents  ## Legacy repr payload.
+            if not (isinstance(d, dict) and 'kwargs_Scattering2D' in d):
+                return contents
+
+            try:
+                return Model_SWT.from_dict(d)
+            except Exception as e:
+                warnings.warn(
+                    f"Could not rebuild the SWT model ({type(e).__name__}: {e}). "
+                    "Returning its saved parameters instead; "
+                    "`roicat.util.Model_SWT.from_dict` on this dict will "
+                    "reproduce the model once kymatio is available."
+                )
+                return d
+
         ## HDBSCAN OBJECT (fast_hdbscan or legacy)
         import fast_hdbscan
         _hdbscan_class = fast_hdbscan.HDBSCAN
@@ -1288,8 +1350,8 @@ class RichFile_ROICaT(rf.RichFile):
             },
             {
                 "type_name":          "model_swt",
-                "function_load":      load_repr,
-                "function_save":      save_repr,
+                "function_load":      load_model_swt,
+                "function_save":      save_model_swt,
                 "object_class":       Model_SWT,
                 "suffix":             "swt",
                 "library":            "roicat",
@@ -1394,11 +1456,108 @@ class JSON_List(list):
 
 ## Wrapper for SWT
 class Model_SWT(torch.nn.Module):
+    """
+    Wraps a kymatio ``Scattering2D`` so it can be used (and serialized) as a
+    regular ``torch.nn.Module``.
+
+    The wrapped transform holds no learned state: kymatio derives its entire
+    filter bank analytically from the constructor arguments below, so recording
+    those arguments is a complete description of the model. That is what
+    :meth:`to_dict` / :meth:`from_dict` do, and it is why a rebuilt model is
+    equivalent to the original rather than an approximation of it.
+    """
+
+    ## Constructor arguments of kymatio's Scattering2D that fully determine the
+    ## filter bank. kymatio stores each under an attribute of the same name.
+    ## `backend` is deliberately excluded: kymatio replaces the string with an
+    ## imported module object during __init__, so it is neither JSON-safe nor
+    ## meaningful to persist (it is re-resolved from the default on rebuild).
+    _KEYS_SCATTERING2D = ('J', 'shape', 'L', 'max_order', 'pre_pad', 'out_type')
+
     def __init__(self, model: torch.nn.Module):
         super(Model_SWT, self).__init__()
         self.add_module('model', model)
     def forward(self, x):
         return self.model(x)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Returns a JSON-serializable description of the wrapped transform.
+
+        Returns:
+            (Dict[str, Any]):
+                to_dict (Dict[str, Any]):
+                    Dictionary with the wrapped class name, the Scattering2D
+                    constructor arguments, and the device the model is on.
+
+        Raises:
+            TypeError:
+                If the wrapped model is not a kymatio ``Scattering2D`` (or does
+                not otherwise expose the expected constructor attributes), in
+                which case there is nothing meaningful to record.
+        """
+        inner = self.model
+        missing = [k for k in self._KEYS_SCATTERING2D if not hasattr(inner, k)]
+        if missing:
+            raise TypeError(
+                f"Cannot describe wrapped model of type {type(inner).__name__}: "
+                f"missing expected Scattering2D attributes {missing}."
+            )
+
+        kwargs = {k: getattr(inner, k) for k in self._KEYS_SCATTERING2D}
+        ## Coerce to plain Python types; kymatio may hold numpy scalars/tuples.
+        kwargs['shape'] = [int(v) for v in kwargs['shape']]
+        kwargs['J'] = int(kwargs['J'])
+        kwargs['L'] = int(kwargs['L'])
+        kwargs['max_order'] = int(kwargs['max_order'])
+        kwargs['pre_pad'] = bool(kwargs['pre_pad'])
+        kwargs['out_type'] = str(kwargs['out_type'])
+
+        ## The filters live in buffers, so they carry the model's device.
+        device = next((str(b.device) for b in self.buffers()), 'cpu')
+
+        return {
+            'class_wrapped': type(inner).__name__,
+            'kwargs_Scattering2D': kwargs,
+            'device': device,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> 'Model_SWT':
+        """
+        Rebuilds a Model_SWT from the output of :meth:`to_dict`.
+
+        Args:
+            d (Dict[str, Any]):
+                Dictionary produced by :meth:`to_dict`.
+
+        Returns:
+            (Model_SWT):
+                from_dict (Model_SWT):
+                    A model whose filter bank is identical to the original's,
+                    since kymatio computes it deterministically from the
+                    recorded arguments.
+        """
+        ## Imported here rather than at module scope: roicat.util is imported by
+        ## the tracking subpackage, so a top-level import would be circular, and
+        ## kymatio is only needed when a model is actually being rebuilt.
+        from .tracking.scatteringWaveletTransformer import import_Scattering2D
+
+        kwargs = dict(d['kwargs_Scattering2D'])
+        kwargs['shape'] = tuple(kwargs['shape'])
+        model = cls(import_Scattering2D()(**kwargs))
+
+        ## Restore the original device when it is available, but never fail over
+        ## it: an archive written on a GPU machine must still load on a CPU one.
+        device = d.get('device', 'cpu')
+        try:
+            model.to(device)
+        except Exception as e:
+            warnings.warn(
+                f"Could not place the rebuilt SWT model on its original device "
+                f"{device!r} ({type(e).__name__}: {e}). Leaving it on CPU."
+            )
+        return model
 
 
 def make_session_bool(n_roi: np.ndarray,) -> np.ndarray:

@@ -7,6 +7,34 @@ from tqdm.auto import tqdm
 
 from .. import helpers, util
 
+
+def import_Scattering2D():
+    """
+    Imports kymatio's torch ``Scattering2D``, applying the scipy compatibility
+    shim it needs first.
+
+    Factored out of :class:`SWT` so that rebuilding a saved model
+    (:meth:`roicat.util.Model_SWT.from_dict`) goes through exactly the same
+    import path as building a fresh one.
+
+    Returns:
+        (type):
+            import_Scattering2D (type):
+                The ``kymatio.torch.Scattering2D`` class.
+    """
+    ## Monkey-patch for scipy >= 1.17 compatibility (sph_harm removed).
+    ## sph_harm(m, n, theta, phi) was replaced by sph_harm_y(n, m, theta, phi)
+    ## with swapped argument order for both (m,n) and (theta,phi).
+    ## Needed on any kymatio import, not just the 2D one: `kymatio.torch` pulls
+    ## in the 3D frontend, whose filter bank imports sph_harm at module scope.
+    import scipy.special
+    if not hasattr(scipy.special, 'sph_harm'):
+        scipy.special.sph_harm = lambda m, n, theta, phi: scipy.special.sph_harm_y(n, m, phi, theta)
+
+    from kymatio.torch import Scattering2D
+    return Scattering2D
+
+
 class SWT(util.ROICaT_Module):
     """
     Performs scattering wavelet transform using the kymatio library.
@@ -57,14 +85,7 @@ class SWT(util.ROICaT_Module):
             ],
         )
 
-        ## Monkey-patch for scipy >= 1.17 compatibility (sph_harm removed).
-        ## sph_harm(m, n, theta, phi) was replaced by sph_harm_y(n, m, theta, phi)
-        ## with swapped argument order for both (m,n) and (theta,phi).
-        import scipy.special
-        if not hasattr(scipy.special, 'sph_harm'):
-            scipy.special.sph_harm = lambda m, n, theta, phi: scipy.special.sph_harm_y(n, m, phi, theta)
-
-        from kymatio.torch import Scattering2D
+        Scattering2D = import_Scattering2D()
 
         self._verbose = verbose
         self._device = device
