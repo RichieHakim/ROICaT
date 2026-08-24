@@ -110,22 +110,38 @@ you want to use ROICaT.
 
 ### 2. Install ROICaT
 ```
-pip install roicat[all]
+pip install roicat
 ```
+That is the whole install. Everything ROICaT needs is included: both pipelines,
+the interactive plots, and Jupyter for running the notebooks. There are no
+extras to choose between.
+
 **Note on zsh:** if you are using a zsh terminal, change command to: `pip3
-install --user 'roicat[all]'` <br>
+install --user roicat` <br>
 **Note on installing GPU support on Windows:** see
 [GPU Troubleshooting](https://roicat.readthedocs.io/en/latest/installation.html#gpu-support-issues)
 documentation.
 <br>
-**Note on opencv:** The headless version of opencv is installed by default. If
-the regular version is already installed, you will need to uninstall it first.
+**Note on opencv:** ROICaT installs the headless build of opencv, which has no
+GUI support and does not need one. If the regular build is already in your
+environment, uninstall it first -- the two provide the same `cv2` module and pip
+cannot tell them apart.
+<br>
+**Note on reproducible installs:** `pip install roicat` resolves each dependency
+freshly, so you get recent versions. To install the exact versions ROICaT is
+tested against instead, use `pip install roicat[pinned]`. This is worth doing if
+a fresh install breaks, or if you are reproducing published results.
+<br>
+**Note on older commands:** `pip install roicat[all]`, `roicat[tracking]` and
+the other extras still work and still install everything. They are empty aliases
+now, kept so that commands printed in older documentation keep behaving
+sensibly.
 
 ### 3. Clone the repo to get the notebooks
 ```
 git clone https://github.com/RichieHakim/ROICaT
 ```
-Then, navigate to the `ROICaT/notebooks/jupyter` directory to run the notebooks.
+Then, navigate to the `ROICaT/notebooks` directory to run the notebooks.
 
 
 # Quick Start
@@ -155,7 +171,7 @@ There are 2 parts to upgrading ROICaT: the **Python package** and the
 Activate your environment first, then...\
 To upgrade the Python package, run:
 ```
-pip install --upgrade roicat[all]
+pip install --upgrade roicat
 ```
 To upgrade the repository files, navigate your terminal to the `ROICaT` folder and run:
 ```

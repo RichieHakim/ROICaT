@@ -4,4 +4,4 @@ sphinx
 sphinx_rtd_theme
 # furo==2023.9.10
 myst_parser
-roicat[all]
+roicat

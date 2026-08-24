@@ -1,14 +1,27 @@
 import warnings
 
 
+## One importable module per base dependency in pyproject.toml, plus the two
+## from the `dev` extra that CI installs. tests/test_pyproject_extras.py checks
+## that the declaration is complete; this checks that what was declared
+## actually imports on this platform.
 PACKAGES = [
+    'IPython',
     'PIL',
+    'bokeh',
     'cpuinfo',
     'cv2',
+    'fast_hdbscan',
+    'h5py',
+    'holoviews',
     'jupyter',
+    'jupyter_bokeh',
+    'kornia',
+    'kymatio',
     'mat73',
     'matplotlib',
     'natsort',
+    'numba',
     'numpy',
     'onnx',
     'onnxruntime',
@@ -16,22 +29,23 @@ PACKAGES = [
     'pandas',
     'psutil',
     'pytest',
+    'requests',
+    'richfile',
+    'roiextractors',
+    'romatch',
     'scipy',
-    'seaborn',
+    'skimage',
     'skl2onnx',
     'sklearn',
     'sparse',
+    'sparse_convolution',
+    'seaborn',
     'torch',
     'torchvision',
     'tqdm',
+    'umap',
     'xxhash',
     'yaml',
-    'bokeh',
-    'holoviews',
-    'jupyter_bokeh',
-    'umap',
-    'fast_hdbscan',
-    'kymatio',
 ]
 
 def test_internal_package_tests():

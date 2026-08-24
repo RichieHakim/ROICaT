@@ -13,137 +13,175 @@ requires-python = ">=3.11, <3.14"
 authors = [{name = "Richard Hakim"}]
 keywords = ["neuroscience", "neuroimaging", "machine learning", "deep learning"]
 
-## Two parallel families of extras, plus one for development.
+## Everything ROICaT imports is declared here, so `pip install roicat` gives a
+## working install: both pipelines, the interactive plots and the notebooks.
 ##
-##   core / classification / tracking / all
-##       Exact versions. What the docs, the notebooks and CI install, and what
-##       anyone reproducing published results should use.
-##
-##   core_latest / classification_latest / tracking_latest / all_latest
-##       Same packages, no version constraints. For packages that depend on
-##       ROICaT: a pinned dependency propagates its pins to everything
-##       downstream, which is usually not resolvable alongside the downstream
-##       package's own requirements.
-##
-##   dev
-##       Testing and notebook tooling. Not needed to use the library.
-##
-## tests/test_pyproject_extras.py asserts the two families name the same
-## packages, so they cannot drift apart.
-[project.optional-dependencies]
-core = [
-    "matplotlib==3.11.1",
-    "mat73==0.65",
-    "natsort==8.4.0",
-    "numpy==2.4.6",
-    "optuna==4.9.0",
-    "pandas==3.0.3",
-    "Pillow==12.3.0",
-    "PyYAML==6.0.3",
-    "scikit-learn==1.9.0",
-    "scipy==1.17.1",
-    "seaborn==0.13.2",
-    "sparse==0.19.0",
-    "tqdm==4.70.0",
-    "torch==2.13.0",
-    "torchvision==0.28.0",
-    "psutil==7.2.2",
-    "py-cpuinfo==9.0.0",
-    "skl2onnx==1.20.0",
-    "onnx>=1.17.0,<1.23.0",
-    "onnxruntime==1.28.0",
-    "richfile>=0.6.2",
-    "sparse_convolution>=0.4.0",
-]
-classification = [
-    "roicat[core]",
-    "umap-learn==0.5.12",
-    "bokeh==3.9.2",
-    "holoviews[recommended]==1.23.1",
-    "jupyter-bokeh==4.1.0",
-]
-tracking = [
-    "roicat[core]",
-    "opencv-contrib-python-headless<=5.0.0.93",
-    "fast-hdbscan==0.3.2",
-    "kymatio==0.3.0",
-    "kornia==0.8.3",
+## Only lower bounds, and only where a specific version introduced something
+## ROICaT relies on. A package that depends on ROICaT inherits these
+## requirements and has no way to relax them, so an upper bound here becomes an
+## upper bound on everyone downstream. Exact versions live in the `pinned`
+## extra instead, where they are opt-in.
+dependencies = [
+    ## Numerics and data handling.
+    "numpy",
+    "scipy",
+    "scikit-learn",
+    "scikit-image",
+    "pandas",
+    "sparse",
+    "sparse_convolution>=0.4.0",  ## Toeplitz convolution used by tracking/blurring.py.
+    "numba",  ## roicat/tracking/clustering.py compiles two hot loops with @numba.njit.
+    "torch",
+    "torchvision",
+    "optuna",
+
+    ## File formats and I/O.
+    "richfile>=0.6.2",  ## 0.6.2 introduced the type-registry API roicat/util.py uses.
+    "h5py",  ## Reading .h5/.mat-v7.3 ROI files in roicat/helpers.py.
+    "mat73",
+    "PyYAML",
+    "requests",  ## Downloading ROInet weights in roicat/helpers.py.
+    "roiextractors",
+    "Pillow",
+
+    ## Alignment and tracking.
+    "opencv-contrib-python-headless",
+    "fast-hdbscan",
+    "kymatio",
+    "kornia",
     ## The 'fused-local-corr' extra publishes x86_64 Linux wheels only, with no
     ## source distribution, so on ARM Linux the requirement cannot resolve at
     ## all and the whole install fails. Ask for it only where it exists; RoMa
     ## runs without it, more slowly.
     "romatch-roicat[fused-local-corr]>=0.1.2.post1; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "romatch-roicat>=0.1.2.post1; sys_platform != 'linux' or platform_machine != 'x86_64'",
-    "roiextractors==0.9.0",
-]
-all = [
-    "roicat[core,classification,tracking]",
-    "scikit-image==0.26.0",
-]
 
-core_latest = [
-    "matplotlib",
-    "mat73",
-    "natsort",
-    "numpy",
-    "optuna",
-    "pandas",
-    "Pillow",
-    "PyYAML",
-    "scikit-learn",
-    "scipy",
-    "seaborn",
-    "sparse",
-    "tqdm",
-    "torch",
-    "torchvision",
-    "psutil",
-    "py-cpuinfo",
+    ## Exporting and running packaged classifiers.
     "skl2onnx",
-    "onnx",
+    "onnx>=1.17.0",
     "onnxruntime",
-    "richfile",
-    "sparse_convolution",
-]
-classification_latest = [
-    "roicat[core_latest]",
-    "umap-learn",
+
+    ## Plotting, interactive selection and the notebooks. The interactive
+    ## labelling and region-drawing tools are the documented way to use the
+    ## classification pipeline, so the notebook stack is not optional.
+    "matplotlib",
+    "seaborn",
     "bokeh",
     "holoviews[recommended]",
     "jupyter-bokeh",
-]
-tracking_latest = [
-    "roicat[core_latest]",
-    "opencv-contrib-python-headless",
-    "fast-hdbscan",
-    "kymatio",
-    "kornia",
-    "romatch-roicat[fused-local-corr]; sys_platform == 'linux' and platform_machine == 'x86_64'",
-    "romatch-roicat; sys_platform != 'linux' or platform_machine != 'x86_64'",
-    "roiextractors",
-]
-all_latest = [
-    "roicat[core_latest,classification_latest,tracking_latest]",
-    "scikit-image",
+    "umap-learn",
+    "jupyter",
+    ## Imported at module scope by roicat/pipelines.py. `jupyter` happens to
+    ## pull it in via ipykernel, but that is a coincidence of packaging, not
+    ## something to depend on.
+    "ipython",
+
+    ## Progress bars and system introspection.
+    "tqdm",
+    "natsort",
+    "psutil",
+    "py-cpuinfo",
 ]
 
-## Running the test suite and the notebooks. `pytest` is here rather than in
-## `core` so that a package depending on ROICaT does not inherit a pinned test
-## runner it must then match.
-dev = [
-    "roicat[all]",
+[project.optional-dependencies]
+
+## `pinned` names the same packages as `[project] dependencies`, at the exact
+## versions CI runs. Use it to reproduce published results, or when a fresh
+## resolve breaks and you need a set known to work:
+##
+##     pip install roicat[pinned]
+##
+## Dependabot maintains these. tests/test_pyproject_extras.py asserts that
+## `pinned` and the base dependencies name the same packages, so they cannot
+## drift apart.
+pinned = [
+    "numpy==2.4.6",
+    "scipy==1.17.1",
+    "scikit-learn==1.9.0",
+    "scikit-image==0.26.0",
+    "pandas==3.0.3",
+    "sparse==0.19.0",
+    "sparse_convolution==0.4.0",
+    "numba==0.67.0",
+    "torch==2.13.0",
+    "torchvision==0.28.0",
+    "optuna==4.9.0",
+
+    "richfile==0.6.2",
+    "h5py==3.16.0",
+    "mat73==0.65",
+    "PyYAML==6.0.3",
+    "requests==2.34.2",
+    "roiextractors==0.9.0",
+    "Pillow==12.3.0",
+
+    ## An upper bound rather than an exact pin, as it was before this
+    ## reorganization.
+    "opencv-contrib-python-headless<=5.0.0.93",
+    "fast-hdbscan==0.3.2",
+    "kymatio==0.3.0",
+    "kornia==0.8.3",
+    ## A floor rather than an exact pin: these two lines are the same
+    ## requirement split by platform, and only one of them applies on any
+    ## given machine.
+    "romatch-roicat[fused-local-corr]>=0.1.2.post1; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "romatch-roicat>=0.1.2.post1; sys_platform != 'linux' or platform_machine != 'x86_64'",
+
+    "skl2onnx==1.20.0",
+    ## The upper bound is inherited from before this reorganization; the
+    ## commit that added it does not record what broke.
+    "onnx>=1.17.0,<1.23.0",
+    "onnxruntime==1.28.0",
+
+    "matplotlib==3.11.1",
+    "seaborn==0.13.2",
+    "bokeh==3.9.2",
+    "holoviews[recommended]==1.23.1",
+    "jupyter-bokeh==4.1.0",
+    "umap-learn==0.5.12",
     "jupyter==1.1.1",
-    "pytest==9.1.1",
-    "selenium==4.46.0",
-    "xxhash==3.8.1",
+    "ipython==9.16.1",
+
+    "tqdm==4.70.0",
+    "natsort==8.4.0",
+    "psutil==7.2.2",
+    "py-cpuinfo==9.0.0",
 ]
-dev_latest = [
-    "roicat[all_latest]",
-    "jupyter",
+
+## Running the test suite. Unpinned for the same reason as the base
+## dependencies: a package depending on ROICaT should not inherit a pinned test
+## runner it then has to match.
+dev = [
     "pytest",
     "selenium",
     "xxhash",
 ]
+dev_pinned = [
+    "roicat[pinned]",
+    "pytest==9.1.1",
+    "selenium==4.46.0",
+    "xxhash==3.8.1",
+]
+
+## Training a new ROInet from scratch (roicat/model_training/). Not needed to
+## use a trained model, which is what nearly everyone wants.
+training = [
+    "wandb",
+]
+
+## Empty aliases, kept so that `pip install roicat[all]` and the other commands
+## published in older docs, papers and scripts keep working. Everything they
+## used to install is now in the base dependencies, so there is nothing left
+## for them to add.
+core = []
+classification = []
+tracking = []
+all = []
+core_latest = []
+classification_latest = []
+tracking_latest = []
+all_latest = []
+dev_latest = ["roicat[dev]"]
 
 [project.scripts]
 roicat = "roicat.__main__:main"
