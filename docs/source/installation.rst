@@ -21,29 +21,6 @@ If you have issues importing packages like `roicat` or any of its dependencies, 
    pip install --upgrade --force --no-cache-dir roicat[core]
 
 
-HDBSCAN installation issues
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-ROICaT clusters with `fast-hdbscan`, which is pure Python plus numba and needs
-no compiler, so this should not come up during a normal install. It applies only
-if you install the original `hdbscan` package yourself in order to use it as an
-alternative clusterer.
-
-If you are using **Windows** and receive the error: `ERROR: Could not build wheels for hdbscan, which is
-required to install pyproject.toml-based projects`, make sure that
-you have installed Microsoft C++ Build Tools. If not, download from
-`here <https://visualstudio.microsoft.com/visual-cpp-build-tools/>`_ and run the
-commands:
-
-.. code-block:: bash
-
-   cd path/to/vs_buildtools.exe
-   vs_buildtools.exe --norestart --passive --downloadThenInstall --includeRecommended --add Microsoft.VisualStudio.Workload.NativeDesktop --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Workload.MSBuildTools
-
-Then, try proceeding with the installation by rerunning the pip install command
-above.
-(`reference <https://stackoverflow.com/questions/64261546/how-to-solve-error-microsoft-visual-c-14-0-or-greater-is-required-when-inst>`_)
-
 GPU support issues
 ~~~~~~~~~~~~~~~~~~
 

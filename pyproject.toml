@@ -13,36 +13,8 @@ requires-python = ">=3.11, <3.14"
 authors = [{name = "Richard Hakim"}]
 keywords = ["neuroscience", "neuroimaging", "machine learning", "deep learning"]
 
-## `[project] dependencies` is deliberately empty, and the packages live in the
-## `core` extra instead.
-##
-## The reason is that pip has no way to relax a requirement, only to add to it.
-## An exact pin here would be inherited by everything that depends on ROICaT
-## with no escape hatch, and a `latest` extra naming the same package unpinned
-## does not undo it -- the resolver intersects the two and the pin wins. Tested
-## directly: a package pinning `packaging==24.0` in its base dependencies, with
-## an extra asking for unconstrained `packaging`, still installs 24.0 when that
-## extra is requested, with 26.3 available.
-##
-## So pinned-by-default and an unpinned opt-out cannot both live here. Keeping
-## the packages in extras gives both.
 dependencies = []
 
-## Two families, naming the same packages:
-##
-##   core
-##       Exact versions. This is the install: `pip install roicat[core]` gives
-##       everything ROICaT needs, at the versions CI runs, which is what the
-##       docs and the notebooks assume and what anyone reproducing published
-##       results should use.
-##
-##   latest
-##       The same packages, unconstrained. For packages that depend on ROICaT:
-##       a pinned dependency propagates its pins downstream, which is usually
-##       not resolvable alongside the downstream package's own requirements.
-##
-## tests/test_pyproject_extras.py asserts the two name the same packages, so
-## they cannot drift apart.
 [project.optional-dependencies]
 core = [
     ## Numerics and data handling.
