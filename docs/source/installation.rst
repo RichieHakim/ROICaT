@@ -18,7 +18,7 @@ If you have issues importing packages like `roicat` or any of its dependencies, 
 .. code-block:: bash
 
    pip uninstall roicat
-   pip install --upgrade --force --no-cache-dir roicat
+   pip install --upgrade --force --no-cache-dir roicat[core]
 
 
 HDBSCAN installation issues

@@ -47,13 +47,10 @@ jobs:
           "3.13",
         ]
         extra: [
-          ## Everything ROICaT needs is in the base dependencies, so `dev` adds
-          ## only the test tooling and resolves each dependency freshly.
-          ## `dev_pinned` installs the same packages at the exact versions in
-          ## the `pinned` extra. The two can fail independently, so both are
-          ## built.
+          ## `dev` and `dev_latest` are `core` / `latest` plus the test tooling,
+          ## so the matrix covers both dependency families.
           dev,
-          dev_pinned,
+          dev_latest,
         ]
 
     steps:

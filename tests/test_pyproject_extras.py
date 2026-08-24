@@ -1,15 +1,14 @@
 """
 Checks on the dependency declaration in ``pyproject.toml``.
 
-Everything ROICaT imports is declared in ``[project] dependencies``, so a plain
-``pip install roicat`` is a working install. Two things can quietly break that:
-a new ``import`` of something nobody declared (it works locally because some
-other package happened to pull it in), and the ``pinned`` extra drifting away
-from the base list. Both are tested here.
+Everything ROICaT imports is declared in the ``core`` extra, so
+``pip install roicat[core]`` is a complete install. ``latest`` names the same
+packages unconstrained, for downstream packages that cannot inherit pins.
 
-The base list carries lower bounds only. A package that depends on ROICaT
-inherits the base requirements and has no way to relax them, so an upper bound
-here constrains every downstream consumer. Exact versions belong in ``pinned``.
+Three things can quietly break that: a new ``import`` of something nobody
+declared (it works locally because some other package happened to pull it in),
+the two families drifting apart, and a version constraint creeping into
+``latest``. All three are tested here.
 """
 
 from typing import Dict, List, Set  ## typing
@@ -27,20 +26,26 @@ PATH_ROOT = Path(__file__).resolve().parent.parent
 PATH_PYPROJECT = PATH_ROOT / 'pyproject.toml'
 DIR_PACKAGE = PATH_ROOT / 'roicat'
 
-## Extras that predate the move to a self-sufficient base install. They are
-## empty now, but removing them would break `pip install roicat[all]` and the
-## other commands printed in older docs, papers and downstream scripts.
+## Extras that predate `core` and `latest` becoming complete on their own. They
+## are aliases now, but removing the names would break `pip install roicat[all]`
+## and the other commands printed in older docs, papers and downstream scripts.
 NAMES_EXTRAS_LEGACY = [
-    'core',
     'classification',
     'tracking',
     'all',
+    'pinned',
     'core_latest',
     'classification_latest',
     'tracking_latest',
     'all_latest',
-    'dev_latest',
+    'dev_pinned',
 ]
+
+## Pinned extra -> its unconstrained counterpart.
+PAIRS_EXTRAS = {
+    'core': 'latest',
+    'dev': 'dev_latest',
+}
 
 ## Importable module name -> the distribution on PyPI that provides it, for the
 ## cases where the two differ.
@@ -123,6 +128,40 @@ def _names_declared(requirements: List[str]) -> Set[str]:
     return {_name_distribution(req) for req in requirements}
 
 
+def _resolve(extras: dict, name: str, _seen: Set[str] = None) -> Set[str]:
+    """
+    Expands one extra into the distributions it pulls in, following
+    self-references like ``roicat[core]``.
+
+    Args:
+        extras (dict):
+            All optional-dependency groups.
+        name (str):
+            The group to expand.
+
+    Returns:
+        (Set[str]):
+            Normalized distribution names, without version constraints, extras
+            or environment markers.
+    """
+    _seen = set() if _seen is None else _seen
+    if name in _seen:
+        return set()  ## Self-referential extras would otherwise recurse forever.
+    _seen.add(name)
+
+    out = set()
+    for req in extras[name]:
+        body = req.split(';')[0].strip()
+        match = re.match(r'^([A-Za-z0-9_.\-]+)(?:\[([^\]]*)\])?', body)
+        dist, extras_requested = match.group(1), match.group(2)
+        if dist.lower() == 'roicat':
+            for sub in (extras_requested or '').split(','):
+                out |= _resolve(extras, sub.strip(), _seen)
+        else:
+            out.add(dist.lower().replace('_', '-'))
+    return out
+
+
 def _modules_imported() -> Dict[str, List[str]]:
     """
     Walks every module under ``roicat/`` and collects the third-party top-level
@@ -156,16 +195,17 @@ def _modules_imported() -> Dict[str, List[str]]:
 
 def test_every_import_is_declared_or_explicitly_optional():
     """
-    Every third-party module ROICaT imports must either be a base dependency or
-    be listed in ``MODULES_NOT_DEPENDENCIES`` with a reason.
+    Every third-party module ROICaT imports must either be in the ``core``
+    extra or be listed in ``MODULES_NOT_DEPENDENCIES`` with a reason.
 
-    This is the invariant that makes ``pip install roicat`` mean something. It
-    used to hold only by luck in places: ``pandas`` was undeclared for a long
-    time and worked because seaborn pulled it in, and ``cv2`` was imported at
-    module scope while living in an extra, so a ``roicat[classification]``
-    install could not ``import roicat`` at all (#662).
+    This is the invariant that makes ``pip install roicat[core]`` mean
+    something. It used to hold only by luck in places: ``pandas`` was undeclared
+    for a long time and worked because seaborn pulled it in, and ``cv2`` was
+    imported at module scope while ``core`` did not name it, so a
+    ``roicat[classification]`` install could not ``import roicat`` at all
+    (#662).
     """
-    declared = _names_declared(_load_pyproject()['project']['dependencies'])
+    declared = _resolve(_load_pyproject()['project']['optional-dependencies'], 'core')
     undeclared = {}
     for module, sites in _modules_imported().items():
         if module in MODULES_NOT_DEPENDENCIES:
@@ -174,7 +214,7 @@ def test_every_import_is_declared_or_explicitly_optional():
         if dist not in declared:
             undeclared[module] = sites[:3]
     assert not undeclared, (
-        'Imported by ROICaT but not in [project] dependencies: '
+        'Imported by ROICaT but not in the "core" extra: '
         f'{undeclared}. Either declare it, or add it to MODULES_NOT_DEPENDENCIES '
         'with a note saying why an install without it still works.'
     )
@@ -205,42 +245,65 @@ def test_optional_modules_are_not_imported_at_module_scope():
     )
 
 
-def test_pinned_names_the_same_packages_as_the_base_dependencies():
+@pytest.mark.parametrize('extra_pinned, extra_latest', sorted(PAIRS_EXTRAS.items()))
+def test_the_two_families_name_the_same_packages(extra_pinned, extra_latest):
     """
-    ``pinned`` exists to reproduce a known-good install of the base list. A
-    package present in one and not the other makes it something else: either an
-    unpinned hole in a set that claims to be exact, or a package that arrives
-    only when you ask for the pins.
+    ``latest`` exists so that a downstream package can install what ROICaT needs
+    without inheriting its pins. A package present in one family and not the
+    other makes it something else: either an unpinned hole in a set that claims
+    to be exact, or an ImportError in somebody else's install.
     """
-    project = _load_pyproject()['project']
-    base = _names_declared(project['dependencies'])
-    pinned = _names_declared([
-        req for req in project['optional-dependencies']['pinned']
-        if not req.lower().startswith('roicat[')
-    ])
-    assert base == pinned, (
-        f'Base dependencies and the "pinned" extra have drifted apart. '
-        f'Only in base: {sorted(base - pinned)}. Only in pinned: {sorted(pinned - base)}.'
+    extras = _load_pyproject()['project']['optional-dependencies']
+    for name in (extra_pinned, extra_latest):
+        assert name in extras, f"pyproject.toml has no '{name}' extra."
+
+    pkgs_pinned, pkgs_latest = _resolve(extras, extra_pinned), _resolve(extras, extra_latest)
+    assert pkgs_pinned == pkgs_latest, (
+        f"'{extra_pinned}' and '{extra_latest}' have drifted apart. "
+        f"Only in '{extra_pinned}': {sorted(pkgs_pinned - pkgs_latest)}. "
+        f"Only in '{extra_latest}': {sorted(pkgs_latest - pkgs_pinned)}."
     )
 
 
-def test_base_dependencies_carry_no_upper_bounds():
+def test_latest_extras_are_unpinned():
     """
-    An upper bound in the base list cannot be relaxed by anything that depends
-    on ROICaT, so it silently caps every downstream package too. Upper bounds
-    belong in ``pinned``, which is opt-in.
+    A version constraint inside ``latest`` defeats its purpose: it is the
+    constraint, not the package, that a downstream package cannot satisfy.
     """
-    bounded = []
-    for req in _load_pyproject()['project']['dependencies']:
-        body = req.split(';')[0].strip()
-        ## Strip the name and any [extras] first, so `holoviews[recommended]`
-        ## does not read as a constraint.
-        constraint = re.sub(r'^[A-Za-z0-9_.\-]+(\[[^\]]*\])?', '', body).strip()
-        if any(op in constraint for op in ('<', '==', '~=')):
-            bounded.append(req)
-    assert not bounded, (
-        f'Upper-bounded or exactly-pinned base dependencies: {bounded}. '
-        'Move the constraint to the "pinned" extra.'
+    extras = _load_pyproject()['project']['optional-dependencies']
+    constrained = {}
+    for name in PAIRS_EXTRAS.values():
+        for req in extras[name]:
+            body = req.split(';')[0].strip()
+            ## Strip the distribution name and any [extras] before looking for a
+            ## constraint, so 'holoviews[recommended]' does not read as one.
+            rest = re.sub(r'^[A-Za-z0-9_.\-]+(\[[^\]]*\])?', '', body).strip()
+            if rest and not body.lower().startswith('roicat['):
+                constrained.setdefault(name, []).append(req)
+    assert not constrained, f'Version constraints found in unpinned extras: {constrained}'
+
+
+def test_base_dependencies_stay_empty():
+    """
+    The packages live in extras rather than in ``[project] dependencies``, and
+    that is load-bearing rather than incidental.
+
+    pip can add a constraint but never relax one. A pin in the base list would
+    be inherited by every package depending on ROICaT with no way out, and a
+    ``latest`` extra naming the same package unconstrained does not undo it --
+    the resolver intersects the two and the pin wins. Verified directly: a
+    package with ``packaging==24.0`` in its base dependencies and an extra
+    asking for bare ``packaging`` still installs 24.0 when that extra is
+    requested, with 26.3 available.
+
+    So a pinned default and an unpinned opt-out cannot coexist if the packages
+    are in the base list. Putting even one there starts undoing that.
+    """
+    declared = _load_pyproject()['project']['dependencies']
+    assert declared == [], (
+        f'[project] dependencies is no longer empty: {declared}. Anything here '
+        'is pinned for every downstream consumer with no escape, and the '
+        '"latest" extra cannot loosen it. Put it in "core" and "latest" instead.'
     )
 
 
@@ -249,14 +312,15 @@ def test_legacy_extras_still_resolve(name):
     """
     ``pip install roicat[all]`` is printed in the README of every past release,
     in the docs and in an unknown number of downstream scripts. Removing the
-    name would make those commands warn and install a different thing than the
-    author intended, so the names stay even though they are empty.
+    name would make those commands warn and install nothing at all, so the names
+    stay as aliases for the family they used to be part of.
     """
     extras = _load_pyproject()['project']['optional-dependencies']
     assert name in extras, (
-        f"pyproject.toml no longer declares the '{name}' extra. It is empty by "
-        f"design, but `pip install roicat[{name}]` must keep working."
+        f"pyproject.toml no longer declares the '{name}' extra. It is an alias "
+        f"now, but `pip install roicat[{name}]` must keep working."
     )
+    assert _resolve(extras, name), f"The '{name}' alias resolves to nothing."
 
 
 ######################################################################################################################################
@@ -314,12 +378,12 @@ def test_ci_tests_every_supported_python():
     )
 
 
-def test_ci_covers_both_the_base_and_pinned_dependency_sets():
+def test_ci_covers_both_dependency_families():
     """
-    The two dependency sets resolve to different versions and can fail
-    independently: ``pinned`` breaks when a pin stops being installable, the
-    base list breaks when a new upstream release is incompatible. The matrix
-    has to build both or one of them is untested.
+    The two families resolve to different versions and fail independently:
+    ``core`` breaks when a pin stops being installable, ``latest`` breaks when a
+    new upstream release is incompatible. The matrix has to build both or one of
+    them is untested.
     """
     import yaml
 
@@ -330,8 +394,8 @@ def test_ci_covers_both_the_base_and_pinned_dependency_sets():
     extras_tested = {str(v) for v in workflow['jobs']['build']['strategy']['matrix']['extra']}
 
     names_installed = {name for entry in extras_tested for name in entry.split(',')}
-    assert 'dev' in names_installed, 'No CI row installs the unpinned base dependencies.'
-    assert 'dev_pinned' in names_installed, 'No CI row installs the "pinned" set.'
+    assert 'dev' in names_installed, 'No CI row installs the pinned "core" family.'
+    assert 'dev_latest' in names_installed, 'No CI row installs the unpinned "latest" family.'
 
 
 def test_readme_states_the_supported_pythons():
