@@ -2931,3 +2931,121 @@ class Test_richfile_type_registry:
         dependency, so no type should claim to come from it."""
         offenders = [p['type_name'] for p in self._registered_properties() if p['library'] == 'onnx2torch']
         assert not offenders, f'types still attributed to onnx2torch: {offenders}'
+
+
+######################################################################################################################################
+######################################################## OPTIONAL OPENCV #############################################################
+######################################################################################################################################
+
+
+class Test_opencv_is_optional:
+    """
+    ``roicat/tracking/alignment.py`` imported cv2 at module scope, and
+    ``roicat/__init__.py`` imports the tracking subpackage, so ``import roicat``
+    required OpenCV. OpenCV ships only with the `tracking` extras, so a
+    ``roicat[classification]`` install could not import the package at all.
+    See issue #662. CI missed it because the matrix only builds `dev` /
+    `dev_latest`, which resolve to `all` and install everything.
+    """
+
+    def test_no_module_scope_cv2_import_in_roicat(self):
+        """cv2 may be imported inside a function, never at module scope --
+        module scope is what runs on `import roicat`."""
+        import ast
+        import roicat
+
+        root = Path(roicat.__file__).parent
+        offenders = []
+        for path in sorted(root.rglob('*.py')):
+            tree = ast.parse(path.read_text(), filename=str(path))
+            for node in tree.body:  ## module scope only
+                names = []
+                if isinstance(node, ast.Import):
+                    names = [a.name for a in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    names = [node.module or '']
+                if any(n == 'cv2' or n.startswith('cv2.') for n in names):
+                    offenders.append(f'{path.relative_to(root)}:{node.lineno}')
+        assert not offenders, (
+            f'cv2 imported at module scope (breaks `import roicat` without OpenCV): {offenders}'
+        )
+
+    def test_no_cv2_constant_in_a_default_argument(self):
+        """A `cv2.` constant used as a default argument is evaluated when the
+        module is imported, so it defeats a lazy import just as surely as a
+        module-scope `import cv2` does. Both `OpticalFlowFarneback.__init__`
+        and `ORB.__init__` used to do this."""
+        import ast
+
+        from roicat.tracking import alignment
+
+        tree = ast.parse(Path(alignment.__file__).read_text())
+
+        def uses_cv2(n):
+            return any(isinstance(x, ast.Name) and x.id == 'cv2' for x in ast.walk(n))
+
+        offenders = []
+
+        def scan(body, ctx=''):
+            for node in body:
+                if isinstance(node, ast.ClassDef):
+                    scan(node.body, f'{ctx}{node.name}.')
+                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    args = node.args
+                    defaults = list(args.defaults) + [d for d in args.kw_defaults if d]
+                    if any(uses_cv2(d) for d in defaults):
+                        offenders.append(f'{ctx}{node.name}() default arg')
+                elif uses_cv2(node):
+                    offenders.append(f'{ctx}statement at line {node.lineno}')
+
+        scan(tree.body)
+        assert not offenders, f'cv2 evaluated at import time: {offenders}'
+
+    def test_import_roicat_succeeds_without_opencv(self):
+        """The end-to-end check: a fresh interpreter that cannot import cv2
+        must still be able to import roicat."""
+        import subprocess
+        import sys
+        import textwrap
+
+        script = textwrap.dedent(
+            '''
+            import sys
+            from importlib.abc import MetaPathFinder
+
+            class _BlockCV2(MetaPathFinder):
+                """Make cv2 unimportable, as it is on a classification-only install."""
+                def find_spec(self, fullname, path=None, target=None):
+                    if fullname == 'cv2' or fullname.startswith('cv2.'):
+                        raise ImportError(f'blocked for test: {fullname}')
+                    return None
+
+            sys.meta_path.insert(0, _BlockCV2())
+            for name in list(sys.modules):
+                if name == 'cv2' or name.startswith('cv2.'):
+                    del sys.modules[name]
+
+            import roicat
+            import roicat.tracking.alignment
+            print('IMPORT_OK')
+            '''
+        )
+        result = subprocess.run(
+            [sys.executable, '-c', script],
+            capture_output=True, text=True, timeout=900,
+        )
+        assert 'IMPORT_OK' in result.stdout, (
+            f'importing roicat without OpenCV failed:\n'
+            f'--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}'
+        )
+
+    def test_error_names_what_to_install(self, monkeypatch):
+        """When an alignment routine is actually reached without OpenCV, the
+        error should say what to install rather than a bare ModuleNotFoundError."""
+        import sys
+
+        from roicat.tracking import alignment
+
+        monkeypatch.setitem(sys.modules, 'cv2', None)
+        with pytest.raises(ImportError, match='opencv'):
+            alignment.import_cv2()

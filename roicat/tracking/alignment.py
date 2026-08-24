@@ -11,10 +11,37 @@ import scipy.optimize
 import scipy.sparse
 import torch
 from tqdm.auto import tqdm
-import cv2
 import matplotlib.pyplot as plt
 
 from .. import helpers, util
+
+
+def import_cv2():
+    """
+    Imports OpenCV, with an error that says what to install if it is missing.
+
+    OpenCV is only needed by the alignment routines below, but this module used
+    to import it at module scope -- and ``roicat/__init__.py`` imports the
+    tracking subpackage, so that made ``import roicat`` fail outright on any
+    install without OpenCV (e.g. ``roicat[classification]``). Importing it
+    inside the functions that use it keeps the failure local to the feature
+    that needs it.
+
+    Returns:
+        (module):
+            import_cv2 (module):
+                The ``cv2`` module.
+    """
+    try:
+        import cv2
+    except ImportError as e:
+        raise ImportError(
+            "OpenCV is required for ROICaT's image alignment, but is not installed. "
+            "Install it with `pip install roicat[tracking]`, or directly with "
+            "`pip install opencv-contrib-python-headless`."
+        ) from e
+    return cv2
+
 
 class Aligner(util.ROICaT_Module):
     """
@@ -1309,6 +1336,7 @@ def clahe(
             im_out (np.ndarray): 
                 Output image after applying CLAHE.
     """
+    cv2 = import_cv2()
     assert isinstance(grid_size, (int, tuple)), 'grid_size must be int or tuple'
     if isinstance(grid_size, int):
         grid_size = (grid_size, grid_size)
@@ -1470,6 +1498,7 @@ class ImageRegistrationMethod:
         Returns:
             warp_matrix (np.ndarray[3x3]) - the resulting transformation.
         """
+        cv2 = import_cv2()
         # 1) detect & match keypoints
         kptsA, kptsB = self._forward_rigid(im_template, im_moving, **kwargs)
 
@@ -2041,6 +2070,7 @@ class DeepFlow(ImageRegistrationMethod):
         device: str = 'cpu',
         verbose=False,
     ):
+        cv2 = import_cv2()
         super().__init__(device=device, verbose=verbose)
 
         self.model = cv2.optflow.createOptFlow_DeepFlow()
@@ -2126,11 +2156,16 @@ class OpticalFlowFarneback(ImageRegistrationMethod):
         iterations: int = 7,
         poly_n: int = 5,
         poly_sigma: float = 1.5,
-        flags: int = cv2.OPTFLOW_FARNEBACK_GAUSSIAN,  ## == 256
+        flags: Optional[int] = None,  ## None -> cv2.OPTFLOW_FARNEBACK_GAUSSIAN (== 256)
         device: str = 'cpu',
         verbose=False,
     ):
         super().__init__(device=device, verbose=verbose)
+
+        ## Resolved here rather than in the signature: evaluating a cv2 constant
+        ## as a default argument would import OpenCV at module scope again.
+        if flags is None:
+            flags = import_cv2().OPTFLOW_FARNEBACK_GAUSSIAN  ## == 256
 
         self.pyr_scale, self.levels, self.winsize, self.iterations, self.poly_n, self.poly_sigma, self.flags = \
             pyr_scale, levels, winsize, iterations, poly_n, poly_sigma, flags
@@ -2141,6 +2176,7 @@ class OpticalFlowFarneback(ImageRegistrationMethod):
         im_moving: Union[np.ndarray, torch.Tensor],
         **kwargs,
     ):
+        cv2 = import_cv2()
         h, w = im_moving.shape
         x_grid, y_grid = np.meshgrid(np.arange(0., w).astype(np.float32), np.arange(0., h).astype(np.float32), indexing='xy')
 
@@ -2213,6 +2249,7 @@ class SIFT(ImageRegistrationMethod):
         device: str = 'cpu',
         verbose: bool = False,
     ):
+        cv2 = import_cv2()
         super().__init__(device=device, verbose=verbose)
 
         self.sift = cv2.SIFT_create(
@@ -2251,6 +2288,7 @@ class SIFT(ImageRegistrationMethod):
         self,
         image: Union[np.ndarray, torch.Tensor],
     ):
+        cv2 = import_cv2()
         if isinstance(image, torch.Tensor):
             image = image.cpu().numpy()
         if image.ndim == 3:
@@ -2299,12 +2337,13 @@ class ORB(ImageRegistrationMethod):
         edgeThreshold: int = 31,
         firstLevel: int = 0,
         WTA_K: int = 2,
-        scoreType: int = cv2.ORB_HARRIS_SCORE,
+        scoreType: Optional[int] = None,  ## None -> cv2.ORB_HARRIS_SCORE (== 0)
         patchSize: int = 31,
         fastThreshold: int = 20,
         device: str = 'cpu',
         verbose: bool = False,
     ):
+        cv2 = import_cv2()
         super().__init__(device=device, verbose=verbose)
         self.orb = cv2.ORB_create(
             nfeatures=nfeatures,
@@ -2313,7 +2352,7 @@ class ORB(ImageRegistrationMethod):
             edgeThreshold=edgeThreshold,
             firstLevel=firstLevel,
             WTA_K=WTA_K,
-            scoreType=scoreType,
+            scoreType=cv2.ORB_HARRIS_SCORE if scoreType is None else scoreType,
             patchSize=patchSize,
             fastThreshold=fastThreshold,
         )
@@ -2347,6 +2386,7 @@ class ORB(ImageRegistrationMethod):
         self,
         image: Union[np.ndarray, torch.Tensor],
     ):
+        cv2 = import_cv2()
         if isinstance(image, torch.Tensor):
             image = image.cpu().numpy()
         if image.ndim == 3:
