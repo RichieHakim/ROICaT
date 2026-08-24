@@ -22,8 +22,8 @@ core = [
     "scipy==1.17.1",
     "scikit-learn==1.9.0",
     "scikit-image==0.26.0",
-    "pandas==3.0.3",
-    "sparse==0.19.0",
+    "pandas==3.0.5",
+    "sparse==0.19.2",
     "sparse_convolution==0.4.0",  ## Toeplitz convolution used by tracking/blurring.py.
     "numba==0.67.0",  ## roicat/tracking/clustering.py compiles two hot loops with @numba.njit.
     "torch==2.13.0",
@@ -62,7 +62,7 @@ core = [
     ## The upper bound is inherited from before this reorganization; the commit
     ## that added it does not record what broke.
     "onnx>=1.17.0,<1.23.0",
-    "onnxruntime==1.28.0",
+    "onnxruntime==1.29.0",
 
     ## Plotting, interactive selection and the notebooks. The interactive
     ## labelling and region-drawing tools are the documented way to use the
@@ -137,8 +137,8 @@ latest = [
 dev = [
     "roicat[core]",
     "pytest==9.1.1",
-    "selenium==4.46.0",
-    "xxhash==3.8.1",
+    "selenium==4.47.0",
+    "xxhash==4.0.1",
 ]
 dev_latest = [
     "roicat[latest]",
