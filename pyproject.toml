@@ -134,7 +134,7 @@ dev = [
     "roicat[all]",
     "jupyter==1.1.1",
     "pytest==9.1.1",
-    "selenium==4.46.0",
+    "selenium==4.47.0",
     "xxhash==3.8.1",
 ]
 dev_latest = [
