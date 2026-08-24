@@ -1,1 +1,1 @@
-pip install --user roicat[core]
+pip install --user roicat[all]

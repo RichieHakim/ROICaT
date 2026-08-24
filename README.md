@@ -110,18 +110,15 @@ you want to use ROICaT.
 
 ### 2. Install ROICaT
 ```
-pip install roicat[core]
+pip install roicat[all]
 ```
 That is the whole install. Everything ROICaT needs is included: both pipelines,
-the interactive plots, and Jupyter for running the notebooks. There is no longer
-a choice to make between extras -- `[classification]`, `[tracking]` and `[all]`
-all install the same complete set.
-
-`[core]` installs the exact versions ROICaT is tested against, which is what you
-want unless you have a reason not to.
+the interactive plots, and Jupyter for running the notebooks. `[core]`,
+`[classification]`, `[tracking]` and `[pinned]` are all names for the same
+complete set, at the exact versions ROICaT is tested against.
 
 **Note on zsh:** if you are using a zsh terminal, change command to: `pip3
-install --user 'roicat[core]'` <br>
+install --user 'roicat[all]'` <br>
 **Note on installing GPU support on Windows:** see
 [GPU Troubleshooting](https://roicat.readthedocs.io/en/latest/installation.html#gpu-support-issues)
 documentation.
@@ -169,7 +166,7 @@ There are 2 parts to upgrading ROICaT: the **Python package** and the
 Activate your environment first, then...\
 To upgrade the Python package, run:
 ```
-pip install --upgrade roicat[core]
+pip install --upgrade roicat[all]
 ```
 To upgrade the repository files, navigate your terminal to the `ROICaT` folder and run:
 ```

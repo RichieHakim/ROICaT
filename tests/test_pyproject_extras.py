@@ -26,9 +26,9 @@ PATH_ROOT = Path(__file__).resolve().parent.parent
 PATH_PYPROJECT = PATH_ROOT / 'pyproject.toml'
 DIR_PACKAGE = PATH_ROOT / 'roicat'
 
-## Extras that predate `core` and `latest` becoming complete on their own. They
-## are aliases now, but removing the names would break `pip install roicat[all]`
-## and the other commands printed in older docs, papers and downstream scripts.
+## Names that resolve to `core` or `latest` rather than holding a list of their
+## own. `all` is the documented install command; the rest are kept because they
+## are printed in older docs, papers and downstream scripts.
 NAMES_EXTRAS_LEGACY = [
     'classification',
     'tracking',
@@ -310,10 +310,10 @@ def test_base_dependencies_stay_empty():
 @pytest.mark.parametrize('name', NAMES_EXTRAS_LEGACY)
 def test_legacy_extras_still_resolve(name):
     """
-    ``pip install roicat[all]`` is printed in the README of every past release,
-    in the docs and in an unknown number of downstream scripts. Removing the
-    name would make those commands warn and install nothing at all, so the names
-    stay as aliases for the family they used to be part of.
+    ``pip install roicat[all]`` is the documented install command, and the other
+    names are printed in the README of every past release, in the docs and in an
+    unknown number of downstream scripts. Removing one would make those commands
+    warn and install nothing at all.
     """
     extras = _load_pyproject()['project']['optional-dependencies']
     assert name in extras, (
