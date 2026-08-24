@@ -54,6 +54,7 @@ core = [
     "onnxruntime==1.28.0",
     "richfile>=0.6.2",
     "sparse_convolution>=0.4.0",
+    "fast-hdbscan==0.3.2",
 ]
 classification = [
     "roicat[core]",
@@ -65,7 +66,6 @@ classification = [
 tracking = [
     "roicat[core]",
     "opencv-contrib-python-headless<=5.0.0.93",
-    "fast-hdbscan==0.3.2",
     "kymatio==0.3.0",
     "kornia==0.8.3",
     ## The 'fused-local-corr' extra publishes x86_64 Linux wheels only, with no
@@ -104,6 +104,7 @@ core_latest = [
     "onnxruntime",
     "richfile",
     "sparse_convolution",
+    "fast-hdbscan",
 ]
 classification_latest = [
     "roicat[core_latest]",
@@ -115,7 +116,6 @@ classification_latest = [
 tracking_latest = [
     "roicat[core_latest]",
     "opencv-contrib-python-headless",
-    "fast-hdbscan",
     "kymatio",
     "kornia",
     "romatch-roicat[fused-local-corr]; sys_platform == 'linux' and platform_machine == 'x86_64'",

@@ -235,3 +235,24 @@ def test_readme_states_the_supported_pythons():
         f"README requirements line names {sorted(named)}: {line.strip()!r}, "
         f"but requires-python admits {sorted(_versions_supported())}."
     )
+
+
+def test_core_declares_fast_hdbscan():
+    """
+    fast_hdbscan belongs in `core`, not only in `tracking`.
+
+    A tracking run writes a `fast_hdbscan.HDBSCAN` object into its richfile (it
+    lands at `clusterer.hdbs` in `run_data.richfile`). richfile archives are
+    meant to be portable between installs, so a `roicat[classification]` user
+    handed a colleague's tracking output must be able to load it -- which needs
+    the hdbscan type registered, which needs fast_hdbscan importable.
+
+    The cost is small: fast_hdbscan is ~6 MB, and its heavy dependency chain
+    (numba, llvmlite) is already a core transitive dependency via `sparse`.
+    """
+    extras = _load_extras()
+    for name in ('core', 'core_latest'):
+        assert 'fast-hdbscan' in _resolve(extras, name), (
+            f"extra '{name}' should declare fast-hdbscan so that every ROICaT "
+            'install can read richfiles containing an HDBSCAN object.'
+        )
