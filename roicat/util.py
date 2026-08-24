@@ -1513,13 +1513,21 @@ class Model_SWT(torch.nn.Module):
         kwargs['pre_pad'] = bool(kwargs['pre_pad'])
         kwargs['out_type'] = str(kwargs['out_type'])
 
-        ## The filters live in buffers, so they carry the model's device.
-        device = next((str(b.device) for b in self.buffers()), 'cpu')
+        ## The filters live in buffers, so they carry the model's device and
+        ## dtype. Both must be recorded: kymatio builds its filter bank in a
+        ## fixed default dtype, and its Fourier ops require the input and the
+        ## filters to match ("Input and filter must be of the same dtype"), so a
+        ## model that had been cast with .double()/.half() would otherwise come
+        ## back silently narrowed and reject the inputs the original accepted.
+        buffer_first = next(iter(self.buffers()), None)
+        device = 'cpu' if buffer_first is None else str(buffer_first.device)
+        dtype = None if buffer_first is None else str(buffer_first.dtype).split('.')[-1]
 
         return {
             'class_wrapped': type(inner).__name__,
             'kwargs_Scattering2D': kwargs,
             'device': device,
+            'dtype': dtype,
         }
 
     @classmethod
@@ -1546,6 +1554,21 @@ class Model_SWT(torch.nn.Module):
         kwargs = dict(d['kwargs_Scattering2D'])
         kwargs['shape'] = tuple(kwargs['shape'])
         model = cls(import_Scattering2D()(**kwargs))
+
+        ## Restore the original dtype. kymatio builds its filters in a fixed
+        ## default, so a model that had been cast with .double()/.half() would
+        ## otherwise come back narrowed and reject the inputs the original
+        ## accepted. Absent from archives written before dtype was recorded, in
+        ## which case kymatio's default is already correct.
+        dtype = d.get('dtype')
+        if dtype is not None:
+            try:
+                model.to(dtype=getattr(torch, dtype))
+            except Exception as e:
+                warnings.warn(
+                    f"Could not restore the rebuilt SWT model's dtype {dtype!r} "
+                    f"({type(e).__name__}: {e}). Leaving it at kymatio's default."
+                )
 
         ## Restore the original device when it is available, but never fail over
         ## it: an archive written on a GPU machine must still load on a CPU one.

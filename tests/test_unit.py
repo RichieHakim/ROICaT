@@ -3001,6 +3001,35 @@ class Test_Model_SWT_serialization:
         with torch.no_grad():
             np.testing.assert_array_equal(model(x).numpy(), loaded(x).numpy())
 
+    def test_round_trip_preserves_dtype(self, tmp_path):
+        """A model cast with .double() must come back as float64.
+
+        kymatio builds its filter bank in a fixed default dtype, and its Fourier
+        ops require input and filters to match ("Input and filter must be of the
+        same dtype"). Recording only the device would silently narrow a cast
+        model on reload, so it would reject the very inputs the original
+        accepted -- a wrong answer rather than an error.
+        """
+        model = self._make_model().double()
+        assert next(iter(model.buffers())).dtype == torch.float64
+
+        loaded = self._save_load(model, tmp_path)
+        assert next(iter(loaded.buffers())).dtype == torch.float64, (
+            'dtype was not preserved through the round trip'
+        )
+
+        rng = np.random.RandomState(0)
+        x = torch.as_tensor(rng.randn(2, *self.SHAPE)).double().contiguous()
+        with torch.no_grad():
+            np.testing.assert_array_equal(model(x).numpy(), loaded(x).numpy())
+
+    def test_load_without_recorded_dtype_still_works(self, tmp_path):
+        """Payloads written before dtype was recorded must still rebuild."""
+        d = self._make_model().to_dict()
+        d.pop('dtype')
+        rebuilt = util.Model_SWT.from_dict(d)
+        assert isinstance(rebuilt, util.Model_SWT)
+
     def test_legacy_repr_payload_loads_unchanged(self, tmp_path):
         """Archives written before this change hold a repr string under the
         same type name. They must keep loading, and keep returning the string
