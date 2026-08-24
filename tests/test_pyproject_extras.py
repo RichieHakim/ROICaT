@@ -148,13 +148,18 @@ def test_import_time_dependencies_are_declared():
         'richfile': 'richfile',
     }
     extras = _load_extras()
-    declared = _resolve(extras, 'all')
+    ## Resolved against `core`, not `all`: `core` is the floor every other extra
+    ## builds on, so it is the only place a declaration guarantees the package is
+    ## present for *every* install. Checking `all` passed while `cv2` was declared
+    ## only in `tracking`, which left `roicat[classification]` unable to run
+    ## `import roicat` at all.
+    declared = _resolve(extras, 'core')
     missing = sorted({
         dist for dist in MODULES_IMPORT_TIME.values()
         if dist.replace('_', '-') not in declared
     })
     assert not missing, (
-        f'Imported at import time but not declared in the "all" extra: {missing}'
+        f'Imported at import time but not declared in the "core" extra: {missing}'
     )
 
 

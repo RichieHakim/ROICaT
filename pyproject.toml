@@ -54,6 +54,10 @@ core = [
     "onnxruntime==1.28.0",
     "richfile>=0.6.2",
     "sparse_convolution>=0.4.0",
+    ## Imported at module scope by roicat/tracking/alignment.py, and
+    ## roicat/__init__.py imports the tracking subpackage, so `import roicat`
+    ## needs it regardless of which extra was installed.
+    "opencv-contrib-python-headless<=5.0.0.93",
 ]
 classification = [
     "roicat[core]",
@@ -64,7 +68,6 @@ classification = [
 ]
 tracking = [
     "roicat[core]",
-    "opencv-contrib-python-headless<=5.0.0.93",
     "fast-hdbscan==0.3.2",
     "kymatio==0.3.0",
     "kornia==0.8.3",
@@ -104,6 +107,7 @@ core_latest = [
     "onnxruntime",
     "richfile",
     "sparse_convolution",
+    "opencv-contrib-python-headless",
 ]
 classification_latest = [
     "roicat[core_latest]",
@@ -114,7 +118,6 @@ classification_latest = [
 ]
 tracking_latest = [
     "roicat[core_latest]",
-    "opencv-contrib-python-headless",
     "fast-hdbscan",
     "kymatio",
     "kornia",
