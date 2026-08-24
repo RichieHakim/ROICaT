@@ -2865,3 +2865,69 @@ class Test_reason_fused_local_corr_unavailable:
         assert self._fn()() is None
         self._fn().cache_clear()
         assert isinstance(self._fn()(), str)
+
+
+######################################################################################################################################
+################################################## RICHFILE TYPE REGISTRY ############################################################
+######################################################################################################################################
+
+
+class Test_richfile_type_registry:
+    """
+    Every type registered on RichFile_ROICaT carries a "library" string, and
+    richfile resolves that string to an installed distribution on *every save*
+    in order to stamp a version into the metadata. So a library naming a
+    package ROICaT does not actually depend on is a save-time crash for anyone
+    without it -- see issue #660, where "model_swt" claimed to come from
+    onnx2torch (a package nothing in ROICaT imports, installed only by the
+    `all` extra), which broke saving for every tracking-only install.
+    """
+
+    @staticmethod
+    def _resolve_library(library):
+        """Mirror of the library -> version resolution richfile performs during
+        save. Returns a version string, or raises the way a save would."""
+        import importlib
+        import importlib.metadata
+
+        if library in ('python', 'builtins'):
+            return 'builtin'
+        try:
+            return importlib.metadata.version(library)
+        except importlib.metadata.PackageNotFoundError:
+            ## richfile falls back to importing the module; so do we.
+            return getattr(importlib.import_module(library), '__version__', 'unknown')
+
+    def _registered_properties(self):
+        return util.RichFile_ROICaT().type_lookup.properties
+
+    def test_every_registered_library_is_resolvable(self):
+        """A library string that does not resolve is one that raises on save.
+
+        This has teeth because the test environment is built from ROICaT's own
+        extras: a registration naming a package that is not a ROICaT dependency
+        fails here rather than in a user's pipeline.
+        """
+        unresolvable = {}
+        for prop in self._registered_properties():
+            try:
+                self._resolve_library(prop['library'])
+            except Exception as e:
+                unresolvable[prop['type_name']] = f"{prop['library']!r} -> {type(e).__name__}: {e}"
+        assert not unresolvable, (
+            'These registered types name a library that does not resolve in this '
+            f'environment, so saving them would raise: {unresolvable}'
+        )
+
+    def test_model_swt_is_attributed_to_roicat(self):
+        """Model_SWT is defined in roicat.util. Regression guard for #660."""
+        prop = util.RichFile_ROICaT().type_lookup['model_swt']
+        assert prop['library'] == 'roicat', (
+            f"model_swt should be attributed to roicat, got {prop['library']!r}"
+        )
+
+    def test_no_registration_names_onnx2torch(self):
+        """Nothing in ROICaT imports onnx2torch and it is no longer a
+        dependency, so no type should claim to come from it."""
+        offenders = [p['type_name'] for p in self._registered_properties() if p['library'] == 'onnx2torch']
+        assert not offenders, f'types still attributed to onnx2torch: {offenders}'
