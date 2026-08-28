@@ -112,20 +112,31 @@ you want to use ROICaT.
 ```
 pip install roicat[all]
 ```
+That is the whole install. Everything ROICaT needs is included: both pipelines,
+the interactive plots, and Jupyter for running the notebooks. `[core]`,
+`[classification]`, `[tracking]` and `[pinned]` are all names for the same
+complete set, at the exact versions ROICaT is tested against.
+
 **Note on zsh:** if you are using a zsh terminal, change command to: `pip3
 install --user 'roicat[all]'` <br>
 **Note on installing GPU support on Windows:** see
 [GPU Troubleshooting](https://roicat.readthedocs.io/en/latest/installation.html#gpu-support-issues)
 documentation.
 <br>
-**Note on opencv:** The headless version of opencv is installed by default. If
-the regular version is already installed, you will need to uninstall it first.
+**Note on opencv:** ROICaT installs the headless build of opencv, which has no
+GUI support and does not need one. If the regular build is already in your
+environment, uninstall it first -- the two provide the same `cv2` module and pip
+cannot tell them apart.
+<br>
+**Note for packages that depend on ROICaT:** use `pip install roicat[latest]`
+instead. It installs the same packages with no version constraints, so ROICaT's
+pins do not propagate into your own dependency resolution.
 
 ### 3. Clone the repo to get the notebooks
 ```
 git clone https://github.com/RichieHakim/ROICaT
 ```
-Then, navigate to the `ROICaT/notebooks/jupyter` directory to run the notebooks.
+Then, navigate to the `ROICaT/notebooks` directory to run the notebooks.
 
 
 # Quick Start

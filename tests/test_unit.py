@@ -2865,3 +2865,210 @@ class Test_reason_fused_local_corr_unavailable:
         assert self._fn()() is None
         self._fn().cache_clear()
         assert isinstance(self._fn()(), str)
+
+
+######################################################################################################################################
+################################################## RICHFILE TYPE REGISTRY ############################################################
+######################################################################################################################################
+
+
+class Test_richfile_type_registry:
+    """
+    Every type registered on RichFile_ROICaT carries a "library" string, and
+    richfile resolves that string to an installed distribution on *every save*
+    in order to stamp a version into the metadata. So a library naming a
+    package ROICaT does not actually depend on is a save-time crash for anyone
+    without it -- see issue #660, where "model_swt" claimed to come from
+    onnx2torch (a package nothing in ROICaT imports, installed only by the
+    `all` extra), which broke saving for every tracking-only install.
+    """
+
+    @staticmethod
+    def _resolve_library(library):
+        """Mirror of the library -> version resolution richfile performs during
+        save. Returns a version string, or raises the way a save would."""
+        import importlib
+        import importlib.metadata
+
+        if library in ('python', 'builtins'):
+            return 'builtin'
+        try:
+            return importlib.metadata.version(library)
+        except importlib.metadata.PackageNotFoundError:
+            ## richfile falls back to importing the module; so do we.
+            return getattr(importlib.import_module(library), '__version__', 'unknown')
+
+    def _registered_properties(self):
+        return util.RichFile_ROICaT().type_lookup.properties
+
+    def test_every_registered_library_is_resolvable(self):
+        """A library string that does not resolve is one that raises on save.
+
+        This has teeth because the test environment is built from ROICaT's own
+        extras: a registration naming a package that is not a ROICaT dependency
+        fails here rather than in a user's pipeline.
+        """
+        unresolvable = {}
+        for prop in self._registered_properties():
+            try:
+                self._resolve_library(prop['library'])
+            except Exception as e:
+                unresolvable[prop['type_name']] = f"{prop['library']!r} -> {type(e).__name__}: {e}"
+        assert not unresolvable, (
+            'These registered types name a library that does not resolve in this '
+            f'environment, so saving them would raise: {unresolvable}'
+        )
+
+    def test_model_swt_is_attributed_to_roicat(self):
+        """Model_SWT is defined in roicat.util. Regression guard for #660."""
+        prop = util.RichFile_ROICaT().type_lookup['model_swt']
+        assert prop['library'] == 'roicat', (
+            f"model_swt should be attributed to roicat, got {prop['library']!r}"
+        )
+
+    def test_no_registration_names_onnx2torch(self):
+        """Nothing in ROICaT imports onnx2torch and it is no longer a
+        dependency, so no type should claim to come from it."""
+        offenders = [p['type_name'] for p in self._registered_properties() if p['library'] == 'onnx2torch']
+        assert not offenders, f'types still attributed to onnx2torch: {offenders}'
+
+
+######################################################################################################################################
+##################################################### MODEL_SWT SERIALIZATION ########################################################
+######################################################################################################################################
+
+
+class Test_Model_SWT_serialization:
+    """
+    Model_SWT used to be written into richfiles as its repr -- a 38-byte string
+    like ``'Model_SWT(\\n  (model): Scattering2D()\\n)'`` -- which recorded
+    neither J, L, shape nor device, and loaded back as that string rather than
+    as a model. These tests pin the JSON round trip that replaced it, and pin
+    that files written the old way still load the old way.
+    """
+
+    SHAPE = (36, 36)
+
+    def _make_model(self):
+        from roicat.tracking import scatteringWaveletTransformer as swt_module
+        Scattering2D = swt_module.import_Scattering2D()
+        return util.Model_SWT(Scattering2D(shape=self.SHAPE, J=2, L=8))
+
+    def _save_load(self, obj, tmp_path, name='payload.richfile'):
+        path = str(Path(tmp_path) / name)
+        util.RichFile_ROICaT(path=path, backend='directory').save({'swt': obj}, overwrite=True)
+        return util.RichFile_ROICaT(path=path).load()['swt']
+
+    def test_to_dict_captures_constructor_args_and_is_json_safe(self):
+        import json
+
+        d = self._make_model().to_dict()
+        assert d['kwargs_Scattering2D']['J'] == 2
+        assert d['kwargs_Scattering2D']['L'] == 8
+        assert tuple(d['kwargs_Scattering2D']['shape']) == self.SHAPE
+        ## `backend` becomes a module object inside kymatio, so it must not be
+        ## recorded; if it leaked in, this dump would raise.
+        assert 'backend' not in d['kwargs_Scattering2D']
+        json.dumps(d)
+
+    def test_round_trip_returns_an_equivalent_model(self, tmp_path):
+        """The point of the change: what comes back is a model, not a string."""
+        model = self._make_model()
+        loaded = self._save_load(model, tmp_path)
+
+        assert isinstance(loaded, util.Model_SWT), (
+            f'expected a Model_SWT back, got {type(loaded).__name__}'
+        )
+
+        ## kymatio derives its filter bank analytically, so a rebuilt model's
+        ## buffers should be bit-identical, not merely close.
+        buffers_original = dict(model.named_buffers())
+        buffers_loaded = dict(loaded.named_buffers())
+        assert set(buffers_original) == set(buffers_loaded), 'filter bank differs in structure'
+        for k in buffers_original:
+            np.testing.assert_array_equal(
+                buffers_original[k].numpy(), buffers_loaded[k].numpy(),
+                err_msg=f'filter buffer {k!r} differs after round trip',
+            )
+
+    def test_round_trip_preserves_the_transform(self, tmp_path):
+        """Identical filters should mean identical outputs on the same input."""
+        model = self._make_model()
+        loaded = self._save_load(model, tmp_path)
+
+        rng = np.random.RandomState(0)
+        x = torch.as_tensor(rng.randn(2, *self.SHAPE).astype(np.float32)).contiguous()
+        with torch.no_grad():
+            np.testing.assert_array_equal(model(x).numpy(), loaded(x).numpy())
+
+    def test_round_trip_preserves_dtype(self, tmp_path):
+        """A model cast with .double() must come back as float64.
+
+        kymatio builds its filter bank in a fixed default dtype, and its Fourier
+        ops require input and filters to match ("Input and filter must be of the
+        same dtype"). Recording only the device would silently narrow a cast
+        model on reload, so it would reject the very inputs the original
+        accepted -- a wrong answer rather than an error.
+        """
+        model = self._make_model().double()
+        assert next(iter(model.buffers())).dtype == torch.float64
+
+        loaded = self._save_load(model, tmp_path)
+        assert next(iter(loaded.buffers())).dtype == torch.float64, (
+            'dtype was not preserved through the round trip'
+        )
+
+        rng = np.random.RandomState(0)
+        x = torch.as_tensor(rng.randn(2, *self.SHAPE)).double().contiguous()
+        with torch.no_grad():
+            np.testing.assert_array_equal(model(x).numpy(), loaded(x).numpy())
+
+    def test_load_without_recorded_dtype_still_works(self, tmp_path):
+        """Payloads written before dtype was recorded must still rebuild."""
+        d = self._make_model().to_dict()
+        d.pop('dtype')
+        rebuilt = util.Model_SWT.from_dict(d)
+        assert isinstance(rebuilt, util.Model_SWT)
+
+    def test_legacy_repr_payload_loads_unchanged(self, tmp_path):
+        """Archives written before this change hold a repr string under the
+        same type name. They must keep loading, and keep returning the string
+        they always returned."""
+        legacy = 'Model_SWT(\n  (model): Scattering2D()\n)'
+        path = Path(tmp_path) / 'legacy.swt'
+        path.write_text(legacy)
+
+        function_load = util.RichFile_ROICaT().type_lookup['model_swt']['function_load']
+        assert function_load(path=str(path)) == legacy
+
+    def test_load_degrades_to_params_without_kymatio(self, tmp_path, monkeypatch):
+        """Rebuilding needs kymatio. Not having it must not turn a load that
+        used to succeed into an exception -- warn and hand back the params."""
+        import sys
+
+        model = self._make_model()
+        path = Path(tmp_path) / 'model.swt'
+        function_save = util.RichFile_ROICaT().type_lookup['model_swt']['function_save']
+        function_load = util.RichFile_ROICaT().type_lookup['model_swt']['function_load']
+        function_save(obj=model, path=str(path))
+
+        ## A None entry in sys.modules makes the import raise ImportError, which
+        ## is the same failure a machine without kymatio produces.
+        monkeypatch.setitem(sys.modules, 'kymatio', None)
+        monkeypatch.setitem(sys.modules, 'kymatio.torch', None)
+
+        with pytest.warns(UserWarning):
+            out = function_load(path=str(path))
+        assert isinstance(out, dict) and 'kwargs_Scattering2D' in out
+
+    def test_non_kymatio_model_falls_back_to_repr(self, tmp_path):
+        """Model_SWT is a generic wrapper. Wrapping something that is not a
+        Scattering2D should degrade to the old repr record rather than break
+        the entire save."""
+        wrapped = util.Model_SWT(torch.nn.Linear(2, 2))
+        path = Path(tmp_path) / 'other.swt'
+        function_save = util.RichFile_ROICaT().type_lookup['model_swt']['function_save']
+
+        with pytest.warns(UserWarning):
+            function_save(obj=wrapped, path=str(path))
+        assert path.read_text().startswith('Model_SWT(')
