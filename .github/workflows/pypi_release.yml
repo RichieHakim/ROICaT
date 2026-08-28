@@ -71,7 +71,13 @@ jobs:
         name: python-package-distributions
         path: dist/
     - name: Sign the dists with Sigstore
-      uses: sigstore/gh-action-sigstore-python@v3.0.0
+      ## Pinned to a commit rather than a tag so the installed code cannot
+      ## change under us. v3.0.0 asked for `sigstore ~= 3.0` and so installed
+      ## whatever was newest in that line; when Sigstore rotated its TUF root in
+      ## August 2026 the root embedded in sigstore-python 3.x stopped verifying
+      ## and signing failed with "root was signed by 0/3 keys", breaking the
+      ## 1.7.8 release. v3.5.0 pins sigstore==4.5.0 and tuf==7.0.0 exactly.
+      uses: sigstore/gh-action-sigstore-python@790bc6befb9d733738f18d8f895854b453640ec9  # v3.5.0
       with:
         inputs: >-
           ./dist/*.tar.gz
