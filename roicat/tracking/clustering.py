@@ -184,9 +184,59 @@ class Clusterer(util.ROICaT_Module):
             return {name: SimilarityMetric.from_dict(d) for name, d in stored.items()}
         return stored
 
+    def _prepare_bounds_findParameters(
+        self,
+        bounds_findParameters: Optional[Dict[str, Optional[List[float]]]] = None,
+    ) -> Dict[str, Optional[List[float]]]:
+        """
+        Build the default ``bounds_findParameters`` dictionary from the metric
+        configs and merge any user-supplied entries over it.
+
+        The defaults reproduce the historical hard-coded values exactly: the
+        ``power_<name>`` bounds come from each metric config's ``power_bounds``,
+        ``p_norm`` is ``[-5, -0.1]``, the sigmoid ``b`` bounds are ``[0.5, 10.0]``
+        (the endpoints of the grid that
+        :meth:`_estimate_sigmoid_params` used to hard-code), and the sigmoid
+        ``mu`` bounds are ``None``, meaning "derive from the observed range of
+        the (z-scored) similarity values" (the grid used to hard-code the
+        calibration bin centers' min and max).
+        RH 2025
+
+        Args:
+            bounds_findParameters (Optional[Dict[str, Optional[List[float]]]]):
+                User-supplied bounds. Any subset of the keys is accepted; every
+                key not present keeps its default. ``None`` means "all defaults".
+
+        Returns:
+            (Dict[str, Optional[List[float]]]):
+                bounds_findParameters (Dict[str, Optional[List[float]]]):
+                    A new dictionary holding one entry per optimizable
+                    parameter. Values are ``[low, high]`` pairs, except a
+                    sigmoid ``mu`` bound which may be ``None``.
+        """
+        bounds = {}
+
+        ## One power bound per metric that opts into power optimization
+        for name, cfg in self._metric_configs.items():
+            if cfg.optimize_power:
+                bounds[f'power_{name}'] = list(cfg.power_bounds)
+        bounds['p_norm'] = [-5, -0.1]
+
+        ## One (mu, b) pair per metric that opts into sigmoid activation
+        for name, cfg in self._metric_configs.items():
+            if cfg.optimize_sigmoid:
+                bounds[f'sig_{name}_kwargs_mu'] = None  ## None → derive from the observed range
+                bounds[f'sig_{name}_kwargs_b'] = [0.5, 10.0]
+
+        ## User entries win, key by key, so a partial dict is valid
+        if bounds_findParameters is not None:
+            bounds.update(bounds_findParameters)
+
+        return bounds
+
     def find_optimal_parameters_for_pruning(
         self,
-        bounds_findParameters: Optional[Dict[str, List[float]]] = None,
+        bounds_findParameters: Optional[Dict[str, Optional[List[float]]]] = None,
         de_kwargs: Dict[str, Any] = {
             'maxiter': 100,
             'tol': 1e-6,
@@ -199,6 +249,9 @@ class Clusterer(util.ROICaT_Module):
         smoothing_window_bins: Optional[int] = None,
         subsample_pairs: Optional[int] = None,
         seed: Optional[int] = None,
+        freeze_sigmoid: bool = True,
+        n_grid_sigmoid_mu: int = 50,
+        n_grid_sigmoid_b: int = 30,
     ) -> Dict:
         """
         Find optimal mixing parameters for pruning the similarity graph.
@@ -211,9 +264,11 @@ class Clusterer(util.ROICaT_Module):
            optimal sigmoid parameters ``(mu, b)`` via Fisher's linear
            discriminant.
         2. **Differential evolution**: With sigmoid parameters frozen from
-           stage 1, optimizes the remaining parameters (one ``power_<name>``
-           per metric with ``optimize_power=True``, plus ``p_norm``) by
-           minimizing the histogram overlap loss.
+           stage 1 (``freeze_sigmoid=True``, the default), optimizes the
+           remaining parameters (one ``power_<name>`` per metric with
+           ``optimize_power=True``, plus ``p_norm``) by minimizing the
+           histogram overlap loss. With ``freeze_sigmoid=False``, ``(mu, b)``
+           are optimized jointly with them instead.
 
         This method replaces the original Optuna TPE search (see
         :meth:`_find_optimal_parameters_for_pruning_optuna` in the legacy
@@ -222,11 +277,30 @@ class Clusterer(util.ROICaT_Module):
         RH 2023 / 2025
 
         Args:
-            bounds_findParameters (Dict[str, List[float]]):
-                Bounds for the optimized parameters. Keys are
-                ``power_<name>`` for each metric with ``optimize_power=True``,
-                plus ``p_norm``. Auto-constructed from metric configs if
-                ``None``.
+            bounds_findParameters (Optional[Dict[str, Optional[List[float]]]]):
+                Bounds for the optimized parameters, as ``[low, high]``
+                pairs. Any key not supplied falls back to its default, so a
+                partial dictionary is fine and ``None`` uses all defaults.
+                Recognized keys: \n
+                * ``power_<name>``: exponent applied to metric ``<name>``,
+                  for each metric with ``optimize_power=True``. Default is
+                  the metric config's ``power_bounds``.
+                * ``p_norm``: the Minkowski p used to mix the metrics.
+                  Default ``[-5, -0.1]``.
+                * ``sig_<name>_kwargs_mu``: center of the sigmoid applied to
+                  metric ``<name>``, for each metric with
+                  ``optimize_sigmoid=True``. Default ``None``, meaning
+                  "derive from the observed range of the (z-scored)
+                  similarity values" - the naive-Bayes calibration bin
+                  centers when ``freeze_sigmoid=True``, the min and max of
+                  the similarity values themselves when ``False``.
+                * ``sig_<name>_kwargs_b``: slope of that sigmoid.
+                  Default ``[0.5, 10.0]``.
+                The ``sig_*`` bounds govern both paths: they are the
+                endpoints of the grid searched by
+                :meth:`_estimate_sigmoid_params` when
+                ``freeze_sigmoid=True``, and the differential-evolution
+                bounds when ``freeze_sigmoid=False``.
             de_kwargs (Dict[str, Any]):
                 Keyword arguments for
                 ``scipy.optimize.differential_evolution``: \n
@@ -251,6 +325,20 @@ class Clusterer(util.ROICaT_Module):
                 auto-computed based on pair counts.
             seed (Optional[int]):
                 Random seed for reproducibility.
+            freeze_sigmoid (bool):
+                If ``True``, the sigmoid parameters ``(mu, b)`` are estimated
+                once by :meth:`_estimate_sigmoid_params` (a Fisher-discriminant
+                grid search over the bounds above) and held fixed, so the DE
+                searches only the ``power_<name>`` values and ``p_norm``. If
+                ``False``, ``(mu, b)`` become DE variables too, bounded by the
+                same ``sig_*`` entries of ``bounds_findParameters``.
+            n_grid_sigmoid_mu (int):
+                Number of ``mu`` values in the grid searched by
+                :meth:`_estimate_sigmoid_params`. Only used when
+                ``freeze_sigmoid=True``.
+            n_grid_sigmoid_b (int):
+                Number of ``b`` values in that grid. Only used when
+                ``freeze_sigmoid=True``.
 
         Returns:
             (Dict):
@@ -264,17 +352,12 @@ class Clusterer(util.ROICaT_Module):
             keys=[
                 'bounds_findParameters', 'de_kwargs', 'n_bins',
                 'smoothing_window_bins', 'subsample_pairs', 'seed',
+                'freeze_sigmoid', 'n_grid_sigmoid_mu', 'n_grid_sigmoid_b',
             ],
         )
 
-        ## Auto-construct bounds from metric configs if not provided
-        if bounds_findParameters is None:
-            bounds_findParameters = {}
-            for name, cfg in self._metric_configs.items():
-                if cfg.optimize_power:
-                    bounds_findParameters[f'power_{name}'] = list(cfg.power_bounds)
-            bounds_findParameters['p_norm'] = [-5, -0.1]
-
+        ## Bounds are merged over the defaults inside _find_optimal_parameters_DE,
+        ## so a partial dict or None is passed straight through.
         ## NB calibration → Fisher sigmoid estimation → N-param DE.
         return self._find_optimal_parameters_DE(
             bounds_findParameters=bounds_findParameters,
@@ -283,7 +366,9 @@ class Clusterer(util.ROICaT_Module):
             smoothing_window_bins=smoothing_window_bins,
             subsample_pairs=subsample_pairs,
             seed=seed,
-            freeze_sigmoid=True,
+            freeze_sigmoid=freeze_sigmoid,
+            n_grid_sigmoid_mu=n_grid_sigmoid_mu,
+            n_grid_sigmoid_b=n_grid_sigmoid_b,
         )
 
     ####################################################################
@@ -382,7 +467,7 @@ class Clusterer(util.ROICaT_Module):
 
     def _find_optimal_parameters_DE(
         self,
-        bounds_findParameters: Optional[Dict[str, List[float]]] = None,
+        bounds_findParameters: Optional[Dict[str, Optional[List[float]]]] = None,
         de_kwargs: Dict[str, Any] = {
             'maxiter': 100,
             'tol': 1e-6,
@@ -396,6 +481,8 @@ class Clusterer(util.ROICaT_Module):
         subsample_pairs: Optional[int] = None,
         seed: Optional[int] = None,
         freeze_sigmoid: bool = True,
+        n_grid_sigmoid_mu: int = 50,
+        n_grid_sigmoid_b: int = 30,
     ) -> Dict:
         """
         Find optimal mixing parameters using scipy differential evolution.
@@ -413,10 +500,14 @@ class Clusterer(util.ROICaT_Module):
         RH 2025
 
         Args:
-            bounds_findParameters (Dict[str, List[float]]):
-                Bounds for each parameter, keyed by ``power_<name>`` and
-                ``p_norm``. Auto-constructed from metric configs if ``None``.
-                When ``False``, all 7 keys are needed.
+            bounds_findParameters (Optional[Dict[str, Optional[List[float]]]]):
+                Bounds for each parameter, keyed by ``power_<name>``,
+                ``p_norm``, ``sig_<name>_kwargs_mu`` and
+                ``sig_<name>_kwargs_b``. Merged over the defaults built by
+                :meth:`_prepare_bounds_findParameters`, so any subset of the
+                keys (or ``None``) is accepted. See
+                :meth:`find_optimal_parameters_for_pruning` for the meaning
+                of each key and its default.
             de_kwargs (Dict[str, Any]):
                 Keyword arguments for
                 ``scipy.optimize.differential_evolution``: \n
@@ -446,6 +537,13 @@ class Clusterer(util.ROICaT_Module):
                 If ``True``, fix sigmoid params from NB calibration,
                 reducing DE to 3 parameters. If ``False``, optimize
                 all 7 parameters jointly.
+            n_grid_sigmoid_mu (int):
+                Number of ``mu`` values in the grid searched by
+                :meth:`_estimate_sigmoid_params`. Only used when
+                ``freeze_sigmoid=True``.
+            n_grid_sigmoid_b (int):
+                Number of ``b`` values in that grid. Only used when
+                ``freeze_sigmoid=True``.
 
         Returns:
             (Dict):
@@ -459,25 +557,18 @@ class Clusterer(util.ROICaT_Module):
             keys=[
                 'bounds_findParameters', 'de_kwargs', 'n_bins',
                 'smoothing_window_bins', 'subsample_pairs', 'seed',
-                'freeze_sigmoid',
+                'freeze_sigmoid', 'n_grid_sigmoid_mu', 'n_grid_sigmoid_b',
             ],
         )
 
         self.n_bins = self.n_bins if n_bins is None else n_bins
         self.smooth_window = self.smooth_window if smoothing_window_bins is None else smoothing_window_bins
 
-        ## Auto-construct bounds from metric configs if not provided
-        if bounds_findParameters is None:
-            bounds_findParameters = {}
-            for name, cfg in self._metric_configs.items():
-                if cfg.optimize_power:
-                    bounds_findParameters[f'power_{name}'] = list(cfg.power_bounds)
-            bounds_findParameters['p_norm'] = [-5, -0.1]
-            ## Add sigmoid bounds for unfrozen case
-            for name, cfg in self._metric_configs.items():
-                if cfg.optimize_sigmoid:
-                    bounds_findParameters[f'sig_{name}_kwargs_mu'] = [0., 1.0]
-                    bounds_findParameters[f'sig_{name}_kwargs_b'] = [0.1, 1.5]
+        ## Merge any user-supplied bounds over the defaults. This is a new dict,
+        ## so the mutation below cannot reach into the caller's dictionary.
+        bounds_findParameters = self._prepare_bounds_findParameters(
+            bounds_findParameters=bounds_findParameters,
+        )
 
         self.bounds_findParameters = bounds_findParameters
         self._seed = seed
@@ -504,7 +595,11 @@ class Clusterer(util.ROICaT_Module):
         if freeze_sigmoid:
             if not hasattr(self, 'calibrations_naive_bayes') or self.calibrations_naive_bayes is None:
                 self.make_naive_bayes_distance_matrix()
-            sig_params = self._estimate_sigmoid_params()
+            sig_params = self._estimate_sigmoid_params(
+                bounds_findParameters=bounds_findParameters,
+                n_grid_sigmoid_mu=n_grid_sigmoid_mu,
+                n_grid_sigmoid_b=n_grid_sigmoid_b,
+            )
             _frozen_sig = sig_params  ## Dict[metric_name, {'mu': float, 'b': float}]
             if self._verbose:
                 parts = [f'{n}(mu={p["mu"]:.3f}, b={p["b"]:.1f})' for n, p in _frozen_sig.items()]
@@ -541,9 +636,32 @@ class Clusterer(util.ROICaT_Module):
             elif ptype == 'sig_b':
                 param_keys.append(f'sig_{pname}_kwargs_b')
 
+        ## Resolve any `None` sigmoid `mu` bound that the DE actually searches.
+        ## `None` means "span the observed range of that metric's (z-scored)
+        ## similarity values". The frozen path never reaches here because
+        ## `_de_param_layout` has no sigmoid entries when `freeze_sigmoid=True`;
+        ## there the same `None` is resolved against the naive-Bayes calibration
+        ## bin centers inside `_estimate_sigmoid_params`.
+        for ptype, pname in self._de_param_layout:
+            if (ptype == 'sig_mu') and (bounds_findParameters.get(f'sig_{pname}_kwargs_mu') is None):
+                data_metric = self.similarities[pname].data  ## shape: (nnz,)
+                bounds_findParameters[f'sig_{pname}_kwargs_mu'] = [
+                    float(np.min(data_metric)),
+                    float(np.max(data_metric)),
+                ]
+
+        ## Fail loudly rather than silently dropping a DE dimension. Dropping one
+        ## used to make `objective_scalar` index past the end of `x`.
+        keys_missing = [k for k in param_keys if bounds_findParameters.get(k) is None]
+        if len(keys_missing) > 0:
+            raise ValueError(
+                f"bounds_findParameters is missing numeric bounds for {keys_missing}. "
+                f"The differential evolution searches {param_keys}; every one of "
+                f"those keys needs a [low, high] pair."
+            )
+
         scipy_bounds = [
-            tuple(bounds_findParameters[k])
-            for k in param_keys if k in bounds_findParameters
+            tuple(bounds_findParameters[k]) for k in param_keys
         ]  ## list of (lo, hi) tuples, one per DE dimension
 
         ################################################################
@@ -1050,7 +1168,12 @@ class Clusterer(util.ROICaT_Module):
 
         return dConj, sConj, calibrations
 
-    def _estimate_sigmoid_params(self) -> Dict[str, Dict[str, float]]:
+    def _estimate_sigmoid_params(
+        self,
+        bounds_findParameters: Optional[Dict[str, Optional[List[float]]]] = None,
+        n_grid_sigmoid_mu: int = 50,
+        n_grid_sigmoid_b: int = 30,
+    ) -> Dict[str, Dict[str, float]]:
         """
         Estimate sigmoid parameters (mu, b) for NN and SWT from
         NB calibration curves using Fisher's linear discriminant.
@@ -1064,14 +1187,36 @@ class Clusterer(util.ROICaT_Module):
         called first.
         RH 2025
 
+        Args:
+            bounds_findParameters (Optional[Dict[str, Optional[List[float]]]]):
+                Supplies the endpoints of the two grids, via the
+                ``sig_<name>_kwargs_mu`` and ``sig_<name>_kwargs_b`` keys.
+                Merged over the defaults by
+                :meth:`_prepare_bounds_findParameters`, so a partial dict or
+                ``None`` is fine. A ``mu`` bound of ``None`` means "span the
+                calibration bin centers", which is the historical behavior.
+            n_grid_sigmoid_mu (int):
+                Number of ``mu`` values in the grid.
+            n_grid_sigmoid_b (int):
+                Number of ``b`` values in the grid.
+
         Returns:
             (Dict[str, Dict[str, float]]):
                 sigmoid_params (Dict[str, Dict[str, float]]):
                     Mapping from feature name to ``{'mu': float, 'b': float}``.
+
+        Raises:
+            ValueError:
+                If a sigmoid ``b`` bound is ``None``; unlike ``mu``, it has no
+                data-derived fallback.
         """
         assert hasattr(self, 'calibrations_naive_bayes') and self.calibrations_naive_bayes is not None, (
             "make_naive_bayes_distance_matrix() must be called before "
             "_estimate_sigmoid_params()."
+        )
+
+        bounds_findParameters = self._prepare_bounds_findParameters(
+            bounds_findParameters=bounds_findParameters,
         )
 
         result = {}
@@ -1093,11 +1238,25 @@ class Clusterer(util.ROICaT_Module):
 
             ## Vectorized grid search over (mu, b) to maximize Fisher
             ## discriminant in sigmoid-transformed space.
+            ## Grid endpoints come from the user-facing bounds. A `None` mu
+            ## bound spans the observed range of the calibration bin centers.
+            bound_mu = bounds_findParameters.get(f'sig_{name}_kwargs_mu')
+            bound_b = bounds_findParameters.get(f'sig_{name}_kwargs_b')
+            if bound_b is None:
+                raise ValueError(
+                    f"bounds_findParameters['sig_{name}_kwargs_b'] is None. The "
+                    f"sigmoid slope bound must be a [low, high] pair."
+                )
+            if bound_mu is None:
+                bound_mu = [float(centers_np.min()), float(centers_np.max())]
+
             ## Grid shapes: mu (M,), b (B,) → sig_vals (M, B, n_bins)
             mu_grid = np.linspace(
-                float(centers_np.min()), float(centers_np.max()), 50,
+                float(bound_mu[0]), float(bound_mu[1]), int(n_grid_sigmoid_mu),
             )
-            b_grid = np.linspace(0.5, 10.0, 30)
+            b_grid = np.linspace(
+                float(bound_b[0]), float(bound_b[1]), int(n_grid_sigmoid_b),
+            )
             ## Broadcasting: (M,1,1) * ((1,1,n_bins) - (M,1,1))
             sig_vals = 1.0 / (1.0 + np.exp(
                 -b_grid[None, :, None] * (centers_np[None, None, :] - mu_grid[:, None, None])
