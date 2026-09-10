@@ -28,7 +28,7 @@ core = [
     "numba==0.67.0",  ## roicat/tracking/clustering.py compiles two hot loops with @numba.njit.
     "torch==2.13.0",
     "torchvision==0.28.0",
-    "optuna==4.9.0",
+    "optuna==5.0.0",
 
     ## File formats and I/O.
     "richfile==0.6.2",  ## 0.6.2 introduced the type-registry API roicat/util.py uses.
