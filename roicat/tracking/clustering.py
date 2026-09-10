@@ -1502,9 +1502,11 @@ class Clusterer(util.ROICaT_Module):
 
         Raises:
             ValueError:
-                If ``d_cutoff`` is ``None`` and the estimated 'same' and
-                'different' distributions have no crossover point, leaving
-                nothing to infer the cutoff from.
+                If the estimated 'same' and 'different' distributions have
+                no crossover point and either ``d_cutoff`` is ``None``
+                (nothing to infer the cutoff from) or
+                ``convert_to_probability`` is ``True`` (no distributions to
+                build the probability map from).
         """
         ## Store parameter (but not data) args as attributes
         self.params['make_pruned_similarity_graphs'] = self._locals_to_params(
@@ -1542,20 +1544,36 @@ class Clusterer(util.ROICaT_Module):
         dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(self.dConj)
 
         ## No crossover: the estimated 'same' and 'different' distributions
-        ## never separate, so there is no distance to infer a cutoff from.
-        ## Fail loudly here instead of letting `d_crossover - min_d` below
-        ## raise a bare TypeError on ``None``.
-        if (d_crossover is None) and (d_cutoff is None):
-            raise ValueError(
+        ## never separate, and `_separate_diffSame_distributions` returns all
+        ## ``None``. Two consumers below cannot proceed on that: the inferred
+        ## cutoff (`d_crossover - min_d`) and the probability map, which
+        ## smooths and divides the ``None`` densities. Fail loudly here
+        ## instead of letting either raise a bare TypeError.
+        if d_crossover is None:
+            msg_cause = (
                 "No crossover point exists: the 'same' and 'different' distance "
-                "distributions estimated from these mixing parameters never separate, "
-                "so the cutoff distance cannot be inferred. Pass `d_cutoff` explicitly "
-                "(pick it from `plot_similarity_relationships`, and keep in mind that "
-                "`fit_sequentialHungarian` separately rejects pairs above its own "
-                "`thresh_cost`), or refit the mixing with "
+                "distributions estimated from these mixing parameters never separate"
+            )
+            msg_refit = (
+                "refit the mixing with "
                 "`find_optimal_parameters_for_pruning(objective='histogram_overlap')`, "
                 "whose loss penalizes exactly this degenerate case."
             )
+            if convert_to_probability:
+                raise ValueError(
+                    f"{msg_cause}, so there are no distributions to convert the "
+                    f"distances into probabilities with. Pass "
+                    f"`convert_to_probability=False` (and an explicit `d_cutoff`), or "
+                    f"{msg_refit}"
+                )
+            if d_cutoff is None:
+                raise ValueError(
+                    f"{msg_cause}, so the cutoff distance cannot be inferred. Pass "
+                    f"`d_cutoff` explicitly (pick it from "
+                    f"`plot_similarity_relationships`, and keep in mind that "
+                    f"`fit_sequentialHungarian` separately rejects pairs above its own "
+                    f"`thresh_cost`), or {msg_refit}"
+                )
 
         if convert_to_probability:        
             ## convert into probabilities

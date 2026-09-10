@@ -1411,6 +1411,15 @@ class Test_edge_cases:
         )
         assert clusterer.d_cutoff == 0.5
 
+        ## The probability map needs the densities themselves, so an explicit
+        ## cutoff is not enough there: it used to reach `_fn_smooth(None)`.
+        with pytest.raises(ValueError, match='convert the distances into probabilities'):
+            clusterer.make_pruned_similarity_graphs(
+                mixing_params=mixing_params_collapsed,
+                d_cutoff=0.5,
+                convert_to_probability=True,
+            )
+
     def test_nb_calibration_monotonicity(self, clusterer_with_data):
         """P(same|s_k) bins should be strictly monotonically non-decreasing for all features."""
         _, _, cal = clusterer_with_data.make_naive_bayes_distance_matrix()
