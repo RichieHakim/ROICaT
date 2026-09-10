@@ -1155,9 +1155,14 @@ class Test__find_optimal_parameters_DE:
     def test_histogram_overlap_with_unfrozen_sigmoid_does_not_warn(
         self, clusterer_with_data,
     ):
-        """The legacy objective anchors the scale, so it must stay quiet."""
-        with warnings.catch_warnings():
-            warnings.simplefilter('error', UserWarning)
+        """The legacy objective anchors the scale, so it must stay quiet.
+
+        Checks for this specific warning rather than promoting every
+        `UserWarning` to an error, so an unrelated deprecation from scipy
+        or torch on someone else's machine does not fail the test.
+        """
+        with warnings.catch_warnings(record=True) as warnings_caught:
+            warnings.simplefilter('always')
             clusterer_with_data._find_optimal_parameters_DE(
                 seed=42,
                 objective='histogram_overlap',
@@ -1166,6 +1171,9 @@ class Test__find_optimal_parameters_DE:
                     'maxiter': 2, 'tol': 1e-4, 'popsize': 4, 'polish': False,
                 },
             )
+        assert not any('scale-free' in str(w.message) for w in warnings_caught), (
+            'the scale-free warning fired on the legacy objective'
+        )
 
     def test_invalid_objective_raises(self, clusterer_with_data):
         """An unrecognized objective should fail loudly, before any fitting."""
