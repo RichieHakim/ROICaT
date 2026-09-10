@@ -228,8 +228,9 @@ def get_default_parameters(
             'clustering': {
                 'mixing_method': 'automatic',  ## 'automatic' (NB calibration + freeze-sigmoid DE) or 'manual'
                 'parameters_automatic_mixing': {
-                    'n_bins': None,  ## Number of bins for histograms. None = heuristic.
-                    'smoothing_window_bins': None,  ## Smoothing window for distributions. None = heuristic.
+                    'objective': 'auroc',  ## Loss minimized by the DE. 'auroc': 1 - AUROC(cross-session vs same-session distances), a rank statistic that cannot be lowered by collapsing true matches onto the non-match lobe. 'histogram_overlap': the legacy overlap-area loss, kept for reproducing older fits.
+                    'n_bins': None,  ## Number of bins for histograms. None = heuristic. Only reaches the DE when objective is 'histogram_overlap'; used downstream by the pruning either way.
+                    'smoothing_window_bins': None,  ## Smoothing window for distributions. None = heuristic. Legacy-objective and downstream only, as with n_bins.
                     'subsample_pairs': None,  ## Subsample this many pairs for speedup. None = use all.
                     'freeze_sigmoid': True,  ## True: sigmoid (mu, b) fixed by a Fisher-discriminant grid search over the bounds below. False: (mu, b) are DE variables too.
                     'n_grid_sigmoid_mu': 50,  ## Number of mu values in that grid search. Only used when freeze_sigmoid is True.

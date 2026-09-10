@@ -882,6 +882,93 @@ def clusterer_with_data(dir_data_test):
     return clusterer
 
 
+class Test_auroc_crossCloserThanSame:
+    """Tests for the pure AUROC used by the 'auroc' DE objective."""
+
+    def test_identical_distributions(self):
+        """Two arms drawn from the same values are indistinguishable: 0.5."""
+        from roicat.tracking.clustering import auroc_crossCloserThanSame
+        auroc = auroc_crossCloserThanSame(
+            d_crossSession=np.arange(10, dtype=np.float64),
+            d_sameSession=np.arange(10, dtype=np.float64),
+        )
+        assert auroc == pytest.approx(0.5, abs=1e-12)
+
+    def test_perfect_separation(self):
+        """All cross-session distances below all same-session ones: 1.0."""
+        from roicat.tracking.clustering import auroc_crossCloserThanSame
+        auroc = auroc_crossCloserThanSame(
+            d_crossSession=np.array([0.0, 0.1, 0.2, 0.3]),
+            d_sameSession=np.array([0.5, 0.7, 0.9, 1.0]),
+        )
+        assert auroc == pytest.approx(1.0, abs=1e-12)
+
+    def test_perfect_inversion(self):
+        """The reverse ordering is the other limit: 0.0."""
+        from roicat.tracking.clustering import auroc_crossCloserThanSame
+        auroc = auroc_crossCloserThanSame(
+            d_crossSession=np.array([0.5, 0.7, 0.9, 1.0]),
+            d_sameSession=np.array([0.0, 0.1, 0.2, 0.3]),
+        )
+        assert auroc == pytest.approx(0.0, abs=1e-12)
+
+    def test_full_collapse_is_chance(self):
+        """Every distance tied — the failure mode the old loss rewarded — is 0.5.
+
+        Mid-rank tie handling is what makes this exact: each tied pair
+        contributes 0.5, so a mixing that pushes everything onto d = 1
+        cannot score better than chance.
+        """
+        from roicat.tracking.clustering import auroc_crossCloserThanSame
+        auroc = auroc_crossCloserThanSame(
+            d_crossSession=np.ones(50), d_sameSession=np.ones(30),
+        )
+        assert auroc == pytest.approx(0.5, abs=1e-12)
+
+    def test_partial_ties_match_bruteforce(self):
+        """Mid-ranks agree with the O(n*m) definition on a tie-heavy case."""
+        from roicat.tracking.clustering import auroc_crossCloserThanSame
+        rng = np.random.RandomState(0)
+        d_cross = np.round(rng.rand(200), 1)  ## rounding forces many ties
+        d_same = np.round(rng.rand(150) * 0.8 + 0.2, 1)
+        ## AUROC = P(cross < same) + 0.5 * P(cross == same)
+        comparison = d_cross[:, None] - d_same[None, :]  ## shape (200, 150)
+        auroc_bruteforce = float(
+            np.mean((comparison < 0).astype(np.float64)
+                    + 0.5 * (comparison == 0).astype(np.float64))
+        )
+        auroc = auroc_crossCloserThanSame(d_crossSession=d_cross, d_sameSession=d_same)
+        assert auroc == pytest.approx(auroc_bruteforce, abs=1e-12)
+
+    def test_loss_is_one_minus_auroc(self, clusterer_with_data):
+        """The DE minimizes 1 - AUROC, so the reported loss is in [0, 1]."""
+        from roicat.tracking.clustering import auroc_crossCloserThanSame
+        clusterer_with_data._find_optimal_parameters_DE(
+            seed=42,
+            objective='auroc',
+            de_kwargs={
+                'maxiter': 3, 'tol': 1e-4, 'popsize': 5, 'polish': False,
+            },
+        )
+        loss = clusterer_with_data._de_result.fun
+        assert 0.0 <= loss <= 1.0
+        ## The optimum must be reachable as 1 - AUROC of some distance vector.
+        auroc_implied = 1.0 - loss
+        assert 0.0 <= auroc_implied <= 1.0
+
+    def test_empty_arm_raises(self):
+        """An empty arm leaves the statistic undefined; fail loudly."""
+        from roicat.tracking.clustering import auroc_crossCloserThanSame
+        with pytest.raises(ValueError, match='non-empty'):
+            auroc_crossCloserThanSame(
+                d_crossSession=np.array([]), d_sameSession=np.ones(5),
+            )
+        with pytest.raises(ValueError, match='non-empty'):
+            auroc_crossCloserThanSame(
+                d_crossSession=np.ones(5), d_sameSession=np.array([]),
+            )
+
+
 class Test__find_optimal_parameters_DE:
     """Tests for Clusterer._find_optimal_parameters_DE."""
 
@@ -933,14 +1020,49 @@ class Test__find_optimal_parameters_DE:
         assert np.isfinite(clusterer_with_data._de_result.fun)
 
     def test_loss_below_threshold(self, clusterer_with_data):
-        """DE should find a loss significantly below the trivial/default value.
-        On the test dataset, DE reliably finds loss ~55. The default manual
-        params typically give loss >200."""
-        clusterer_with_data._find_optimal_parameters_DE(seed=42)
-        assert clusterer_with_data._de_result.fun < 200, (
-            f'DE loss {clusterer_with_data._de_result.fun:.1f} is too high; '
-            f'expected < 200 on test data'
+        """DE should beat the trivial value under either objective.
+
+        The two objectives live on different scales, so the thresholds
+        differ. `histogram_overlap` is an overlap area in unnormalized
+        counts: DE reliably finds ~55 on this dataset while the default
+        manual params typically give >200. `auroc` is `1 - AUROC`, bounded
+        in [0, 1], where 0.5 is what a zero-information (fully collapsed)
+        mixing scores. The old single `< 200` assertion is kept for the
+        legacy objective; it would pass vacuously on the new default.
+        """
+        clusterer_with_data._find_optimal_parameters_DE(
+            seed=42, objective='histogram_overlap',
         )
+        assert clusterer_with_data._de_result.fun < 200, (
+            f'DE histogram_overlap loss {clusterer_with_data._de_result.fun:.1f} '
+            f'is too high; expected < 200 on test data'
+        )
+
+        clusterer_with_data._find_optimal_parameters_DE(seed=42, objective='auroc')
+        assert clusterer_with_data._de_result.fun < 0.5, (
+            f'DE auroc loss {clusterer_with_data._de_result.fun:.4f} is at or '
+            f'above chance; expected < 0.5 on test data'
+        )
+
+    def test_objective_histogram_overlap_runs(self, clusterer_with_data):
+        """The legacy objective stays selectable and returns the same keys."""
+        result = clusterer_with_data._find_optimal_parameters_DE(
+            seed=42,
+            objective='histogram_overlap',
+            de_kwargs={
+                'maxiter': 3, 'tol': 1e-4, 'popsize': 5, 'polish': False,
+            },
+        )
+        assert set(result.keys()) == {'power_sf', 'power_nn', 'power_swt', 'p_norm',
+                                      'sig_sf_kwargs', 'sig_nn_kwargs', 'sig_swt_kwargs'}
+        assert np.isfinite(clusterer_with_data._de_result.fun)
+
+    def test_invalid_objective_raises(self, clusterer_with_data):
+        """An unrecognized objective should fail loudly, before any fitting."""
+        with pytest.raises(ValueError, match='objective must be one of'):
+            clusterer_with_data._find_optimal_parameters_DE(
+                seed=42, objective='histogram-overlap',
+            )
 
     def test_subsample_pairs(self, clusterer_with_data):
         """DE with subsample_pairs should still return valid params."""
