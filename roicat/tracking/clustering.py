@@ -387,14 +387,22 @@ class Clusterer(util.ROICaT_Module):
                   the best DE solution. Often has no effect: both
                   objectives are piecewise-constant in the parameters.
             n_bins (Optional[int]):
-                Overwrites ``n_bins`` from ``__init__``. Only reaches the
-                differential evolution when
-                ``objective='histogram_overlap'`` -- the ``'auroc'``
-                objective is binless -- but is used downstream by
-                :meth:`make_pruned_similarity_graphs` either way.
+                Overwrites ``n_bins`` from ``__init__``. It reaches the
+                differential evolution *directly* only when
+                ``objective='histogram_overlap'`` (the ``'auroc'``
+                objective is binless), but it also sets the resolution of
+                the naive-Bayes calibration built by
+                :meth:`make_naive_bayes_distance_matrix`, which
+                :meth:`_estimate_sigmoid_params` reads to freeze
+                ``(mu, b)`` under ``freeze_sigmoid=True``. Changing it
+                therefore moves the fitted parameters under *either*
+                objective. It is also used downstream by
+                :meth:`make_pruned_similarity_graphs`.
             smoothing_window_bins (Optional[int]):
                 Overwrites ``smoothing_window_bins`` from ``__init__``.
-                Legacy-objective and downstream only, as with ``n_bins``.
+                Same three-way reach as ``n_bins``: the legacy objective,
+                the naive-Bayes calibration behind the frozen sigmoid, and
+                the downstream pruning.
             subsample_pairs (Optional[int]):
                 If not ``None``, subsample this many pairs for the loss
                 evaluation. Maintains intra/inter ratio. If ``None``,
@@ -408,6 +416,12 @@ class Clusterer(util.ROICaT_Module):
                 searches only the ``power_<name>`` values and ``p_norm``. If
                 ``False``, ``(mu, b)`` become DE variables too, bounded by the
                 same ``sig_*`` entries of ``bounds_findParameters``.
+                Combining ``False`` with ``objective='auroc'`` warns: the
+                rank objective is scale-free while ``thresh_cost`` and
+                ``d_cutoff`` are absolute, so the fitted sigmoids may rank
+                pairs well yet place true matches above the threshold (we
+                measured recall 0.09 on a 3-session dataset). It is not
+                blocked -- a caller who sets their own cutoff may proceed.
             n_grid_sigmoid_mu (int):
                 Number of ``mu`` values in the grid searched by
                 :meth:`_estimate_sigmoid_params`. Only used when
@@ -623,12 +637,15 @@ class Clusterer(util.ROICaT_Module):
                   the best DE solution. Often has no effect: both
                   objectives are piecewise-constant in the parameters.
             n_bins (Optional[int]):
-                Overwrites ``n_bins`` from __init__. Only used by the DE
-                when ``objective='histogram_overlap'``; kept as an
-                attribute for the downstream pruning either way.
+                Overwrites ``n_bins`` from __init__. Used by the DE
+                directly only when ``objective='histogram_overlap'``, but
+                it also sets the resolution of the naive-Bayes
+                calibration behind the frozen sigmoid, so it moves the
+                fitted parameters under either objective, and it is kept
+                as an attribute for the downstream pruning.
             smoothing_window_bins (Optional[int]):
                 Overwrites ``smoothing_window_bins`` from __init__.
-                Legacy-objective and downstream only, as with ``n_bins``.
+                Same three-way reach as ``n_bins``.
             subsample_pairs (Optional[int]):
                 If not ``None``, subsample this many pairs for the loss.
                 Maintains intra/inter ratio. If ``None``,
@@ -639,7 +656,12 @@ class Clusterer(util.ROICaT_Module):
             freeze_sigmoid (bool):
                 If ``True``, fix sigmoid params from NB calibration,
                 reducing DE to 3 parameters. If ``False``, optimize
-                all 7 parameters jointly.
+                all 7 parameters jointly. ``False`` with
+                ``objective='auroc'`` warns: the rank objective is
+                scale-free while ``thresh_cost`` and ``d_cutoff`` are
+                absolute, so the fit may rank pairs well yet place true
+                matches above the threshold (recall 0.09 measured on a
+                3-session dataset).
             n_grid_sigmoid_mu (int):
                 Number of ``mu`` values in the grid searched by
                 :meth:`_estimate_sigmoid_params`. Only used when
@@ -683,6 +705,21 @@ class Clusterer(util.ROICaT_Module):
         if objective not in objectives_valid:
             raise ValueError(
                 f"objective must be one of {objectives_valid}, got {objective!r}."
+            )
+
+        ## A rank statistic is invariant to any monotone rescaling of the
+        ## distances, so it pins the *ordering* of the pairs but not the axis
+        ## that the absolute cutoffs downstream are expressed on.
+        if (objective == 'auroc') and (not freeze_sigmoid):
+            warnings.warn(
+                "objective='auroc' with freeze_sigmoid=False: the rank objective is "
+                "scale-free, while thresh_cost (fit_sequentialHungarian) and d_cutoff "
+                "(make_pruned_similarity_graphs) are absolute distances. The DE may "
+                "therefore return sigmoids that rank pairs well but push true matches "
+                "above those thresholds -- we measured recall 0.09 on a 3-session "
+                "dataset this way. Either keep freeze_sigmoid=True, which anchors "
+                "(mu, b) to the naive-Bayes calibration, or set d_cutoff / thresh_cost "
+                "yourself for the fit you get back."
             )
 
         self.n_bins = self.n_bins if n_bins is None else n_bins
@@ -1462,6 +1499,12 @@ class Clusterer(util.ROICaT_Module):
                 The cutoff distance for pruning the distance matrix. If
                 ``None``, then the optimal cutoff distance is inferred. (Default
                 is ``None``)
+
+        Raises:
+            ValueError:
+                If ``d_cutoff`` is ``None`` and the estimated 'same' and
+                'different' distributions have no crossover point, leaving
+                nothing to infer the cutoff from.
         """
         ## Store parameter (but not data) args as attributes
         self.params['make_pruned_similarity_graphs'] = self._locals_to_params(
@@ -1497,6 +1540,22 @@ class Clusterer(util.ROICaT_Module):
                 mixing_params=mixing_params,
             )
         dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(self.dConj)
+
+        ## No crossover: the estimated 'same' and 'different' distributions
+        ## never separate, so there is no distance to infer a cutoff from.
+        ## Fail loudly here instead of letting `d_crossover - min_d` below
+        ## raise a bare TypeError on ``None``.
+        if (d_crossover is None) and (d_cutoff is None):
+            raise ValueError(
+                "No crossover point exists: the 'same' and 'different' distance "
+                "distributions estimated from these mixing parameters never separate, "
+                "so the cutoff distance cannot be inferred. Pass `d_cutoff` explicitly "
+                "(pick it from `plot_similarity_relationships`, and keep in mind that "
+                "`fit_sequentialHungarian` separately rejects pairs above its own "
+                "`thresh_cost`), or refit the mixing with "
+                "`find_optimal_parameters_for_pruning(objective='histogram_overlap')`, "
+                "whose loss penalizes exactly this degenerate case."
+            )
 
         if convert_to_probability:        
             ## convert into probabilities

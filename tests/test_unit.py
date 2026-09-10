@@ -941,9 +941,25 @@ class Test_auroc_crossCloserThanSame:
         assert auroc == pytest.approx(auroc_bruteforce, abs=1e-12)
 
     def test_loss_is_one_minus_auroc(self, clusterer_with_data):
-        """The DE minimizes 1 - AUROC, so the reported loss is in [0, 1]."""
+        """`de_result.fun` must be exactly `1 - AUROC` at the fitted parameters.
+
+        Recomputes the conjunctive distances from the returned mixing
+        parameters and re-derives the loss, which is the contract a
+        bounded-but-unrelated objective would not satisfy. `polish=False`
+        so that `_de_result.fun` corresponds to `_de_result.x` and hence
+        to the parameters that come back.
+
+        The two distance computations are not the same code: the DE inner
+        loop works on cloned float32 tensors with `clamp(min=1e-8)` and a
+        running sum, while `make_conjunctive_distance_matrix` clamps at 0
+        and uses `torch.mean` over a stacked tensor. They agree bit-for-bit
+        on this dataset (checked with `==`), but the assertion below uses a
+        tight `np.isclose` so that a float32 reassociation on another
+        platform reports as a tolerance failure rather than a false alarm.
+        """
         from roicat.tracking.clustering import auroc_crossCloserThanSame
-        clusterer_with_data._find_optimal_parameters_DE(
+
+        mixing_params = clusterer_with_data._find_optimal_parameters_DE(
             seed=42,
             objective='auroc',
             de_kwargs={
@@ -952,9 +968,22 @@ class Test_auroc_crossCloserThanSame:
         )
         loss = clusterer_with_data._de_result.fun
         assert 0.0 <= loss <= 1.0
-        ## The optimum must be reachable as 1 - AUROC of some distance vector.
-        auroc_implied = 1.0 - loss
-        assert 0.0 <= auroc_implied <= 1.0
+
+        ## Rebuild the distances the fit landed on. The test data is far
+        ## below the auto-subsample threshold, so the DE saw all pairs.
+        dConj, _, _ = clusterer_with_data.make_conjunctive_distance_matrix(
+            similarities=clusterer_with_data.similarities,
+            mixing_params=mixing_params,
+        )
+        mask_intra = clusterer_with_data._intra_mask  ## True = same-session pair
+        loss_recomputed = 1.0 - auroc_crossCloserThanSame(
+            d_crossSession=dConj.data[~mask_intra],
+            d_sameSession=dConj.data[mask_intra],
+        )
+        assert np.isclose(loss, loss_recomputed, rtol=1e-12, atol=0.0), (
+            f'DE loss {loss!r} != 1 - AUROC at the fitted parameters '
+            f'({loss_recomputed!r})'
+        )
 
     def test_empty_arm_raises(self):
         """An empty arm leaves the statistic undefined; fail loudly."""
@@ -1056,6 +1085,87 @@ class Test__find_optimal_parameters_DE:
         assert set(result.keys()) == {'power_sf', 'power_nn', 'power_swt', 'p_norm',
                                       'sig_sf_kwargs', 'sig_nn_kwargs', 'sig_swt_kwargs'}
         assert np.isfinite(clusterer_with_data._de_result.fun)
+
+    def test_legacy_loss_matches_histogram_overlap(self, clusterer_with_data):
+        """`de_result.fun` must equal the legacy overlap area at the fit.
+
+        The bit-for-bit promise for `objective='histogram_overlap'` is that
+        the DE still minimizes exactly `_compute_histogram_overlap`. Pinning
+        the fitted floats themselves would only pin this machine's
+        scipy/numpy, so the check is self-consistency instead: recompute the
+        overlap from the returned parameters through the public distance
+        path and compare. Tight `np.isclose` for the same float32
+        reassociation reason as the AUROC test; it is `==` here.
+        """
+        mixing_params = clusterer_with_data._find_optimal_parameters_DE(
+            seed=42,
+            objective='histogram_overlap',
+            de_kwargs={
+                'maxiter': 3, 'tol': 1e-4, 'popsize': 5, 'polish': False,
+            },
+        )
+        loss = clusterer_with_data._de_result.fun
+
+        dConj, _, _ = clusterer_with_data.make_conjunctive_distance_matrix(
+            similarities=clusterer_with_data.similarities,
+            mixing_params=mixing_params,
+        )
+        ## Same histogram infrastructure the DE builds internally.
+        n_bins = clusterer_with_data.n_bins
+        edges = torch.linspace(0, 1, n_bins + 1, dtype=torch.float32)
+        smoother = helpers.Convolver_1d(
+            kernel=torch.ones(helpers.make_odd(n_bins // 10, mode='up')),
+            length_x=n_bins,
+            pad_mode='same',
+            correct_edge_effects=True,
+            device='cpu',
+        )
+        mask_intra = clusterer_with_data._intra_mask  ## True = same-session pair
+        n_intra = int(mask_intra.sum())
+        loss_recomputed, _, _ = clusterer_with_data._compute_histogram_overlap(
+            distances=torch.as_tensor(dConj.data, dtype=torch.float32),
+            intra_indices=torch.as_tensor(np.where(mask_intra)[0]),
+            edges=edges,
+            smoother=smoother,
+            scale_factor=mask_intra.shape[0] / max(n_intra, 1),
+        )
+        assert np.isclose(loss, loss_recomputed, rtol=1e-12, atol=0.0), (
+            f'DE loss {loss!r} != histogram overlap at the fitted parameters '
+            f'({loss_recomputed!r})'
+        )
+
+    def test_auroc_with_unfrozen_sigmoid_warns(self, clusterer_with_data):
+        """`objective='auroc'` + `freeze_sigmoid=False` must warn, not raise.
+
+        AUROC is a rank statistic and so fixes no absolute distance scale,
+        while `thresh_cost` and `d_cutoff` downstream are absolute. The
+        combination stays available for callers who set their own cutoff,
+        but it has to announce itself.
+        """
+        with pytest.warns(UserWarning, match='scale-free'):
+            clusterer_with_data._find_optimal_parameters_DE(
+                seed=42,
+                objective='auroc',
+                freeze_sigmoid=False,
+                de_kwargs={
+                    'maxiter': 2, 'tol': 1e-4, 'popsize': 4, 'polish': False,
+                },
+            )
+
+    def test_histogram_overlap_with_unfrozen_sigmoid_does_not_warn(
+        self, clusterer_with_data,
+    ):
+        """The legacy objective anchors the scale, so it must stay quiet."""
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', UserWarning)
+            clusterer_with_data._find_optimal_parameters_DE(
+                seed=42,
+                objective='histogram_overlap',
+                freeze_sigmoid=False,
+                de_kwargs={
+                    'maxiter': 2, 'tol': 1e-4, 'popsize': 4, 'polish': False,
+                },
+            )
 
     def test_invalid_objective_raises(self, clusterer_with_data):
         """An unrecognized objective should fail loudly, before any fitting."""
@@ -1255,6 +1365,43 @@ class Test_edge_cases:
             },
         )
         assert np.isfinite(clusterer_with_data._de_result.fun)
+
+    def test_no_crossover_raises_without_d_cutoff(self, clusterer_with_data):
+        """No crossover + inferred cutoff must raise, not `TypeError` on None.
+
+        A sigmoid centered far above the z-scored similarity range saturates
+        every activation to 0, so every pair lands at distance 1. The 'same'
+        residual is then empty everywhere, `_separate_diffSame_distributions`
+        finds no crossover and returns `d_crossover=None`, and the inferred
+        cutoff used to be computed as `None - min_d`.
+        """
+        from roicat import tracking
+        from roicat.tracking.similarity_graph import DEFAULT_METRICS
+
+        ## Fresh instance: the call below sets dConj/graph_pruned, which the
+        ## module-scoped fixture would otherwise carry into other tests.
+        clusterer = tracking.clustering.Clusterer(
+            similarities=clusterer_with_data.similarities,
+            metric_configs=DEFAULT_METRICS,
+            s_sesh=clusterer_with_data.s_sesh,
+            verbose=False,
+        )
+        mixing_params_collapsed = {
+            'power_sf': 1.0, 'power_nn': 1.0, 'power_swt': 1.0, 'p_norm': -4.0,
+            'sig_sf_kwargs': None,
+            'sig_nn_kwargs': {'mu': 10.0, 'b': 10.0},
+            'sig_swt_kwargs': {'mu': 10.0, 'b': 10.0},
+        }
+        with pytest.raises(ValueError, match='No crossover point exists'):
+            clusterer.make_pruned_similarity_graphs(
+                mixing_params=mixing_params_collapsed,
+            )
+
+        ## An explicit cutoff is the documented way through, and it works.
+        clusterer.make_pruned_similarity_graphs(
+            mixing_params=mixing_params_collapsed, d_cutoff=0.5,
+        )
+        assert clusterer.d_cutoff == 0.5
 
     def test_nb_calibration_monotonicity(self, clusterer_with_data):
         """P(same|s_k) bins should be strictly monotonically non-decreasing for all features."""
