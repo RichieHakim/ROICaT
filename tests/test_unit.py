@@ -1951,6 +1951,55 @@ class TestFastHDBSCAN:
         assert clusterer.params['fit']['d_clusterMerge'] is None  ## original arg was None
 
 
+class TestSequentialHungarianThreshCost:
+    """Tests for tying fit_sequentialHungarian's threshold to the pruning cutoff."""
+
+    ## Fixed mixing so `make_pruned_similarity_graphs` never has to infer a crossover
+    ## from the synthetic distributions; every fit below passes an explicit `d_cutoff`.
+    MIXING_PARAMS = {
+        'power_sf': 1.0, 'power_nn': 1.0, 'power_swt': 1.0, 'p_norm': -4.0,
+        'sig_sf_kwargs': None,
+        'sig_nn_kwargs': {'mu': 0.5, 'b': 1.0},
+        'sig_swt_kwargs': {'mu': 0.5, 'b': 1.0},
+    }
+
+    def test_thresh_cost_none_matches_explicit_d_cutoff(self):
+        """thresh_cost=None must give the labels of passing self.d_cutoff by hand."""
+        clusterer, _, session_bool = _make_synthetic_clusterer(
+            n_sessions=4, n_rois_per_session=20, seed=42,
+        )
+        clusterer.make_pruned_similarity_graphs(
+            mixing_params=dict(self.MIXING_PARAMS),
+            d_cutoff=0.35,
+        )
+        ## bool, not the helper's float64: fit_sequentialHungarian indexes ROI ranges
+        ## with `session_bool.sum(0)`.
+        session_bool = session_bool.astype(bool)
+
+        kwargs = dict(d_conj=clusterer.dConj_pruned, session_bool=session_bool)
+        labels_tied = clusterer.fit_sequentialHungarian(**kwargs, thresh_cost=None)
+        assert clusterer.params['fit_sequentialHungarian']['thresh_cost'] is None
+        labels_explicit = clusterer.fit_sequentialHungarian(**kwargs, thresh_cost=0.35)
+        np.testing.assert_array_equal(labels_tied, labels_explicit)
+
+        ## The equality above is only meaningful if the threshold moves the labels on
+        ## this data at all. It does: below d_cutoff every cluster is lost.
+        labels_stricter = clusterer.fit_sequentialHungarian(**kwargs, thresh_cost=0.2)
+        assert not np.array_equal(labels_tied, labels_stricter)
+
+    def test_thresh_cost_none_raises_without_d_cutoff(self):
+        """Without make_pruned_similarity_graphs there is no cutoff to tie to."""
+        clusterer, d_conj, session_bool = _make_synthetic_clusterer(
+            n_sessions=4, n_rois_per_session=20, seed=42,
+        )
+        with pytest.raises(ValueError, match='d_cutoff'):
+            clusterer.fit_sequentialHungarian(
+                d_conj=d_conj,
+                session_bool=session_bool.astype(bool),
+                thresh_cost=None,
+            )
+
+
 class TestFastHDBSCANQualityMetrics:
     """Tests for quality metrics extraction with fast_hdbscan backend."""
 
