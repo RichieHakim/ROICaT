@@ -286,7 +286,7 @@ def get_default_parameters(
                     'n_steps_clusterSplit': 100,  ## (advanced) How finely to step through distances to remove violations
                 },
                 'sequential_hungarian': {
-                    'thresh_cost': 0.6, ## Threshold for the cost matrix. Lower numbers result in more clusters.
+                    'thresh_cost': None, ## Threshold for the cost matrix. Lower numbers result in more clusters. None defaults to d_cutoff (pruning threshold).
                 },
             },
             'results_saving': {

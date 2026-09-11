@@ -2302,7 +2302,7 @@ class Clusterer(util.ROICaT_Module):
         self,
         d_conj: scipy.sparse.csr_array,
         session_bool: np.ndarray,
-        thresh_cost: float = 0.95,
+        thresh_cost: Optional[float] = None,
     ) -> np.ndarray:
         """
         Applies CaImAn's method for clustering.
@@ -2319,19 +2319,41 @@ class Clusterer(util.ROICaT_Module):
             session_bool (np.ndarray): 
                 Boolean array indicating which ROIs are in which sessions. 
                 Shape: *(n_rois, n_sessions)*
-            thresh_cost (float): 
-                Threshold below which ROI pairs are considered potential matches. 
-                (Default is *0.95*)
+            thresh_cost (Optional[float]): 
+                Threshold below which ROI pairs are considered potential matches.
+                If ``None``, defaults to ``self.d_cutoff`` (the pruning
+                threshold from ``make_pruned_similarity_graphs``), which accepts
+                exactly the pairs that survived pruning. Note that ROI pairs
+                with no surviving edge enter the cost matrix at *1.0*, so any
+                threshold above *1.0* matches everything. (Default is ``None``)
 
         Returns:
             (np.ndarray): 
                 labels (np.ndarray): 
                     Cluster labels. Shape: *(n_rois,)*
+
+        Raises:
+            ValueError:
+                If ``thresh_cost`` is ``None`` and ``self.d_cutoff`` has not
+                been set, i.e. ``make_pruned_similarity_graphs`` has not been
+                run.
         """
         ## Store parameter (but not data) args as attributes
         self.params['fit_sequentialHungarian'] = self._locals_to_params(
             locals_dict=locals(),
             keys=['thresh_cost',],)
+
+        ## Resolve thresh_cost default: use d_cutoff from pruning. Pairs with no
+        ## surviving edge enter the cost matrix at 1.0 and pruned-in pairs sit below
+        ## d_cutoff, so this accepts the pruned graph and nothing else.
+        if thresh_cost is None:
+            if getattr(self, 'd_cutoff', None) is None:
+                raise ValueError(
+                    "thresh_cost=None ties the threshold to the pruning cutoff, but "
+                    "`self.d_cutoff` is not set. Call `make_pruned_similarity_graphs` "
+                    "first, or pass `thresh_cost` as a float."
+                )
+            thresh_cost = float(self.d_cutoff)
 
         print(f"Clustering with CaImAn's sequential Hungarian algorithm method...") if self._verbose else None
         def find_matches(D_s):
