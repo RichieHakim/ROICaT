@@ -62,7 +62,7 @@ core = [
     ## The upper bound is inherited from before this reorganization; the commit
     ## that added it does not record what broke.
     "onnx>=1.17.0,<1.23.0",
-    "onnxruntime==1.29.0",
+    "onnxruntime==1.30.0",
 
     ## Plotting, interactive selection and the notebooks. The interactive
     ## labelling and region-drawing tools are the documented way to use the
