@@ -3931,6 +3931,11 @@ def make_label_variants(
 
 
 def plot_quality_metrics(quality_metrics: dict, labels: Union[np.ndarray, list], n_sessions: int) -> None:
+    ## The pipeline passes the JSON_List that make_label_variants returns, and on a
+    ## list `labels == -1` is the scalar False rather than a boolean mask, so every
+    ## count in the suptitle below came out as 0 / 1 / 1 regardless of the data.
+    labels = np.asarray(labels)
+
     fig, axs = plt.subplots(nrows=2, ncols=2, figsize=(15,7))
 
     axs[0,0].hist(quality_metrics['cluster_silhouette'], 50);
@@ -3945,7 +3950,7 @@ def plot_quality_metrics(quality_metrics: dict, labels: Union[np.ndarray, list],
     axs[1,0].set_xlabel('sample_silhouette score');
     axs[1,0].set_ylabel('roi sample counts');
 
-    u, c = np.unique((v:=np.array(labels))[v!=-1], return_counts=True)
+    u, c = np.unique(labels[labels!=-1], return_counts=True)
     n_sesh = np.bincount(c)
 
     axs[1,1].bar(np.arange(len(n_sesh)), n_sesh);
