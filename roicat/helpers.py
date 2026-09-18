@@ -4305,10 +4305,21 @@ def remap_sparse_images(
     safe: bool = True,
     n_workers: int = -1,
     verbose: bool = True,
+    backend: str = 'griddata',
 ) -> List[scipy.sparse.csr_array]:
     """
     Remaps a list of sparse images using the given remap field.
     RH 2023
+
+    Warning:
+        The default ``backend='griddata'`` interpolates over the convex hull of
+        each image's nonzero pixels, so holes and concavities in a non-convex
+        image are filled in and pixels near the edge of the hull are dropped
+        (ROICaT issue #686). ``backend='operator'`` instead builds a
+        ``Remapping_operator2d`` and warps every image with one sparse matrix
+        multiplication, which samples each output pixel from the pixels under it
+        and leaves holes empty. It is also much faster for more than a handful of
+        images.
 
     Args:
         ims_sparse (Union[scipy.sparse.spmatrix, List[scipy.sparse.spmatrix]]):
@@ -4338,6 +4349,17 @@ def remap_sparse_images(
             available CPU cores.
         verbose (bool):
             Whether or not to use a tqdm progress bar. (Default is ``True``)
+        backend (str):
+            Which implementation to use. Options are:
+            \n
+            * ``'griddata'``: ``scipy.interpolate.griddata``, one image at a
+              time. See the warning above.
+            * ``'operator'``: one ``Remapping_operator2d`` for all the images.
+              ``method`` must be ``'nearest'`` or ``'linear'`` and ``fill_value``
+              must be 0; ``safe`` and ``n_workers`` do not apply, since a matrix
+              multiplication has no degenerate image shapes and runs in one
+              single-threaded pass. ``dtype`` must be a floating type. \n
+            (Default is ``'griddata'``)
 
     Returns:
         (List[scipy.sparse.csr_array]):
@@ -4347,6 +4369,8 @@ def remap_sparse_images(
     Raises:
         AssertionError: If the image and remappingIdx have different spatial
         dimensions.
+        ValueError: If ``backend`` is unknown, or ``backend='operator'`` is
+        combined with a ``method`` or ``fill_value`` it cannot honor.
     """
     # Ensure ims_sparse is a list of sparse matrices
     ims_sparse = [ims_sparse] if not isinstance(ims_sparse, list) else ims_sparse
@@ -4361,6 +4385,30 @@ def remap_sparse_images(
     
     dtype = ims_sparse[0].dtype if dtype is None else dtype
     
+    if backend not in ['griddata', 'operator']:
+        raise ValueError(f"backend must be one of ['griddata', 'operator']. Got {backend}")
+    if backend == 'operator':
+        if method not in ['nearest', 'linear']:
+            raise ValueError(f"With backend='operator', method must be one of ['nearest', 'linear']. Got {method}")
+        if fill_value != 0:
+            raise ValueError(f"With backend='operator', fill_value must be 0. Anything outside the frame contributes nothing. Got {fill_value}")
+        if not np.issubdtype(np.dtype(dtype), np.floating):
+            raise ValueError(f"With backend='operator', dtype must be a floating type, else every interpolation weight rounds to 0. It defaults to the dtype of ims_sparse. Got {dtype}")
+        ## Stack the images into the (n_images, H*W) layout the operator warps in
+        ## one multiplication, then split the result back into 2D images.
+        ims_flat = scipy.sparse.vstack(
+            [scipy.sparse.csr_array(im).reshape((1, dims_ims[0] * dims_ims[1])) for im in ims_sparse],
+            format='csr',
+        )
+        remapper = Remapping_operator2d(
+            remappingIdx=remappingIdx,
+            interpolation_method=method,
+            dtype=dtype,
+            support=support_for_remapping_operator2d(x=ims_flat, shape_frame=dims_ims),
+        )
+        ims_flat_out = remapper(x=ims_flat, batching=True)
+        return [scipy.sparse.csr_array(ims_flat_out[ii:ii+1, :].reshape(dims_ims)) for ii in range(ims_flat_out.shape[0])]
+
     if safe:
         conv2d = Toeplitz_convolution2d(
             x_shape=(dims_ims[0], dims_ims[1]),
@@ -4835,6 +4883,532 @@ def resize_remappingIdx(
     if return_3D:
         ri_resized = ri_resized[0]
     return ri_resized
+
+class Remapping_operator2d():
+    """
+    Applies a remapping index field to images by multiplying them with a
+    precomputed sparse matrix. A backward warp with a fixed interpolation kernel
+    is a linear function of the image, so for a given ``remappingIdx`` there is a
+    matrix ``W`` with ``vec(warped_image) == W @ vec(image)`` exactly. That matrix
+    is built once here and reused, which turns the warping of a whole batch of
+    images into a single sparse matrix multiplication. Unlike a scattered-point
+    interpolation (see ``remap_sparse_images``), each output pixel is a weighted
+    sum of the pixels it samples, so holes and concavities in a sparse image stay
+    empty.
+    RH 2026
+
+    The matrix is stored transposed, as ``Wt[idx_source, idx_destination]``,
+    because ``x @ Wt`` then visits only the rows named by the nonzeros of ``x``.
+    Warping one sparse image costs O(nnz(image)) rather than O(H*W).
+
+    Conventions follow the rest of the ``remappingIdx`` family:
+    ``remappingIdx[r, c, 0]`` is the source column and ``remappingIdx[r, c, 1]``
+    is the source row sampled by destination pixel *(r, c)*, in absolute pixels.
+    Images are flattened in C order, so a pixel's flat index is ``y*W + x``.
+
+    Interpolation taps are bounds-checked one at a time. A tap that falls outside
+    the frame contributes 0 and the surviving taps are **not** renormalized,
+    which matches ``torch.nn.functional.grid_sample(padding_mode='zeros',
+    align_corners=True)`` and ``scipy.ndimage.map_coordinates(mode='grid-constant',
+    cval=0)`` for finite coordinates. Coordinates that are NaN or infinite fail
+    every bounds check, so they contribute nothing and the output pixel is 0.
+    This is the one deliberate departure from those two references, which
+    propagate a NaN instead; ``compose_remappingIdx`` and ``invert_remappingIdx``
+    fill unmapped pixels with NaN, and those pixels should come out empty. The
+    ``'nearest'`` kernel samples pixel ``floor(coordinate + 0.5)``.
+
+    There are two build modes: \n
+        * ``support=None``: the full matrix, of shape *(H*W, H*W)*, in the
+          attribute ``Wt``. It holds up to 4 nonzeros per pixel for ``'linear'``
+          (1 for ``'nearest'``), so about 36 bytes per pixel in float32 with
+          32-bit indices, and 12 for ``'nearest'``. Frames that need 64-bit
+          indices cost half again as much. The build peaks at roughly 200 bytes
+          per pixel. This is the faster mode and the right one for ordinary
+          frames.
+        * ``support`` given: the matrix restricted to the source pixels that
+          ``support`` occupies, in the attributes ``Wt_compact``, ``src_ids`` and
+          ``dest_ids``. Entries outside the support would only ever multiply
+          zeros, so the output is bit-identical to the full build, but memory
+          scales with the occupied pixels instead of the frame area. Use it for
+          large frames holding sparse images; the field is then read in strips
+          and never expanded. Calling the operator on an image with a nonzero
+          outside the support raises a ``ValueError`` rather than dropping it. \n
+    ``support_for_remapping_operator2d`` makes that choice from the frame size.
+
+    Attributes:
+        shape_frame (Tuple[int, int]):
+            The *(H, W)* shape of both the input and the output images.
+        interpolation_method (str):
+            The kernel used, ``'nearest'`` or ``'linear'``.
+        dtype (np.dtype):
+            The dtype of the matrix and of the output.
+        Wt (Optional[scipy.sparse.csr_array]):
+            The transposed operator, shape *(H*W, H*W)*. ``None`` when
+            ``support`` was given.
+        Wt_compact (Optional[scipy.sparse.csr_array]):
+            The transposed operator over the compacted index spaces, shape
+            *(len(src_ids), len(dest_ids))*. ``None`` for the full build.
+        src_ids (Optional[np.ndarray]):
+            Sorted flat indices of the source pixels the operator covers.
+            ``None`` for the full build.
+        dest_ids (Optional[np.ndarray]):
+            Sorted flat indices of the destination pixels that receive a nonzero
+            weight. ``None`` for the full build.
+
+    Args:
+        remappingIdx (Union[np.ndarray, torch.Tensor]):
+            The remapping index field. Shape: *(H, W, 2)*, last dimension is
+            *(x, y)*. Any floating dtype; it is cast to float64 one strip at a
+            time before the weights are computed.
+        interpolation_method (str):
+            The interpolation kernel to use. \n
+            * ``'nearest'``: samples pixel ``floor(coordinate + 0.5)``.
+            * ``'linear'``: bilinear, up to 4 taps per output pixel. \n
+            (Default is ``'linear'``)
+        dtype (np.dtype):
+            The dtype the matrix is stored in and the dtype of the output. Must
+            be a floating type, since an integer dtype would round every weight
+            to 0. (Default is ``np.float32``)
+        support (Optional[Union[scipy.sparse.sparray, scipy.sparse.spmatrix, np.ndarray]]):
+            The source pixels to restrict the matrix to. Either a sparse array
+            of shape *(H, W)* or *(n_images, H*W)*, or a 1D array of flat pixel
+            indices. ``None`` builds the full matrix. (Default is ``None``)
+        rows_per_strip (Optional[int]):
+            Number of destination rows to process per pass over the field.
+            ``None`` targets about a million pixels per strip. Only affects peak
+            memory; the result is identical. (Default is ``None``)
+
+    Raises:
+        ValueError: If ``interpolation_method`` is not a known kernel.
+        AssertionError: If ``remappingIdx`` is not *(H, W, 2)* or ``dtype`` is
+            not a floating type.
+
+    Example:
+        .. highlight:: python
+        .. code-block:: python
+
+            remapper = Remapping_operator2d(
+                remappingIdx=remappingIdx,
+                interpolation_method='linear',
+            )
+            ims_warped = remapper(
+                x=scipy.sparse.csr_array(ims_flat),
+                batching=True,
+            )
+    """
+    ## The kernels this class implements, in one place: __init__ validates against
+    ## it and _taps_of_strip holds the matching tap table.
+    _interpolation_methods = ['nearest', 'linear']
+
+    def __init__(
+        self,
+        remappingIdx: Union[np.ndarray, torch.Tensor],
+        interpolation_method: str = 'linear',
+        dtype: np.dtype = np.float32,
+        support: Optional[Union[scipy.sparse.sparray, scipy.sparse.spmatrix, np.ndarray]] = None,
+        rows_per_strip: Optional[int] = None,
+    ):
+        """
+        Initializes the Remapping_operator2d object and builds the sparse matrix.
+        """
+        assert isinstance(remappingIdx, (np.ndarray, torch.Tensor)), f"remappingIdx must be a np.ndarray or torch.Tensor. Got {type(remappingIdx)}"
+        assert remappingIdx.ndim == 3, f"remappingIdx must have shape (H, W, 2). Got shape {tuple(remappingIdx.shape)}"
+        assert remappingIdx.shape[2] == 2, f"remappingIdx must have shape (H, W, 2). Got shape {tuple(remappingIdx.shape)}"
+        assert np.issubdtype(np.dtype(dtype), np.floating), f"dtype must be a floating point type, else every interpolation weight rounds to 0. Got {dtype}"
+        if interpolation_method not in self._interpolation_methods:
+            raise ValueError(f"interpolation_method must be one of {self._interpolation_methods}. Got {interpolation_method}")
+
+        self.interpolation_method = interpolation_method
+        self.dtype = np.dtype(dtype)
+        self.shape_frame = (int(remappingIdx.shape[0]), int(remappingIdx.shape[1]))
+        H, W = self.shape_frame
+        n_pixels = H * W
+
+        ## Not cast here: the cast to float64 happens one strip at a time, since a
+        ## float64 copy of a large field can be bigger than the matrix it makes.
+        ri = remappingIdx.detach().cpu().numpy() if isinstance(remappingIdx, torch.Tensor) else np.asarray(remappingIdx)
+
+        self.src_ids = None if support is None else self._flatIdx_from_support(support=support, shape_frame=self.shape_frame)
+        n_src = n_pixels if self.src_ids is None else int(self.src_ids.size)
+
+        ## The field is walked in strips of destination rows so that the
+        ## (source, destination, weight) triplets are never held for a whole
+        ## frame's worth of taps at once.
+        rows_per_strip = max(1, min(H, (2 ** 20) // max(W, 1))) if rows_per_strip is None else int(rows_per_strip)
+        idx_src, idx_dest, weights, ids_dest = [], [], [], []
+        n_dest = 0
+        for row_start in range(0, H, rows_per_strip):
+            s, d, w = self._taps_of_strip(ri=ri, row_start=row_start, row_stop=min(row_start + rows_per_strip, H))
+            if self.src_ids is not None:
+                ## Restrict to the support. A dropped tap would only ever be
+                ## multiplied by a zero pixel.
+                pos = np.searchsorted(self.src_ids, s)
+                keep = (self.src_ids[np.minimum(pos, n_src - 1)] == s) if n_src > 0 else np.zeros(s.shape, dtype=bool)
+                s, d, w = pos[keep], d[keep], w[keep]
+                ## Destination pixels are renumbered too, else the matrix keeps a
+                ## row pointer for every pixel in the frame. Strips cover
+                ## ascending, disjoint destinations, so the concatenated ids stay
+                ## sorted and the relabeling stays monotonic.
+                ids, inv = np.unique(d, return_inverse=True)
+                ids_dest.append(ids)
+                d = inv + n_dest
+                n_dest += int(ids.size)
+            idx_src.append(s)
+            idx_dest.append(d)
+            weights.append(w.astype(self.dtype))  ## weights are computed in float64 and cast once
+
+        if self.src_ids is None:
+            self.dest_ids = None
+            n_dest = n_pixels
+        else:
+            self.dest_ids = np.concatenate(ids_dest) if len(ids_dest) > 0 else np.empty(0, dtype=np.int64)
+
+        Wt = scipy.sparse.csr_array(
+            (np.concatenate(weights), (np.concatenate(idx_src), np.concatenate(idx_dest))),
+            shape=(n_src, n_dest),
+        )
+        ## scipy's COO to CSR conversion already returns this sorted and without
+        ## duplicates, and the tap list holds no duplicate (source, destination)
+        ## pair, so both calls are no-ops today. They are belt-and-braces on a path
+        ## whose whole contract is that the two build modes agree bit for bit: the
+        ## within-row column order sets the order scipy accumulates products in.
+        Wt.sum_duplicates()
+        Wt.sort_indices()
+        ## The index dtype follows the assembled matrix: indptr has to count up to
+        ## the nonzero count, indices have to hold the largest column id. Deciding
+        ## it from the pixel count instead wraps silently at around 23000 x 23000.
+        dtype_idx = self._dtype_index(n_nonzero=int(Wt.data.size), n_index_max=n_dest - 1)
+        Wt.indices = Wt.indices.astype(dtype_idx, copy=False)
+        Wt.indptr = Wt.indptr.astype(dtype_idx, copy=False)
+        if (int(Wt.indptr[-1]) != int(Wt.data.size)) or (Wt.nnz < 0):
+            raise RuntimeError(f"Sparse index arrays overflowed while building the operator. indptr[-1]={int(Wt.indptr[-1])}, nnz={Wt.nnz}, data.size={int(Wt.data.size)}.")
+
+        self.Wt = Wt if self.src_ids is None else None
+        self.Wt_compact = None if self.src_ids is None else Wt
+
+    def __call__(
+        self,
+        x: Union[np.ndarray, scipy.sparse.sparray, scipy.sparse.spmatrix, torch.Tensor],
+        batching: bool = True,
+    ) -> Union[np.ndarray, scipy.sparse.csr_array, torch.Tensor]:
+        """
+        Warps image(s) with the remapping field the operator was built from.
+
+        The input is never modified. Sparse input gives sparse output, dense
+        gives dense, and a ``torch.Tensor`` is passed through numpy and returned
+        as a CPU tensor.
+
+        Args:
+            x (Union[np.ndarray, scipy.sparse.sparray, scipy.sparse.spmatrix, torch.Tensor]):
+                Image(s) to warp. \n
+                * If ``batching==False``: a single 2D image. Shape:
+                  *(self.shape_frame[0], self.shape_frame[1])*
+                * If ``batching==True``: multiple images that have been flattened
+                  into row vectors (with order='C'). Shape: *(n_images,
+                  self.shape_frame[0]*self.shape_frame[1])* \n
+                Any dtype that can be cast to ``self.dtype``, including bool and
+                integer dtypes. A sparse input is read in canonical form, so two
+                representations of the same matrix give the same bits out when
+                ``x.dtype`` is ``self.dtype``. When ``x`` is cast down to a
+                narrower dtype the cast happens before the duplicates are summed,
+                so a matrix that stores an entry twice can differ from its
+                canonical twin by a rounding step (measured: up to 2.4e-7
+                relative, float64 in with a float32 operator).
+            batching (bool):
+                * ``False``: x is a single 2D image.
+                * ``True``: x is a 2D array where each row is a flattened image. \n
+                (Default is ``True``)
+
+        Returns:
+            (Union[np.ndarray, scipy.sparse.csr_array, torch.Tensor]):
+                out (Union[np.ndarray, scipy.sparse.csr_array, torch.Tensor]):
+                    The warped image(s), with the same shape and rows in the same
+                    order as ``x``, in dtype ``self.dtype``. Sparse output is a
+                    ``scipy.sparse.csr_array`` in canonical form: duplicates
+                    summed, indices sorted within each row, no explicit zeros.
+
+        Raises:
+            ValueError: If the operator was built with a ``support`` and ``x``
+                has a *stored* entry at a pixel outside it. Explicit zeros count,
+                because they are what ``_flatIdx_from_support`` counts when it
+                reads a support off a sparse array, so the two stay symmetric.
+        """
+        H, W = self.shape_frame
+        n_pixels = H * W
+        return_torch = isinstance(x, torch.Tensor)
+        if return_torch:
+            x = x.detach().cpu().numpy()
+
+        if batching:
+            assert (x.ndim == 2) and (x.shape[1] == n_pixels), f"With batching=True, x must have shape (n_images, {n_pixels}). Got {tuple(x.shape)}"
+            x_flat = x
+        else:
+            assert tuple(x.shape) == self.shape_frame, f"With batching=False, x must have shape {self.shape_frame}. Got {tuple(x.shape)}"
+            x_flat = x.reshape(1, n_pixels)
+
+        if scipy.sparse.issparse(x_flat):
+            out = self._apply_sparse(x=scipy.sparse.csr_array(x_flat))
+        else:
+            out = self._apply_dense(x=np.asarray(x_flat, dtype=self.dtype))
+
+        if not batching:
+            out = out.reshape(self.shape_frame)
+            out = self._canonicalize(A=scipy.sparse.csr_array(out)) if scipy.sparse.issparse(out) else out
+        return torch.as_tensor(out) if return_torch else out
+
+    def _apply_sparse(
+        self,
+        x: scipy.sparse.csr_array,
+    ) -> scipy.sparse.csr_array:
+        """
+        Warps a stack of flattened sparse images. ``x`` may share its arrays with
+        the caller's input, so nothing here writes to them.
+        """
+        n_rows = int(x.shape[0])
+        n_pixels = self.shape_frame[0] * self.shape_frame[1]
+        ## Cast first so the whole product runs in self.dtype instead of being
+        ## promoted to float64 by an integer input and rounded afterwards.
+        if x.dtype != self.dtype:
+            x = x.astype(self.dtype)  ## a private copy
+        elif not x.has_canonical_format:
+            x = x.copy()  ## about to be canonicalized in place, so do not touch the caller's
+        ## The matrix is multiplied as it is stored, so duplicate or unsorted
+        ## entries would change the order the products accumulate in and with it
+        ## the last bits of the result. Canonicalizing makes the output a function
+        ## of the matrix rather than of the way it was stored. This returns
+        ## immediately for the already-canonical arrays that callers normally hold.
+        x.sum_duplicates()
+
+        if self.Wt is not None:
+            out = x @ self.Wt
+        else:
+            n_src = int(self.src_ids.size)
+            ## Relabel the columns into support space. The relabeling is
+            ## monotonic, so scipy accumulates the products in the same order the
+            ## full build would and the two outputs match bit for bit.
+            pos = np.searchsorted(self.src_ids, x.indices)
+            in_support = (n_src > 0) and np.array_equal(self.src_ids[np.minimum(pos, n_src - 1)], x.indices)
+            if (int(x.indices.size) > 0) and (not in_support):
+                raise ValueError("x has a nonzero at a pixel outside the operator's support. Rebuild the operator with a support that covers x.")
+            dtype_idx = self._dtype_index(n_nonzero=int(x.indptr[-1]), n_index_max=n_src - 1)
+            out = scipy.sparse.csr_array(
+                (x.data, pos.astype(dtype_idx), x.indptr.astype(dtype_idx, copy=False)),
+                shape=(n_rows, n_src),
+            ) @ self.Wt_compact
+            ## Map the destination columns back to frame positions. dest_ids is
+            ## sorted, so this relabeling is monotonic too. out.indices index into
+            ## dest_ids, so they are below its length by construction and numpy
+            ## gathers with them at whatever width scipy chose; the result takes
+            ## dest_ids' int64 and is narrowed once, below.
+            dtype_idx = self._dtype_index(n_nonzero=int(out.indptr[-1]), n_index_max=n_pixels - 1)
+            out = scipy.sparse.csr_array(
+                (out.data, self.dest_ids[out.indices].astype(dtype_idx), out.indptr.astype(dtype_idx, copy=False)),
+                shape=(n_rows, n_pixels),
+            )
+        return self._canonicalize(A=scipy.sparse.csr_array(out))
+
+    def _apply_dense(
+        self,
+        x: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Warps a stack of flattened dense images.
+        """
+        if self.Wt is not None:
+            return np.asarray(x @ self.Wt, dtype=self.dtype)
+        x_support = x[:, self.src_ids]
+        ## Dropping the columns outside the support is only lossless if there is
+        ## nothing in them.
+        if np.count_nonzero(x_support) != np.count_nonzero(x):
+            raise ValueError("x has a nonzero at a pixel outside the operator's support. Rebuild the operator with a support that covers x.")
+        out = np.zeros((int(x.shape[0]), self.shape_frame[0] * self.shape_frame[1]), dtype=self.dtype)
+        out[:, self.dest_ids] = x_support @ self.Wt_compact
+        return out
+
+    def _taps_of_strip(
+        self,
+        ri: np.ndarray,
+        row_start: int,
+        row_stop: int,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Computes the interpolation taps for one strip of destination rows.
+
+        Args:
+            ri (np.ndarray):
+                The remapping index field. Shape: *(H, W, 2)*.
+            row_start (int):
+                First destination row of the strip.
+            row_stop (int):
+                One past the last destination row of the strip.
+
+        Returns:
+            (Tuple[np.ndarray, np.ndarray, np.ndarray]):
+                idx_source (np.ndarray):
+                    Flat index of the source pixel of each tap. Shape: *(n_taps,)*
+                idx_dest (np.ndarray):
+                    Flat index of the destination pixel of each tap. Shape:
+                    *(n_taps,)*
+                weights (np.ndarray):
+                    Tap weights, float64. Shape: *(n_taps,)*
+        """
+        H, W = self.shape_frame
+        strip = ri[row_start:row_stop]
+        ## float64 so that floor() and the weights carry no float32 slop
+        x = np.asarray(strip[..., 0], dtype=np.float64).reshape(-1)  ## (n_strip,) source column
+        y = np.asarray(strip[..., 1], dtype=np.float64).reshape(-1)  ## (n_strip,) source row
+        idx_dest = np.arange(row_start * W, row_stop * W, dtype=np.int64)  ## (n_strip,) flat destination index
+
+        ## The kernel as a table of 1D taps: a base pixel plus one weight per tap
+        ## along each axis. A cubic kernel would be a wider base and two more
+        ## entries in each list.
+        ## errstate: an infinite coordinate makes inf-inf and inf*0, both of which
+        ## give a NaN weight. That NaN is dropped by the bounds check below, so
+        ## the warning would only be noise.
+        with np.errstate(invalid='ignore'):
+            if self.interpolation_method == 'nearest':
+                x0, y0 = np.floor(x + 0.5), np.floor(y + 0.5)
+                w_x, w_y = [np.ones_like(x)], [np.ones_like(y)]
+            elif self.interpolation_method == 'linear':
+                x0, y0 = np.floor(x), np.floor(y)
+                w_x, w_y = [1. - (x - x0), x - x0], [1. - (y - y0), y - y0]
+            else:
+                ## Unreachable: __init__ validates against _interpolation_methods,
+                ## which is the same list this table implements. Adding a kernel
+                ## there without adding it here lands the caller in this message
+                ## rather than in an UnboundLocalError.
+                raise ValueError(f"No tap table for interpolation_method={self.interpolation_method}. Implemented: {self._interpolation_methods}")
+
+            out_src, out_dest, out_weight = [], [], []
+            for d_row, wy in enumerate(w_y):
+                for d_col, wx in enumerate(w_x):
+                    col, row = x0 + d_col, y0 + d_row
+                    w = wy * wx
+                    ## Each tap is bounds-checked on its own and the survivors are
+                    ## not renormalized. NaN and infinite coordinates fail every
+                    ## comparison here, so they contribute nothing.
+                    valid = (col >= 0) & (col < W) & (row >= 0) & (row < H) & (w != 0.)
+                    out_src.append((row[valid] * W + col[valid]).astype(np.int64))
+                    out_dest.append(idx_dest[valid])
+                    out_weight.append(w[valid])
+        return np.concatenate(out_src), np.concatenate(out_dest), np.concatenate(out_weight)
+
+    @staticmethod
+    def _flatIdx_from_support(
+        support: Union[scipy.sparse.sparray, scipy.sparse.spmatrix, np.ndarray],
+        shape_frame: Tuple[int, int],
+    ) -> np.ndarray:
+        """
+        Converts a support specification into sorted unique flat pixel indices.
+        A sparse input contributes every stored entry, including explicit zeros,
+        which only ever makes the support larger than it needs to be.
+
+        Args:
+            support (Union[scipy.sparse.sparray, scipy.sparse.spmatrix, np.ndarray]):
+                A sparse array of shape *(H, W)* or *(n_images, H*W)*, or a 1D
+                array of flat pixel indices.
+            shape_frame (Tuple[int, int]):
+                The *(H, W)* shape of the frame.
+
+        Returns:
+            (np.ndarray):
+                src_ids (np.ndarray):
+                    Sorted unique flat pixel indices. Shape: *(n_support,)*
+        """
+        H, W = shape_frame
+        if scipy.sparse.issparse(support):
+            if tuple(support.shape) == (H, W):
+                support_coo = scipy.sparse.coo_array(support)
+                idx = support_coo.row.astype(np.int64) * W + support_coo.col.astype(np.int64)
+            else:
+                assert support.shape[-1] == H * W, f"A sparse support must have shape (H, W) or (n_images, H*W) with (H, W)={shape_frame}. Got {tuple(support.shape)}"
+                idx = scipy.sparse.csr_array(support).indices.astype(np.int64)
+        else:
+            support = np.asarray(support)
+            ## A dense image or an occupancy mask is the natural reading of
+            ## "the pixels to restrict to", but this branch reads values as
+            ## indices, so a 2D array would quietly become the support {0, 1}.
+            assert support.ndim == 1, f"An ndarray support must be a 1D array of flat pixel indices, not an image. Got shape {support.shape}. Pass a dense image as scipy.sparse.csr_array(image), or as np.flatnonzero(image)."
+            idx = support.astype(np.int64)
+        idx = np.unique(idx)
+        assert (idx.size == 0) or ((idx[0] >= 0) and (idx[-1] < H * W)), f"support contains flat pixel indices outside [0, {H * W})."
+        return idx
+
+    @staticmethod
+    def _dtype_index(
+        n_nonzero: int,
+        n_index_max: int,
+    ) -> np.dtype:
+        """
+        Picks the index dtype of a CSR matrix. The row pointer has to count up to
+        the nonzero count and the column indices have to hold the largest column
+        id, so both quantities are checked. int64 is a valid answer; the point is
+        that nothing wraps silently.
+
+        Args:
+            n_nonzero (int):
+                Number of nonzeros the matrix holds.
+            n_index_max (int):
+                Largest index the matrix has to store.
+
+        Returns:
+            (np.dtype):
+                dtype_index (np.dtype):
+                    ``np.int32`` if both fit in it, else ``np.int64``.
+        """
+        return np.dtype(np.int32) if max(int(n_nonzero), int(n_index_max)) <= np.iinfo(np.int32).max else np.dtype(np.int64)
+
+    @staticmethod
+    def _canonicalize(
+        A: scipy.sparse.csr_array,
+    ) -> scipy.sparse.csr_array:
+        """
+        Puts a CSR array into canonical form in place: duplicates summed, indices
+        sorted within each row, no explicit zeros. Only call this on an array the
+        operator owns.
+        """
+        A.sum_duplicates()
+        A.sort_indices()
+        A.eliminate_zeros()
+        return A
+
+
+def support_for_remapping_operator2d(
+    x: Union[scipy.sparse.sparray, scipy.sparse.spmatrix, np.ndarray],
+    shape_frame: Tuple[int, int],
+    n_pixels_max_full: int = 2 ** 24,
+) -> Optional[Union[scipy.sparse.sparray, scipy.sparse.spmatrix, np.ndarray]]:
+    """
+    Chooses the build mode of ``Remapping_operator2d`` from the frame size.
+    RH 2026
+
+    Returns ``x`` when the frame is large enough that the full matrix should not
+    be built, and ``None`` otherwise. Both modes give the same output, so this
+    only trades build time against memory. At the default threshold of 2**24
+    pixels (4096 x 4096) the full build peaks at about 3.4 GB and its peak grows
+    at roughly 200 bytes per pixel from there, while the restricted build's peak
+    follows the images' occupied pixels instead. Below the threshold the full
+    build is the faster of the two, by several times when the images cover most
+    of the frame, so it is kept there.
+
+    Args:
+        x (Union[scipy.sparse.sparray, scipy.sparse.spmatrix, np.ndarray]):
+            The images that will be warped, in any form
+            ``Remapping_operator2d`` accepts as a ``support``.
+        shape_frame (Tuple[int, int]):
+            The *(H, W)* shape of the frame.
+        n_pixels_max_full (int):
+            Largest frame, in pixels, for which the full matrix is built.
+            (Default is ``2 ** 24``)
+
+    Returns:
+        (Optional[Union[scipy.sparse.sparray, scipy.sparse.spmatrix, np.ndarray]]):
+            support (Optional[...]):
+                ``x`` or ``None``, to be passed to
+                ``Remapping_operator2d(support=...)``.
+    """
+    return x if (int(shape_frame[0]) * int(shape_frame[1])) > int(n_pixels_max_full) else None
+
 
 def add_text_to_images(
     images: np.array, 

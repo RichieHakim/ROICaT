@@ -184,6 +184,7 @@ def get_default_parameters(
                 },
                 'transform_ROIs': {
                     'normalize': True,  ## If True, normalize the spatial footprints to have a sum of 1.
+                    'method_warp': 'linear',  ## How each ROI is warped. 'linear' or 'nearest' use a sparse warp operator; 'legacy_griddata_cubic' is the old per-ROI griddata path, which fills in holes in non-convex ROIs (issue #686).
                 },
             },
             'blurring': {
