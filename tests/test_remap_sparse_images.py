@@ -1,6 +1,6 @@
 """
 Unit tests for the sparse ROI warp added for ROICaT issue #686:
-``helpers.remap_sparse_images_matmul`` and
+``helpers.remap_sparse_images`` and
 ``Aligner.transform_ROIs(method_warp=...)``.
 
 Two references are written here from the documented contract, independently of
@@ -19,7 +19,7 @@ are accumulated in cannot change the answer.
 These tests need no downloaded test data and run on CPU.
 
 To run the tests, use the command (in a terminal):
-    pytest -v test_remap_sparse_images_matmul.py
+    pytest -v test_remap_sparse_images.py
 """
 
 from typing import Tuple
@@ -118,7 +118,7 @@ def _warp_reference(ims: np.ndarray, remappingIdx: np.ndarray, method: str, refe
 
 def _warp_matmul(ims: np.ndarray, remappingIdx: np.ndarray, method: str, dtype: np.dtype = np.float64, **kwargs) -> np.ndarray:
     """Runs the function under test on dense flattened images and densifies the output to float64."""
-    out = helpers.remap_sparse_images_matmul(
+    out = helpers.remap_sparse_images(
         ims_sparse_flat=scipy.sparse.csr_array(np.asarray(ims)),
         remappingIdx=remappingIdx,
         method=method,
@@ -360,7 +360,7 @@ def test_empty_batch_and_all_zero_image(method):
     rng = np.random.default_rng(2)
     shape_frame = (8, 6)
     field = _field_smooth(shape_frame, rng)
-    out_empty = helpers.remap_sparse_images_matmul(ims_sparse_flat=scipy.sparse.csr_array((0, 48), dtype=np.float32), remappingIdx=field, method=method)
+    out_empty = helpers.remap_sparse_images(ims_sparse_flat=scipy.sparse.csr_array((0, 48), dtype=np.float32), remappingIdx=field, method=method)
     _assert_canonical(out=out_empty, shape=(0, 48), dtype=np.float32)
 
     ims = _dyadic_images(shape_frame=shape_frame, rng=rng, n_images=3)
@@ -401,22 +401,6 @@ def test_ring_roi_keeps_its_hole_empty(method):
     assert out.sum() > 0, 'the ring itself should survive the warp'
 
 
-def test_legacy_griddata_path_fills_the_hole():
-    """The contrast that motivates #686, and the proof that the ring fixture can show the bug: griddata fills the hole."""
-    shape_frame = (24, 24)
-    im, mask_hole = _roi_ring(shape_frame)
-    out_legacy = helpers.remap_sparse_images(
-        ims_sparse=[scipy.sparse.csr_array(im)],
-        remappingIdx=_field_translate(shape_frame, shift_x=0.5, shift_y=-0.5),
-        method='cubic',
-        fill_value=0,
-        dtype=np.float32,
-        safe=True,
-        verbose=False,
-    )[0]
-    assert out_legacy.toarray()[mask_hole].sum() > 0
-
-
 ######################################################################################################################################
 ######################################################## CALL SEMANTICS ##############################################################
 ######################################################################################################################################
@@ -434,8 +418,8 @@ def test_every_sparse_format_gives_the_same_csr_array(constructor):
     shape_frame = (12, 9)
     field = _field_smooth(shape_frame, rng)
     ims = _dyadic_images(shape_frame=shape_frame, rng=rng)
-    out_reference = helpers.remap_sparse_images_matmul(ims_sparse_flat=scipy.sparse.csr_array(ims), remappingIdx=field)
-    out = helpers.remap_sparse_images_matmul(ims_sparse_flat=constructor(ims), remappingIdx=field)
+    out_reference = helpers.remap_sparse_images(ims_sparse_flat=scipy.sparse.csr_array(ims), remappingIdx=field)
+    out = helpers.remap_sparse_images(ims_sparse_flat=constructor(ims), remappingIdx=field)
     _assert_canonical(out=out, shape=ims.shape, dtype=np.float32)
     _assert_csr_identical(out, out_reference, msg=constructor.__name__)
 
@@ -458,7 +442,7 @@ def test_noncanonical_input_is_summed_and_not_modified(dtype):
     ims = scipy.sparse.csr_array((data, indices, np.array([0, 40, 80], dtype=np.int32)), shape=(2, 108))
     data_before, indices_before, indptr_before = ims.data.copy(), ims.indices.copy(), ims.indptr.copy()
 
-    out = helpers.remap_sparse_images_matmul(ims_sparse_flat=ims, remappingIdx=field, dtype=dtype)
+    out = helpers.remap_sparse_images(ims_sparse_flat=ims, remappingIdx=field, dtype=dtype)
 
     assert np.array_equal(ims.data, data_before) and np.array_equal(ims.indices, indices_before) and np.array_equal(ims.indptr, indptr_before)
     assert not np.shares_memory(out.data, ims.data)
@@ -489,9 +473,9 @@ def test_remappingIdx_memory_layout_and_dtype_do_not_matter(method):
     ims = scipy.sparse.csr_array(_dyadic_images(shape_frame=shape_frame, rng=rng))
     field_strided = np.repeat(field, 2, axis=1)[:, ::2]
     assert not field_strided.flags['C_CONTIGUOUS']
-    out_reference = helpers.remap_sparse_images_matmul(ims_sparse_flat=ims, remappingIdx=field, method=method)
+    out_reference = helpers.remap_sparse_images(ims_sparse_flat=ims, remappingIdx=field, method=method)
     for field_variant in [field.astype(np.float32), np.asfortranarray(field), field_strided]:
-        _assert_csr_identical(helpers.remap_sparse_images_matmul(ims_sparse_flat=ims, remappingIdx=field_variant, method=method), out_reference)
+        _assert_csr_identical(helpers.remap_sparse_images(ims_sparse_flat=ims, remappingIdx=field_variant, method=method), out_reference)
 
 
 @pytest.mark.parametrize('method', METHODS)
@@ -520,10 +504,10 @@ def test_output_is_bit_identical_for_any_batch_size_and_on_repeat(dtype, method)
     field = _field_translate(shape_frame) + rng.normal(0, 3, size=(23, 17, 2))
     ims = scipy.sparse.csr_array(rng.normal(0, 1, size=(6, 23 * 17)) * (rng.random((6, 23 * 17)) < 0.3))
     kwargs = dict(ims_sparse_flat=ims, remappingIdx=field, method=method, dtype=dtype)
-    out_reference = helpers.remap_sparse_images_matmul(**kwargs)
+    out_reference = helpers.remap_sparse_images(**kwargs)
     ## 1 -> one frame row per batch; 17 * 3 + 5 -> three rows; 23 * 17 -> whole frame; then a repeat of the default
     for n_pixels_per_batch in [1, 17, 17 * 3 + 5, 23 * 17 - 1, 23 * 17, 2**22]:
-        out = helpers.remap_sparse_images_matmul(n_pixels_per_batch=n_pixels_per_batch, **kwargs)
+        out = helpers.remap_sparse_images(n_pixels_per_batch=n_pixels_per_batch, **kwargs)
         _assert_canonical(out=out, shape=ims.shape, dtype=dtype)
         _assert_csr_identical(out, out_reference, msg=f"n_pixels_per_batch={n_pixels_per_batch}")
 
@@ -540,9 +524,9 @@ def test_output_is_bit_identical_for_any_batch_size_and_on_repeat(dtype, method)
 def test_invalid_arguments_raise(kwargs_bad):
     """Arguments the function cannot honor fail loudly, before any work is done."""
     kwargs = {'ims_sparse_flat': scipy.sparse.csr_array((2, 108), dtype=np.float32), 'remappingIdx': _field_translate((12, 9)), 'method': 'linear', 'dtype': np.float32}
-    helpers.remap_sparse_images_matmul(**kwargs)  ## the baseline is valid, so each failure below is due to the one bad argument
+    helpers.remap_sparse_images(**kwargs)  ## the baseline is valid, so each failure below is due to the one bad argument
     with pytest.raises(AssertionError):
-        helpers.remap_sparse_images_matmul(**{**kwargs, **kwargs_bad})
+        helpers.remap_sparse_images(**{**kwargs, **kwargs_bad})
 
 
 ######################################################################################################################################
@@ -596,15 +580,14 @@ def test_transform_ROIs_contract(method_warp, aligner):
     assert aligner.params['transform_ROIs']['method_warp'] == method_warp
 
     out_raw = aligner.transform_ROIs(ROIs=[rois], remappingIdx=fields[:1], normalize=False, method_warp=method_warp)[0]
-    _assert_csr_identical(out_raw, helpers.remap_sparse_images_matmul(ims_sparse_flat=rois, remappingIdx=fields[0], method=method_warp, dtype=np.float32))
+    _assert_csr_identical(out_raw, helpers.remap_sparse_images(ims_sparse_flat=rois, remappingIdx=fields[0], method=method_warp, dtype=np.float32))
 
 
 def test_transform_ROIs_method_warp_options(aligner):
-    """``'linear'`` is the default everywhere, unknown options raise ``ValueError``, and the legacy option warns but still runs."""
+    """``'linear'`` is the default everywhere and unknown options raise."""
     assert util.get_default_parameters()['alignment']['transform_ROIs']['method_warp'] == 'linear'
     rng = np.random.default_rng(11)
     shape_frame = (14, 12)
-    ## No all-zero ROI here: the legacy path's ``safe`` branch recurses without end on one (a defect of that path, not of this test)
     rois = _rois_for_aligner(shape_frame=shape_frame, rng=rng, n_roi=3, include_empty=False)
     kwargs = dict(ROIs=[rois], remappingIdx=[_field_translate(shape_frame, shift_x=0.5, shift_y=-0.5)], normalize=True)
 
@@ -612,12 +595,6 @@ def test_transform_ROIs_method_warp_options(aligner):
     assert aligner.params['transform_ROIs']['method_warp'] == 'linear'
     _assert_csr_identical(out_default[0], aligner.transform_ROIs(method_warp='linear', **kwargs)[0])
 
-    for method_warp in ['cubic', 'bilinear', 'legacy', '', None]:
-        with pytest.raises(ValueError):
+    for method_warp in ['cubic', 'bilinear', 'legacy_griddata_cubic', '', None]:
+        with pytest.raises(AssertionError):
             aligner.transform_ROIs(method_warp=method_warp, **kwargs)
-
-    with pytest.warns(UserWarning, match='legacy'):
-        out_legacy = aligner.transform_ROIs(method_warp='legacy_griddata_cubic', **kwargs)
-    assert aligner.params['transform_ROIs']['method_warp'] == 'legacy_griddata_cubic'
-    assert (type(out_legacy[0]) is type(out_default[0])) and (out_legacy[0].shape == out_default[0].shape) and (out_legacy[0].dtype == out_default[0].dtype)
-    assert np.isfinite(out_legacy[0].data).all()

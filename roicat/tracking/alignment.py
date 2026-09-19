@@ -1029,16 +1029,12 @@ class Aligner(util.ROICaT_Module):
                 If ``True``, data is normalized. (Default is ``True``)
             method_warp (str):
                 How each ROI's footprint is warped. \n
-                * ``'linear'``: bilinear interpolation, applied to all of a
-                  session's ROIs at once with
-                  ``helpers.remap_sparse_images_matmul``.
-                * ``'nearest'``: as above, with a nearest-neighbor kernel.
-                * ``'legacy_griddata_cubic'``: the pre-2026 path,
-                  ``scipy.interpolate.griddata`` with ``method='cubic'`` per ROI.
-                  It fills the holes and concavities of non-convex ROIs and drops
-                  pixels near the edge of each ROI's convex hull (ROICaT issue
-                  #686). Kept so that old results can be reproduced; it will be
-                  removed in a future release. \n
+                * ``'linear'``: bilinear interpolation.
+                * ``'nearest'``: nearest-neighbor interpolation. \n
+                See ``helpers.remap_sparse_images``. Before 2026 ROIs were
+                warped with ``scipy.interpolate.griddata`` (cubic), which filled
+                the holes of non-convex ROIs (ROICaT issue #686), so results
+                differ from older versions. \n
                 (Default is ``'linear'``)
 
         Returns:
@@ -1046,9 +1042,6 @@ class Aligner(util.ROICaT_Module):
                 ROIs_aligned (List[np.ndarray]): 
                     Transformed ROIs. One ``scipy.sparse.csr_array`` of shape
                     *(n_roi, H*W)* per session, float32, rows in input order.
-
-        Raises:
-            ValueError: If ``method_warp`` is not one of the three options.
         """
         ## Store parameter (but not data) args as attributes
         self.params['transform_ROIs'] = self._locals_to_params(
@@ -1059,44 +1052,19 @@ class Aligner(util.ROICaT_Module):
             ],
         )
 
-        if method_warp not in ['linear', 'nearest', 'legacy_griddata_cubic']:
-            raise ValueError(f"method_warp must be one of ['linear', 'nearest', 'legacy_griddata_cubic']. Got {method_warp}")
-        if method_warp == 'legacy_griddata_cubic':
-            warnings.warn(
-                "method_warp='legacy_griddata_cubic' uses the legacy scipy.interpolate.griddata"
-                " path, which fills the holes and concavities of non-convex ROIs and drops pixels"
-                " near the edge of each ROI's convex hull (ROICaT issue #686). It is kept so that"
-                " older results can be reproduced and will be removed in a future release. Use"
-                " method_warp='linear' or 'nearest'."
-            )
-
         if remappingIdx is None:
             assert (self.remappingIdx_geo is not None) or (self.remappingIdx_nonrigid is not None), 'If remappingIdx is not provided, then geometric or nonrigid registration must be performed first.'
             remappingIdx = self.remappingIdx_nonrigid if self.remappingIdx_nonrigid is not None else self.remappingIdx_geo
 
-        H, W = remappingIdx[0].shape[:2]
-
         print('Registering ROIs...') if self._verbose else None
         self.ROIs_aligned = []
         for ii, (remap, rois) in tqdm(enumerate(zip(remappingIdx, ROIs)), total=len(remappingIdx), mininterval=1, disable=not self._verbose, desc='Registering ROIs', position=1):
-            if method_warp == 'legacy_griddata_cubic':
-                rois_aligned = helpers.remap_sparse_images(
-                    ims_sparse=[roi.reshape((H, W)) for roi in rois],
-                    remappingIdx=remap,
-                    method='cubic',
-                    fill_value=0,
-                    dtype=np.float32,
-                    safe=True,
-                    verbose=False,
-                )
-                rois_aligned = scipy.sparse.vstack([roi.reshape(1, -1) for roi in rois_aligned])
-            else:
-                rois_aligned = helpers.remap_sparse_images_matmul(
-                    ims_sparse_flat=rois,
-                    remappingIdx=remap,
-                    method=method_warp,
-                    dtype=np.float32,
-                )
+            rois_aligned = helpers.remap_sparse_images(
+                ims_sparse_flat=rois,
+                remappingIdx=remap,
+                method=method_warp,
+                dtype=np.float32,
+            )
 
             if normalize:
                 rois_aligned.data[rois_aligned.data < 0] = 0

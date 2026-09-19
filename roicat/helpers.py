@@ -4297,135 +4297,6 @@ def remap_images(
 
 
 def remap_sparse_images(
-    ims_sparse: Union[scipy.sparse.spmatrix, List[scipy.sparse.spmatrix]],
-    remappingIdx: np.ndarray,
-    method: str = 'linear',
-    fill_value: float = 0,
-    dtype: Union[str, np.dtype] = None,
-    safe: bool = True,
-    n_workers: int = -1,
-    verbose: bool = True,
-) -> List[scipy.sparse.csr_array]:
-    """
-    Remaps a list of sparse images using the given remap field.
-    RH 2023
-
-    Args:
-        ims_sparse (Union[scipy.sparse.spmatrix, List[scipy.sparse.spmatrix]]):
-            A single sparse image or a list of sparse images.
-        remappingIdx (np.ndarray): 
-            An array of shape *(H, W, 2)* representing the remap field. It
-            should be the same size as the images in ims_sparse.
-        method (str): 
-            Interpolation method to use. See ``scipy.interpolate.griddata``.
-            Options are:
-            \n
-            * ``'linear'``
-            * ``'nearest'``
-            * ``'cubic'`` \n
-            (Default is ``'linear'``)
-        fill_value (float): 
-            Value used to fill points outside the convex hull. (Default is
-            ``0.0``)
-        dtype (Union[str, np.dtype]): 
-            The data type of the resulting sparse images. Default is ``None``,
-            which will use the data type of the input sparse images.
-        safe (bool): 
-            If ``True``, checks if the image is 0D or 1D and applies a tiny
-            Gaussian blur to increase the image width. (Default is ``True``)
-        n_workers (int): 
-            Number of parallel workers to use. Default is *-1*, which uses all
-            available CPU cores.
-        verbose (bool):
-            Whether or not to use a tqdm progress bar. (Default is ``True``)
-
-    Returns:
-        (List[scipy.sparse.csr_array]):
-            ims_sparse_out (List[scipy.sparse.csr_array]):
-                A list of remapped sparse images.
-
-    Raises:
-        AssertionError: If the image and remappingIdx have different spatial
-        dimensions.
-    """
-    # Ensure ims_sparse is a list of sparse matrices
-    ims_sparse = [ims_sparse] if not isinstance(ims_sparse, list) else ims_sparse
-
-    # Assert that all images are sparse matrices
-    assert all(scipy.sparse.issparse(im) for im in ims_sparse), "All images must be sparse matrices."
-    
-    # Assert and retrieve dimensions
-    dims_ims = ims_sparse[0].shape
-    dims_remap = remappingIdx.shape
-    assert dims_ims == dims_remap[:-1], "Image and remappingIdx should have same spatial dimensions."
-    
-    dtype = ims_sparse[0].dtype if dtype is None else dtype
-    
-    if safe:
-        conv2d = Toeplitz_convolution2d(
-            x_shape=(dims_ims[0], dims_ims[1]),
-            k=np.array([[0   , 1e-8, 0   ],
-                        [1e-8, 1,    1e-8],
-                        [0   , 1e-8, 0   ]], dtype=dtype),
-            dtype=dtype,
-        )
-
-    def warp_sparse_image(
-        im_sparse: scipy.sparse.csr_array,
-        remappingIdx: np.ndarray,
-        method: str = method,
-        fill_value: float = fill_value,
-        safe: bool = safe
-    ) -> scipy.sparse.csr_array:
-        
-        # Convert sparse image to COO format
-        im_coo = scipy.sparse.coo_array(im_sparse)
-
-        # Get coordinates and values from COO format
-        rows, cols = im_coo.row, im_coo.col
-        data = im_coo.data
-
-        if safe:
-            # can't use scipy.interpolate.griddata with 1d values
-            is_horz = np.unique(rows).size == 1
-            is_vert = np.unique(cols).size == 1
-
-            # check for diagonal pixels 
-            # slope = rise / run --- don't need to check if run==0 
-            rdiff = np.diff(rows)
-            cdiff = np.diff(cols)
-            is_diag = np.unique(cdiff / rdiff).size == 1 if not np.any(rdiff==0) else False
-            
-            # best practice to just convolve instead of interpolating if too few pixels
-            is_smol = rows.size < 3 
-
-            if is_horz or is_vert or is_smol or is_diag:
-                # warp convolved sparse image directly without interpolation
-                return warp_sparse_image(im_sparse=conv2d(im_sparse, batching=False), remappingIdx=remappingIdx)
-
-        # Get values at the grid points
-        try:
-            grid_values = scipy.interpolate.griddata(
-                points=(rows, cols), 
-                values=data, 
-                xi=remappingIdx[:,:,::-1], 
-                method=method, 
-                fill_value=fill_value,
-            )
-        except Exception as e:
-            raise Exception(f"Error interpolating sparse image. Something is either weird about one of the input images or the remappingIdx. Error: {e}")
-        
-        # Create a new sparse image from the nonzero pixels
-        warped_sparse_image = scipy.sparse.csr_array(grid_values, dtype=dtype)
-        warped_sparse_image.eliminate_zeros()
-        return warped_sparse_image
-    
-    wsi_partial = partial(warp_sparse_image, remappingIdx=remappingIdx)
-    ims_sparse_out = map_parallel(func=wsi_partial, args=[ims_sparse,], method='multithreading', n_workers=n_workers, prog_bar=verbose)
-    return ims_sparse_out
-
-
-def remap_sparse_images_matmul(
     ims_sparse_flat: Union[scipy.sparse.sparray, scipy.sparse.spmatrix],
     remappingIdx: np.ndarray,
     method: str = 'linear',
@@ -4440,9 +4311,13 @@ def remap_sparse_images_matmul(
     interpolation weights of output pixel ``i`` (at most 4 for ``'linear'``).
     One product therefore warps every image at once, and the result is what a
     dense warp of each image would give (``scipy.ndimage.map_coordinates`` with
-    ``mode='grid-constant'``). Unlike the scattered-point interpolation in
-    ``remap_sparse_images``, holes and concavities in an image stay empty.
+    ``mode='grid-constant'``). Holes and concavities in an image stay empty.
     RH 2026
+
+    Before 2026 this function interpolated each image's nonzero pixels with
+    ``scipy.interpolate.griddata``, which filled in the convex hull of
+    non-convex images and dropped pixels near its edge (ROICaT issue #686). It
+    took a list of 2D images; it now takes them flattened into rows.
 
     ``W`` is never held whole. Its rows are written, multiplied and discarded
     one batch of output rows at a time, so memory scales with the images and
