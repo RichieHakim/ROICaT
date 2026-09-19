@@ -116,9 +116,29 @@ def _warp_reference(ims: np.ndarray, remappingIdx: np.ndarray, method: str, refe
     return np.stack(out, axis=0)
 
 
+def _remap_flat(ims_sparse_flat, remappingIdx: np.ndarray, constructor=scipy.sparse.csr_array, **kwargs) -> scipy.sparse.csr_array:
+    """
+    Splits a flattened *(n_images, H*W)* stack into the list of 2D sparse images
+    the function takes, checks the output contract of every image, and stacks
+    the outputs back into *(n_images, H*W)*.
+    """
+    H, W = remappingIdx.shape[:2]
+    ims_csr = scipy.sparse.csr_array(ims_sparse_flat)
+    out = helpers.remap_sparse_images(
+        ims_sparse=[constructor(ims_csr[[ii]].reshape((H, W))) for ii in range(ims_csr.shape[0])],
+        remappingIdx=remappingIdx,
+        **kwargs,
+    )
+    assert isinstance(out, list) and (len(out) == ims_csr.shape[0])
+    dtype = kwargs['dtype'] if kwargs.get('dtype', None) is not None else ims_csr.dtype
+    for im in out:
+        _assert_canonical(out=im, shape=(H, W), dtype=dtype)
+    return scipy.sparse.vstack([im.reshape((1, H * W)) for im in out], format='csr')
+
+
 def _warp_matmul(ims: np.ndarray, remappingIdx: np.ndarray, method: str, dtype: np.dtype = np.float64, **kwargs) -> np.ndarray:
     """Runs the function under test on dense flattened images and densifies the output to float64."""
-    out = helpers.remap_sparse_images(
+    out = _remap_flat(
         ims_sparse_flat=scipy.sparse.csr_array(np.asarray(ims)),
         remappingIdx=remappingIdx,
         method=method,
@@ -356,12 +376,12 @@ def test_nearest_rounds_half_up():
 
 @pytest.mark.parametrize('method', METHODS)
 def test_empty_batch_and_all_zero_image(method):
-    """Zero images give a *(0, H*W)* output. An all-zero image gives an all-zero row between two intact ones."""
+    """An empty list raises. An all-zero image gives an all-zero image between two intact ones."""
     rng = np.random.default_rng(2)
     shape_frame = (8, 6)
     field = _field_smooth(shape_frame, rng)
-    out_empty = helpers.remap_sparse_images(ims_sparse_flat=scipy.sparse.csr_array((0, 48), dtype=np.float32), remappingIdx=field, method=method)
-    _assert_canonical(out=out_empty, shape=(0, 48), dtype=np.float32)
+    with pytest.raises(AssertionError):
+        helpers.remap_sparse_images(ims_sparse=[], remappingIdx=field, method=method)
 
     ims = _dyadic_images(shape_frame=shape_frame, rng=rng, n_images=3)
     ims[1] = 0
@@ -418,9 +438,8 @@ def test_every_sparse_format_gives_the_same_csr_array(constructor):
     shape_frame = (12, 9)
     field = _field_smooth(shape_frame, rng)
     ims = _dyadic_images(shape_frame=shape_frame, rng=rng)
-    out_reference = helpers.remap_sparse_images(ims_sparse_flat=scipy.sparse.csr_array(ims), remappingIdx=field)
-    out = helpers.remap_sparse_images(ims_sparse_flat=constructor(ims), remappingIdx=field)
-    _assert_canonical(out=out, shape=ims.shape, dtype=np.float32)
+    out_reference = _remap_flat(ims_sparse_flat=ims, remappingIdx=field, dtype=np.float32)
+    out = _remap_flat(ims_sparse_flat=ims, remappingIdx=field, constructor=constructor, dtype=np.float32)
     _assert_csr_identical(out, out_reference, msg=constructor.__name__)
 
 
@@ -435,21 +454,23 @@ def test_noncanonical_input_is_summed_and_not_modified(dtype):
     rng = np.random.default_rng(5)
     shape_frame = (12, 9)
     field = _field_smooth(shape_frame, rng)
-    ## Built from raw CSR triplets, because every scipy constructor from dense or COO canonicalizes on the way in
-    indices = np.concatenate([rng.permutation(108)[:20], rng.permutation(108)[:20]] * 2).astype(np.int32)  ## each row: 20 columns stored twice, unsorted
+    ## A COO array keeps duplicated entries and explicit zeros exactly as given
+    rows, cols = rng.integers(0, 12, size=40), rng.integers(0, 9, size=40)
+    rows, cols = np.concatenate([rows, rows]), np.concatenate([cols, cols])  ## every entry stored twice
     data = rng.integers(1, 1000, size=80).astype(dtype)
     data[[3, 50]] = 0
-    ims = scipy.sparse.csr_array((data, indices, np.array([0, 40, 80], dtype=np.int32)), shape=(2, 108))
-    data_before, indices_before, indptr_before = ims.data.copy(), ims.indices.copy(), ims.indptr.copy()
+    im = scipy.sparse.coo_array((data, (rows, cols)), shape=shape_frame)
+    data_before, rows_before, cols_before = im.data.copy(), im.row.copy(), im.col.copy()
 
-    out = helpers.remap_sparse_images(ims_sparse_flat=ims, remappingIdx=field, dtype=dtype)
+    out = helpers.remap_sparse_images(ims_sparse=im, remappingIdx=field, dtype=dtype)
 
-    assert np.array_equal(ims.data, data_before) and np.array_equal(ims.indices, indices_before) and np.array_equal(ims.indptr, indptr_before)
-    assert not np.shares_memory(out.data, ims.data)
-    _assert_canonical(out=out, shape=(2, 108), dtype=dtype)
-    ims_dense = np.zeros((2, 108))
-    np.add.at(ims_dense, (np.repeat([0, 1], 40), indices_before), data_before)
-    assert np.array_equal(out.toarray(), _warp_reference(ims=ims_dense, remappingIdx=field, method='linear'))
+    assert np.array_equal(im.data, data_before) and np.array_equal(im.row, rows_before) and np.array_equal(im.col, cols_before)
+    assert isinstance(out, list) and (len(out) == 1), 'a single image in gives a list of one image out'
+    assert not np.shares_memory(out[0].data, im.data)
+    _assert_canonical(out=out[0], shape=shape_frame, dtype=dtype)
+    im_dense = np.zeros(shape_frame)
+    np.add.at(im_dense, (rows_before, cols_before), data_before)
+    assert np.array_equal(out[0].toarray().reshape(1, -1), _warp_reference(ims=im_dense.reshape(1, -1), remappingIdx=field, method='linear'))
 
 
 @pytest.mark.parametrize('dtype_in', [bool, np.uint8, np.int32, np.float32, np.float64])
@@ -473,9 +494,9 @@ def test_remappingIdx_memory_layout_and_dtype_do_not_matter(method):
     ims = scipy.sparse.csr_array(_dyadic_images(shape_frame=shape_frame, rng=rng))
     field_strided = np.repeat(field, 2, axis=1)[:, ::2]
     assert not field_strided.flags['C_CONTIGUOUS']
-    out_reference = helpers.remap_sparse_images(ims_sparse_flat=ims, remappingIdx=field, method=method)
+    out_reference = _remap_flat(ims_sparse_flat=ims, remappingIdx=field, method=method)
     for field_variant in [field.astype(np.float32), np.asfortranarray(field), field_strided]:
-        _assert_csr_identical(helpers.remap_sparse_images(ims_sparse_flat=ims, remappingIdx=field_variant, method=method), out_reference)
+        _assert_csr_identical(_remap_flat(ims_sparse_flat=ims, remappingIdx=field_variant, method=method), out_reference)
 
 
 @pytest.mark.parametrize('method', METHODS)
@@ -504,10 +525,10 @@ def test_output_is_bit_identical_for_any_batch_size_and_on_repeat(dtype, method)
     field = _field_translate(shape_frame) + rng.normal(0, 3, size=(23, 17, 2))
     ims = scipy.sparse.csr_array(rng.normal(0, 1, size=(6, 23 * 17)) * (rng.random((6, 23 * 17)) < 0.3))
     kwargs = dict(ims_sparse_flat=ims, remappingIdx=field, method=method, dtype=dtype)
-    out_reference = helpers.remap_sparse_images(**kwargs)
+    out_reference = _remap_flat(**kwargs)
     ## 1 -> one frame row per batch; 17 * 3 + 5 -> three rows; 23 * 17 -> whole frame; then a repeat of the default
     for n_pixels_per_batch in [1, 17, 17 * 3 + 5, 23 * 17 - 1, 23 * 17, 2**22]:
-        out = helpers.remap_sparse_images(n_pixels_per_batch=n_pixels_per_batch, **kwargs)
+        out = _remap_flat(n_pixels_per_batch=n_pixels_per_batch, **kwargs)
         _assert_canonical(out=out, shape=ims.shape, dtype=dtype)
         _assert_csr_identical(out, out_reference, msg=f"n_pixels_per_batch={n_pixels_per_batch}")
 
@@ -515,15 +536,16 @@ def test_output_is_bit_identical_for_any_batch_size_and_on_repeat(dtype, method)
 @pytest.mark.parametrize('kwargs_bad', [
     {'remappingIdx': np.zeros((12, 9, 3))},
     {'remappingIdx': np.zeros((12, 9))},
-    {'remappingIdx': np.zeros((9, 9, 2))},  ## H*W does not match the images
+    {'remappingIdx': np.zeros((9, 9, 2))},  ## (H, W) does not match the images
     {'remappingIdx': np.zeros((12, 9, 2)).tolist()},
     {'method': 'cubic'},
     {'dtype': np.int32},
-    {'ims_sparse_flat': np.zeros((2, 108))},
+    {'ims_sparse': [np.zeros((12, 9))]},
+    {'ims_sparse': []},
 ], ids=lambda kwargs_bad: list(kwargs_bad.keys())[0])
 def test_invalid_arguments_raise(kwargs_bad):
     """Arguments the function cannot honor fail loudly, before any work is done."""
-    kwargs = {'ims_sparse_flat': scipy.sparse.csr_array((2, 108), dtype=np.float32), 'remappingIdx': _field_translate((12, 9)), 'method': 'linear', 'dtype': np.float32}
+    kwargs = {'ims_sparse': [scipy.sparse.csr_array((12, 9), dtype=np.float32)] * 2, 'remappingIdx': _field_translate((12, 9)), 'method': 'linear', 'dtype': np.float32}
     helpers.remap_sparse_images(**kwargs)  ## the baseline is valid, so each failure below is due to the one bad argument
     with pytest.raises(AssertionError):
         helpers.remap_sparse_images(**{**kwargs, **kwargs_bad})
@@ -580,7 +602,7 @@ def test_transform_ROIs_contract(method_warp, aligner):
     assert aligner.params['transform_ROIs']['method_warp'] == method_warp
 
     out_raw = aligner.transform_ROIs(ROIs=[rois], remappingIdx=fields[:1], normalize=False, method_warp=method_warp)[0]
-    _assert_csr_identical(out_raw, helpers.remap_sparse_images(ims_sparse_flat=rois, remappingIdx=fields[0], method=method_warp, dtype=np.float32))
+    _assert_csr_identical(out_raw, _remap_flat(ims_sparse_flat=rois, remappingIdx=fields[0], method=method_warp, dtype=np.float32))
 
 
 def test_transform_ROIs_method_warp_options(aligner):

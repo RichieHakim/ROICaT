@@ -4297,15 +4297,14 @@ def remap_images(
 
 
 def remap_sparse_images(
-    ims_sparse_flat: Union[scipy.sparse.sparray, scipy.sparse.spmatrix],
+    ims_sparse: Union[scipy.sparse.sparray, scipy.sparse.spmatrix, List[Union[scipy.sparse.sparray, scipy.sparse.spmatrix]]],
     remappingIdx: np.ndarray,
     method: str = 'linear',
-    dtype: np.dtype = np.float32,
+    dtype: Optional[np.dtype] = None,
     n_pixels_per_batch: int = 2**22,
-) -> scipy.sparse.csr_array:
+) -> List[scipy.sparse.csr_array]:
     """
-    Remaps a stack of flattened sparse images with a sparse matrix
-    multiplication. A backward warp with a fixed interpolation kernel is a
+    Remaps a list of sparse images with a sparse matrix multiplication. A backward warp with a fixed interpolation kernel is a
     linear function of the image, so there is a sparse matrix ``W`` with
     ``vec(im_warped) == W @ vec(im)`` exactly: row ``i`` of ``W`` holds the
     interpolation weights of output pixel ``i`` (at most 4 for ``'linear'``).
@@ -4316,8 +4315,7 @@ def remap_sparse_images(
 
     Before 2026 this function interpolated each image's nonzero pixels with
     ``scipy.interpolate.griddata``, which filled in the convex hull of
-    non-convex images and dropped pixels near its edge (ROICaT issue #686). It
-    took a list of 2D images; it now takes them flattened into rows.
+    non-convex images and dropped pixels near its edge (ROICaT issue #686).
 
     ``W`` is never held whole. Its rows are written, multiplied and discarded
     one batch of output rows at a time, so memory scales with the images and
@@ -4328,9 +4326,9 @@ def remap_sparse_images(
     rescaled. Output pixels with a NaN or infinite coordinate are 0.
 
     Args:
-        ims_sparse_flat (Union[scipy.sparse.sparray, scipy.sparse.spmatrix]):
-            Images flattened into rows (with order='C'). Shape: *(n_images,
-            H*W)*. Any dtype that casts to ``dtype``. Not modified.
+        ims_sparse (Union[scipy.sparse.sparray, List[scipy.sparse.sparray]]):
+            A single sparse image or a list of sparse images. Shape of each:
+            *(H, W)*. Not modified.
         remappingIdx (np.ndarray):
             Backward remapping field in absolute pixel coordinates. Shape:
             *(H, W, 2)*. ``remappingIdx[r, c, 0]`` is the source column (x) and
@@ -4341,29 +4339,33 @@ def remap_sparse_images(
             * ``'linear'``: bilinear.
             * ``'nearest'``: nearest neighbor, ties rounded up
               (``floor(coordinate + 0.5)``).
-        dtype (np.dtype):
-            Floating point dtype of the weights and the output.
+        dtype (Optional[np.dtype]):
+            Floating point dtype of the weights and the output. ``None`` means
+            the dtype of the first image.
         n_pixels_per_batch (int):
             Number of output pixels whose rows of ``W`` are held at once
             (rounded to whole image rows). Changes memory use only; the output
             is bit-identical for any value.
 
     Returns:
-        (scipy.sparse.csr_array):
-            ims_remapped (scipy.sparse.csr_array):
-                Remapped images. Shape: *(n_images, H*W)*. Sorted indices, no
+        (List[scipy.sparse.csr_array]):
+            ims_remapped (List[scipy.sparse.csr_array]):
+                Remapped images. Shape of each: *(H, W)*. Sorted indices, no
                 explicit zeros.
     """
-    assert scipy.sparse.issparse(ims_sparse_flat), f"ims_sparse_flat must be a scipy sparse array. Got {type(ims_sparse_flat)}"
+    ims_sparse = [ims_sparse] if not isinstance(ims_sparse, list) else ims_sparse
+    assert (len(ims_sparse) > 0) and all(scipy.sparse.issparse(im) for im in ims_sparse), "ims_sparse must be a sparse image or a non-empty list of sparse images."
     assert isinstance(remappingIdx, np.ndarray) and (remappingIdx.ndim == 3) and (remappingIdx.shape[2] == 2), f"remappingIdx must be a np.ndarray of shape (H, W, 2)."
     H, W = remappingIdx.shape[:2]
-    assert ims_sparse_flat.shape[1] == H * W, f"ims_sparse_flat must have shape (n_images, H*W) = (n_images, {H * W}). Got {ims_sparse_flat.shape}"
+    assert all(im.shape == (H, W) for im in ims_sparse), f"Images and remappingIdx must have the same spatial dimensions: {(H, W)}."
     assert method in ['linear', 'nearest'], f"method must be 'linear' or 'nearest'. Got {method}"
+    dtype = ims_sparse[0].dtype if dtype is None else dtype
     assert np.issubdtype(np.dtype(dtype), np.floating), f"dtype must be a floating point type, else every weight rounds to 0. Got {dtype}"
 
-    ## (H*W, n_images): row s lists the images that cover source pixel s. The
-    ## conversion copies, so the caller's arrays are left alone.
-    ims_t = scipy.sparse.csr_array(scipy.sparse.csr_array(ims_sparse_flat).astype(dtype, copy=False).T)
+    ## Images flattened (order='C') into rows, then transposed to (H*W, n_images):
+    ## row s lists the images that cover source pixel s.
+    ims_flat = scipy.sparse.vstack([scipy.sparse.csr_array(im).reshape((1, H * W)) for im in ims_sparse], format='csr')  ## (n_images, H*W)
+    ims_t = scipy.sparse.csr_array(ims_flat.astype(dtype, copy=False).T)  ## (H*W, n_images)
 
     dtype_idx = scipy.sparse.get_index_dtype(maxval=max(H * W, 4 * int(n_pixels_per_batch)))
     ims_remapped = []
@@ -4398,7 +4400,8 @@ def remap_sparse_images(
         ## Transposed per batch so that no output-side array of length H*W is made.
         ims_remapped.append(scipy.sparse.csr_array((W_batch @ ims_t).T))  ## (n_images, n_batch)
 
-    return scipy.sparse.hstack(ims_remapped, format='csr')  ## (n_images, H*W)
+    ims_remapped = scipy.sparse.hstack(ims_remapped, format='csr')  ## (n_images, H*W)
+    return [scipy.sparse.csr_array(ims_remapped[[ii]].reshape((H, W))) for ii in range(ims_remapped.shape[0])]
 
 
 def invert_remappingIdx(
