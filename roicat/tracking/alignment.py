@@ -1030,8 +1030,8 @@ class Aligner(util.ROICaT_Module):
             method_warp (str):
                 How each ROI's footprint is warped. \n
                 * ``'linear'``: bilinear interpolation, applied to all of a
-                  session's ROIs at once with one
-                  ``helpers.Remapping_operator2d``.
+                  session's ROIs at once with
+                  ``helpers.remap_sparse_images_matmul``.
                 * ``'nearest'``: as above, with a nearest-neighbor kernel.
                 * ``'legacy_griddata_cubic'``: the pre-2026 path,
                   ``scipy.interpolate.griddata`` with ``method='cubic'`` per ROI.
@@ -1091,19 +1091,12 @@ class Aligner(util.ROICaT_Module):
                 )
                 rois_aligned = scipy.sparse.vstack([roi.reshape(1, -1) for roi in rois_aligned])
             else:
-                ## The warp is a linear operator, so one sparse matrix warps every
-                ## ROI of the session in a single multiplication, with no per-ROI
-                ## reshaping. The operator is deliberately a local variable: it can
-                ## be larger than the ROIs themselves, and run_data serializes
-                ## aligner.__dict__ whole.
-                rois_flat = scipy.sparse.csr_array(rois)
-                remapper = helpers.Remapping_operator2d(
+                rois_aligned = helpers.remap_sparse_images_matmul(
+                    ims_sparse_flat=rois,
                     remappingIdx=remap,
-                    interpolation_method=method_warp,
+                    method=method_warp,
                     dtype=np.float32,
-                    support=helpers.support_for_remapping_operator2d(x=rois_flat, shape_frame=(H, W)),
                 )
-                rois_aligned = remapper(x=rois_flat, batching=True)
 
             if normalize:
                 rois_aligned.data[rois_aligned.data < 0] = 0
