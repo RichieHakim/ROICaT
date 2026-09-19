@@ -3072,3 +3072,76 @@ class Test_Model_SWT_serialization:
         with pytest.warns(UserWarning):
             function_save(obj=wrapped, path=str(path))
         assert path.read_text().startswith('Model_SWT(')
+
+
+class Test_plot_quality_metrics:
+    """
+    The suptitle counts of ``plot_quality_metrics``.
+
+    ``make_label_variants`` ends by casting the squeezed labels to a
+    ``util.JSON_List`` for JSON compatibility, and the pipeline hands that
+    straight to this function. On a list, ``labels == -1`` is the scalar
+    ``False`` instead of a boolean mask, so the title read
+    ``n_excluded: 0, n_included: 1, n_clusters: 1`` on every run. These tests
+    pin the counts, and pin that a list and an array give the same title.
+    """
+
+    ## 3 excluded, 4 included, 2 clusters, 7 total.
+    LABELS = [0, 0, 1, 1, -1, -1, -1]
+
+    @pytest.fixture(autouse=True)
+    def _headless_backend(self):
+        import matplotlib
+        backend_original = matplotlib.get_backend()
+        matplotlib.use('Agg')
+        yield
+        matplotlib.use(backend_original)
+
+    @staticmethod
+    def _quality_metrics():
+        """The three keys the function histograms. Values are arbitrary."""
+        return {
+            'cluster_silhouette': np.array([0.1, 0.6]),
+            'cluster_intra_means': np.array([0.4, 0.8]),
+            'sample_silhouette': np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]),
+        }
+
+    @staticmethod
+    def _title(labels):
+        import matplotlib.pyplot as plt
+        from roicat.tracking.clustering import plot_quality_metrics
+
+        fig, _ = plot_quality_metrics(
+            quality_metrics=Test_plot_quality_metrics._quality_metrics(),
+            labels=labels,
+            n_sessions=2,
+        )
+        try:
+            return fig.get_suptitle()
+        finally:
+            plt.close(fig)
+
+    def test_counts_are_correct_for_a_JSON_List(self):
+        """The type the pipeline actually passes."""
+        title = self._title(util.JSON_List(self.LABELS))
+        assert 'n_excluded: 3' in title
+        assert 'n_included: 4' in title
+        assert 'n_total: 7' in title
+        assert 'n_clusters: 2' in title
+        assert 'n_sessions: 2' in title
+
+    def test_counts_are_correct_for_a_plain_list(self):
+        title = self._title(list(self.LABELS))
+        assert 'n_excluded: 3' in title
+        assert 'n_clusters: 2' in title
+
+    def test_list_and_array_give_the_same_title(self):
+        """The bug stated directly: the title must not depend on the container."""
+        assert self._title(util.JSON_List(self.LABELS)) == self._title(np.array(self.LABELS))
+
+    def test_counts_are_correct_when_nothing_is_excluded(self):
+        """`labels == -1` matching nothing must still give a real mask, not False."""
+        title = self._title(util.JSON_List([0, 0, 1, 1, 2]))
+        assert 'n_excluded: 0' in title
+        assert 'n_included: 5' in title
+        assert 'n_clusters: 3' in title
