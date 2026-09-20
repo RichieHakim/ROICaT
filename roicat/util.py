@@ -232,10 +232,17 @@ def get_default_parameters(
                     'n_bins': None,  ## Number of bins for histograms. None = heuristic.
                     'smoothing_window_bins': None,  ## Smoothing window for distributions. None = heuristic.
                     'subsample_pairs': None,  ## Subsample this many pairs for speedup. None = use all.
+                    'freeze_sigmoid': True,  ## True: sigmoid (mu, b) fixed by a Fisher-discriminant grid search over the bounds below. False: (mu, b) are DE variables too.
+                    'n_grid_sigmoid_mu': 50,  ## Number of mu values in that grid search. Only used when freeze_sigmoid is True.
+                    'n_grid_sigmoid_b': 30,  ## Number of b values in that grid search. Only used when freeze_sigmoid is True.
                     'bounds_findParameters': {
                         'power_nn': [0.0, 2.],  ## Bounds for the exponent applied to s_nn
                         'power_swt': [0.0, 2.],  ## Bounds for the exponent applied to s_swt
                         'p_norm': [-5, -0.1],  ## Bounds for the p-norm (Minkowski) mixing parameter
+                        'sig_nn_kwargs_mu': None,  ## Bounds for the center of the sigmoid applied to s_nn. None = derive from the observed range of the z-scored similarities.
+                        'sig_nn_kwargs_b': [0.5, 10.0],  ## Bounds for the slope of the sigmoid applied to s_nn
+                        'sig_swt_kwargs_mu': None,  ## Bounds for the center of the sigmoid applied to s_swt. None = derive from the observed range of the z-scored similarities.
+                        'sig_swt_kwargs_b': [0.5, 10.0],  ## Bounds for the slope of the sigmoid applied to s_swt
                     },
                     'de_kwargs': {
                         'maxiter': 100,  ## Max DE generations
