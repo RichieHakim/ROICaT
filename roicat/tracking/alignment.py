@@ -1056,18 +1056,16 @@ class Aligner(util.ROICaT_Module):
             assert (self.remappingIdx_geo is not None) or (self.remappingIdx_nonrigid is not None), 'If remappingIdx is not provided, then geometric or nonrigid registration must be performed first.'
             remappingIdx = self.remappingIdx_nonrigid if self.remappingIdx_nonrigid is not None else self.remappingIdx_geo
 
-        H, W = remappingIdx[0].shape[:2]
-
         print('Registering ROIs...') if self._verbose else None
         self.ROIs_aligned = []
         for ii, (remap, rois) in tqdm(enumerate(zip(remappingIdx, ROIs)), total=len(remappingIdx), mininterval=1, disable=not self._verbose, desc='Registering ROIs', position=1):
             rois_aligned = helpers.remap_sparse_images(
-                ims_sparse=[roi.reshape((H, W)) for roi in rois],
+                ims_sparse=rois,
                 remappingIdx=remap,
                 method=method_warp,
                 dtype=np.float32,
+                flattened=True,
             )
-            rois_aligned = scipy.sparse.vstack([roi.reshape(1, -1) for roi in rois_aligned])
 
             if normalize:
                 rois_aligned.data[rois_aligned.data < 0] = 0

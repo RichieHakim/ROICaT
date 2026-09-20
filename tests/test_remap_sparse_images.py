@@ -443,6 +443,29 @@ def test_every_sparse_format_gives_the_same_csr_array(constructor):
     _assert_csr_identical(out, out_reference, msg=constructor.__name__)
 
 
+@pytest.mark.parametrize('constructor', [scipy.sparse.csr_array, scipy.sparse.csc_matrix, scipy.sparse.coo_array])
+@pytest.mark.parametrize('method', METHODS)
+def test_flattened_layout_matches_list_layout(constructor, method):
+    """``flattened=True`` takes and returns one *(n_images, H*W)* array whose rows are, bit for bit, the images of the list layout."""
+    rng = np.random.default_rng(12)
+    shape_frame = (12, 9)
+    field = _field_smooth(shape_frame, rng)
+    ims = _dyadic_images(shape_frame=shape_frame, rng=rng)
+    ims_flat = constructor(ims)
+    out = helpers.remap_sparse_images(ims_sparse=ims_flat, remappingIdx=field, method=method, dtype=np.float32, flattened=True)
+    _assert_canonical(out=out, shape=ims.shape, dtype=np.float32)
+    _assert_csr_identical(out, _remap_flat(ims_sparse_flat=ims, remappingIdx=field, method=method, dtype=np.float32))
+
+    out_empty = helpers.remap_sparse_images(ims_sparse=scipy.sparse.csr_array((0, 108), dtype=np.float32), remappingIdx=field, method=method, flattened=True)
+    _assert_canonical(out=out_empty, shape=(0, 108), dtype=np.float32)
+
+    for ims_bad in [scipy.sparse.csr_array(ims.reshape(-1, 54)), ims, [ims_flat]]:  ## wrong width, dense, a list
+        with pytest.raises(AssertionError):
+            helpers.remap_sparse_images(ims_sparse=ims_bad, remappingIdx=field, method=method, flattened=True)
+    with pytest.raises(AssertionError):
+        helpers.remap_sparse_images(ims_sparse=ims_flat, remappingIdx=field, method=method, flattened=False)  ## a flattened stack is not a (H, W) image
+
+
 @pytest.mark.parametrize('dtype', [np.float32, np.float64])
 def test_noncanonical_input_is_summed_and_not_modified(dtype):
     """
