@@ -4380,9 +4380,8 @@ def remap_sparse_images(
     ## (H*W, n_images): row s lists the images that cover source pixel s. The
     ## conversion copies, so the caller's arrays are left alone.
     ims_t = scipy.sparse.csr_array(ims_flat.astype(dtype, copy=False).T)
-    ## All indices are int64. int32 wraps silently above 2**31 pixels or nonzeros.
-    dtype_idx = np.int64
-    ims_t = scipy.sparse.csr_array((ims_t.data, ims_t.indices.astype(dtype_idx), ims_t.indptr.astype(dtype_idx)), shape=ims_t.shape)
+
+    dtype_idx = scipy.sparse.get_index_dtype(maxval=max(H * W, 4 * int(n_pixels_per_batch)))
     ims_remapped = []
     for _, (row_start, row_stop) in make_batches(range(H), batch_size=max(1, int(n_pixels_per_batch) // W), return_idx=True):
         ## float64 so that floor() and the weights carry no float32 rounding
