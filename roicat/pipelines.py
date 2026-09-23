@@ -399,18 +399,28 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         ### Save some figures
         
         #### Save FOV_images as .png files
+        def to_uint8(array, normalize=True):
+            ## Nonrigid warping leaves NaNs along the FOV borders (they come in via
+            ## remappingIdx_nonrigid). Without scrubbing them, array.max() is NaN and
+            ## the normalized image comes out entirely black.
+            array = np.nan_to_num(np.asarray(array), nan=0.0)
+            return ((array / array.max() if normalize else array) * 255).astype(np.uint8)
         def save_image(array, path, normalize=True):
             ## Use PIL to save the image
             from PIL import Image
             Path(path).parent.mkdir(parents=True, exist_ok=True)
-            Image.fromarray((np.array(array / array.max() if normalize else array) * 255).astype(np.uint8)).save(path)
+            Image.fromarray(to_uint8(array, normalize=normalize)).save(path)
+        ## Bind the max intensity projections once; they are reused below for the gifs
+        ims_ROIs = data.get_maxIntensityProjection_spatialFootprints()
+        ims_ROIs_aligned = aligner.get_ROIsAligned_maxIntensityProjection(normalize=True)
+        ims_ROIs_aligned_blurred = blurrer.get_ROIsBlurred_maxIntensityProjection()
         [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'FOV_images' / f'FOV_images_{ii}.png') ) for ii, array in enumerate(data.FOV_images)]
         [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'FOV_images_aligned_geometric' / f'FOV_images_aligned_geometric_{ii}.png') ) for ii, array in enumerate(aligner.ims_registered_geo)]
         if params['alignment']['fit_nonrigid']['method']:
             [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'FOV_images_aligned_nonrigid' / f'FOV_images_aligned_nonrigid_{ii}.png') ) for ii, array in enumerate(aligner.ims_registered_nonrigid)]
-        [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'ROIs' / f'ROIs_{ii}.png') ) for ii, array in enumerate(data.get_maxIntensityProjection_spatialFootprints())]
-        [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'ROIs_aligned' / f'ROIs_aligned_{ii}.png') ) for ii, array in enumerate(aligner.get_ROIsAligned_maxIntensityProjection(normalize=True))]
-        [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'ROIs_aligned_blurred' / f'ROIs_aligned_blurred_{ii}.png') ) for ii, array in enumerate(blurrer.get_ROIsBlurred_maxIntensityProjection())]
+        [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'ROIs' / f'ROIs_{ii}.png') ) for ii, array in enumerate(ims_ROIs)]
+        [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'ROIs_aligned' / f'ROIs_aligned_{ii}.png') ) for ii, array in enumerate(ims_ROIs_aligned)]
+        [save_image(array, str(Path(dir_save).resolve() / 'visualization' / 'ROIs_aligned_blurred' / f'ROIs_aligned_blurred_{ii}.png') ) for ii, array in enumerate(ims_ROIs_aligned_blurred)]
         
         #### Save the image alignment checker images
         fig_all_to_all, fig_direct = aligner.plot_alignment_results_geometric()
@@ -478,7 +488,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         ### Save gifs of the FOVs at different stages of alignment
         helpers.save_gif(
             array=helpers.add_text_to_images(
-                images=[((f / np.max(f)) * 255).astype(np.uint8) for f in FOV_images], 
+                images=[to_uint8(f) for f in FOV_images], 
                 text=[[f"{ii}",] for ii in range(len(FOV_clusters))], 
                 font_size=3,
                 line_width=10,
@@ -491,7 +501,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
 
         helpers.save_gif(
             array=helpers.add_text_to_images(
-                images=[((f / np.max(f)) * 255).astype(np.uint8) for f in aligner.ims_registered_geo], 
+                images=[to_uint8(f) for f in aligner.ims_registered_geo], 
                 text=[[f"{ii}",] for ii in range(len(FOV_clusters))], 
                 font_size=3,
                 line_width=10,
@@ -505,7 +515,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         if params['alignment']['fit_nonrigid']['method']:
             helpers.save_gif(
                 array=helpers.add_text_to_images(
-                    images=[((f / np.max(f)) * 255).astype(np.uint8) for f in aligner.ims_registered_nonrigid], 
+                    images=[to_uint8(f) for f in aligner.ims_registered_nonrigid], 
                     text=[[f"{ii}",] for ii in range(len(FOV_clusters))], 
                     font_size=3,
                     line_width=10,
@@ -515,6 +525,46 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
                 frameRate=params['results_saving']['gif_frame_rate'],
                 loop=0,
             )
+
+        ### Save gifs of the ROIs at different stages of alignment
+        helpers.save_gif(
+            array=helpers.add_text_to_images(
+                images=[to_uint8(f) for f in ims_ROIs],
+                text=[[f"{ii}",] for ii in range(len(FOV_clusters))],
+                font_size=3,
+                line_width=10,
+                position=(30, 90),
+            ),
+            path=str(Path(dir_save).resolve() / 'visualization' / 'ROIs' / 'ROIs.gif'),
+            frameRate=params['results_saving']['gif_frame_rate'],
+            loop=0,
+        )
+
+        helpers.save_gif(
+            array=helpers.add_text_to_images(
+                images=[to_uint8(f) for f in ims_ROIs_aligned],
+                text=[[f"{ii}",] for ii in range(len(FOV_clusters))],
+                font_size=3,
+                line_width=10,
+                position=(30, 90),
+            ),
+            path=str(Path(dir_save).resolve() / 'visualization' / 'ROIs_aligned' / 'ROIs_aligned.gif'),
+            frameRate=params['results_saving']['gif_frame_rate'],
+            loop=0,
+        )
+
+        helpers.save_gif(
+            array=helpers.add_text_to_images(
+                images=[to_uint8(f) for f in ims_ROIs_aligned_blurred],
+                text=[[f"{ii}",] for ii in range(len(FOV_clusters))],
+                font_size=3,
+                line_width=10,
+                position=(30, 90),
+            ),
+            path=str(Path(dir_save).resolve() / 'visualization' / 'ROIs_aligned_blurred' / 'ROIs_aligned_blurred.gif'),
+            frameRate=params['results_saving']['gif_frame_rate'],
+            loop=0,
+        )
 
 
 

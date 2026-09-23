@@ -5,6 +5,7 @@ import numpy as np
 import scipy
 import scipy.optimize
 import scipy.sparse
+import scipy.stats
 import sklearn
 import sklearn.isotonic
 import matplotlib.pyplot as plt
@@ -14,6 +15,75 @@ from tqdm.auto import tqdm
 from .. import helpers, util
 from .similarity_graph import SimilarityMetric
 
+
+
+def auroc_crossCloserThanSame(
+    d_crossSession: np.ndarray,
+    d_sameSession: np.ndarray,
+) -> float:
+    """
+    Mann-Whitney AUROC asking whether cross-session pairs sit at *smaller*
+    conjunctive distances than same-session pairs.
+
+    Same-session pairs are known non-matches: two ROIs found in one session
+    are never the same neuron. The cross-session arm is a mixture holding a
+    fraction ``pi`` of true matches, so if cross-session non-matches are
+    exchangeable with same-session ones::
+
+        AUROC = pi * AUROC_match + (1 - pi) * 0.5
+
+    Collapsing the true matches onto the non-match distribution therefore
+    drives the statistic to 0.5 -- the *worst* value reachable under a
+    monotone mixing, not the best -- which is what makes ``1 - AUROC`` safe
+    to minimize. Being a rank statistic it is also invariant to any monotone
+    rescaling of the distances, so it cannot be lowered by squeezing the
+    distance axis.
+
+    Orientation and ties::
+
+        AUROC = P(d_cross < d_same) + 0.5 * P(d_cross == d_same)
+
+    so cross-session-closer scores above 0.5. It is computed from the pooled
+    mid-rank sum (``scipy.stats.rankdata(method='average')``) rather than an
+    ``O(n_cross * n_same)`` comparison, so every tie contributes exactly 0.5
+    and a fully collapsed distance vector (all values identical) scores
+    exactly 0.5.
+    RH 2025
+
+    Args:
+        d_crossSession (np.ndarray):
+            Distances of cross-session pairs, a mixture of true matches and
+            non-matches. Shape: *(n_cross,)*.
+        d_sameSession (np.ndarray):
+            Distances of same-session pairs, all known non-matches.
+            Shape: *(n_same,)*.
+
+    Returns:
+        (float):
+            auroc (float):
+                AUROC in ``[0, 1]``. 0.5 means the two arms are
+                indistinguishable by rank.
+
+    Raises:
+        ValueError:
+            If either arm is empty, in which case the statistic is
+            undefined.
+    """
+    n_cross, n_same = int(d_crossSession.size), int(d_sameSession.size)
+    if (n_cross == 0) or (n_same == 0):
+        raise ValueError(
+            f"AUROC requires both arms to be non-empty, got n_crossSession={n_cross}"
+            f" and n_sameSession={n_same}."
+        )
+
+    ## Pooled mid-ranks; ranks[:n_cross] are the cross-session pairs' ranks.
+    ranks = scipy.stats.rankdata(
+        np.concatenate([d_crossSession, d_sameSession]),
+        method='average',
+    )  ## shape: (n_cross + n_same,)
+    ## Mann-Whitney U counting (cross > same) pairs, each tie worth 0.5.
+    u_crossGreater = float(ranks[:n_cross].sum()) - (n_cross * (n_cross + 1) / 2.0)
+    return float(1.0 - (u_crossGreater / (n_cross * n_same)))
 
 
 class Clusterer(util.ROICaT_Module):
@@ -184,9 +254,59 @@ class Clusterer(util.ROICaT_Module):
             return {name: SimilarityMetric.from_dict(d) for name, d in stored.items()}
         return stored
 
+    def _prepare_bounds_findParameters(
+        self,
+        bounds_findParameters: Optional[Dict[str, Optional[List[float]]]] = None,
+    ) -> Dict[str, Optional[List[float]]]:
+        """
+        Build the default ``bounds_findParameters`` dictionary from the metric
+        configs and merge any user-supplied entries over it.
+
+        The defaults reproduce the historical hard-coded values exactly: the
+        ``power_<name>`` bounds come from each metric config's ``power_bounds``,
+        ``p_norm`` is ``[-5, -0.1]``, the sigmoid ``b`` bounds are ``[0.5, 10.0]``
+        (the endpoints of the grid that
+        :meth:`_estimate_sigmoid_params` used to hard-code), and the sigmoid
+        ``mu`` bounds are ``None``, meaning "derive from the observed range of
+        the (z-scored) similarity values" (the grid used to hard-code the
+        calibration bin centers' min and max).
+        RH 2025
+
+        Args:
+            bounds_findParameters (Optional[Dict[str, Optional[List[float]]]]):
+                User-supplied bounds. Any subset of the keys is accepted; every
+                key not present keeps its default. ``None`` means "all defaults".
+
+        Returns:
+            (Dict[str, Optional[List[float]]]):
+                bounds_findParameters (Dict[str, Optional[List[float]]]):
+                    A new dictionary holding one entry per optimizable
+                    parameter. Values are ``[low, high]`` pairs, except a
+                    sigmoid ``mu`` bound which may be ``None``.
+        """
+        bounds = {}
+
+        ## One power bound per metric that opts into power optimization
+        for name, cfg in self._metric_configs.items():
+            if cfg.optimize_power:
+                bounds[f'power_{name}'] = list(cfg.power_bounds)
+        bounds['p_norm'] = [-5, -0.1]
+
+        ## One (mu, b) pair per metric that opts into sigmoid activation
+        for name, cfg in self._metric_configs.items():
+            if cfg.optimize_sigmoid:
+                bounds[f'sig_{name}_kwargs_mu'] = None  ## None → derive from the observed range
+                bounds[f'sig_{name}_kwargs_b'] = [0.5, 10.0]
+
+        ## User entries win, key by key, so a partial dict is valid
+        if bounds_findParameters is not None:
+            bounds.update(bounds_findParameters)
+
+        return bounds
+
     def find_optimal_parameters_for_pruning(
         self,
-        bounds_findParameters: Optional[Dict[str, List[float]]] = None,
+        bounds_findParameters: Optional[Dict[str, Optional[List[float]]]] = None,
         de_kwargs: Dict[str, Any] = {
             'maxiter': 100,
             'tol': 1e-6,
@@ -199,6 +319,10 @@ class Clusterer(util.ROICaT_Module):
         smoothing_window_bins: Optional[int] = None,
         subsample_pairs: Optional[int] = None,
         seed: Optional[int] = None,
+        freeze_sigmoid: bool = True,
+        n_grid_sigmoid_mu: int = 50,
+        n_grid_sigmoid_b: int = 30,
+        objective: str = 'auroc',
     ) -> Dict:
         """
         Find optimal mixing parameters for pruning the similarity graph.
@@ -211,9 +335,11 @@ class Clusterer(util.ROICaT_Module):
            optimal sigmoid parameters ``(mu, b)`` via Fisher's linear
            discriminant.
         2. **Differential evolution**: With sigmoid parameters frozen from
-           stage 1, optimizes the remaining parameters (one ``power_<name>``
-           per metric with ``optimize_power=True``, plus ``p_norm``) by
-           minimizing the histogram overlap loss.
+           stage 1 (``freeze_sigmoid=True``, the default), optimizes the
+           remaining parameters (one ``power_<name>`` per metric with
+           ``optimize_power=True``, plus ``p_norm``) by minimizing
+           ``objective``. With ``freeze_sigmoid=False``, ``(mu, b)`` are
+           optimized jointly with them instead.
 
         This method replaces the original Optuna TPE search (see
         :meth:`_find_optimal_parameters_for_pruning_optuna` in the legacy
@@ -222,11 +348,30 @@ class Clusterer(util.ROICaT_Module):
         RH 2023 / 2025
 
         Args:
-            bounds_findParameters (Dict[str, List[float]]):
-                Bounds for the optimized parameters. Keys are
-                ``power_<name>`` for each metric with ``optimize_power=True``,
-                plus ``p_norm``. Auto-constructed from metric configs if
-                ``None``.
+            bounds_findParameters (Optional[Dict[str, Optional[List[float]]]]):
+                Bounds for the optimized parameters, as ``[low, high]``
+                pairs. Any key not supplied falls back to its default, so a
+                partial dictionary is fine and ``None`` uses all defaults.
+                Recognized keys: \n
+                * ``power_<name>``: exponent applied to metric ``<name>``,
+                  for each metric with ``optimize_power=True``. Default is
+                  the metric config's ``power_bounds``.
+                * ``p_norm``: the Minkowski p used to mix the metrics.
+                  Default ``[-5, -0.1]``.
+                * ``sig_<name>_kwargs_mu``: center of the sigmoid applied to
+                  metric ``<name>``, for each metric with
+                  ``optimize_sigmoid=True``. Default ``None``, meaning
+                  "derive from the observed range of the (z-scored)
+                  similarity values" - the naive-Bayes calibration bin
+                  centers when ``freeze_sigmoid=True``, the min and max of
+                  the similarity values themselves when ``False``.
+                * ``sig_<name>_kwargs_b``: slope of that sigmoid.
+                  Default ``[0.5, 10.0]``.
+                The ``sig_*`` bounds govern both paths: they are the
+                endpoints of the grid searched by
+                :meth:`_estimate_sigmoid_params` when
+                ``freeze_sigmoid=True``, and the differential-evolution
+                bounds when ``freeze_sigmoid=False``.
             de_kwargs (Dict[str, Any]):
                 Keyword arguments for
                 ``scipy.optimize.differential_evolution``: \n
@@ -239,24 +384,78 @@ class Clusterer(util.ROICaT_Module):
                 * ``recombination`` (float): Crossover probability
                   in ``[0, 1]``.
                 * ``polish`` (bool): If ``True``, run L-BFGS-B from
-                  the best DE solution. Often has no effect on
-                  piecewise-constant histogram loss.
+                  the best DE solution. Often has no effect: both
+                  objectives are piecewise-constant in the parameters.
             n_bins (Optional[int]):
-                Overwrites ``n_bins`` from ``__init__``.
+                Overwrites ``n_bins`` from ``__init__``. It reaches the
+                differential evolution *directly* only when
+                ``objective='histogram_overlap'`` (the ``'auroc'``
+                objective is binless), but it also sets the resolution of
+                the naive-Bayes calibration built by
+                :meth:`make_naive_bayes_distance_matrix`, which
+                :meth:`_estimate_sigmoid_params` reads to freeze
+                ``(mu, b)`` under ``freeze_sigmoid=True``. Changing it
+                therefore moves the fitted parameters under *either*
+                objective. It is also used downstream by
+                :meth:`make_pruned_similarity_graphs`.
             smoothing_window_bins (Optional[int]):
                 Overwrites ``smoothing_window_bins`` from ``__init__``.
+                Same three-way reach as ``n_bins``: the legacy objective,
+                the naive-Bayes calibration behind the frozen sigmoid, and
+                the downstream pruning.
             subsample_pairs (Optional[int]):
-                If not ``None``, subsample this many pairs for histogram
-                loss evaluation. Maintains intra/inter ratio. If ``None``,
+                If not ``None``, subsample this many pairs for the loss
+                evaluation. Maintains intra/inter ratio. If ``None``,
                 auto-computed based on pair counts.
             seed (Optional[int]):
                 Random seed for reproducibility.
+            freeze_sigmoid (bool):
+                If ``True``, the sigmoid parameters ``(mu, b)`` are estimated
+                once by :meth:`_estimate_sigmoid_params` (a Fisher-discriminant
+                grid search over the bounds above) and held fixed, so the DE
+                searches only the ``power_<name>`` values and ``p_norm``. If
+                ``False``, ``(mu, b)`` become DE variables too, bounded by the
+                same ``sig_*`` entries of ``bounds_findParameters``.
+                Combining ``False`` with ``objective='auroc'`` warns: the
+                rank objective is scale-free while ``thresh_cost`` and
+                ``d_cutoff`` are absolute, so the fitted sigmoids may rank
+                pairs well yet place true matches above the threshold (we
+                measured recall 0.09 on a 3-session dataset). It is not
+                blocked -- a caller who sets their own cutoff may proceed.
+            n_grid_sigmoid_mu (int):
+                Number of ``mu`` values in the grid searched by
+                :meth:`_estimate_sigmoid_params`. Only used when
+                ``freeze_sigmoid=True``.
+            n_grid_sigmoid_b (int):
+                Number of ``b`` values in that grid. Only used when
+                ``freeze_sigmoid=True``.
+            objective (str):
+                Which loss the differential evolution minimizes: \n
+                * ``'auroc'``: ``1 - AUROC``, where the AUROC is the
+                  Mann-Whitney probability that a cross-session pair sits
+                  at a smaller distance than a same-session (known
+                  non-match) pair, taken over the raw nonzero distances.
+                  See :func:`auroc_crossCloserThanSame`. Ranges over
+                  ``[0, 1]``, with 0.5 for a mixing that carries no
+                  information about matching.
+                * ``'histogram_overlap'``: the legacy loss, the overlap
+                  area between the scaled intra-session histogram and the
+                  residual 'same' lobe, in unnormalized counts. See
+                  :meth:`_compute_histogram_overlap`. Kept for reproducing
+                  fits made before the default changed: it is bilinear in
+                  those counts, so shrinking the estimated 'same' lobe
+                  lowers it, and pushing true matches onto the non-match
+                  lobe at ``d = 1`` scores better than separating them.
 
         Returns:
             (Dict):
                 kwargs_makeConjunctiveDistanceMatrix_best (Dict):
                     Optimal parameters for
                     :meth:`make_conjunctive_distance_matrix`.
+
+        Raises:
+            ValueError:
+                If ``objective`` is not one of the two names above.
         """
         ## Store parameter (but not data) args as attributes
         self.params['find_optimal_parameters_for_pruning'] = self._locals_to_params(
@@ -264,17 +463,13 @@ class Clusterer(util.ROICaT_Module):
             keys=[
                 'bounds_findParameters', 'de_kwargs', 'n_bins',
                 'smoothing_window_bins', 'subsample_pairs', 'seed',
+                'freeze_sigmoid', 'n_grid_sigmoid_mu', 'n_grid_sigmoid_b',
+                'objective',
             ],
         )
 
-        ## Auto-construct bounds from metric configs if not provided
-        if bounds_findParameters is None:
-            bounds_findParameters = {}
-            for name, cfg in self._metric_configs.items():
-                if cfg.optimize_power:
-                    bounds_findParameters[f'power_{name}'] = list(cfg.power_bounds)
-            bounds_findParameters['p_norm'] = [-5, -0.1]
-
+        ## Bounds are merged over the defaults inside _find_optimal_parameters_DE,
+        ## so a partial dict or None is passed straight through.
         ## NB calibration → Fisher sigmoid estimation → N-param DE.
         return self._find_optimal_parameters_DE(
             bounds_findParameters=bounds_findParameters,
@@ -283,7 +478,10 @@ class Clusterer(util.ROICaT_Module):
             smoothing_window_bins=smoothing_window_bins,
             subsample_pairs=subsample_pairs,
             seed=seed,
-            freeze_sigmoid=True,
+            freeze_sigmoid=freeze_sigmoid,
+            n_grid_sigmoid_mu=n_grid_sigmoid_mu,
+            n_grid_sigmoid_b=n_grid_sigmoid_b,
+            objective=objective,
         )
 
     ####################################################################
@@ -382,7 +580,7 @@ class Clusterer(util.ROICaT_Module):
 
     def _find_optimal_parameters_DE(
         self,
-        bounds_findParameters: Optional[Dict[str, List[float]]] = None,
+        bounds_findParameters: Optional[Dict[str, Optional[List[float]]]] = None,
         de_kwargs: Dict[str, Any] = {
             'maxiter': 100,
             'tol': 1e-6,
@@ -396,6 +594,9 @@ class Clusterer(util.ROICaT_Module):
         subsample_pairs: Optional[int] = None,
         seed: Optional[int] = None,
         freeze_sigmoid: bool = True,
+        n_grid_sigmoid_mu: int = 50,
+        n_grid_sigmoid_b: int = 30,
+        objective: str = 'auroc',
     ) -> Dict:
         """
         Find optimal mixing parameters using scipy differential evolution.
@@ -413,10 +614,14 @@ class Clusterer(util.ROICaT_Module):
         RH 2025
 
         Args:
-            bounds_findParameters (Dict[str, List[float]]):
-                Bounds for each parameter, keyed by ``power_<name>`` and
-                ``p_norm``. Auto-constructed from metric configs if ``None``.
-                When ``False``, all 7 keys are needed.
+            bounds_findParameters (Optional[Dict[str, Optional[List[float]]]]):
+                Bounds for each parameter, keyed by ``power_<name>``,
+                ``p_norm``, ``sig_<name>_kwargs_mu`` and
+                ``sig_<name>_kwargs_b``. Merged over the defaults built by
+                :meth:`_prepare_bounds_findParameters`, so any subset of the
+                keys (or ``None``) is accepted. See
+                :meth:`find_optimal_parameters_for_pruning` for the meaning
+                of each key and its default.
             de_kwargs (Dict[str, Any]):
                 Keyword arguments for
                 ``scipy.optimize.differential_evolution``: \n
@@ -429,15 +634,21 @@ class Clusterer(util.ROICaT_Module):
                 * ``recombination`` (float): Crossover probability
                   in ``[0, 1]``.
                 * ``polish`` (bool): If ``True``, run L-BFGS-B from
-                  the best DE solution. Often has no effect on
-                  piecewise-constant histogram loss.
+                  the best DE solution. Often has no effect: both
+                  objectives are piecewise-constant in the parameters.
             n_bins (Optional[int]):
-                Overwrites ``n_bins`` from __init__.
+                Overwrites ``n_bins`` from __init__. Used by the DE
+                directly only when ``objective='histogram_overlap'``, but
+                it also sets the resolution of the naive-Bayes
+                calibration behind the frozen sigmoid, so it moves the
+                fitted parameters under either objective, and it is kept
+                as an attribute for the downstream pruning.
             smoothing_window_bins (Optional[int]):
                 Overwrites ``smoothing_window_bins`` from __init__.
+                Same three-way reach as ``n_bins``.
             subsample_pairs (Optional[int]):
-                If not ``None``, subsample this many pairs for histogram
-                loss. Maintains intra/inter ratio. If ``None``,
+                If not ``None``, subsample this many pairs for the loss.
+                Maintains intra/inter ratio. If ``None``,
                 auto-computed: subsamples to 1.1M (100k intra + 1M inter)
                 when there are enough pairs, otherwise uses all pairs.
             seed (Optional[int]):
@@ -445,13 +656,38 @@ class Clusterer(util.ROICaT_Module):
             freeze_sigmoid (bool):
                 If ``True``, fix sigmoid params from NB calibration,
                 reducing DE to 3 parameters. If ``False``, optimize
-                all 7 parameters jointly.
+                all 7 parameters jointly. ``False`` with
+                ``objective='auroc'`` warns: the rank objective is
+                scale-free while ``thresh_cost`` and ``d_cutoff`` are
+                absolute, so the fit may rank pairs well yet place true
+                matches above the threshold (recall 0.09 measured on a
+                3-session dataset).
+            n_grid_sigmoid_mu (int):
+                Number of ``mu`` values in the grid searched by
+                :meth:`_estimate_sigmoid_params`. Only used when
+                ``freeze_sigmoid=True``.
+            n_grid_sigmoid_b (int):
+                Number of ``b`` values in that grid. Only used when
+                ``freeze_sigmoid=True``.
+            objective (str):
+                Which loss to minimize: ``'auroc'`` for
+                ``1 - AUROC(cross-session vs same-session distances)``
+                (see :func:`auroc_crossCloserThanSame`), or
+                ``'histogram_overlap'`` for the legacy overlap-area loss
+                (see :meth:`_compute_histogram_overlap`). Documented in
+                full on :meth:`find_optimal_parameters_for_pruning`.
 
         Returns:
             (Dict):
                 kwargs_makeConjunctiveDistanceMatrix_best (Dict):
                     Optimal parameters for
                     :meth:`make_conjunctive_distance_matrix`.
+
+        Raises:
+            ValueError:
+                If ``objective`` is not a recognized name, or if
+                ``bounds_findParameters`` leaves any searched parameter
+                without numeric bounds.
         """
         ## Store parameter (but not data) args as attributes
         self.params['_find_optimal_parameters_DE'] = self._locals_to_params(
@@ -459,25 +695,41 @@ class Clusterer(util.ROICaT_Module):
             keys=[
                 'bounds_findParameters', 'de_kwargs', 'n_bins',
                 'smoothing_window_bins', 'subsample_pairs', 'seed',
-                'freeze_sigmoid',
+                'freeze_sigmoid', 'n_grid_sigmoid_mu', 'n_grid_sigmoid_b',
+                'objective',
             ],
         )
+
+        ## Validate before the (expensive) naive-Bayes calibration below.
+        objectives_valid = ('auroc', 'histogram_overlap')
+        if objective not in objectives_valid:
+            raise ValueError(
+                f"objective must be one of {objectives_valid}, got {objective!r}."
+            )
+
+        ## A rank statistic is invariant to any monotone rescaling of the
+        ## distances, so it pins the *ordering* of the pairs but not the axis
+        ## that the absolute cutoffs downstream are expressed on.
+        if (objective == 'auroc') and (not freeze_sigmoid):
+            warnings.warn(
+                "objective='auroc' with freeze_sigmoid=False: the rank objective is "
+                "scale-free, while thresh_cost (fit_sequentialHungarian) and d_cutoff "
+                "(make_pruned_similarity_graphs) are absolute distances. The DE may "
+                "therefore return sigmoids that rank pairs well but push true matches "
+                "above those thresholds -- we measured recall 0.09 on a 3-session "
+                "dataset this way. Either keep freeze_sigmoid=True, which anchors "
+                "(mu, b) to the naive-Bayes calibration, or set d_cutoff / thresh_cost "
+                "yourself for the fit you get back."
+            )
 
         self.n_bins = self.n_bins if n_bins is None else n_bins
         self.smooth_window = self.smooth_window if smoothing_window_bins is None else smoothing_window_bins
 
-        ## Auto-construct bounds from metric configs if not provided
-        if bounds_findParameters is None:
-            bounds_findParameters = {}
-            for name, cfg in self._metric_configs.items():
-                if cfg.optimize_power:
-                    bounds_findParameters[f'power_{name}'] = list(cfg.power_bounds)
-            bounds_findParameters['p_norm'] = [-5, -0.1]
-            ## Add sigmoid bounds for unfrozen case
-            for name, cfg in self._metric_configs.items():
-                if cfg.optimize_sigmoid:
-                    bounds_findParameters[f'sig_{name}_kwargs_mu'] = [0., 1.0]
-                    bounds_findParameters[f'sig_{name}_kwargs_b'] = [0.1, 1.5]
+        ## Merge any user-supplied bounds over the defaults. This is a new dict,
+        ## so the mutation below cannot reach into the caller's dictionary.
+        bounds_findParameters = self._prepare_bounds_findParameters(
+            bounds_findParameters=bounds_findParameters,
+        )
 
         self.bounds_findParameters = bounds_findParameters
         self._seed = seed
@@ -504,7 +756,11 @@ class Clusterer(util.ROICaT_Module):
         if freeze_sigmoid:
             if not hasattr(self, 'calibrations_naive_bayes') or self.calibrations_naive_bayes is None:
                 self.make_naive_bayes_distance_matrix()
-            sig_params = self._estimate_sigmoid_params()
+            sig_params = self._estimate_sigmoid_params(
+                bounds_findParameters=bounds_findParameters,
+                n_grid_sigmoid_mu=n_grid_sigmoid_mu,
+                n_grid_sigmoid_b=n_grid_sigmoid_b,
+            )
             _frozen_sig = sig_params  ## Dict[metric_name, {'mu': float, 'b': float}]
             if self._verbose:
                 parts = [f'{n}(mu={p["mu"]:.3f}, b={p["b"]:.1f})' for n, p in _frozen_sig.items()]
@@ -541,9 +797,32 @@ class Clusterer(util.ROICaT_Module):
             elif ptype == 'sig_b':
                 param_keys.append(f'sig_{pname}_kwargs_b')
 
+        ## Resolve any `None` sigmoid `mu` bound that the DE actually searches.
+        ## `None` means "span the observed range of that metric's (z-scored)
+        ## similarity values". The frozen path never reaches here because
+        ## `_de_param_layout` has no sigmoid entries when `freeze_sigmoid=True`;
+        ## there the same `None` is resolved against the naive-Bayes calibration
+        ## bin centers inside `_estimate_sigmoid_params`.
+        for ptype, pname in self._de_param_layout:
+            if (ptype == 'sig_mu') and (bounds_findParameters.get(f'sig_{pname}_kwargs_mu') is None):
+                data_metric = self.similarities[pname].data  ## shape: (nnz,)
+                bounds_findParameters[f'sig_{pname}_kwargs_mu'] = [
+                    float(np.min(data_metric)),
+                    float(np.max(data_metric)),
+                ]
+
+        ## Fail loudly rather than silently dropping a DE dimension. Dropping one
+        ## used to make `objective_scalar` index past the end of `x`.
+        keys_missing = [k for k in param_keys if bounds_findParameters.get(k) is None]
+        if len(keys_missing) > 0:
+            raise ValueError(
+                f"bounds_findParameters is missing numeric bounds for {keys_missing}. "
+                f"The differential evolution searches {param_keys}; every one of "
+                f"those keys needs a [low, high] pair."
+            )
+
         scipy_bounds = [
-            tuple(bounds_findParameters[k])
-            for k in param_keys if k in bounds_findParameters
+            tuple(bounds_findParameters[k]) for k in param_keys
         ]  ## list of (lo, hi) tuples, one per DE dimension
 
         ################################################################
@@ -599,18 +878,22 @@ class Clusterer(util.ROICaT_Module):
         ) if self._verbose and subsample_pairs is not None else None
 
         ################################################################
-        ## Build shared histogram infrastructure from current tensors
+        ## Build shared histogram infrastructure from current tensors.
+        ## Bins and smoothing belong to the legacy objective only; the
+        ## AUROC objective ranks the raw distances.
         ################################################################
-        n_bins_val = self.n_bins
-        edges = torch.linspace(0, 1, n_bins_val + 1, dtype=torch.float32)
-        smooth_window = helpers.make_odd(n_bins_val // 10, mode='up')
-        smoother = helpers.Convolver_1d(
-            kernel=torch.ones(smooth_window),
-            length_x=n_bins_val,
-            pad_mode='same',
-            correct_edge_effects=True,
-            device='cpu',
-        )
+        edges, smoother = None, None
+        if objective == 'histogram_overlap':
+            n_bins_val = self.n_bins
+            edges = torch.linspace(0, 1, n_bins_val + 1, dtype=torch.float32)
+            smooth_window = helpers.make_odd(n_bins_val // 10, mode='up')
+            smoother = helpers.Convolver_1d(
+                kernel=torch.ones(smooth_window),
+                length_x=n_bins_val,
+                pad_mode='same',
+                correct_edge_effects=True,
+                device='cpu',
+            )
 
         ## Mutable containers so resample callback can update them in-place
         _state = {
@@ -643,12 +926,36 @@ class Clusterer(util.ROICaT_Module):
             _state['scale_factor'] = _state['n_all'] / max(_state['n_intra'], 1)
 
         ################################################################
+        ## Loss on one candidate's distances. Selected once, here, so the
+        ## legacy histogram machinery never touches the AUROC path. Both
+        ## read `_state` on every call because `_resample_callback`
+        ## replaces its contents each generation when subsampling.
+        ################################################################
+        if objective == 'auroc':
+            def loss_from_distances(distances):
+                d = distances.detach().numpy()  ## shape: (n,), float32
+                mask_intra = _state['intra_mask'].numpy()  ## shape: (n,), zero-copy view
+                ## A degenerate p_norm can emit inf/nan, which would poison the ranks.
+                finite = np.isfinite(d)  ## shape: (n,)
+                return 1.0 - auroc_crossCloserThanSame(
+                    d_crossSession=d[finite & (~mask_intra)],
+                    d_sameSession=d[finite & mask_intra],
+                )
+        else:
+            def loss_from_distances(distances):
+                loss, _, _ = self._compute_histogram_overlap(
+                    distances=distances,
+                    intra_indices=_state['intra_indices'],
+                    edges=edges,
+                    smoother=smoother,
+                    scale_factor=_state['scale_factor'],
+                )
+                return loss
+
+        ################################################################
         ## Scalar objective — evaluates one parameter vector at a time
         ################################################################
         def objective_scalar(x):
-            ii = _state['intra_indices']
-            sc = _state['scale_factor']
-
             ## Unpack parameter vector using the frozen layout
             param_idx = 0
             sig_params_live = {}  ## for unfrozen sigmoid params
@@ -708,16 +1015,7 @@ class Clusterer(util.ROICaT_Module):
                 running_sum += a.pow(p)
             dist = 1.0 - (running_sum / N).pow(1.0 / p)
 
-            ## Histogram overlap loss via shared helper
-            loss, _, _ = self._compute_histogram_overlap(
-                distances=dist,
-                intra_indices=ii,
-                edges=edges,
-                smoother=smoother,
-                scale_factor=sc,
-            )
-
-            return loss
+            return loss_from_distances(dist)
 
         ################################################################
         ## Configure and run differential evolution
@@ -785,7 +1083,7 @@ class Clusterer(util.ROICaT_Module):
 
         print(
             f'Completed DE parameter search. '
-            f'Best value: {self._de_result.fun:.2f}, '
+            f'Best value: {self._de_result.fun:.6g}, '
             f'evaluations: {self._de_result.nfev}, '
             f'params: {self.best_params}'
         ) if self._verbose else None
@@ -1050,7 +1348,12 @@ class Clusterer(util.ROICaT_Module):
 
         return dConj, sConj, calibrations
 
-    def _estimate_sigmoid_params(self) -> Dict[str, Dict[str, float]]:
+    def _estimate_sigmoid_params(
+        self,
+        bounds_findParameters: Optional[Dict[str, Optional[List[float]]]] = None,
+        n_grid_sigmoid_mu: int = 50,
+        n_grid_sigmoid_b: int = 30,
+    ) -> Dict[str, Dict[str, float]]:
         """
         Estimate sigmoid parameters (mu, b) for NN and SWT from
         NB calibration curves using Fisher's linear discriminant.
@@ -1064,14 +1367,36 @@ class Clusterer(util.ROICaT_Module):
         called first.
         RH 2025
 
+        Args:
+            bounds_findParameters (Optional[Dict[str, Optional[List[float]]]]):
+                Supplies the endpoints of the two grids, via the
+                ``sig_<name>_kwargs_mu`` and ``sig_<name>_kwargs_b`` keys.
+                Merged over the defaults by
+                :meth:`_prepare_bounds_findParameters`, so a partial dict or
+                ``None`` is fine. A ``mu`` bound of ``None`` means "span the
+                calibration bin centers", which is the historical behavior.
+            n_grid_sigmoid_mu (int):
+                Number of ``mu`` values in the grid.
+            n_grid_sigmoid_b (int):
+                Number of ``b`` values in the grid.
+
         Returns:
             (Dict[str, Dict[str, float]]):
                 sigmoid_params (Dict[str, Dict[str, float]]):
                     Mapping from feature name to ``{'mu': float, 'b': float}``.
+
+        Raises:
+            ValueError:
+                If a sigmoid ``b`` bound is ``None``; unlike ``mu``, it has no
+                data-derived fallback.
         """
         assert hasattr(self, 'calibrations_naive_bayes') and self.calibrations_naive_bayes is not None, (
             "make_naive_bayes_distance_matrix() must be called before "
             "_estimate_sigmoid_params()."
+        )
+
+        bounds_findParameters = self._prepare_bounds_findParameters(
+            bounds_findParameters=bounds_findParameters,
         )
 
         result = {}
@@ -1093,11 +1418,25 @@ class Clusterer(util.ROICaT_Module):
 
             ## Vectorized grid search over (mu, b) to maximize Fisher
             ## discriminant in sigmoid-transformed space.
+            ## Grid endpoints come from the user-facing bounds. A `None` mu
+            ## bound spans the observed range of the calibration bin centers.
+            bound_mu = bounds_findParameters.get(f'sig_{name}_kwargs_mu')
+            bound_b = bounds_findParameters.get(f'sig_{name}_kwargs_b')
+            if bound_b is None:
+                raise ValueError(
+                    f"bounds_findParameters['sig_{name}_kwargs_b'] is None. The "
+                    f"sigmoid slope bound must be a [low, high] pair."
+                )
+            if bound_mu is None:
+                bound_mu = [float(centers_np.min()), float(centers_np.max())]
+
             ## Grid shapes: mu (M,), b (B,) → sig_vals (M, B, n_bins)
             mu_grid = np.linspace(
-                float(centers_np.min()), float(centers_np.max()), 50,
+                float(bound_mu[0]), float(bound_mu[1]), int(n_grid_sigmoid_mu),
             )
-            b_grid = np.linspace(0.5, 10.0, 30)
+            b_grid = np.linspace(
+                float(bound_b[0]), float(bound_b[1]), int(n_grid_sigmoid_b),
+            )
             ## Broadcasting: (M,1,1) * ((1,1,n_bins) - (M,1,1))
             sig_vals = 1.0 / (1.0 + np.exp(
                 -b_grid[None, :, None] * (centers_np[None, None, :] - mu_grid[:, None, None])
@@ -1160,6 +1499,14 @@ class Clusterer(util.ROICaT_Module):
                 The cutoff distance for pruning the distance matrix. If
                 ``None``, then the optimal cutoff distance is inferred. (Default
                 is ``None``)
+
+        Raises:
+            ValueError:
+                If the estimated 'same' and 'different' distributions have
+                no crossover point and either ``d_cutoff`` is ``None``
+                (nothing to infer the cutoff from) or
+                ``convert_to_probability`` is ``True`` (no distributions to
+                build the probability map from).
         """
         ## Store parameter (but not data) args as attributes
         self.params['make_pruned_similarity_graphs'] = self._locals_to_params(
@@ -1195,6 +1542,38 @@ class Clusterer(util.ROICaT_Module):
                 mixing_params=mixing_params,
             )
         dens_same_crop, dens_same, dens_diff, dens_all, edges, d_crossover = self._separate_diffSame_distributions(self.dConj)
+
+        ## No crossover: the estimated 'same' and 'different' distributions
+        ## never separate, and `_separate_diffSame_distributions` returns all
+        ## ``None``. Two consumers below cannot proceed on that: the inferred
+        ## cutoff (`d_crossover - min_d`) and the probability map, which
+        ## smooths and divides the ``None`` densities. Fail loudly here
+        ## instead of letting either raise a bare TypeError.
+        if d_crossover is None:
+            msg_cause = (
+                "No crossover point exists: the 'same' and 'different' distance "
+                "distributions estimated from these mixing parameters never separate"
+            )
+            msg_refit = (
+                "refit the mixing with "
+                "`find_optimal_parameters_for_pruning(objective='histogram_overlap')`, "
+                "whose loss penalizes exactly this degenerate case."
+            )
+            if convert_to_probability:
+                raise ValueError(
+                    f"{msg_cause}, so there are no distributions to convert the "
+                    f"distances into probabilities with. Pass "
+                    f"`convert_to_probability=False` (and an explicit `d_cutoff`), or "
+                    f"{msg_refit}"
+                )
+            if d_cutoff is None:
+                raise ValueError(
+                    f"{msg_cause}, so the cutoff distance cannot be inferred. Pass "
+                    f"`d_cutoff` explicitly (pick it from "
+                    f"`plot_similarity_relationships`, and keep in mind that "
+                    f"`fit_sequentialHungarian` separately rejects pairs above its own "
+                    f"`thresh_cost`), or {msg_refit}"
+                )
 
         if convert_to_probability:        
             ## convert into probabilities
@@ -1923,7 +2302,7 @@ class Clusterer(util.ROICaT_Module):
         self,
         d_conj: scipy.sparse.csr_array,
         session_bool: np.ndarray,
-        thresh_cost: float = 0.95,
+        thresh_cost: Optional[float] = None,
     ) -> np.ndarray:
         """
         Applies CaImAn's method for clustering.
@@ -1940,19 +2319,41 @@ class Clusterer(util.ROICaT_Module):
             session_bool (np.ndarray): 
                 Boolean array indicating which ROIs are in which sessions. 
                 Shape: *(n_rois, n_sessions)*
-            thresh_cost (float): 
-                Threshold below which ROI pairs are considered potential matches. 
-                (Default is *0.95*)
+            thresh_cost (Optional[float]): 
+                Threshold below which ROI pairs are considered potential matches.
+                If ``None``, defaults to ``self.d_cutoff`` (the pruning
+                threshold from ``make_pruned_similarity_graphs``), which accepts
+                exactly the pairs that survived pruning. Note that ROI pairs
+                with no surviving edge enter the cost matrix at *1.0*, so any
+                threshold above *1.0* matches everything. (Default is ``None``)
 
         Returns:
             (np.ndarray): 
                 labels (np.ndarray): 
                     Cluster labels. Shape: *(n_rois,)*
+
+        Raises:
+            ValueError:
+                If ``thresh_cost`` is ``None`` and ``self.d_cutoff`` has not
+                been set, i.e. ``make_pruned_similarity_graphs`` has not been
+                run.
         """
         ## Store parameter (but not data) args as attributes
         self.params['fit_sequentialHungarian'] = self._locals_to_params(
             locals_dict=locals(),
             keys=['thresh_cost',],)
+
+        ## Resolve thresh_cost default: use d_cutoff from pruning. Pairs with no
+        ## surviving edge enter the cost matrix at 1.0 and pruned-in pairs sit below
+        ## d_cutoff, so this accepts the pruned graph and nothing else.
+        if thresh_cost is None:
+            if getattr(self, 'd_cutoff', None) is None:
+                raise ValueError(
+                    "thresh_cost=None ties the threshold to the pruning cutoff, but "
+                    "`self.d_cutoff` is not set. Call `make_pruned_similarity_graphs` "
+                    "first, or pass `thresh_cost` as a float."
+                )
+            thresh_cost = float(self.d_cutoff)
 
         print(f"Clustering with CaImAn's sequential Hungarian algorithm method...") if self._verbose else None
         def find_matches(D_s):
@@ -3931,6 +4332,11 @@ def make_label_variants(
 
 
 def plot_quality_metrics(quality_metrics: dict, labels: Union[np.ndarray, list], n_sessions: int) -> None:
+    ## The pipeline passes the JSON_List that make_label_variants returns, and on a
+    ## list `labels == -1` is the scalar False rather than a boolean mask, so every
+    ## count in the suptitle below came out as 0 / 1 / 1 regardless of the data.
+    labels = np.asarray(labels)
+
     fig, axs = plt.subplots(nrows=2, ncols=2, figsize=(15,7))
 
     axs[0,0].hist(quality_metrics['cluster_silhouette'], 50);
@@ -3945,7 +4351,7 @@ def plot_quality_metrics(quality_metrics: dict, labels: Union[np.ndarray, list],
     axs[1,0].set_xlabel('sample_silhouette score');
     axs[1,0].set_ylabel('roi sample counts');
 
-    u, c = np.unique((v:=np.array(labels))[v!=-1], return_counts=True)
+    u, c = np.unique(labels[labels!=-1], return_counts=True)
     n_sesh = np.bincount(c)
 
     axs[1,1].bar(np.arange(len(n_sesh)), n_sesh);

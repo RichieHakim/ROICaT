@@ -70,7 +70,7 @@ core = [
     "matplotlib==3.11.1",
     "seaborn==0.13.2",
     "bokeh==3.9.2",
-    "holoviews[recommended]==1.23.1",
+    "holoviews[recommended]==1.23.2",
     "jupyter-bokeh==4.1.0",
     "umap-learn==0.5.12",
     "jupyter==1.1.1",

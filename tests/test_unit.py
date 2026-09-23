@@ -882,6 +882,122 @@ def clusterer_with_data(dir_data_test):
     return clusterer
 
 
+class Test_auroc_crossCloserThanSame:
+    """Tests for the pure AUROC used by the 'auroc' DE objective."""
+
+    def test_identical_distributions(self):
+        """Two arms drawn from the same values are indistinguishable: 0.5."""
+        from roicat.tracking.clustering import auroc_crossCloserThanSame
+        auroc = auroc_crossCloserThanSame(
+            d_crossSession=np.arange(10, dtype=np.float64),
+            d_sameSession=np.arange(10, dtype=np.float64),
+        )
+        assert auroc == pytest.approx(0.5, abs=1e-12)
+
+    def test_perfect_separation(self):
+        """All cross-session distances below all same-session ones: 1.0."""
+        from roicat.tracking.clustering import auroc_crossCloserThanSame
+        auroc = auroc_crossCloserThanSame(
+            d_crossSession=np.array([0.0, 0.1, 0.2, 0.3]),
+            d_sameSession=np.array([0.5, 0.7, 0.9, 1.0]),
+        )
+        assert auroc == pytest.approx(1.0, abs=1e-12)
+
+    def test_perfect_inversion(self):
+        """The reverse ordering is the other limit: 0.0."""
+        from roicat.tracking.clustering import auroc_crossCloserThanSame
+        auroc = auroc_crossCloserThanSame(
+            d_crossSession=np.array([0.5, 0.7, 0.9, 1.0]),
+            d_sameSession=np.array([0.0, 0.1, 0.2, 0.3]),
+        )
+        assert auroc == pytest.approx(0.0, abs=1e-12)
+
+    def test_full_collapse_is_chance(self):
+        """Every distance tied — the failure mode the old loss rewarded — is 0.5.
+
+        Mid-rank tie handling is what makes this exact: each tied pair
+        contributes 0.5, so a mixing that pushes everything onto d = 1
+        cannot score better than chance.
+        """
+        from roicat.tracking.clustering import auroc_crossCloserThanSame
+        auroc = auroc_crossCloserThanSame(
+            d_crossSession=np.ones(50), d_sameSession=np.ones(30),
+        )
+        assert auroc == pytest.approx(0.5, abs=1e-12)
+
+    def test_partial_ties_match_bruteforce(self):
+        """Mid-ranks agree with the O(n*m) definition on a tie-heavy case."""
+        from roicat.tracking.clustering import auroc_crossCloserThanSame
+        rng = np.random.RandomState(0)
+        d_cross = np.round(rng.rand(200), 1)  ## rounding forces many ties
+        d_same = np.round(rng.rand(150) * 0.8 + 0.2, 1)
+        ## AUROC = P(cross < same) + 0.5 * P(cross == same)
+        comparison = d_cross[:, None] - d_same[None, :]  ## shape (200, 150)
+        auroc_bruteforce = float(
+            np.mean((comparison < 0).astype(np.float64)
+                    + 0.5 * (comparison == 0).astype(np.float64))
+        )
+        auroc = auroc_crossCloserThanSame(d_crossSession=d_cross, d_sameSession=d_same)
+        assert auroc == pytest.approx(auroc_bruteforce, abs=1e-12)
+
+    def test_loss_is_one_minus_auroc(self, clusterer_with_data):
+        """`de_result.fun` must be exactly `1 - AUROC` at the fitted parameters.
+
+        Recomputes the conjunctive distances from the returned mixing
+        parameters and re-derives the loss, which is the contract a
+        bounded-but-unrelated objective would not satisfy. `polish=False`
+        so that `_de_result.fun` corresponds to `_de_result.x` and hence
+        to the parameters that come back.
+
+        The two distance computations are not the same code: the DE inner
+        loop works on cloned float32 tensors with `clamp(min=1e-8)` and a
+        running sum, while `make_conjunctive_distance_matrix` clamps at 0
+        and uses `torch.mean` over a stacked tensor. They agree bit-for-bit
+        on this dataset (checked with `==`), but the assertion below uses a
+        tight `np.isclose` so that a float32 reassociation on another
+        platform reports as a tolerance failure rather than a false alarm.
+        """
+        from roicat.tracking.clustering import auroc_crossCloserThanSame
+
+        mixing_params = clusterer_with_data._find_optimal_parameters_DE(
+            seed=42,
+            objective='auroc',
+            de_kwargs={
+                'maxiter': 3, 'tol': 1e-4, 'popsize': 5, 'polish': False,
+            },
+        )
+        loss = clusterer_with_data._de_result.fun
+        assert 0.0 <= loss <= 1.0
+
+        ## Rebuild the distances the fit landed on. The test data is far
+        ## below the auto-subsample threshold, so the DE saw all pairs.
+        dConj, _, _ = clusterer_with_data.make_conjunctive_distance_matrix(
+            similarities=clusterer_with_data.similarities,
+            mixing_params=mixing_params,
+        )
+        mask_intra = clusterer_with_data._intra_mask  ## True = same-session pair
+        loss_recomputed = 1.0 - auroc_crossCloserThanSame(
+            d_crossSession=dConj.data[~mask_intra],
+            d_sameSession=dConj.data[mask_intra],
+        )
+        assert np.isclose(loss, loss_recomputed, rtol=1e-12, atol=0.0), (
+            f'DE loss {loss!r} != 1 - AUROC at the fitted parameters '
+            f'({loss_recomputed!r})'
+        )
+
+    def test_empty_arm_raises(self):
+        """An empty arm leaves the statistic undefined; fail loudly."""
+        from roicat.tracking.clustering import auroc_crossCloserThanSame
+        with pytest.raises(ValueError, match='non-empty'):
+            auroc_crossCloserThanSame(
+                d_crossSession=np.array([]), d_sameSession=np.ones(5),
+            )
+        with pytest.raises(ValueError, match='non-empty'):
+            auroc_crossCloserThanSame(
+                d_crossSession=np.ones(5), d_sameSession=np.array([]),
+            )
+
+
 class Test__find_optimal_parameters_DE:
     """Tests for Clusterer._find_optimal_parameters_DE."""
 
@@ -933,14 +1049,138 @@ class Test__find_optimal_parameters_DE:
         assert np.isfinite(clusterer_with_data._de_result.fun)
 
     def test_loss_below_threshold(self, clusterer_with_data):
-        """DE should find a loss significantly below the trivial/default value.
-        On the test dataset, DE reliably finds loss ~55. The default manual
-        params typically give loss >200."""
-        clusterer_with_data._find_optimal_parameters_DE(seed=42)
-        assert clusterer_with_data._de_result.fun < 200, (
-            f'DE loss {clusterer_with_data._de_result.fun:.1f} is too high; '
-            f'expected < 200 on test data'
+        """DE should beat the trivial value under either objective.
+
+        The two objectives live on different scales, so the thresholds
+        differ. `histogram_overlap` is an overlap area in unnormalized
+        counts: DE reliably finds ~55 on this dataset while the default
+        manual params typically give >200. `auroc` is `1 - AUROC`, bounded
+        in [0, 1], where 0.5 is what a zero-information (fully collapsed)
+        mixing scores. The old single `< 200` assertion is kept for the
+        legacy objective; it would pass vacuously on the new default.
+        """
+        clusterer_with_data._find_optimal_parameters_DE(
+            seed=42, objective='histogram_overlap',
         )
+        assert clusterer_with_data._de_result.fun < 200, (
+            f'DE histogram_overlap loss {clusterer_with_data._de_result.fun:.1f} '
+            f'is too high; expected < 200 on test data'
+        )
+
+        clusterer_with_data._find_optimal_parameters_DE(seed=42, objective='auroc')
+        assert clusterer_with_data._de_result.fun < 0.5, (
+            f'DE auroc loss {clusterer_with_data._de_result.fun:.4f} is at or '
+            f'above chance; expected < 0.5 on test data'
+        )
+
+    def test_objective_histogram_overlap_runs(self, clusterer_with_data):
+        """The legacy objective stays selectable and returns the same keys."""
+        result = clusterer_with_data._find_optimal_parameters_DE(
+            seed=42,
+            objective='histogram_overlap',
+            de_kwargs={
+                'maxiter': 3, 'tol': 1e-4, 'popsize': 5, 'polish': False,
+            },
+        )
+        assert set(result.keys()) == {'power_sf', 'power_nn', 'power_swt', 'p_norm',
+                                      'sig_sf_kwargs', 'sig_nn_kwargs', 'sig_swt_kwargs'}
+        assert np.isfinite(clusterer_with_data._de_result.fun)
+
+    def test_legacy_loss_matches_histogram_overlap(self, clusterer_with_data):
+        """`de_result.fun` must equal the legacy overlap area at the fit.
+
+        The bit-for-bit promise for `objective='histogram_overlap'` is that
+        the DE still minimizes exactly `_compute_histogram_overlap`. Pinning
+        the fitted floats themselves would only pin this machine's
+        scipy/numpy, so the check is self-consistency instead: recompute the
+        overlap from the returned parameters through the public distance
+        path and compare. Tight `np.isclose` for the same float32
+        reassociation reason as the AUROC test; it is `==` here.
+        """
+        mixing_params = clusterer_with_data._find_optimal_parameters_DE(
+            seed=42,
+            objective='histogram_overlap',
+            de_kwargs={
+                'maxiter': 3, 'tol': 1e-4, 'popsize': 5, 'polish': False,
+            },
+        )
+        loss = clusterer_with_data._de_result.fun
+
+        dConj, _, _ = clusterer_with_data.make_conjunctive_distance_matrix(
+            similarities=clusterer_with_data.similarities,
+            mixing_params=mixing_params,
+        )
+        ## Same histogram infrastructure the DE builds internally.
+        n_bins = clusterer_with_data.n_bins
+        edges = torch.linspace(0, 1, n_bins + 1, dtype=torch.float32)
+        smoother = helpers.Convolver_1d(
+            kernel=torch.ones(helpers.make_odd(n_bins // 10, mode='up')),
+            length_x=n_bins,
+            pad_mode='same',
+            correct_edge_effects=True,
+            device='cpu',
+        )
+        mask_intra = clusterer_with_data._intra_mask  ## True = same-session pair
+        n_intra = int(mask_intra.sum())
+        loss_recomputed, _, _ = clusterer_with_data._compute_histogram_overlap(
+            distances=torch.as_tensor(dConj.data, dtype=torch.float32),
+            intra_indices=torch.as_tensor(np.where(mask_intra)[0]),
+            edges=edges,
+            smoother=smoother,
+            scale_factor=mask_intra.shape[0] / max(n_intra, 1),
+        )
+        assert np.isclose(loss, loss_recomputed, rtol=1e-12, atol=0.0), (
+            f'DE loss {loss!r} != histogram overlap at the fitted parameters '
+            f'({loss_recomputed!r})'
+        )
+
+    def test_auroc_with_unfrozen_sigmoid_warns(self, clusterer_with_data):
+        """`objective='auroc'` + `freeze_sigmoid=False` must warn, not raise.
+
+        AUROC is a rank statistic and so fixes no absolute distance scale,
+        while `thresh_cost` and `d_cutoff` downstream are absolute. The
+        combination stays available for callers who set their own cutoff,
+        but it has to announce itself.
+        """
+        with pytest.warns(UserWarning, match='scale-free'):
+            clusterer_with_data._find_optimal_parameters_DE(
+                seed=42,
+                objective='auroc',
+                freeze_sigmoid=False,
+                de_kwargs={
+                    'maxiter': 2, 'tol': 1e-4, 'popsize': 4, 'polish': False,
+                },
+            )
+
+    def test_histogram_overlap_with_unfrozen_sigmoid_does_not_warn(
+        self, clusterer_with_data,
+    ):
+        """The legacy objective anchors the scale, so it must stay quiet.
+
+        Checks for this specific warning rather than promoting every
+        `UserWarning` to an error, so an unrelated deprecation from scipy
+        or torch on someone else's machine does not fail the test.
+        """
+        with warnings.catch_warnings(record=True) as warnings_caught:
+            warnings.simplefilter('always')
+            clusterer_with_data._find_optimal_parameters_DE(
+                seed=42,
+                objective='histogram_overlap',
+                freeze_sigmoid=False,
+                de_kwargs={
+                    'maxiter': 2, 'tol': 1e-4, 'popsize': 4, 'polish': False,
+                },
+            )
+        assert not any('scale-free' in str(w.message) for w in warnings_caught), (
+            'the scale-free warning fired on the legacy objective'
+        )
+
+    def test_invalid_objective_raises(self, clusterer_with_data):
+        """An unrecognized objective should fail loudly, before any fitting."""
+        with pytest.raises(ValueError, match='objective must be one of'):
+            clusterer_with_data._find_optimal_parameters_DE(
+                seed=42, objective='histogram-overlap',
+            )
 
     def test_subsample_pairs(self, clusterer_with_data):
         """DE with subsample_pairs should still return valid params."""
@@ -1133,6 +1373,52 @@ class Test_edge_cases:
             },
         )
         assert np.isfinite(clusterer_with_data._de_result.fun)
+
+    def test_no_crossover_raises_without_d_cutoff(self, clusterer_with_data):
+        """No crossover + inferred cutoff must raise, not `TypeError` on None.
+
+        A sigmoid centered far above the z-scored similarity range saturates
+        every activation to 0, so every pair lands at distance 1. The 'same'
+        residual is then empty everywhere, `_separate_diffSame_distributions`
+        finds no crossover and returns `d_crossover=None`, and the inferred
+        cutoff used to be computed as `None - min_d`.
+        """
+        from roicat import tracking
+        from roicat.tracking.similarity_graph import DEFAULT_METRICS
+
+        ## Fresh instance: the call below sets dConj/graph_pruned, which the
+        ## module-scoped fixture would otherwise carry into other tests.
+        clusterer = tracking.clustering.Clusterer(
+            similarities=clusterer_with_data.similarities,
+            metric_configs=DEFAULT_METRICS,
+            s_sesh=clusterer_with_data.s_sesh,
+            verbose=False,
+        )
+        mixing_params_collapsed = {
+            'power_sf': 1.0, 'power_nn': 1.0, 'power_swt': 1.0, 'p_norm': -4.0,
+            'sig_sf_kwargs': None,
+            'sig_nn_kwargs': {'mu': 10.0, 'b': 10.0},
+            'sig_swt_kwargs': {'mu': 10.0, 'b': 10.0},
+        }
+        with pytest.raises(ValueError, match='No crossover point exists'):
+            clusterer.make_pruned_similarity_graphs(
+                mixing_params=mixing_params_collapsed,
+            )
+
+        ## An explicit cutoff is the documented way through, and it works.
+        clusterer.make_pruned_similarity_graphs(
+            mixing_params=mixing_params_collapsed, d_cutoff=0.5,
+        )
+        assert clusterer.d_cutoff == 0.5
+
+        ## The probability map needs the densities themselves, so an explicit
+        ## cutoff is not enough there: it used to reach `_fn_smooth(None)`.
+        with pytest.raises(ValueError, match='convert the distances into probabilities'):
+            clusterer.make_pruned_similarity_graphs(
+                mixing_params=mixing_params_collapsed,
+                d_cutoff=0.5,
+                convert_to_probability=True,
+            )
 
     def test_nb_calibration_monotonicity(self, clusterer_with_data):
         """P(same|s_k) bins should be strictly monotonically non-decreasing for all features."""
@@ -1663,6 +1949,55 @@ class TestFastHDBSCAN:
         assert isinstance(labels, np.ndarray)
         ## Verify the stored param reflects the d_cutoff value
         assert clusterer.params['fit']['d_clusterMerge'] is None  ## original arg was None
+
+
+class TestSequentialHungarianThreshCost:
+    """Tests for tying fit_sequentialHungarian's threshold to the pruning cutoff."""
+
+    ## Fixed mixing so `make_pruned_similarity_graphs` never has to infer a crossover
+    ## from the synthetic distributions; every fit below passes an explicit `d_cutoff`.
+    MIXING_PARAMS = {
+        'power_sf': 1.0, 'power_nn': 1.0, 'power_swt': 1.0, 'p_norm': -4.0,
+        'sig_sf_kwargs': None,
+        'sig_nn_kwargs': {'mu': 0.5, 'b': 1.0},
+        'sig_swt_kwargs': {'mu': 0.5, 'b': 1.0},
+    }
+
+    def test_thresh_cost_none_matches_explicit_d_cutoff(self):
+        """thresh_cost=None must give the labels of passing self.d_cutoff by hand."""
+        clusterer, _, session_bool = _make_synthetic_clusterer(
+            n_sessions=4, n_rois_per_session=20, seed=42,
+        )
+        clusterer.make_pruned_similarity_graphs(
+            mixing_params=dict(self.MIXING_PARAMS),
+            d_cutoff=0.35,
+        )
+        ## bool, not the helper's float64: fit_sequentialHungarian indexes ROI ranges
+        ## with `session_bool.sum(0)`.
+        session_bool = session_bool.astype(bool)
+
+        kwargs = dict(d_conj=clusterer.dConj_pruned, session_bool=session_bool)
+        labels_tied = clusterer.fit_sequentialHungarian(**kwargs, thresh_cost=None)
+        assert clusterer.params['fit_sequentialHungarian']['thresh_cost'] is None
+        labels_explicit = clusterer.fit_sequentialHungarian(**kwargs, thresh_cost=0.35)
+        np.testing.assert_array_equal(labels_tied, labels_explicit)
+
+        ## The equality above is only meaningful if the threshold moves the labels on
+        ## this data at all. It does: below d_cutoff every cluster is lost.
+        labels_stricter = clusterer.fit_sequentialHungarian(**kwargs, thresh_cost=0.2)
+        assert not np.array_equal(labels_tied, labels_stricter)
+
+    def test_thresh_cost_none_raises_without_d_cutoff(self):
+        """Without make_pruned_similarity_graphs there is no cutoff to tie to."""
+        clusterer, d_conj, session_bool = _make_synthetic_clusterer(
+            n_sessions=4, n_rois_per_session=20, seed=42,
+        )
+        with pytest.raises(ValueError, match='d_cutoff'):
+            clusterer.fit_sequentialHungarian(
+                d_conj=d_conj,
+                session_bool=session_bool.astype(bool),
+                thresh_cost=None,
+            )
 
 
 class TestFastHDBSCANQualityMetrics:
@@ -3072,3 +3407,76 @@ class Test_Model_SWT_serialization:
         with pytest.warns(UserWarning):
             function_save(obj=wrapped, path=str(path))
         assert path.read_text().startswith('Model_SWT(')
+
+
+class Test_plot_quality_metrics:
+    """
+    The suptitle counts of ``plot_quality_metrics``.
+
+    ``make_label_variants`` ends by casting the squeezed labels to a
+    ``util.JSON_List`` for JSON compatibility, and the pipeline hands that
+    straight to this function. On a list, ``labels == -1`` is the scalar
+    ``False`` instead of a boolean mask, so the title read
+    ``n_excluded: 0, n_included: 1, n_clusters: 1`` on every run. These tests
+    pin the counts, and pin that a list and an array give the same title.
+    """
+
+    ## 3 excluded, 4 included, 2 clusters, 7 total.
+    LABELS = [0, 0, 1, 1, -1, -1, -1]
+
+    @pytest.fixture(autouse=True)
+    def _headless_backend(self):
+        import matplotlib
+        backend_original = matplotlib.get_backend()
+        matplotlib.use('Agg')
+        yield
+        matplotlib.use(backend_original)
+
+    @staticmethod
+    def _quality_metrics():
+        """The three keys the function histograms. Values are arbitrary."""
+        return {
+            'cluster_silhouette': np.array([0.1, 0.6]),
+            'cluster_intra_means': np.array([0.4, 0.8]),
+            'sample_silhouette': np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]),
+        }
+
+    @staticmethod
+    def _title(labels):
+        import matplotlib.pyplot as plt
+        from roicat.tracking.clustering import plot_quality_metrics
+
+        fig, _ = plot_quality_metrics(
+            quality_metrics=Test_plot_quality_metrics._quality_metrics(),
+            labels=labels,
+            n_sessions=2,
+        )
+        try:
+            return fig.get_suptitle()
+        finally:
+            plt.close(fig)
+
+    def test_counts_are_correct_for_a_JSON_List(self):
+        """The type the pipeline actually passes."""
+        title = self._title(util.JSON_List(self.LABELS))
+        assert 'n_excluded: 3' in title
+        assert 'n_included: 4' in title
+        assert 'n_total: 7' in title
+        assert 'n_clusters: 2' in title
+        assert 'n_sessions: 2' in title
+
+    def test_counts_are_correct_for_a_plain_list(self):
+        title = self._title(list(self.LABELS))
+        assert 'n_excluded: 3' in title
+        assert 'n_clusters: 2' in title
+
+    def test_list_and_array_give_the_same_title(self):
+        """The bug stated directly: the title must not depend on the container."""
+        assert self._title(util.JSON_List(self.LABELS)) == self._title(np.array(self.LABELS))
+
+    def test_counts_are_correct_when_nothing_is_excluded(self):
+        """`labels == -1` matching nothing must still give a real mask, not False."""
+        title = self._title(util.JSON_List([0, 0, 1, 1, 2]))
+        assert 'n_excluded: 0' in title
+        assert 'n_included: 5' in title
+        assert 'n_clusters: 3' in title

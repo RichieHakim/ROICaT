@@ -1012,6 +1012,7 @@ class Aligner(util.ROICaT_Module):
         ROIs: np.ndarray, 
         remappingIdx: Optional[np.ndarray] = None,
         normalize: bool = True,
+        method_warp: str = 'linear',
     ) -> List[np.ndarray]:
         """
         Transforms ROIs based on remapping indices and normalization settings.
@@ -1026,17 +1027,28 @@ class Aligner(util.ROICaT_Module):
                 ``None``)
             normalize (bool): 
                 If ``True``, data is normalized. (Default is ``True``)
+            method_warp (str):
+                How each ROI's footprint is warped. \n
+                * ``'linear'``: bilinear interpolation.
+                * ``'nearest'``: nearest-neighbor interpolation. \n
+                See ``helpers.remap_sparse_images``. Before 2026 ROIs were
+                warped with ``scipy.interpolate.griddata`` (cubic), which filled
+                the holes of non-convex ROIs (ROICaT issue #686), so results
+                differ from older versions. \n
+                (Default is ``'linear'``)
 
         Returns:
             (List[np.ndarray]): 
                 ROIs_aligned (List[np.ndarray]): 
-                    Transformed ROIs.
+                    Transformed ROIs. One ``scipy.sparse.csr_array`` of shape
+                    *(n_roi, H*W)* per session, float32, rows in input order.
         """
         ## Store parameter (but not data) args as attributes
         self.params['transform_ROIs'] = self._locals_to_params(
             locals_dict=locals(),
             keys=[
                 'normalize',
+                'method_warp',
             ],
         )
 
@@ -1044,21 +1056,16 @@ class Aligner(util.ROICaT_Module):
             assert (self.remappingIdx_geo is not None) or (self.remappingIdx_nonrigid is not None), 'If remappingIdx is not provided, then geometric or nonrigid registration must be performed first.'
             remappingIdx = self.remappingIdx_nonrigid if self.remappingIdx_nonrigid is not None else self.remappingIdx_geo
 
-        H, W = remappingIdx[0].shape[:2]
-
         print('Registering ROIs...') if self._verbose else None
         self.ROIs_aligned = []
         for ii, (remap, rois) in tqdm(enumerate(zip(remappingIdx, ROIs)), total=len(remappingIdx), mininterval=1, disable=not self._verbose, desc='Registering ROIs', position=1):
             rois_aligned = helpers.remap_sparse_images(
-                ims_sparse=[roi.reshape((H, W)) for roi in rois],
+                ims_sparse=rois,
                 remappingIdx=remap,
-                method='cubic',
-                fill_value=0,
+                method=method_warp,
                 dtype=np.float32,
-                safe=True,
-                verbose=False,
+                flattened=True,
             )
-            rois_aligned = scipy.sparse.vstack([roi.reshape(1, -1) for roi in rois_aligned])
 
             if normalize:
                 rois_aligned.data[rois_aligned.data < 0] = 0
