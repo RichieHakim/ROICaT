@@ -1,3 +1,6 @@
+import concurrent.futures
+import inspect
+import os
 import warnings
 from typing import Union, Tuple, List, Dict, Optional, Any
 
@@ -5,7 +8,6 @@ import numpy as np
 import scipy
 import scipy.optimize
 import scipy.sparse
-import scipy.stats
 import sklearn
 import sklearn.isotonic
 import matplotlib.pyplot as plt
@@ -43,11 +45,14 @@ def auroc_crossCloserThanSame(
 
         AUROC = P(d_cross < d_same) + 0.5 * P(d_cross == d_same)
 
-    so cross-session-closer scores above 0.5. It is computed from the pooled
-    mid-rank sum (``scipy.stats.rankdata(method='average')``) rather than an
+    so cross-session-closer scores above 0.5. It is computed from the
+    same-session pairs' mid-ranks in the pooled sample rather than an
     ``O(n_cross * n_same)`` comparison, so every tie contributes exactly 0.5
     and a fully collapsed distance vector (all values identical) scores
-    exactly 0.5.
+    exactly 0.5. The mid-ranks come from one sort of the pooled values and
+    two binary searches per same-session value, counted in integers, so the
+    result is exact and matches ``scipy.stats.rankdata(method='average')``
+    bit for bit at about a tenth of its cost.
     RH 2025
 
     Args:
@@ -67,7 +72,7 @@ def auroc_crossCloserThanSame(
     Raises:
         ValueError:
             If either arm is empty, in which case the statistic is
-            undefined.
+            undefined, or if any distance is NaN.
     """
     n_cross, n_same = int(d_crossSession.size), int(d_sameSession.size)
     if (n_cross == 0) or (n_same == 0):
@@ -76,13 +81,21 @@ def auroc_crossCloserThanSame(
             f" and n_sameSession={n_same}."
         )
 
-    ## Pooled mid-ranks; ranks[:n_cross] are the cross-session pairs' ranks.
-    ranks = scipy.stats.rankdata(
-        np.concatenate([d_crossSession, d_sameSession]),
-        method='average',
-    )  ## shape: (n_cross + n_same,)
-    ## Mann-Whitney U counting (cross > same) pairs, each tie worth 0.5.
-    u_crossGreater = float(ranks[:n_cross].sum()) - (n_cross * (n_cross + 1) / 2.0)
+    pooled_sorted = np.sort(np.concatenate([d_crossSession, d_sameSession]))  ## shape: (n_cross + n_same,)
+    if np.isnan(pooled_sorted[-1]):  ## NaNs sort last
+        raise ValueError("AUROC inputs contain NaN distances.")
+    ## Sorted keys keep the binary searches cache-friendly.
+    same_sorted = np.sort(d_sameSession)  ## shape: (n_same,)
+    ## 2 * mid-rank (1-based) of a same-session value = n_less + n_lessOrEqual + 1
+    rank2_sum_same = (
+        int(np.searchsorted(pooled_sorted, same_sorted, side='left').sum())
+        + int(np.searchsorted(pooled_sorted, same_sorted, side='right').sum())
+        + n_same
+    )
+    ## Mann-Whitney U counting (same > cross) pairs, doubled; each tie worth 0.5.
+    u2_sameGreater = rank2_sum_same - (n_same * (n_same + 1))
+    ## U counting (cross > same) pairs, via U_cross + U_same = n_cross * n_same.
+    u_crossGreater = ((2 * n_cross * n_same) - u2_sameGreater) / 2.0
     return float(1.0 - (u_crossGreater / (n_cross * n_same)))
 
 
@@ -314,6 +327,7 @@ class Clusterer(util.ROICaT_Module):
             'mutation': (0.5, 1.5),
             'recombination': 0.7,
             'polish': True,
+            'workers': -1,
         },
         n_bins: Optional[int] = None,
         smoothing_window_bins: Optional[int] = None,
@@ -386,6 +400,11 @@ class Clusterer(util.ROICaT_Module):
                 * ``polish`` (bool): If ``True``, run L-BFGS-B from
                   the best DE solution. Often has no effect: both
                   objectives are piecewise-constant in the parameters.
+                * ``workers`` (int): Threads that evaluate each
+                  generation's candidates in parallel. ``-1`` uses all
+                  available cores. Any value uses scipy's
+                  ``updating='deferred'`` scheme, so the result does not
+                  depend on the number of workers.
             n_bins (Optional[int]):
                 Overwrites ``n_bins`` from ``__init__``. It reaches the
                 differential evolution *directly* only when
@@ -588,6 +607,7 @@ class Clusterer(util.ROICaT_Module):
             'mutation': (0.5, 1.5),
             'recombination': 0.7,
             'polish': True,
+            'workers': -1,
         },
         n_bins: Optional[int] = None,
         smoothing_window_bins: Optional[int] = None,
@@ -610,7 +630,10 @@ class Clusterer(util.ROICaT_Module):
         The inner loop operates entirely on precomputed torch tensors — no
         scipy sparse operations per evaluation. When subsampling is active,
         the subsample is redrawn each DE generation to reduce overfitting
-        to a specific pair subset.
+        to a specific pair subset. A progress bar tracks the generations
+        when verbose, and the best loss after each generation is kept in
+        ``self.de_loss_history``. With subsampling, each generation's loss
+        is scored on a different subsample, so the history is noisy.
         RH 2025
 
         Args:
@@ -636,6 +659,11 @@ class Clusterer(util.ROICaT_Module):
                 * ``polish`` (bool): If ``True``, run L-BFGS-B from
                   the best DE solution. Often has no effect: both
                   objectives are piecewise-constant in the parameters.
+                * ``workers`` (int): Threads that evaluate each
+                  generation's candidates in parallel. ``-1`` uses all
+                  available cores. Any value uses scipy's
+                  ``updating='deferred'`` scheme, so the result does not
+                  depend on the number of workers.
             n_bins (Optional[int]):
                 Overwrites ``n_bins`` from __init__. Used by the DE
                 directly only when ``objective='histogram_overlap'``, but
@@ -837,6 +865,11 @@ class Clusterer(util.ROICaT_Module):
             ).clone()
             for name, sim in self.similarities.items()
         }  ## Dict[str, Tensor(nnz,)]
+        ## Apply the frozen sigmoids once here instead of in every evaluation.
+        names_sigmoidFrozen = set(_frozen_sig) if _frozen_sig is not None else set()
+        for name in names_sigmoidFrozen:
+            mu, b = _frozen_sig[name]['mu'], _frozen_sig[name]['b']
+            tensors_full[name] = torch.sigmoid(b * (tensors_full[name] - mu))
 
         ## Boolean mask for intra-session (known-different) pairs
         if not hasattr(self, '_intra_mask') or self._intra_mask is None:
@@ -911,7 +944,7 @@ class Clusterer(util.ROICaT_Module):
         ################################################################
         _generation_counter = [0]
 
-        def _resample_callback(xk, convergence=None):
+        def _resample_callback():
             """Redraw subsample at the start of each generation."""
             gen = _generation_counter[0]
             _generation_counter[0] += 1
@@ -981,25 +1014,23 @@ class Clusterer(util.ROICaT_Module):
             for name, cfg in _cached_configs.items():
                 s_w = _state['tensors'][name]
 
-                ## Apply sigmoid if configured
-                if cfg.optimize_sigmoid:
-                    if _frozen_sig is not None and name in _frozen_sig:
-                        mu = _frozen_sig[name]['mu']
-                        b = _frozen_sig[name]['b']
-                    elif name in sig_params_live:
+                ## Apply sigmoid if configured. Frozen ones are already in the tensors.
+                if cfg.optimize_sigmoid and (name not in names_sigmoidFrozen):
+                    if name in sig_params_live:
                         mu = sig_params_live[name]['mu']
                         b = sig_params_live[name]['b']
                     else:
                         mu, b = 0.0, 1.0
                     s_w = torch.sigmoid(b * (s_w - mu))
 
-                ## Apply power if optimized
+                ## Apply power if optimized. Clamp at 0 like `_activation_function`,
+                ## so the DE scores the same distances that clustering uses.
                 if cfg.optimize_power:
                     power = float(x[param_idx])
                     param_idx += 1
-                    s_w = torch.clamp(s_w, min=1e-8).pow(power)
+                    s_w = torch.clamp(s_w, min=0).pow(power)
                 else:
-                    s_w = torch.clamp(s_w, min=1e-8)
+                    s_w = torch.clamp(s_w, min=0)
 
                 activated.append(s_w)
 
@@ -1025,25 +1056,49 @@ class Clusterer(util.ROICaT_Module):
         de_kwargs_use = dict(de_kwargs)
 
         nnz_full = next(iter(tensors_full.values())).shape[0]
+        is_subsampled = (subsample_pairs is not None) and (subsample_pairs < nnz_full)
 
-        ## Always resample each generation when subsampling
-        if subsample_pairs is not None and subsample_pairs < nnz_full:
-            existing_cb = de_kwargs_use.pop('callback', None)
-            def _combined_callback(xk, convergence=None):
-                _resample_callback(xk, convergence)
-                if existing_cb is not None:
-                    return existing_cb(xk, convergence)  ## propagate stop signal
-            de_kwargs_use['callback'] = _combined_callback
+        ## Threads evaluate each generation's candidates; numpy's sort and
+        ## torch's kernels release the GIL. The deferred update is used for
+        ## every worker count so that the result does not depend on it.
+        n_workers = de_kwargs_use.pop('workers', 1)
+        if not (isinstance(n_workers, int) and ((n_workers >= 1) or (n_workers == -1))):
+            raise ValueError(f"de_kwargs['workers'] must be a positive int or -1, got {n_workers!r}.")
+        if n_workers == -1:
+            n_workers = len(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else os.cpu_count()
+        de_kwargs_use.setdefault('updating', 'deferred')
+
+        ## Per-generation callback: redraw the subsample, record the best
+        ## loss, advance the progress bar, then run any user callback.
+        callback_user = de_kwargs_use.pop('callback', None)
+        self.de_loss_history = []  ## best loss after each generation
+        progress_bar = tqdm(total=de_kwargs_use.get('maxiter'), desc='DE generations', disable=not self._verbose)
+
+        def _callback_generation(intermediate_result):
+            if is_subsampled:
+                _resample_callback()
+            self.de_loss_history.append(float(intermediate_result.fun))
+            progress_bar.set_postfix(loss_best=f'{intermediate_result.fun:.6g}', refresh=False)
+            progress_bar.update(1)
+            if callback_user is None:
+                return False
+            ## Same dispatch as scipy: new-style callbacks take only `intermediate_result`.
+            if set(inspect.signature(callback_user).parameters) == {'intermediate_result'}:
+                return callback_user(intermediate_result=intermediate_result)
+            return callback_user(np.copy(intermediate_result.x), intermediate_result.convergence)  ## truthy stops the DE
 
         ## Coerce seed to int for scipy DE; leave None for random behavior
         de_seed = int(seed) if seed is not None else None
 
-        self._de_result = scipy.optimize.differential_evolution(
-            func=objective_scalar,
-            bounds=scipy_bounds,
-            seed=de_seed,
-            **de_kwargs_use,
-        )
+        with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as pool, progress_bar:
+            self._de_result = scipy.optimize.differential_evolution(
+                func=objective_scalar,
+                bounds=scipy_bounds,
+                seed=de_seed,
+                callback=_callback_generation,
+                workers=pool.map,
+                **de_kwargs_use,
+            )
 
         ## Extract best parameters from DE result
         x_best = self._de_result.x

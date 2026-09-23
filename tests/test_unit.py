@@ -950,12 +950,15 @@ class Test_auroc_crossCloserThanSame:
         to the parameters that come back.
 
         The two distance computations are not the same code: the DE inner
-        loop works on cloned float32 tensors with `clamp(min=1e-8)` and a
-        running sum, while `make_conjunctive_distance_matrix` clamps at 0
-        and uses `torch.mean` over a stacked tensor. They agree bit-for-bit
-        on this dataset (checked with `==`), but the assertion below uses a
-        tight `np.isclose` so that a float32 reassociation on another
-        platform reports as a tolerance failure rather than a false alarm.
+        loop works on cloned float32 tensors with `torch.sigmoid` and a
+        running sum, while `make_conjunctive_distance_matrix` uses
+        `generalised_logistic_function` and `torch.mean` over a stacked
+        tensor. Both clamp at 0; when the DE clamped at 1e-8 instead, pairs
+        with saturated sigmoids got different distances and this test
+        failed. They agree bit-for-bit on this dataset (checked with `==`),
+        but the assertion below uses a tight `np.isclose` so that a float32
+        reassociation on another platform reports as a tolerance failure
+        rather than a false alarm.
         """
         from roicat.tracking.clustering import auroc_crossCloserThanSame
 
@@ -996,6 +999,30 @@ class Test_auroc_crossCloserThanSame:
             auroc_crossCloserThanSame(
                 d_crossSession=np.ones(5), d_sameSession=np.array([]),
             )
+
+    def test_nan_raises(self):
+        """A NaN distance has no rank; fail loudly instead of returning a number."""
+        from roicat.tracking.clustering import auroc_crossCloserThanSame
+        with pytest.raises(ValueError, match='NaN'):
+            auroc_crossCloserThanSame(
+                d_crossSession=np.array([0.1, np.nan]), d_sameSession=np.ones(3),
+            )
+
+    def test_matches_rankdata_bitwise(self):
+        """Bit-for-bit equal to the pooled `scipy.stats.rankdata` formula it replaced."""
+        import scipy.stats
+        from roicat.tracking.clustering import auroc_crossCloserThanSame
+        for seed in range(200):
+            rng = np.random.default_rng(seed)
+            ## Mixed float widths and rounding to force ties.
+            dtype_cross, dtype_same = rng.choice([np.float32, np.float64], size=2)
+            d_cross = np.round(rng.normal(size=rng.integers(1, 60)), rng.integers(0, 3)).astype(dtype_cross)
+            d_same = np.round(rng.normal(size=rng.integers(1, 60)), rng.integers(0, 3)).astype(dtype_same)
+            n_cross, n_same = d_cross.size, d_same.size
+            ranks = scipy.stats.rankdata(np.concatenate([d_cross, d_same]), method='average')
+            u_crossGreater = float(ranks[:n_cross].sum()) - (n_cross * (n_cross + 1) / 2.0)
+            auroc_rankdata = float(1.0 - (u_crossGreater / (n_cross * n_same)))
+            assert auroc_crossCloserThanSame(d_crossSession=d_cross, d_sameSession=d_same) == auroc_rankdata
 
 
 class Test__find_optimal_parameters_DE:
@@ -1215,6 +1242,55 @@ class Test__find_optimal_parameters_DE:
         assert 'power_swt' in result
         assert 'p_norm' in result
         assert np.isfinite(clusterer_with_data._de_result.fun)
+
+    @pytest.mark.parametrize('objective', ['auroc', 'histogram_overlap'])
+    def test_workers_do_not_change_result(self, clusterer_with_data, objective):
+        """Deferred updating makes the fit independent of the thread count."""
+        results = []
+        for workers in [1, 4]:
+            clusterer_with_data._find_optimal_parameters_DE(
+                seed=42,
+                objective=objective,
+                de_kwargs={'maxiter': 3, 'popsize': 5, 'polish': False, 'workers': workers},
+            )
+            results.append(clusterer_with_data._de_result)
+        np.testing.assert_array_equal(results[0].x, results[1].x)
+        assert results[0].fun == results[1].fun
+
+    def test_invalid_workers_raises(self, clusterer_with_data):
+        with pytest.raises(ValueError, match='workers'):
+            clusterer_with_data._find_optimal_parameters_DE(
+                seed=42, de_kwargs={'maxiter': 1, 'popsize': 5, 'workers': 0},
+            )
+
+    def test_loss_history(self, clusterer_with_data):
+        """One best loss per generation, ending at the returned loss."""
+        clusterer_with_data._find_optimal_parameters_DE(
+            seed=42, de_kwargs={'maxiter': 4, 'popsize': 5, 'polish': False},
+        )
+        history = clusterer_with_data.de_loss_history
+        assert len(history) == clusterer_with_data._de_result.nit
+        assert history[-1] == clusterer_with_data._de_result.fun
+        ## All pairs are used on the test data, so the best loss cannot rise.
+        assert np.all(np.diff(history) <= 0)
+
+    @pytest.mark.parametrize('style', ['old', 'new'])
+    def test_user_callback_can_stop(self, clusterer_with_data, style):
+        """Both scipy callback signatures are called, and a truthy return stops the DE."""
+        calls = []
+        if style == 'old':
+            def callback(xk, convergence):
+                calls.append(xk)
+                return True
+        else:
+            def callback(intermediate_result):
+                calls.append(intermediate_result.x)
+                return True
+        clusterer_with_data._find_optimal_parameters_DE(
+            seed=42, de_kwargs={'maxiter': 5, 'popsize': 5, 'polish': False, 'callback': callback},
+        )
+        assert len(calls) == 1
+        assert clusterer_with_data._de_result.nit == 1
 
 
 

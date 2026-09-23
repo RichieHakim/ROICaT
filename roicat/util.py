@@ -252,6 +252,7 @@ def get_default_parameters(
                         'mutation': [0.5, 1.5],  ## DE mutation range
                         'recombination': 0.7,  ## DE crossover probability
                         'polish': True,  ## L-BFGS-B polish after DE
+                        'workers': -1,  ## Threads evaluating each DE generation in parallel. -1 = all available cores. The result does not depend on it.
                     },
                 },
                 'parameters_manual_mixing': {
