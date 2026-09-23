@@ -950,12 +950,15 @@ class Test_auroc_crossCloserThanSame:
         to the parameters that come back.
 
         The two distance computations are not the same code: the DE inner
-        loop works on cloned float32 tensors with `clamp(min=1e-8)` and a
-        running sum, while `make_conjunctive_distance_matrix` clamps at 0
-        and uses `torch.mean` over a stacked tensor. They agree bit-for-bit
-        on this dataset (checked with `==`), but the assertion below uses a
-        tight `np.isclose` so that a float32 reassociation on another
-        platform reports as a tolerance failure rather than a false alarm.
+        loop works on cloned float32 tensors with `torch.sigmoid` and a
+        running sum, while `make_conjunctive_distance_matrix` uses
+        `generalised_logistic_function` and `torch.mean` over a stacked
+        tensor. Both clamp at 0; when the DE clamped at 1e-8 instead, pairs
+        with saturated sigmoids got different distances and this test
+        failed. They agree bit-for-bit on this dataset (checked with `==`),
+        but the assertion below uses a tight `np.isclose` so that a float32
+        reassociation on another platform reports as a tolerance failure
+        rather than a false alarm.
         """
         from roicat.tracking.clustering import auroc_crossCloserThanSame
 

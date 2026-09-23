@@ -1005,13 +1005,14 @@ class Clusterer(util.ROICaT_Module):
                         mu, b = 0.0, 1.0
                     s_w = torch.sigmoid(b * (s_w - mu))
 
-                ## Apply power if optimized
+                ## Apply power if optimized. Clamp at 0 like `_activation_function`,
+                ## so the DE scores the same distances that clustering uses.
                 if cfg.optimize_power:
                     power = float(x[param_idx])
                     param_idx += 1
-                    s_w = torch.clamp(s_w, min=1e-8).pow(power)
+                    s_w = torch.clamp(s_w, min=0).pow(power)
                 else:
-                    s_w = torch.clamp(s_w, min=1e-8)
+                    s_w = torch.clamp(s_w, min=0)
 
                 activated.append(s_w)
 
