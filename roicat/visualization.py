@@ -69,10 +69,10 @@ def display_toggle_image_stack(
             image = image.detach().cpu().numpy()
 
         if clim is None:
-            clim = (np.min(image), np.max(image))
+            clim = (np.nanmin(image), np.nanmax(image))
 
         norm_image = (image - clim[0]) / (clim[1] - clim[0])
-        norm_image = np.clip(norm_image, 0, 1)
+        norm_image = np.nan_to_num(np.clip(norm_image, 0, 1), nan=0.0)
         return (norm_image * 255).astype(np.uint8)
     def resize_image(image, new_size, interpolation):
         """Resize the given image to the specified new size using the specified interpolation method."""
