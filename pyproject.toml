@@ -80,7 +80,7 @@ core = [
     "ipython==9.17.1",
 
     ## Progress bars and system introspection.
-    "tqdm==4.70.0",
+    "tqdm==4.70.1",
     "natsort==8.4.0",
     "psutil==7.2.2",
     "py-cpuinfo==9.0.0",
