@@ -997,6 +997,30 @@ class Test_auroc_crossCloserThanSame:
                 d_crossSession=np.ones(5), d_sameSession=np.array([]),
             )
 
+    def test_nan_raises(self):
+        """A NaN distance has no rank; fail loudly instead of returning a number."""
+        from roicat.tracking.clustering import auroc_crossCloserThanSame
+        with pytest.raises(ValueError, match='NaN'):
+            auroc_crossCloserThanSame(
+                d_crossSession=np.array([0.1, np.nan]), d_sameSession=np.ones(3),
+            )
+
+    def test_matches_rankdata_bitwise(self):
+        """Bit-for-bit equal to the pooled `scipy.stats.rankdata` formula it replaced."""
+        import scipy.stats
+        from roicat.tracking.clustering import auroc_crossCloserThanSame
+        for seed in range(200):
+            rng = np.random.default_rng(seed)
+            ## Mixed float widths and rounding to force ties.
+            dtype_cross, dtype_same = rng.choice([np.float32, np.float64], size=2)
+            d_cross = np.round(rng.normal(size=rng.integers(1, 60)), rng.integers(0, 3)).astype(dtype_cross)
+            d_same = np.round(rng.normal(size=rng.integers(1, 60)), rng.integers(0, 3)).astype(dtype_same)
+            n_cross, n_same = d_cross.size, d_same.size
+            ranks = scipy.stats.rankdata(np.concatenate([d_cross, d_same]), method='average')
+            u_crossGreater = float(ranks[:n_cross].sum()) - (n_cross * (n_cross + 1) / 2.0)
+            auroc_rankdata = float(1.0 - (u_crossGreater / (n_cross * n_same)))
+            assert auroc_crossCloserThanSame(d_crossSession=d_cross, d_sameSession=d_same) == auroc_rankdata
+
 
 class Test__find_optimal_parameters_DE:
     """Tests for Clusterer._find_optimal_parameters_DE."""
