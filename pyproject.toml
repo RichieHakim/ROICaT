@@ -27,7 +27,7 @@ core = [
     "sparse_convolution==0.4.0",  ## Toeplitz convolution used by tracking/blurring.py.
     "numba==0.67.0",  ## roicat/tracking/clustering.py compiles two hot loops with @numba.njit.
     "torch==2.14.0",
-    "torchvision==0.28.0",
+    "torchvision==0.29.0",
     "optuna==5.0.0",
 
     ## File formats and I/O.
