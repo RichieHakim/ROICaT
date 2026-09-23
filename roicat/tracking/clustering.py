@@ -1,3 +1,6 @@
+import concurrent.futures
+import inspect
+import os
 import warnings
 from typing import Union, Tuple, List, Dict, Optional, Any
 
@@ -324,6 +327,7 @@ class Clusterer(util.ROICaT_Module):
             'mutation': (0.5, 1.5),
             'recombination': 0.7,
             'polish': True,
+            'workers': -1,
         },
         n_bins: Optional[int] = None,
         smoothing_window_bins: Optional[int] = None,
@@ -396,6 +400,11 @@ class Clusterer(util.ROICaT_Module):
                 * ``polish`` (bool): If ``True``, run L-BFGS-B from
                   the best DE solution. Often has no effect: both
                   objectives are piecewise-constant in the parameters.
+                * ``workers`` (int): Threads that evaluate each
+                  generation's candidates in parallel. ``-1`` uses all
+                  available cores. Any value uses scipy's
+                  ``updating='deferred'`` scheme, so the result does not
+                  depend on the number of workers.
             n_bins (Optional[int]):
                 Overwrites ``n_bins`` from ``__init__``. It reaches the
                 differential evolution *directly* only when
@@ -598,6 +607,7 @@ class Clusterer(util.ROICaT_Module):
             'mutation': (0.5, 1.5),
             'recombination': 0.7,
             'polish': True,
+            'workers': -1,
         },
         n_bins: Optional[int] = None,
         smoothing_window_bins: Optional[int] = None,
@@ -620,7 +630,10 @@ class Clusterer(util.ROICaT_Module):
         The inner loop operates entirely on precomputed torch tensors — no
         scipy sparse operations per evaluation. When subsampling is active,
         the subsample is redrawn each DE generation to reduce overfitting
-        to a specific pair subset.
+        to a specific pair subset. A progress bar tracks the generations
+        when verbose, and the best loss after each generation is kept in
+        ``self.de_loss_history``. With subsampling, each generation's loss
+        is scored on a different subsample, so the history is noisy.
         RH 2025
 
         Args:
@@ -646,6 +659,11 @@ class Clusterer(util.ROICaT_Module):
                 * ``polish`` (bool): If ``True``, run L-BFGS-B from
                   the best DE solution. Often has no effect: both
                   objectives are piecewise-constant in the parameters.
+                * ``workers`` (int): Threads that evaluate each
+                  generation's candidates in parallel. ``-1`` uses all
+                  available cores. Any value uses scipy's
+                  ``updating='deferred'`` scheme, so the result does not
+                  depend on the number of workers.
             n_bins (Optional[int]):
                 Overwrites ``n_bins`` from __init__. Used by the DE
                 directly only when ``objective='histogram_overlap'``, but
@@ -926,7 +944,7 @@ class Clusterer(util.ROICaT_Module):
         ################################################################
         _generation_counter = [0]
 
-        def _resample_callback(xk, convergence=None):
+        def _resample_callback():
             """Redraw subsample at the start of each generation."""
             gen = _generation_counter[0]
             _generation_counter[0] += 1
@@ -1038,25 +1056,49 @@ class Clusterer(util.ROICaT_Module):
         de_kwargs_use = dict(de_kwargs)
 
         nnz_full = next(iter(tensors_full.values())).shape[0]
+        is_subsampled = (subsample_pairs is not None) and (subsample_pairs < nnz_full)
 
-        ## Always resample each generation when subsampling
-        if subsample_pairs is not None and subsample_pairs < nnz_full:
-            existing_cb = de_kwargs_use.pop('callback', None)
-            def _combined_callback(xk, convergence=None):
-                _resample_callback(xk, convergence)
-                if existing_cb is not None:
-                    return existing_cb(xk, convergence)  ## propagate stop signal
-            de_kwargs_use['callback'] = _combined_callback
+        ## Threads evaluate each generation's candidates; numpy's sort and
+        ## torch's kernels release the GIL. The deferred update is used for
+        ## every worker count so that the result does not depend on it.
+        n_workers = de_kwargs_use.pop('workers', 1)
+        if not (isinstance(n_workers, int) and ((n_workers >= 1) or (n_workers == -1))):
+            raise ValueError(f"de_kwargs['workers'] must be a positive int or -1, got {n_workers!r}.")
+        if n_workers == -1:
+            n_workers = len(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else os.cpu_count()
+        de_kwargs_use.setdefault('updating', 'deferred')
+
+        ## Per-generation callback: redraw the subsample, record the best
+        ## loss, advance the progress bar, then run any user callback.
+        callback_user = de_kwargs_use.pop('callback', None)
+        self.de_loss_history = []  ## best loss after each generation
+        progress_bar = tqdm(total=de_kwargs_use.get('maxiter'), desc='DE generations', disable=not self._verbose)
+
+        def _callback_generation(intermediate_result):
+            if is_subsampled:
+                _resample_callback()
+            self.de_loss_history.append(float(intermediate_result.fun))
+            progress_bar.set_postfix(loss_best=f'{intermediate_result.fun:.6g}', refresh=False)
+            progress_bar.update(1)
+            if callback_user is None:
+                return False
+            ## Same dispatch as scipy: new-style callbacks take only `intermediate_result`.
+            if set(inspect.signature(callback_user).parameters) == {'intermediate_result'}:
+                return callback_user(intermediate_result=intermediate_result)
+            return callback_user(np.copy(intermediate_result.x), intermediate_result.convergence)  ## truthy stops the DE
 
         ## Coerce seed to int for scipy DE; leave None for random behavior
         de_seed = int(seed) if seed is not None else None
 
-        self._de_result = scipy.optimize.differential_evolution(
-            func=objective_scalar,
-            bounds=scipy_bounds,
-            seed=de_seed,
-            **de_kwargs_use,
-        )
+        with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as pool, progress_bar:
+            self._de_result = scipy.optimize.differential_evolution(
+                func=objective_scalar,
+                bounds=scipy_bounds,
+                seed=de_seed,
+                callback=_callback_generation,
+                workers=pool.map,
+                **de_kwargs_use,
+            )
 
         ## Extract best parameters from DE result
         x_best = self._de_result.x

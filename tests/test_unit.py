@@ -1243,6 +1243,55 @@ class Test__find_optimal_parameters_DE:
         assert 'p_norm' in result
         assert np.isfinite(clusterer_with_data._de_result.fun)
 
+    @pytest.mark.parametrize('objective', ['auroc', 'histogram_overlap'])
+    def test_workers_do_not_change_result(self, clusterer_with_data, objective):
+        """Deferred updating makes the fit independent of the thread count."""
+        results = []
+        for workers in [1, 4]:
+            clusterer_with_data._find_optimal_parameters_DE(
+                seed=42,
+                objective=objective,
+                de_kwargs={'maxiter': 3, 'popsize': 5, 'polish': False, 'workers': workers},
+            )
+            results.append(clusterer_with_data._de_result)
+        np.testing.assert_array_equal(results[0].x, results[1].x)
+        assert results[0].fun == results[1].fun
+
+    def test_invalid_workers_raises(self, clusterer_with_data):
+        with pytest.raises(ValueError, match='workers'):
+            clusterer_with_data._find_optimal_parameters_DE(
+                seed=42, de_kwargs={'maxiter': 1, 'popsize': 5, 'workers': 0},
+            )
+
+    def test_loss_history(self, clusterer_with_data):
+        """One best loss per generation, ending at the returned loss."""
+        clusterer_with_data._find_optimal_parameters_DE(
+            seed=42, de_kwargs={'maxiter': 4, 'popsize': 5, 'polish': False},
+        )
+        history = clusterer_with_data.de_loss_history
+        assert len(history) == clusterer_with_data._de_result.nit
+        assert history[-1] == clusterer_with_data._de_result.fun
+        ## All pairs are used on the test data, so the best loss cannot rise.
+        assert np.all(np.diff(history) <= 0)
+
+    @pytest.mark.parametrize('style', ['old', 'new'])
+    def test_user_callback_can_stop(self, clusterer_with_data, style):
+        """Both scipy callback signatures are called, and a truthy return stops the DE."""
+        calls = []
+        if style == 'old':
+            def callback(xk, convergence):
+                calls.append(xk)
+                return True
+        else:
+            def callback(intermediate_result):
+                calls.append(intermediate_result.x)
+                return True
+        clusterer_with_data._find_optimal_parameters_DE(
+            seed=42, de_kwargs={'maxiter': 5, 'popsize': 5, 'polish': False, 'callback': callback},
+        )
+        assert len(calls) == 1
+        assert clusterer_with_data._de_result.nit == 1
+
 
 
 class Test_estimate_sigmoid_params:
