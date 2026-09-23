@@ -67,7 +67,7 @@ core = [
     ## Plotting, interactive selection and the notebooks. The interactive
     ## labelling and region-drawing tools are the documented way to use the
     ## classification pipeline, so the notebook stack is not optional.
-    "matplotlib==3.11.1",
+    "matplotlib==3.11.2",
     "seaborn==0.13.2",
     "bokeh==3.9.2",
     "holoviews[recommended]==1.23.2",
