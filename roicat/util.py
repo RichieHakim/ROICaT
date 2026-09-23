@@ -184,6 +184,7 @@ def get_default_parameters(
                 },
                 'transform_ROIs': {
                     'normalize': True,  ## If True, normalize the spatial footprints to have a sum of 1.
+                    'method_warp': 'linear',  ## Interpolation used to warp each ROI: 'linear' or 'nearest'.
                 },
             },
             'blurring': {
