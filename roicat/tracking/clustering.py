@@ -107,6 +107,8 @@ class Clusterer(util.ROICaT_Module):
             * self.make_pruned_similarity_graphs()
         * Clustering:
             * self.fit(): Which uses a modified HDBSCAN
+            * self.fit_singleLinkage(): Which uses single linkage with
+              same-session cannot-link constraints.
             * self.fit_sequentialHungarian: Which uses a method similar to
               CaImAn's clustering method.
         * Quality control:
@@ -2348,6 +2350,107 @@ class Clusterer(util.ROICaT_Module):
         ## Set clusters with too few ROIs to -1
         u, c = np.unique(labels, return_counts=True)
         labels[np.isin(labels, u[c<2])] = -1
+        labels = helpers.squeeze_integers(labels)
+
+        self.labels = labels
+        return self.labels
+
+    def fit_singleLinkage(
+        self,
+        d_conj: scipy.sparse.csr_array,
+        session_bool: np.ndarray,
+        min_cluster_size: int = 2,
+        d_clusterMerge: Optional[float] = None,
+    ) -> np.ndarray:
+        """
+        Session-constrained single linkage clustering, cut at
+        ``d_clusterMerge``.
+
+        Inter-session edges are merged in order of increasing distance
+        (Kruskal), skipping any edge that would put two ROIs from the same
+        session into one cluster, and merging stops at ``d_clusterMerge``. The
+        tracking pipeline uses this method instead of ``fit`` when there are
+        few sessions (see ``n_sessions_switch``).
+
+        Runs on ``fast_hdbscan``'s cannot-link Kruskal. With ``min_samples=1``
+        every core distance is 0, so edges merge in plain distance order, and
+        ``dbscan_clustering`` cuts the resulting tree. Every node of that tree
+        lies within one session-disjoint component, so no cut can join two
+        ROIs from the same session.
+
+        RH 2026
+
+        Args:
+            d_conj (scipy.sparse.csr_array):
+                Conjunctive distance matrix. Shape: *(n_rois, n_rois)*.
+            session_bool (np.ndarray):
+                Boolean array indicating which ROIs belong to which session.
+                Shape: *(n_rois, n_sessions)*. Each row should contain
+                exactly one ``True``.
+            min_cluster_size (int):
+                Clusters with fewer ROIs than this are set to *-1*. (Default
+                is *2*)
+            d_clusterMerge (Optional[float]):
+                Cut height. Only edges with a distance below this are merged.
+                If ``None``, defaults to ``self.d_cutoff`` (the pruning
+                threshold from ``make_pruned_similarity_graphs``).
+                (Default is ``None``)
+
+        Returns:
+            (np.ndarray):
+                labels (np.ndarray):
+                    Cluster labels for each ROI, shape: *(n_rois_total)*.
+
+        Raises:
+            ValueError:
+                If ``d_clusterMerge`` is ``None`` and ``self.d_cutoff`` has not
+                been set, i.e. ``make_pruned_similarity_graphs`` has not been
+                run.
+        """
+        ## Store parameter (but not data) args as attributes
+        self.params['fit_singleLinkage'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=['min_cluster_size', 'd_clusterMerge',],)
+
+        ## Resolve d_clusterMerge default: use d_cutoff from pruning
+        if d_clusterMerge is None:
+            if getattr(self, 'd_cutoff', None) is None:
+                raise ValueError(
+                    "d_clusterMerge=None ties the cut to the pruning cutoff, but "
+                    "`self.d_cutoff` is not set. Call `make_pruned_similarity_graphs` "
+                    "first, or pass `d_clusterMerge` as a float."
+                )
+            d_clusterMerge = float(self.d_cutoff)
+
+        ## Mask to inter-session pairs only (same as fit)
+        d = d_conj.copy().multiply(self.s_sesh)
+
+        if d.nnz == 0:
+            print('No edges in graph. Returning all -1 labels.') if self._verbose else None
+            self.labels = np.ones(d.shape[0], dtype=int) * -1
+            return self.labels
+
+        ## Session index per ROI, used as the cannot-link group label
+        n_sessions_per_roi = np.asarray(session_bool.sum(axis=1)).ravel()
+        assert np.all(n_sessions_per_roi == 1), "session_bool must contain exactly one True per ROI"
+        cannot_link_groups = np.asarray(np.argmax(session_bool, axis=1), dtype=np.int32)
+
+        print(f'Clustering with session-constrained single linkage, d_clusterMerge={d_clusterMerge:.2f}') if self._verbose else None
+        import fast_hdbscan
+        hdbs = fast_hdbscan.HDBSCAN(
+            min_cluster_size=min_cluster_size,
+            min_samples=1,  ## Core distances are 0, so edges merge in plain distance order
+            metric='precomputed',
+            algorithm='kruskal',
+            cannot_link_groups=cannot_link_groups,
+        ).fit(d)
+        ## Merges with height < d_clusterMerge. With min_samples=1, singletons
+        ## get their own label rather than -1.
+        labels = np.asarray(hdbs.dbscan_clustering(epsilon=d_clusterMerge), dtype=np.int64)
+
+        ## Set clusters below min_cluster_size to -1
+        u, c = np.unique(labels, return_counts=True)
+        labels[np.isin(labels, u[c < min_cluster_size])] = -1
         labels = helpers.squeeze_integers(labels)
 
         self.labels = labels
