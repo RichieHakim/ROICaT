@@ -2982,6 +2982,125 @@ class Test_image_alignment_checker_batching:
 
 
 ######################################################################################################################################
+############################################### ALIGNER: MATCH SEARCH (fit_geometric) ################################################
+######################################################################################################################################
+
+
+class Test_Aligner_match_search:
+    """
+    The match search in ``Aligner.fit_geometric``, on synthetic images with a
+    fake registration. The fake knows each image's true x offset and returns
+    the right translation only for pairs at most ``REACH_PX`` apart, so these
+    tests exercise the search over paths, not a registration method. Whether
+    an image is aligned is still decided by ``ImageAlignmentChecker``.
+
+    Images are crops of one white-noise canvas; image 0 is the template:
+        * 0: x offset 0.
+        * 1: x offset 15. Aligns directly.
+        * 2: x offset 30. Too far to align directly, but aligns to image 1.
+        * 3: unrelated noise. Every registration involving it returns a wrong
+          warp, so it has no path. While any image has no path, the dense
+          search used to discard every path it found, image 2's included.
+        * 4: image 0 plus faint noise. Every registration involving it returns
+          a wrong warp, but it is aligned as it is.
+    """
+
+    SIZE_PX = 128
+    REACH_PX = 20
+    OFFSETS_X = (0, 15, 30, None, None)
+    WARP_WRONG_XY = (25.0, 11.0)
+    Z_THRESHOLD = 4.0
+
+    def _make_images(self, seed=0):
+        rng = np.random.default_rng(seed)
+        canvas = rng.standard_normal((self.SIZE_PX, self.SIZE_PX + 64))
+        images = [canvas[:, x:x + self.SIZE_PX] for x in self.OFFSETS_X[:3]]
+        images.append(rng.standard_normal((self.SIZE_PX, self.SIZE_PX)))
+        images.append(images[0] + 0.01 * rng.standard_normal((self.SIZE_PX, self.SIZE_PX)))
+        return [np.ascontiguousarray(im, dtype=np.float32) for im in images]
+
+    def _fit(self, idx_images, monkeypatch):
+        """
+        Run ``fit_geometric`` on the images in ``idx_images`` (template: the
+        first) with the fake registration. Returns the aligner and the number
+        of registrations run.
+        """
+        from roicat.tracking import alignment
+
+        images_all = self._make_images()
+        images = [images_all[ii] for ii in idx_images]
+        offset_by_image = {im.tobytes(): self.OFFSETS_X[ii] for im, ii in zip(images, idx_images)}
+        reach_px, warp_wrong_xy = self.REACH_PX, self.WARP_WRONG_XY
+        calls = []
+
+        class FakeRegistration:
+            def __init__(self, **kwargs):
+                pass
+
+            def fit_rigid(self, im_template, im_moving, **kwargs):
+                calls.append(1)
+                offset_template = offset_by_image[np.asarray(im_template, dtype=np.float32).tobytes()]
+                offset_moving = offset_by_image[np.asarray(im_moving, dtype=np.float32).tobytes()]
+                warp = np.eye(3, dtype=np.float32)
+                if (offset_template is None) or (offset_moving is None):
+                    warp[:2, 2] = warp_wrong_xy
+                elif abs(offset_template - offset_moving) <= reach_px:
+                    ## Warping by tx gives out[:, j] = im_moving[:, j + tx]
+                    warp[0, 2] = offset_template - offset_moving
+                return warp
+
+        monkeypatch.setattr(alignment, 'PhaseCorrelationRegistration', FakeRegistration)
+        aligner = alignment.Aligner(
+            use_match_search=True,
+            all_to_all=False,
+            radius_in=4,
+            radius_out=20,
+            z_threshold=self.Z_THRESHOLD,
+            um_per_pixel=1.0,
+            device='cpu',
+            verbose=False,
+        )
+        aligner.fit_geometric(
+            template=0,
+            ims_moving=images,
+            template_method='image',
+            method='PhaseCorrelation',
+            kwargs_method={'PhaseCorrelation': {}},
+            kwargs_RANSAC={},
+            compute_final_all_to_all=False,
+            verbose=False,
+        )
+        return aligner, len(calls)
+
+    @staticmethod
+    def _translations(aligner):
+        """(N, 2) translation (tx, ty) of each final warp."""
+        return np.stack([np.asarray(w)[:2, 2] for w in aligner.results_geometric['warp_matrices']], axis=0)
+
+    def test_path_found_by_dense_search_is_kept(self, monkeypatch):
+        """Image 2 gets the warp composed through image 1, although image 3 has no path."""
+        aligner, _ = self._fit(idx_images=[0, 1, 2, 3], monkeypatch=monkeypatch)
+        assert aligner.results_geometric['direct']['alignment_template_to_all'].tolist() == [True, True, False, False]
+
+        translations = self._translations(aligner)
+        np.testing.assert_allclose(translations[1], [-15, 0], atol=1e-5)
+        np.testing.assert_allclose(translations[2], [-30, 0], atol=1e-5)
+        ## No warp aligns image 3, so it keeps identity
+        np.testing.assert_allclose(translations[3], [0, 0], atol=1e-5)
+        assert aligner.results_geometric['final']['alignment_template_to_all'].tolist() == [True, True, True, False]
+
+    def test_first_round_success_skips_dense_search(self, monkeypatch):
+        """Image 4 fails direct registration but is aligned on identity, so the dense search never runs."""
+        aligner, n_registrations = self._fit(idx_images=[0, 1, 4], monkeypatch=monkeypatch)
+        assert aligner.results_geometric['direct']['alignment_template_to_all'].tolist() == [True, True, False]
+
+        np.testing.assert_allclose(self._translations(aligner)[2], [0, 0], atol=1e-5)
+        assert aligner.results_geometric['final']['alignment_template_to_all'].tolist() == [True, True, True]
+        ## 3 direct registrations + 3 onto the failed image; a dense search would add 6
+        assert n_registrations == 6
+
+
+######################################################################################################################################
 ########################################################## ROInet ####################################################################
 ######################################################################################################################################
 

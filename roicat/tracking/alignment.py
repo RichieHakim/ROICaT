@@ -575,7 +575,7 @@ class Aligner(util.ROICaT_Module):
                     if len(idx_no_path) > 0:
                         print(f'Warning: Could not find a path to alignment after path finding for images idx: {idx_no_path}')
 
-                    return warp_matrices_all_to_template_new, warp_matrices_all_to_all, alignment_all_to_all, idx_no_path
+                    return warp_matrices_all_to_template_new, warp_matrices_all_to_all, alignment_all_to_all, idx_no_path, score_template_to_all_new
                     
                 warp_matrices_all_to_all = np.tile(np.eye(3, 3)[None, None, :, :], reps=(len(ims_moving), len(ims_moving), 1, 1))
                 # alignment_all_to_all = np.eye(len(ims_moving), dtype=np.bool_)
@@ -583,13 +583,14 @@ class Aligner(util.ROICaT_Module):
                 score_all_to_all = np.ones((len(ims_moving), len(ims_moving)), dtype=np.float32) * np.nan
                 print(f'Finding alignment between images idx: {idx_toSearch} and all other images...')
                 ## Register the images in idx to the template
-                warp_matrices_all_to_template_new, warp_matrices_all_to_all, alignment_all_to_all, idx_no_path = _update_warps(
+                warp_matrices_all_to_template_new, warp_matrices_all_to_all, alignment_all_to_all, idx_no_path, score_template_to_all_new = _update_warps(
                     idx=idx_toSearch, 
                     warp_matrices_all_to_all=warp_matrices_all_to_all, 
                     alignment_all_to_all=alignment_all_to_all,
                     score_all_to_all=score_all_to_all,
                 )
                 warp_matrices_all_to_template = warp_matrices_all_to_template_new
+                score_template_to_all_round1 = score_template_to_all_new
                 if len(idx_no_path) == 0:
                     print('All images aligned successfully after one round of path finding.') if self._verbose else None
                     warp_matrices_all_to_template = warp_matrices_all_to_template_new
@@ -598,15 +599,28 @@ class Aligner(util.ROICaT_Module):
                     warnings.warn(f'Warning: Could not find a path to alignment for image idx: {idx_no_path}. Now doing a dense search for alignment between all images...')
                     print(f"Finding alignment between remaining images and all other images: {idx_remaining}...") if self._verbose else None
                     ## Register the images in idx to the template
-                    warp_matrices_all_to_template_new, warp_matrices_all_to_all, alignment_all_to_all, idx_no_path = _update_warps(
+                    warp_matrices_all_to_template_new, warp_matrices_all_to_all, alignment_all_to_all, idx_no_path, score_template_to_all_new = _update_warps(
                         idx=idx_remaining, 
                         warp_matrices_all_to_all=warp_matrices_all_to_all, 
                         alignment_all_to_all=alignment_all_to_all,
                         score_all_to_all=score_all_to_all,
                     )
+                    ## Keep the better warp per image. Keeping the dense search only when every
+                    ## image passed let one image with no path discard the paths found for the
+                    ## others. Ties go to the first-round warp, so nothing changes where the
+                    ## dense search adds nothing.
+                    use_dense = score_template_to_all_new > score_template_to_all_round1  ## shape: (N,)
+                    warp_matrices_all_to_template = [
+                        warp_dense if use else warp_round1
+                        for warp_round1, warp_dense, use in zip(
+                            warp_matrices_all_to_template, warp_matrices_all_to_template_new, use_dense,
+                        )
+                    ]
+                    print(f"Using dense-search warps for images idx: {np.where(use_dense)[0]}.") if self._verbose else None
+                    score_template_to_all_best = np.where(use_dense, score_template_to_all_new, score_template_to_all_round1)
+                    idx_no_path = np.where(score_template_to_all_best <= self.z_threshold)[0]
                     if len(idx_no_path) == 0:
                         print('All images aligned successfully after dense search.') if self._verbose else None
-                        warp_matrices_all_to_template = warp_matrices_all_to_template_new
                     else:
                         warnings.warn(f"Warning: Could not find a path to alignment for image idx: {idx_no_path}. Some images may not be aligned.")
 
