@@ -270,8 +270,8 @@ def get_default_parameters(
                     'convert_to_probability': False,  ## Whether or not to convert the similarity matrix and distance matrix to a probability matrix
                 },
                 'cluster_method': {
-                    'method': 'automatic',  ## 'automatic', 'hdbscan', or 'sequential_hungarian'. 'automatic': selects which clustering algorithm to use (generally if n_sessions >=8 then hdbscan, else sequential_hungarian)
-                    'n_sessions_switch': 6, ## Number of sessions to switch from sequential_hungarian to hdbscan
+                    'method': 'automatic',  ## 'automatic', 'hdbscan', 'single_linkage', or 'sequential_hungarian'. 'automatic': selects which clustering algorithm to use (if n_sessions >= n_sessions_switch then hdbscan, else single_linkage)
+                    'n_sessions_switch': 6, ## Number of sessions to switch from single_linkage to hdbscan
                 },
                 'hdbscan': {
                     'min_cluster_size': 2,  ## Minimum number of ROIs that can be considered a 'cluster'
@@ -286,6 +286,10 @@ def get_default_parameters(
                     'alpha': 0.999,  ## (advanced) Scalar applied to distance matrix in HDBSCAN (see hdbscan documentation)
                     'discard_failed_pruning': True,  ## (advanced) Whether or not to set all ROIs that could be separated from clusters with ROIs from the same sessions to label=-1
                     'n_steps_clusterSplit': 100,  ## (advanced) How finely to step through distances to remove violations
+                },
+                'single_linkage': {
+                    'min_cluster_size': 2,  ## Minimum number of ROIs that can be considered a 'cluster'
+                    'd_clusterMerge': None,  ## Single linkage cut height: only edges with a distance below this are merged. None defaults to d_cutoff (pruning threshold).
                 },
                 'sequential_hungarian': {
                     'thresh_cost': None, ## Threshold for the cost matrix. Lower numbers result in more clusters. None defaults to d_cutoff (pruning threshold).

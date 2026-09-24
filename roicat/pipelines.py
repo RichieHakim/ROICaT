@@ -280,13 +280,6 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
     )
     tocs.append(('make_conjunctive_distance', time.time() - tic_start))
 
-    def choose_clustering_method(method='automatic', n_sessions_switch=8, n_sessions=None):
-        if method == 'automatic':
-            method_out = 'hdbscan'.upper() if n_sessions >= n_sessions_switch else 'sequential_hungarian'.upper()
-        else:
-            method_out = method.upper()
-        assert method_out.upper() in ['hdbscan'.upper(), 'sequential_hungarian'.upper()]
-        return method_out
     method_clustering = choose_clustering_method(
         method=params['clustering']['cluster_method']['method'],
         n_sessions_switch=params['clustering']['cluster_method']['n_sessions_switch'],
@@ -298,6 +291,12 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
             d_conj=clusterer.dConj_pruned,  ## Input distance matrix
             session_bool=data.session_bool,  ## Boolean array of which ROIs belong to which sessions
             **params['clustering']['hdbscan'],
+        )
+    elif method_clustering == 'single_linkage'.upper():
+        labels = clusterer.fit_singleLinkage(
+            d_conj=clusterer.dConj_pruned,  ## Input distance matrix
+            session_bool=data.session_bool,  ## Boolean array of which ROIs belong to which sessions
+            **params['clustering']['single_linkage'],
         )
     elif method_clustering == 'sequential_hungarian'.upper():
         labels = clusterer.fit_sequentialHungarian(
@@ -584,3 +583,34 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         print("=" * 50)
 
     return results_all, run_data, params
+
+
+def choose_clustering_method(method: str, n_sessions_switch: int, n_sessions: int) -> str:
+    """
+    Chooses the clustering method used by ``pipeline_tracking``.
+
+    Args:
+        method (str):
+            ``'automatic'``, ``'hdbscan'``, ``'single_linkage'``, or
+            ``'sequential_hungarian'``. ``'automatic'`` selects ``'hdbscan'``
+            if ``n_sessions >= n_sessions_switch``, else
+            ``'single_linkage'``.
+        n_sessions_switch (int):
+            Number of sessions at which ``'automatic'`` switches from
+            ``'single_linkage'`` to ``'hdbscan'``.
+        n_sessions (int):
+            Number of sessions in the data.
+
+    Returns:
+        (str):
+            method_out (str):
+                Upper-case name of the chosen method.
+    """
+    if method == 'automatic':
+        method_out = 'hdbscan'.upper() if n_sessions >= n_sessions_switch else 'single_linkage'.upper()
+    else:
+        method_out = method.upper()
+    assert method_out.upper() in ['hdbscan'.upper(), 'single_linkage'.upper(), 'sequential_hungarian'.upper()], (
+        f"cluster_method.method must be 'automatic', 'hdbscan', 'single_linkage', or 'sequential_hungarian'. Got: {method!r}"
+    )
+    return method_out

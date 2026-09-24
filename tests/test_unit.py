@@ -2076,6 +2076,200 @@ class TestSequentialHungarianThreshCost:
             )
 
 
+def _make_random_graph_clusterer(n_sessions=10, n_rois_per_session=5, p_edge=0.1, seed=2):
+    """
+    Build a Clusterer on a random symmetric graph of inter-session edges.
+
+    Distances are drawn uniformly from (0, 1), so there are no ties and
+    single linkage has one answer. Returns the Clusterer, the sparse distance
+    matrix, session_bool, and the same distances as a dense matrix in which
+    every missing and same-session pair is set to 10.0 (for scipy's linkage).
+    """
+    from roicat import tracking
+    from roicat.tracking.similarity_graph import DEFAULT_METRICS
+
+    rng = np.random.default_rng(seed)
+    n_total = n_sessions * n_rois_per_session
+    session_of_roi = np.repeat(np.arange(n_sessions), n_rois_per_session)
+    session_bool = session_of_roi[:, None] == np.arange(n_sessions)[None, :]  ## shape: (n_total, n_sessions)
+
+    ## Upper triangle of random inter-session edges, then symmetrized
+    mask_edge = np.triu(rng.random((n_total, n_total)) < p_edge, k=1)
+    mask_edge &= session_of_roi[:, None] != session_of_roi[None, :]
+    d_dense = np.where(mask_edge, rng.random((n_total, n_total)), 0.0)
+    d_dense = d_dense + d_dense.T
+
+    d_conj = scipy.sparse.csr_array(d_dense)
+    s_sesh = scipy.sparse.csr_array((d_dense > 0).astype(np.float64))  ## every stored edge is inter-session
+    s = d_conj.copy()
+    s.data = 1.0 - s.data
+    clusterer = tracking.clustering.Clusterer(
+        similarities={'sf': s, 'nn': s.copy(), 'swt': s.copy()},
+        metric_configs=DEFAULT_METRICS,
+        s_sesh=s_sesh,
+        session_bool=session_bool,
+        verbose=False,
+    )
+
+    d_dense_missingFar = np.where(d_dense > 0, d_dense, 10.0)
+    np.fill_diagonal(d_dense_missingFar, 0.0)
+    return clusterer, d_conj, session_bool, d_dense_missingFar
+
+
+def _canonical_labels(labels):
+    """Relabel clusters in order of first appearance, so equal partitions give equal arrays. -1 stays -1."""
+    labels_out = np.full(len(labels), -1, dtype=np.int64)
+    mapping = {}
+    for i, label in enumerate(np.asarray(labels)):
+        if label >= 0:
+            labels_out[i] = mapping.setdefault(label, len(mapping))
+    return labels_out
+
+
+def _singletons_to_noise(labels):
+    """Set clusters with one member to -1."""
+    labels = np.asarray(labels).copy()
+    u, c = np.unique(labels, return_counts=True)
+    labels[np.isin(labels, u[c < 2])] = -1
+    return labels
+
+
+def _has_session_violation(labels, session_bool):
+    """True if any cluster holds two ROIs from one session."""
+    return any(
+        np.any(session_bool[labels == u].sum(axis=0) > 1)
+        for u in np.unique(labels[labels >= 0])
+    )
+
+
+class TestSingleLinkage:
+    """Tests for session-constrained single linkage (``Clusterer.fit_singleLinkage``)."""
+
+    def test_matches_scipy_single_linkage_when_constraint_does_not_bind(self):
+        """Below the first same-session merge, the result is plain single linkage."""
+        import scipy.cluster.hierarchy
+        import scipy.spatial.distance
+
+        clusterer, d_conj, session_bool, d_dense = _make_random_graph_clusterer()
+        linkage = scipy.cluster.hierarchy.linkage(
+            scipy.spatial.distance.squareform(d_dense, checks=False),
+            method='single',
+        )
+
+        ## Walk the unconstrained merges in order and stop at the first one
+        ## that joins two ROIs from the same session.
+        n_total = session_bool.shape[0]
+        sessions_of_node = {i: set(np.nonzero(session_bool[i])[0]) for i in range(n_total)}
+        for i_merge, (a, b, height, _) in enumerate(linkage):
+            if sessions_of_node[int(a)] & sessions_of_node[int(b)]:
+                break
+            sessions_of_node[n_total + i_merge] = sessions_of_node.pop(int(a)) | sessions_of_node.pop(int(b))
+        ## Cut strictly between two merge heights: scipy's fcluster merges at
+        ## <= t, fast_hdbscan's dbscan_clustering at < epsilon.
+        d_cut = (linkage[i_merge - 1, 2] + linkage[i_merge, 2]) / 2
+        assert i_merge >= 10, f"Only {i_merge} merges before the constraint binds; the test would be trivial."
+
+        labels_scipy = _singletons_to_noise(
+            scipy.cluster.hierarchy.fcluster(linkage, t=d_cut, criterion='distance')
+        )
+        assert not _has_session_violation(labels_scipy, session_bool)
+
+        labels = clusterer.fit_singleLinkage(
+            d_conj=d_conj,
+            session_bool=session_bool,
+            d_clusterMerge=d_cut,
+        )
+        np.testing.assert_array_equal(_canonical_labels(labels), _canonical_labels(labels_scipy))
+
+    def test_no_session_violations_when_constraint_binds(self):
+        """Above the first same-session merge, no cluster holds two ROIs from one session."""
+        import scipy.cluster.hierarchy
+        import scipy.spatial.distance
+
+        clusterer, d_conj, session_bool, d_dense = _make_random_graph_clusterer()
+        d_cut = 0.5
+
+        ## The constraint must actually bind at this cut for the test to mean anything
+        linkage = scipy.cluster.hierarchy.linkage(
+            scipy.spatial.distance.squareform(d_dense, checks=False),
+            method='single',
+        )
+        labels_scipy = _singletons_to_noise(
+            scipy.cluster.hierarchy.fcluster(linkage, t=d_cut, criterion='distance')
+        )
+        assert _has_session_violation(labels_scipy, session_bool)
+
+        labels = clusterer.fit_singleLinkage(
+            d_conj=d_conj,
+            session_bool=session_bool,
+            d_clusterMerge=d_cut,
+        )
+        assert not _has_session_violation(labels, session_bool)
+
+        ## And it is constrained single linkage: brute-force Kruskal over the
+        ## edges below the cut, skipping merges that share a session.
+        session_of_roi = np.argmax(session_bool, axis=1)
+        root_of_roi = np.arange(len(session_of_roi))
+        sessions_of_root = {i: {s} for i, s in enumerate(session_of_roi)}
+        def find_root(i):
+            while root_of_roi[i] != i:
+                i = root_of_roi[i]
+            return i
+        idx_row, idx_col = np.nonzero(np.triu(d_dense < d_cut, k=1))
+        for k in np.argsort(d_dense[idx_row, idx_col]):
+            root_a, root_b = find_root(idx_row[k]), find_root(idx_col[k])
+            if root_a != root_b and not (sessions_of_root[root_a] & sessions_of_root[root_b]):
+                root_of_roi[root_b] = root_a
+                sessions_of_root[root_a] |= sessions_of_root.pop(root_b)
+        labels_reference = _singletons_to_noise([find_root(i) for i in range(len(session_of_roi))])
+        np.testing.assert_array_equal(_canonical_labels(labels), _canonical_labels(labels_reference))
+
+    def test_d_clusterMerge_none_uses_d_cutoff(self):
+        """d_clusterMerge=None must give the labels of passing self.d_cutoff by hand."""
+        clusterer, d_conj, session_bool, _ = _make_random_graph_clusterer()
+        with pytest.raises(ValueError, match='d_cutoff'):
+            clusterer.fit_singleLinkage(d_conj=d_conj, session_bool=session_bool)
+
+        clusterer.d_cutoff = 0.3
+        labels_tied = clusterer.fit_singleLinkage(d_conj=d_conj, session_bool=session_bool)
+        assert clusterer.params['fit_singleLinkage']['d_clusterMerge'] is None
+        labels_explicit = clusterer.fit_singleLinkage(d_conj=d_conj, session_bool=session_bool, d_clusterMerge=0.3)
+        np.testing.assert_array_equal(labels_tied, labels_explicit)
+
+    def test_quality_metrics_after_single_linkage(self):
+        """compute_quality_metrics runs after fit_singleLinkage and reports no HDBSCAN metrics."""
+        clusterer, d_conj, session_bool, _ = _make_random_graph_clusterer()
+        labels = clusterer.fit_singleLinkage(
+            d_conj=d_conj,
+            session_bool=session_bool,
+            d_clusterMerge=0.5,
+        )
+        assert not hasattr(clusterer, 'hdbs')
+        s = d_conj.copy()
+        s.data = 1.0 - s.data
+        quality_metrics = clusterer.compute_quality_metrics(sim_mat=s, dist_mat=d_conj)
+        assert np.any(labels >= 0)
+        assert len(quality_metrics['sample_silhouette']) == session_bool.shape[0]
+        assert quality_metrics['hdbscan'] is None
+        assert quality_metrics['sample_probabilities'] is None
+
+    def test_pipeline_automatic_choice(self):
+        """'automatic' picks single linkage below n_sessions_switch and HDBSCAN at or above it."""
+        from roicat import pipelines
+
+        assert pipelines.choose_clustering_method(method='automatic', n_sessions_switch=6, n_sessions=2) == 'SINGLE_LINKAGE'
+        assert pipelines.choose_clustering_method(method='automatic', n_sessions_switch=6, n_sessions=5) == 'SINGLE_LINKAGE'
+        assert pipelines.choose_clustering_method(method='automatic', n_sessions_switch=6, n_sessions=6) == 'HDBSCAN'
+        assert pipelines.choose_clustering_method(method='automatic', n_sessions_switch=6, n_sessions=7) == 'HDBSCAN'
+        ## Explicit methods pass through, including the one 'automatic' no longer picks
+        assert pipelines.choose_clustering_method(method='sequential_hungarian', n_sessions_switch=6, n_sessions=3) == 'SEQUENTIAL_HUNGARIAN'
+        with pytest.raises(AssertionError, match='single_linkage'):
+            pipelines.choose_clustering_method(method='kmeans', n_sessions_switch=6, n_sessions=3)
+        ## The shipped default switch point
+        defaults = util.get_default_parameters(pipeline='tracking')
+        assert defaults['clustering']['cluster_method']['n_sessions_switch'] == 6
+
+
 class TestFastHDBSCANQualityMetrics:
     """Tests for quality metrics extraction with fast_hdbscan backend."""
 
