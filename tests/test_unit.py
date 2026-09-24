@@ -1294,6 +1294,47 @@ class Test__find_optimal_parameters_DE:
 
 
 
+def _make_clusterer_weak_metrics(seed, n_session, n_cell, frac_outlier):
+    """
+    A fully connected synthetic graph: ``sf`` separates matches cleanly, while
+    ``nn`` and ``swt`` are weak z-scored metrics (matches shifted by half a
+    standard deviation). ``frac_outlier`` of their values are replaced by
+    +-[50, 1500], the heavy tails that a z-score over a tiny reference set
+    produces. Returns the Clusterer and its similarity dict.
+    """
+    from roicat import tracking
+    from roicat.tracking.similarity_graph import DEFAULT_METRICS
+    rng = np.random.default_rng(seed)
+    n_roi = n_session * n_cell
+    sess = np.repeat(np.arange(n_session), n_cell)
+    cell = np.tile(np.arange(n_cell), n_session)
+    iu, ju = np.triu_indices(n_roi, k=1)
+    same_session = sess[iu] == sess[ju]
+    match = (~same_session) & (cell[iu] == cell[ju])
+
+    def weak_z():
+        z = rng.normal(0, 1, iu.size) + 0.5 * match
+        is_outlier = rng.random(iu.size) < frac_outlier
+        z[is_outlier] = rng.choice([-1, 1], is_outlier.sum()) * rng.uniform(50, 1500, is_outlier.sum())
+        return z
+
+    def symmetric(v, dtype):
+        rows, cols = np.concatenate([iu, ju]), np.concatenate([ju, iu])
+        return scipy.sparse.csr_array((np.concatenate([v, v]).astype(dtype), (rows, cols)), shape=(n_roi, n_roi))
+
+    sims = {
+        'sf': symmetric(np.where(match, rng.uniform(0.5, 0.9, iu.size), rng.uniform(0.0, 0.2, iu.size)), np.float64),
+        'nn': symmetric(weak_z(), np.float32),
+        'swt': symmetric(weak_z(), np.float32),
+    }
+    s_sesh = symmetric((~same_session).astype(np.float64), np.float64)
+    s_sesh = scipy.sparse.csr_array((s_sesh.data.astype(bool), s_sesh.indices, s_sesh.indptr), shape=s_sesh.shape)
+    clusterer = tracking.clustering.Clusterer(
+        similarities=sims, metric_configs=DEFAULT_METRICS, s_sesh=s_sesh, verbose=False,
+    )
+    return clusterer, sims
+
+
 class Test_estimate_sigmoid_params:
     """Tests for Clusterer._estimate_sigmoid_params."""
 
@@ -1336,6 +1377,31 @@ class Test_estimate_sigmoid_params:
         )
         with pytest.raises(AssertionError, match="make_naive_bayes_distance_matrix"):
             fresh._estimate_sigmoid_params()
+
+    @pytest.mark.parametrize('seed, n_session, n_cell, frac_outlier', [(0, 14, 30, 0.0), (1, 14, 30, 0.0), (0, 6, 10, 0.0), (0, 6, 10, 0.03), (1, 6, 10, 0.03)])
+    def test_weak_metric_sigmoid_does_not_saturate(self, seed, n_session, n_cell, frac_outlier):
+        """A weak metric's frozen sigmoid must not map most pairs to ~0.
+
+        Under the negative ``p_norm`` a single near-zero activation drives
+        ``sConj`` to zero, so a frozen sigmoid that sits above most of a weak
+        metric's values vetoes the strong one and the mixed similarity
+        collapses. The Fisher-ratio pre-fit did exactly that here (a step with
+        ``b`` at its upper bound, up to 64% of pairs below 1e-6; 99% with
+        heavy tails).
+        """
+        clusterer, sims = _make_clusterer_weak_metrics(
+            seed=seed, n_session=n_session, n_cell=n_cell, frac_outlier=frac_outlier,
+        )
+        clusterer.make_naive_bayes_distance_matrix()
+        params = clusterer._estimate_sigmoid_params()
+        for name in ('nn', 'swt'):
+            x = np.asarray(sims[name].data, dtype=np.float64)
+            logsig = -np.logaddexp(0.0, -params[name]['b'] * (x - params[name]['mu']))
+            frac_saturated = float((logsig < np.log(1e-6)).mean())
+            assert frac_saturated < 0.05, (
+                f"{name}: frozen sigmoid (mu={params[name]['mu']:.3g}, b={params[name]['b']:.3g}) "
+                f"puts {frac_saturated:.1%} of pairs below 1e-6"
+            )
 
 
 class Test_naive_bayes_distance_matrix:
