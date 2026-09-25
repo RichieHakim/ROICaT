@@ -215,7 +215,6 @@ def get_default_parameters(
                     'n_workers': -1,  ## Number of CPU cores to use. -1 for all.
                     'block_height': 128,  ## size of a block
                     'block_width': 128,  ## size of a block
-                    'algorithm_nearestNeigbors_spatialFootprints': 'brute',  ## algorithm used to find the pairwise similarity for s_sf. ('brute' is slow but exact. See docs for others.)
                 },
                 'compute_similarity': {
                     'spatialFootprint_maskPower': 1.0,  ##  An exponent to raise the spatial footprints to to care more or less about bright pixels
@@ -233,7 +232,7 @@ def get_default_parameters(
                     'n_bins': None,  ## Number of bins for histograms. None = heuristic. Reaches the DE directly only when objective is 'histogram_overlap', but it also sets the resolution of the naive-Bayes calibration that freezes the sigmoid, so it moves the fit under either objective; used downstream by the pruning too.
                     'smoothing_window_bins': None,  ## Smoothing window for distributions. None = heuristic. Same three-way reach as n_bins: legacy objective, naive-Bayes calibration behind the frozen sigmoid, downstream pruning.
                     'subsample_pairs': None,  ## Subsample this many pairs for speedup. None = use all.
-                    'freeze_sigmoid': True,  ## True: sigmoid (mu, b) fixed by a Fisher-discriminant grid search over the bounds below. False: (mu, b) are DE variables too.
+                    'freeze_sigmoid': True,  ## True: sigmoid (mu, b) fixed by a maximum-likelihood grid search over the bounds below. False: (mu, b) are DE variables too.
                     'n_grid_sigmoid_mu': 50,  ## Number of mu values in that grid search. Only used when freeze_sigmoid is True.
                     'n_grid_sigmoid_b': 30,  ## Number of b values in that grid search. Only used when freeze_sigmoid is True.
                     'bounds_findParameters': {
@@ -299,7 +298,7 @@ def get_default_parameters(
                 'dir_save': None,  ## Directory to save results to. If None, will not save.
                 'prefix_name_save': str(datetime.datetime.now().strftime("%Y%m%d_%H%M%S")),  ## Prefix to append to the saved files
                 'richfile_backend': 'zip',  ## Backend for saving richfile data. Options: 'directory', 'sqlar', 'zip' (default), 'tar'. Archive backends produce a single file instead of a directory tree.
-                'gif_frame_rate': 10.0 ## Frame rate for any GIFs saved
+                'frame_rate': 5.0 ## Frame rate for the saved animations
             },
         }
 
