@@ -215,7 +215,6 @@ def get_default_parameters(
                     'n_workers': -1,  ## Number of CPU cores to use. -1 for all.
                     'block_height': 128,  ## size of a block
                     'block_width': 128,  ## size of a block
-                    'algorithm_nearestNeigbors_spatialFootprints': 'brute',  ## algorithm used to find the pairwise similarity for s_sf. ('brute' is slow but exact. See docs for others.)
                 },
                 'compute_similarity': {
                     'spatialFootprint_maskPower': 1.0,  ##  An exponent to raise the spatial footprints to to care more or less about bright pixels
