@@ -3734,7 +3734,9 @@ def save_gif(
     #     )
     # elif backend == 'PIL':
     from PIL import Image
-    frames = [Image.fromarray(array[i_frame]) for i_frame in range(array.shape[0])]
+    ## Pick each frame's 256-color palette for color coverage, not pixel count. Pillow's default
+    ## (median cut) spends it on the dark background and mutes small bright ROIs.
+    frames = [Image.fromarray(array[i_frame]).convert('RGB').quantize(colors=256, method=Image.Quantize.MAXCOVERAGE, dither=Image.Dither.NONE) for i_frame in range(array.shape[0])]
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     frames[0].save(
         path, 
@@ -3746,6 +3748,57 @@ def save_gif(
     )
     # else:
     #     raise Exception(f'Unsupported backend {backend}')
+
+
+def save_webp(
+    array: Union[np.ndarray, List], 
+    path: str, 
+    frame_rate: float = 5.0, 
+    loop: int = 0, 
+    kwargs_backend: Dict = {},
+):
+    """
+    Saves an array of images as a lossless animated WebP. Unlike a GIF, which
+    holds at most 256 colors per frame, a lossless WebP keeps every pixel's
+    exact color.
+    RH 2026
+
+    Args:
+        array (Union[np.ndarray, list]):
+            The 3D (grayscale) or 4D (color) array of images. \n
+            * If dtype is ``float`` type, then scale is from 0 to 1.
+            * If dtype is ``int``, then scale is from 0 to 255.
+        path (str):
+            The path where the WebP is saved.
+        frame_rate (float):
+            The frame rate of the animation.
+        loop (int):
+            The number of times the animation plays. \n
+            * 0 means loop forever
+            * 1 means play once
+            * 2 means play twice
+            * etc.
+        kwargs_backend (Dict):
+            Keyword arguments for ``PIL.Image.save`` with the WebP writer.
+            They override the defaults, e.g. ``{'lossless': False,
+            'quality': 90}`` for a smaller, lossy file.
+    """
+    array = np.stack(array, axis=0) if isinstance(array, list) else array
+    array = grayscale_to_rgb(array) if array.ndim == 3 else array
+    if np.issubdtype(array.dtype, np.floating):
+        array = (array*255).astype('uint8')
+    from PIL import Image
+    frames = [Image.fromarray(array[i_frame]) for i_frame in range(array.shape[0])]
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    frames[0].save(
+        path, 
+        format='WEBP', 
+        append_images=frames[1:], 
+        save_all=True, 
+        duration=1000/frame_rate, 
+        loop=loop,
+        **{'lossless': True, **kwargs_backend},
+    )
 
 
 ######################################################################################################################################
