@@ -3869,3 +3869,64 @@ class Test_plot_quality_metrics:
         assert 'n_excluded: 0' in title
         assert 'n_included: 5' in title
         assert 'n_clusters: 3' in title
+
+
+@pytest.mark.parametrize('n_pixels, dtype_idx, n_workers', [(512 * 512, np.int32, 1), (2**33, np.int64, 1), (512 * 512, np.int32, -1)])
+def test_manhattan_similarity_index_dtypes(n_pixels, dtype_idx, n_workers):
+    """The spatial footprint similarity must work with int32 pixel indices
+    (typical FOVs) and int64 ones beyond int32 (FOVs over ~46k x 46k), with
+    one or all cores, and equal 1 - L1 on the normalized rows."""
+    from roicat.tracking.similarity_graph import ROI_graph, DEFAULT_METRICS
+    rng = np.random.default_rng(0)
+    n_roi, n_perRoi = 30, 40
+    idx_row = np.repeat(np.arange(n_roi), n_perRoi)  ## shape: (n_roi * n_perRoi,)
+    idx_col = rng.integers(n_pixels // 2, n_pixels, size=n_roi * n_perRoi, dtype=np.int64)
+    idx_col[::3] = idx_col[0]  ## shared pixels so some similarities are nonzero
+    sf = scipy.sparse.csr_array((rng.random(idx_col.size, dtype=np.float32), (idx_row, idx_col)), shape=(n_roi, n_pixels))
+    sf.sum_duplicates()
+    sf = scipy.sparse.csr_array((sf.data, sf.indices.astype(dtype_idx), sf.indptr.astype(dtype_idx)), shape=sf.shape)
+    assert sf.indices.dtype == dtype_idx
+
+    graph = ROI_graph(n_workers=n_workers, frame_height=1, frame_width=1, block_height=1, block_width=1, verbose=False)
+    graph._sf_maskPower = 1.0
+    s_sf = graph._compute_manhattan_similarity(spatialFootprints=sf, config=DEFAULT_METRICS[0])
+    assert isinstance(s_sf, scipy.sparse.csr_array)
+    assert s_sf.has_sorted_indices
+
+    ## Dense reference on the used columns only
+    _, idx_colUsed = np.unique(sf.indices, return_inverse=True)
+    x = scipy.sparse.csr_array((sf.data.astype(np.float64), idx_colUsed, sf.indptr), shape=(n_roi, idx_colUsed.max() + 1)).toarray()
+    x = 0.5 * x / x.sum(1, keepdims=True)  ## shape: (n_roi, n_colUsed)
+    s_ref = 1 - np.abs(x[:, None, :] - x[None, :, :]).sum(-1)  ## shape: (n_roi, n_roi)
+    s_ref[s_ref < 1e-5] = 0
+    np.fill_diagonal(s_ref, 0)
+    assert s_sf.nnz > 0
+    assert np.allclose(s_sf.toarray(), s_ref, atol=1e-6)
+
+
+@pytest.mark.parametrize('n_workers', [0, -2, 1.0])
+def test_roi_graph_invalid_n_workers_raises(n_workers):
+    from roicat.tracking.similarity_graph import ROI_graph
+    with pytest.raises(ValueError, match='n_workers'):
+        ROI_graph(n_workers=n_workers, frame_height=1, frame_width=1, block_height=1, block_width=1, verbose=False)
+
+
+def test_manhattan_similarity_kernel_cache_loads_in_new_process():
+    """A second Python process loads the compiled kernel from numba's cache.
+
+    A jitted function that captures another dispatcher from its enclosing
+    scope gets a new cache key in every process, so it recompiles and writes
+    a new cache file on every run.
+    """
+    import subprocess
+    import sys
+    code = (
+        "import numpy as np\n"
+        "from roicat.tracking.similarity_graph import _get_manhattan_similarity_kernel\n"
+        "k = _get_manhattan_similarity_kernel()\n"
+        "k(np.array([0, 1], np.int64), np.array([0.5]), np.array([0], np.int64), np.array([0, 1], np.int64),"
+        " np.array([0], np.int64), np.array([0.5]), np.array([0.5]), 1e-5)\n"
+        "print(sum(k.stats.cache_hits.values()))\n"
+    )
+    hits = [int(subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, check=True).stdout.strip().splitlines()[-1]) for _ in range(2)]
+    assert hits[1] == 1, f"cache hits per process: {hits}"
