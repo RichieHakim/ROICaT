@@ -454,16 +454,21 @@ class Preprocessor_ROI_images(util.ROICaT_Module):
             return np.nan_to_num(images_cat, nan=self.nan_to_num_val) if self.nan_to_num else images_cat
 
         print(f'Starting Image Resizer') if self._verbose else None
-        ## Each session gets its own scale factor, from its own um_per_pixel
-        return np.concatenate([
-            scale_normalize_ROI_images(
-                ROI_images=ROI_images[ii],
-                scale=self.get_scaleFactor(um_per_pixel=um_per_pixel[ii], size_im=ROI_images[ii].shape[1]),
+        ## Each session gets its own scale factor, from its own um_per_pixel.
+        ## One progress bar over all sessions' ROIs, not one bar per session.
+        progress_bar = tqdm(total=sum(len(ims) for ims in ROI_images), desc='Resizing ROIs', mininterval=5, disable=not self._verbose)
+        ROI_images_rs = []
+        for ims, um_per_pixel_session in zip(ROI_images, um_per_pixel):
+            ROI_images_rs.append(scale_normalize_ROI_images(
+                ROI_images=ims,
+                scale=self.get_scaleFactor(um_per_pixel=um_per_pixel_session, size_im=ims.shape[1]),
                 nan_to_num=self.nan_to_num,
                 nan_to_num_val=self.nan_to_num_val,
-                verbose=self._verbose,
-            ) for ii in range(len(ROI_images))
-        ], axis=0)
+                verbose=False,
+            ))
+            progress_bar.update(len(ims))
+        progress_bar.close()
+        return np.concatenate(ROI_images_rs, axis=0)
 
     def transform_images(self, ROI_images: Union[np.ndarray, torch.Tensor]) -> torch.Tensor:
         """
