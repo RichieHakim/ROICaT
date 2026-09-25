@@ -24,7 +24,7 @@ core = [
     "scikit-image==0.26.0",
     "pandas==3.0.6",
     "sparse==0.19.2",
-    "sparse_convolution==0.4.0",  ## Toeplitz convolution used by tracking/blurring.py.
+    "sparse_convolution==0.4.2",  ## Toeplitz convolution used by tracking/blurring.py.
     "numba==0.67.0",  ## roicat/tracking/clustering.py compiles two hot loops with @numba.njit.
     "torch==2.13.0",
     "torchvision==0.28.0",

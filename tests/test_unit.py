@@ -729,6 +729,38 @@ class Test_ROI_Blurrer:
 
         np.testing.assert_allclose(actual, expected, atol=1e-6)
 
+    @pytest.mark.parametrize(
+        "frame_shape,dtype_idx", [((512, 512), np.int32), ((50_000, 50_000), np.int64)],
+    )
+    def test_fov_size_invariance(self, frame_shape, dtype_idx):
+        """Blurring gives the same ROIs in small and >2**31-pixel FOVs."""
+        from roicat.tracking.blurring import ROI_Blurrer
+
+        ## Reference: ROIs in a 64x64 FOV, away from the edges
+        rng = np.random.default_rng(0)
+        x_ref = np.zeros((5, 64, 64), dtype=np.float32)  ## shape: (n_roi, H, W)
+        mask = rng.random((5, 10, 15)) > 0.5
+        x_ref[:, 20:30, 25:40] = rng.random((5, 10, 15)) * mask
+        blurrer_ref = ROI_Blurrer(frame_shape=(64, 64), kernel_halfWidth=4, verbose=False)
+        out_ref = blurrer_ref.blur_ROIs([scipy.sparse.csr_array(x_ref.reshape(5, -1))])[0]
+
+        ## Same ROIs shifted to the bottom-right corner of the test FOV
+        H, W = frame_shape
+        idx_roi, r, c = np.nonzero(x_ref)
+        x = scipy.sparse.csr_array(
+            (x_ref[idx_roi, r, c], (idx_roi, (r + H - 64) * np.int64(W) + c + W - 64)),
+            shape=(5, H * W),
+        )
+        blurrer = ROI_Blurrer(frame_shape=frame_shape, kernel_halfWidth=4, verbose=False)
+        out = blurrer.blur_ROIs([x])[0]
+        assert out.indices.dtype == dtype_idx
+
+        ## Shift back and compare
+        r_out, c_out = np.divmod(out.indices.astype(np.int64), W)
+        np.testing.assert_array_equal(np.diff(out.indptr), np.diff(out_ref.indptr))
+        np.testing.assert_array_equal((r_out - H + 64) * 64 + c_out - W + 64, out_ref.indices)
+        np.testing.assert_array_equal(out.data, out_ref.data)
+
     def test_max_intensity_projection(self):
         """get_ROIsBlurred_maxIntensityProjection returns correct shape."""
         from roicat.tracking.blurring import ROI_Blurrer
