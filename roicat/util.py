@@ -266,7 +266,7 @@ def get_default_parameters(
                 },
                 'pruning': {
                     'd_cutoff': None,  ## Optionally manually specify a distance cutoff
-                    'stringency': 1.0,  ## How to scale the d_cuttoff. This is a scalaing factor. Smaller numbers result in more pruning.
+                    'stringency': 1.0,  ## How to scale the d_cutoff. This is a scaling factor. Smaller numbers result in more pruning. Lowering it is a weak way to raise precision; filter ROIs by sample_silhouette instead.
                     'convert_to_probability': False,  ## Whether or not to convert the similarity matrix and distance matrix to a probability matrix
                 },
                 'cluster_method': {

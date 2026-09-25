@@ -3822,12 +3822,19 @@ class Test_plot_quality_metrics:
         matplotlib.use(backend_original)
 
     @staticmethod
-    def _quality_metrics():
-        """The three keys the function histograms. Values are arbitrary."""
+    def _quality_metrics(labels):
+        """
+        The keys the function reads, with the lengths
+        ``compute_quality_metrics`` gives for ``labels``: one cluster entry per
+        unique label, -1 included, and one sample entry per ROI. Values are
+        arbitrary. ``cluster_labels_unique`` is left out on purpose, to cover
+        hand-built dicts that lack it.
+        """
+        n_labels_unique = len(np.unique(np.asarray(labels)))
         return {
-            'cluster_silhouette': np.array([0.1, 0.6]),
-            'cluster_intra_means': np.array([0.4, 0.8]),
-            'sample_silhouette': np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]),
+            'cluster_silhouette': np.linspace(-0.5, 0.9, n_labels_unique),
+            'cluster_intra_means': np.linspace(0.3, 0.9, n_labels_unique),
+            'sample_silhouette': np.linspace(-0.5, 0.9, len(labels)),
         }
 
     @staticmethod
@@ -3836,7 +3843,7 @@ class Test_plot_quality_metrics:
         from roicat.tracking.clustering import plot_quality_metrics
 
         fig, _ = plot_quality_metrics(
-            quality_metrics=Test_plot_quality_metrics._quality_metrics(),
+            quality_metrics=Test_plot_quality_metrics._quality_metrics(labels),
             labels=labels,
             n_sessions=2,
         )
@@ -3869,3 +3876,201 @@ class Test_plot_quality_metrics:
         assert 'n_excluded: 0' in title
         assert 'n_included: 5' in title
         assert 'n_clusters: 3' in title
+
+
+class Test_plot_quality_metrics_panels:
+    """
+    The 2x3 layout of ``plot_quality_metrics``: input types, missing and NaN
+    metrics, label-based mapping of cluster values to ROIs, and the
+    fraction-kept curves.
+    """
+
+    ## Three sessions with 4, 3, and 3 ROIs. Cluster 0 spans all three
+    ## sessions, cluster 1 sessions 0 and 1, cluster 2 sessions 0 and 2.
+    N_ROI_BYSESSION = [4, 3, 3]
+    LABELS = [0, 1, 2, -1,  0, 1, -1,  0, 2, -1]
+
+    @pytest.fixture(autouse=True)
+    def _headless_backend(self):
+        import matplotlib
+        import matplotlib.pyplot as plt
+        backend_original = matplotlib.get_backend()
+        matplotlib.use('Agg')
+        yield
+        plt.close('all')
+        matplotlib.use(backend_original)
+
+    @staticmethod
+    def _computed_quality_metrics(labels, return_as_numpy=False):
+        """Real ``compute_quality_metrics`` output on a small graph where ROIs
+        in the same cluster are similar and all others are weakly similar."""
+        from roicat.tracking.clustering import Clusterer
+
+        labels = np.asarray(labels)
+        rng = np.random.default_rng(0)
+        is_same = (labels[:, None] == labels[None, :]) & (labels[:, None] != -1)
+        sim_dense = np.where(is_same, 0.8, 0.1) + rng.uniform(0, 0.1, size=(len(labels), len(labels)))
+        sim_dense = (sim_dense + sim_dense.T) / 2
+        np.fill_diagonal(sim_dense, 0)
+        sim = scipy.sparse.csr_array(sim_dense.astype(np.float32))
+        dist = sim.copy()
+        dist.data = 1.0 - dist.data
+
+        clusterer = object.__new__(Clusterer)
+        return clusterer.compute_quality_metrics(
+            sim_mat=sim,
+            dist_mat=dist,
+            labels=labels,
+            return_as_numpy=return_as_numpy,
+        )
+
+    @staticmethod
+    def _plot(quality_metrics, labels, n_roi_bySession=None):
+        from roicat.tracking.clustering import plot_quality_metrics
+        return plot_quality_metrics(
+            quality_metrics=quality_metrics,
+            labels=labels,
+            n_sessions=3,
+            n_roi_bySession=n_roi_bySession,
+        )
+
+    @staticmethod
+    def _curves(axs):
+        """The fraction-kept curves, keyed by their legend label."""
+        return {line.get_label(): (np.asarray(line.get_xdata()), np.asarray(line.get_ydata())) for line in axs[1, 1].get_lines()}
+
+    @staticmethod
+    def _texts(ax):
+        return [t.get_text() for t in ax.texts]
+
+    @pytest.mark.parametrize('return_as_numpy', [False, True])
+    def test_real_metrics_as_lists_and_arrays(self, return_as_numpy):
+        """The pipeline passes JSON lists with float cluster labels. Arrays
+        must give the same curves."""
+        quality_metrics = self._computed_quality_metrics(labels=self.LABELS, return_as_numpy=return_as_numpy)
+        assert isinstance(quality_metrics['cluster_silhouette'], np.ndarray if return_as_numpy else list)
+        assert -1 in list(quality_metrics['cluster_labels_unique'])
+
+        fig, axs = self._plot(
+            quality_metrics=quality_metrics,
+            labels=util.JSON_List(self.LABELS) if not return_as_numpy else np.array(self.LABELS),
+            n_roi_bySession=self.N_ROI_BYSESSION,
+        )
+        assert axs.shape == (2, 3)
+        assert set(self._curves(axs)) == {'sample_silhouette > cutoff', 'cluster_silhouette > cutoff'}
+
+        ## Three clusters, so the -1 entry must not reach the cluster histogram.
+        assert sum(p.get_height() for p in axs[0, 0].patches) == 3
+
+    def test_sample_probabilities_None(self):
+        """Single-linkage and Hungarian clustering give no HDBSCAN outputs."""
+        quality_metrics = self._computed_quality_metrics(labels=self.LABELS)
+        assert quality_metrics['sample_probabilities'] is None
+        assert quality_metrics['hdbscan'] is None
+        fig, axs = self._plot(quality_metrics=quality_metrics, labels=self.LABELS)
+        assert len(self._curves(axs)) == 2
+
+    def test_fraction_clustered_bySession_given(self):
+        quality_metrics = self._computed_quality_metrics(labels=self.LABELS)
+        fig, axs = self._plot(quality_metrics=quality_metrics, labels=self.LABELS, n_roi_bySession=self.N_ROI_BYSESSION)
+        heights = [p.get_height() for p in axs[1, 2].patches]
+        np.testing.assert_allclose(heights, [3 / 4, 2 / 3, 2 / 3])
+        assert self._texts(axs[1, 2]) == []
+
+    def test_fraction_clustered_bySession_omitted(self):
+        """Without per-session counts the panel shows a note and no bars."""
+        quality_metrics = self._computed_quality_metrics(labels=self.LABELS)
+        fig, axs = self._plot(quality_metrics=quality_metrics, labels=self.LABELS)
+        assert len(axs[1, 2].patches) == 0
+        assert any('n_roi_bySession' in t for t in self._texts(axs[1, 2]))
+
+    def test_n_roi_bySession_must_sum_to_n_roi(self):
+        quality_metrics = self._computed_quality_metrics(labels=self.LABELS)
+        with pytest.raises(AssertionError):
+            self._plot(quality_metrics=quality_metrics, labels=self.LABELS, n_roi_bySession=[4, 3, 2])
+
+    def test_fraction_kept_monotone_and_one_at_minus_one(self):
+        quality_metrics = self._computed_quality_metrics(labels=self.LABELS)
+        fig, axs = self._plot(quality_metrics=quality_metrics, labels=self.LABELS)
+        for name, (x, y) in self._curves(axs).items():
+            assert x[0] == -1, name
+            assert y[0] == 1, name
+            assert np.all(np.diff(y) <= 0), name
+            assert np.all((y >= 0) & (y <= 1)), name
+
+    def test_cluster_values_are_mapped_by_label(self):
+        """
+        The cluster curve must not depend on whether ``cluster_labels_unique``
+        holds -1, and must follow labels, not positions. Labels 5 and 9 are
+        non-contiguous and listed out of order.
+        """
+        labels = [5, 5, 9, 9, 9, -1]
+        sample_silhouette = [0.5, 0.5, 0.5, 0.5, 0.5, -0.9]
+        quality_metrics_with_noise = {
+            'cluster_labels_unique': [-1.0, 9.0, 5.0],
+            'cluster_silhouette': [-0.9, 0.8, 0.2],
+            'cluster_intra_means': [0.0, 0.9, 0.5],
+            'sample_silhouette': sample_silhouette,
+        }
+        quality_metrics_without_noise = {
+            'cluster_labels_unique': [5, 9],
+            'cluster_silhouette': [0.2, 0.8],
+            'cluster_intra_means': [0.5, 0.9],
+            'sample_silhouette': sample_silhouette,
+        }
+        curves = []
+        for quality_metrics in [quality_metrics_with_noise, quality_metrics_without_noise]:
+            fig, axs = self._plot(quality_metrics=quality_metrics, labels=labels)
+            curves.append(self._curves(axs)['cluster_silhouette > cutoff'])
+        np.testing.assert_array_equal(curves[0][1], curves[1][1])
+
+        ## Between 0.2 and 0.8 only the 3 ROIs of cluster 9 survive, out of 5
+        ## clustered ROIs.
+        x, y = curves[0]
+        np.testing.assert_allclose(y[(x > 0.2) & (x < 0.8)], 3 / 5)
+
+    def test_label_missing_from_metrics_raises(self):
+        quality_metrics = {
+            'cluster_labels_unique': [0, 1],
+            'cluster_silhouette': [0.1, 0.2],
+            'cluster_intra_means': [0.5, 0.6],
+            'sample_silhouette': None,
+        }
+        with pytest.raises(AssertionError, match='cluster_labels_unique'):
+            self._plot(quality_metrics=quality_metrics, labels=[0, 0, 2, 2])
+
+    def test_nan_in_cluster_silhouette(self):
+        """A NaN cluster is left out of the histogram with a note, and its
+        ROIs fail every cutoff in the fraction-kept panel."""
+        labels = [0, 0, 1, 1, 2, 2, -1]
+        quality_metrics = {
+            'cluster_labels_unique': [-1, 0, 1, 2],
+            'cluster_silhouette': [-0.5, 0.4, np.nan, 0.6],
+            'cluster_intra_means': [0.0, 0.7, np.nan, 0.8],
+            'sample_silhouette': [0.3, 0.3, 0.2, 0.2, 0.5, 0.5, -0.8],
+        }
+        fig, axs = self._plot(quality_metrics=quality_metrics, labels=labels)
+        assert sum(p.get_height() for p in axs[0, 0].patches) == 2
+        assert axs[0, 0].get_title(loc='right') == '1 NaN not shown'
+        assert axs[0, 1].get_title(loc='right') == '1 NaN not shown'
+
+        x, y = self._curves(axs)['cluster_silhouette > cutoff']
+        assert y[0] == pytest.approx(4 / 6)
+        assert np.all(np.diff(y) <= 0)
+
+    def test_all_ROIs_unclustered(self):
+        """compute_quality_metrics then returns only the -1 entry and no
+        sample silhouette. Every panel must still draw."""
+        labels = [-1] * 10
+        with pytest.warns(UserWarning, match='at least 2'):
+            quality_metrics = self._computed_quality_metrics(labels=labels)
+        assert quality_metrics['cluster_labels_unique'] == [-1.0]
+        assert quality_metrics['sample_silhouette'] is None
+
+        fig, axs = self._plot(quality_metrics=quality_metrics, labels=util.JSON_List(labels), n_roi_bySession=self.N_ROI_BYSESSION)
+        assert self._curves(axs) == {}
+        assert any('no clustered ROIs' in t for t in self._texts(axs[1, 1]))
+        assert any('not computed' in t for t in self._texts(axs[1, 0]))
+        assert [p.get_height() for p in axs[1, 2].patches] == [0, 0, 0]
+        assert 'n_excluded: 10' in fig.get_suptitle()
+        assert 'n_clusters: 0' in fig.get_suptitle()
