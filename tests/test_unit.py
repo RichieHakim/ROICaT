@@ -12,6 +12,8 @@ To run the tests, use the command (in a terminal):
 
 from pathlib import Path
 
+import concurrent.futures
+import os
 import warnings
 import pytest
 
@@ -653,6 +655,85 @@ class Test_flatten_dict:
 ######################################################################################################################################
 
 
+class Test_save_webp:
+    """Tests for helpers.save_webp."""
+
+    def test_roundtrip_is_lossless(self, tmp_path):
+        """Float color and uint8 grayscale frames come back pixel-exact, with the frame rate and loop count."""
+        from PIL import Image
+        rng = np.random.default_rng(0)
+        frames_color = rng.random((3, 40, 50, 3))  ## float, scale 0 to 1
+        frames_gray = rng.integers(0, 256, (3, 40, 50), dtype=np.uint8)
+        cases = [
+            (frames_color, (frames_color * 255).astype(np.uint8)),
+            (list(frames_gray), np.repeat(frames_gray[..., None], 3, axis=-1)),  ## grayscale is saved as RGB
+        ]
+        for i_case, (frames, expected) in enumerate(cases):
+            path = str(tmp_path / f'case_{i_case}' / 'anim.webp')  ## parent directory is created
+            helpers.save_webp(array=frames, path=path, frame_rate=4.0, loop=2)
+            with Image.open(path) as im:
+                assert im.n_frames == 3
+                assert im.info['loop'] == 2
+                for i_frame in range(3):
+                    im.seek(i_frame)
+                    np.testing.assert_array_equal(np.asarray(im.convert('RGB')), expected[i_frame])
+                    assert im.info['duration'] == 250  ## set once the frame is decoded
+
+
+
+class Test_display_toggle_image_stack:
+    """Tests for visualization.display_toggle_image_stack."""
+
+    @staticmethod
+    def _render(monkeypatch, images, **kwargs):
+        """Run the function as if in a notebook. Returns the slider HTML and its decoded frames."""
+        import base64
+        import io
+        import re
+        import sys
+        import types
+        import IPython.display
+        from PIL import Image
+        from roicat import visualization
+        htmls = []
+        monkeypatch.setitem(sys.modules, 'ipykernel', sys.modules.get('ipykernel', types.ModuleType('ipykernel')))
+        monkeypatch.setattr(IPython.display, 'display', lambda obj: htmls.append(obj.data))
+        visualization.display_toggle_image_stack(images, **kwargs)
+        b64s = re.findall(r"'([A-Za-z0-9+/=]+)'", re.search(r"let base64_images = (\[.*?\]);", htmls[0], re.S).group(1))
+        return htmls[0], [Image.open(io.BytesIO(base64.b64decode(b))) for b in b64s]
+
+    def test_frames_are_native_size_and_browser_scales(self, monkeypatch):
+        """Non-square frames keep their native shape; the display box is (height, width) scaled."""
+        rng = np.random.default_rng(0)
+        images_gray = list(rng.random((2, 30, 50)))  ## (height, width)
+        images_rgb = list(rng.random((2, 30, 50, 3)))
+        cases = [
+            (images_gray, {'image_size': 2.0}, 'pixelated'),
+            (images_rgb, {'image_size': (60, 100), 'interpolation': 'bilinear'}, 'auto'),
+        ]
+        for images, kwargs, rendering in cases:
+            html, frames = self._render(monkeypatch, images, **kwargs)
+            assert len(frames) == 2
+            assert all((f.format == 'WEBP') and (f.size == (50, 30)) for f in frames)  ## PIL size is (width, height)
+            assert f'width: 100px; height: 60px; image-rendering: {rendering};' in html
+            assert ('image/png' not in html) and (html.count('data:image/webp;base64,') == 2)
+
+    def test_lossless_by_default(self, monkeypatch):
+        """By default the normalized frames are embedded exactly; a quality makes them lossy."""
+        image = np.arange(30 * 50, dtype=np.float64).reshape(30, 50)
+        expected = ((image - image.min()) / (image.max() - image.min()) * 255).astype(np.uint8)
+        _, frames = self._render(monkeypatch, [image])
+        np.testing.assert_array_equal(np.asarray(frames[0].convert('L')), expected)
+        _, frames_lossy = self._render(monkeypatch, [image], quality=50)
+        assert not np.array_equal(np.asarray(frames_lossy[0].convert('L')), expected)
+
+    def test_invalid_inputs_raise(self, monkeypatch):
+        with pytest.raises(ValueError, match='quality'):
+            self._render(monkeypatch, [np.zeros((4, 4))], quality=101)
+        with pytest.raises(ValueError, match='16383'):
+            self._render(monkeypatch, [np.zeros((1, 16384))])
+
+
 class Test_ROI_Blurrer:
     """Tests for ROI_Blurrer using sparse_convolution library."""
 
@@ -735,6 +816,38 @@ class Test_ROI_Blurrer:
         actual = blurrer.ROIs_blurred[0].toarray().reshape(32, 32)
 
         np.testing.assert_allclose(actual, expected, atol=1e-6)
+
+    @pytest.mark.parametrize(
+        "frame_shape,dtype_idx", [((512, 512), np.int32), ((50_000, 50_000), np.int64)],
+    )
+    def test_fov_size_invariance(self, frame_shape, dtype_idx):
+        """Blurring gives the same ROIs in small and >2**31-pixel FOVs."""
+        from roicat.tracking.blurring import ROI_Blurrer
+
+        ## Reference: ROIs in a 64x64 FOV, away from the edges
+        rng = np.random.default_rng(0)
+        x_ref = np.zeros((5, 64, 64), dtype=np.float32)  ## shape: (n_roi, H, W)
+        mask = rng.random((5, 10, 15)) > 0.5
+        x_ref[:, 20:30, 25:40] = rng.random((5, 10, 15)) * mask
+        blurrer_ref = ROI_Blurrer(frame_shape=(64, 64), kernel_halfWidth=4, verbose=False)
+        out_ref = blurrer_ref.blur_ROIs([scipy.sparse.csr_array(x_ref.reshape(5, -1))])[0]
+
+        ## Same ROIs shifted to the bottom-right corner of the test FOV
+        H, W = frame_shape
+        idx_roi, r, c = np.nonzero(x_ref)
+        x = scipy.sparse.csr_array(
+            (x_ref[idx_roi, r, c], (idx_roi, (r + H - 64) * np.int64(W) + c + W - 64)),
+            shape=(5, H * W),
+        )
+        blurrer = ROI_Blurrer(frame_shape=frame_shape, kernel_halfWidth=4, verbose=False)
+        out = blurrer.blur_ROIs([x])[0]
+        assert out.indices.dtype == dtype_idx
+
+        ## Shift back and compare
+        r_out, c_out = np.divmod(out.indices.astype(np.int64), W)
+        np.testing.assert_array_equal(np.diff(out.indptr), np.diff(out_ref.indptr))
+        np.testing.assert_array_equal((r_out - H + 64) * 64 + c_out - W + 64, out_ref.indices)
+        np.testing.assert_array_equal(out.data, out_ref.data)
 
     def test_max_intensity_projection(self):
         """get_ROIsBlurred_maxIntensityProjection returns correct shape."""
@@ -1271,6 +1384,22 @@ class Test__find_optimal_parameters_DE:
             clusterer_with_data._find_optimal_parameters_DE(
                 seed=42, de_kwargs={'maxiter': 1, 'popsize': 5, 'workers': 0},
             )
+
+    def test_workers_omitted_uses_all_cores(self, clusterer_with_data, monkeypatch):
+        """A ``de_kwargs`` without ``workers`` still runs on all available cores."""
+        maxWorkers_used = []
+
+        class ThreadPoolExecutor_recording(concurrent.futures.ThreadPoolExecutor):
+            def __init__(self, max_workers=None, **kwargs):
+                maxWorkers_used.append(max_workers)
+                super().__init__(max_workers=max_workers, **kwargs)
+
+        monkeypatch.setattr(concurrent.futures, 'ThreadPoolExecutor', ThreadPoolExecutor_recording)
+        clusterer_with_data._find_optimal_parameters_DE(
+            seed=42, de_kwargs={'maxiter': 1, 'popsize': 5, 'polish': False},
+        )
+        n_cores = len(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else os.cpu_count()
+        assert maxWorkers_used == [n_cores]
 
     def test_loss_history(self, clusterer_with_data):
         """One best loss per generation, ending at the returned loss."""

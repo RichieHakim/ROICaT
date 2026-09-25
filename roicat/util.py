@@ -298,7 +298,7 @@ def get_default_parameters(
                 'dir_save': None,  ## Directory to save results to. If None, will not save.
                 'prefix_name_save': str(datetime.datetime.now().strftime("%Y%m%d_%H%M%S")),  ## Prefix to append to the saved files
                 'richfile_backend': 'zip',  ## Backend for saving richfile data. Options: 'directory', 'sqlar', 'zip' (default), 'tar'. Archive backends produce a single file instead of a directory tree.
-                'gif_frame_rate': 10.0 ## Frame rate for any GIFs saved
+                'frame_rate': 5.0 ## Frame rate for the saved animations
             },
         }
 
