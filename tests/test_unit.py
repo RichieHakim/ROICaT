@@ -384,6 +384,15 @@ class Test_Equivalence_checker:
         sb = (s != 0).astype(bool)
         assert checker(sb, sb)[0] == True
 
+    def test_sparse_bool_different(self):
+        """Differing boolean sparse arrays report a mismatch instead of raising TypeError on subtraction."""
+        checker = helpers.Equivalence_checker()
+        s1 = scipy.sparse.csr_array(np.array([[0, 1, 1], [1, 0, 0]], dtype=bool))
+        s2 = scipy.sparse.csr_array(np.array([[0, 1, 0], [1, 0, 1]], dtype=bool))
+        result = checker(s1, s2)
+        assert result[0] == False
+        assert 'n_mismatches=2' in result[1]
+
     def test_sparse_in_nested_dict(self):
         checker = helpers.Equivalence_checker()
         s = scipy.sparse.random_array((10, 10), density=0.5, format='csr', rng=0)

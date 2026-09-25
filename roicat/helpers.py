@@ -6516,6 +6516,9 @@ class Equivalence_checker():
         ## whole sparse matrix into a dense one.
         test_vals = np.asarray(test_csr[rows, cols]).reshape(-1)
         true_vals = np.asarray(true_csr[rows, cols]).reshape(-1)
+        ## Cast booleans to int to avoid TypeError on subtraction in NumPy 2.0
+        test_vals = test_vals.astype(int) if np.issubdtype(test_vals.dtype, bool) else test_vals
+        true_vals = true_vals.astype(int) if np.issubdtype(true_vals.dtype, bool) else true_vals
 
         kwargs = {
             'rtol': self._kwargs_allclose.get('rtol', 1e-7),
