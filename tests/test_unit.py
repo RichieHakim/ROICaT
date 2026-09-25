@@ -4074,3 +4074,246 @@ class Test_plot_quality_metrics_panels:
         assert [p.get_height() for p in axs[1, 2].patches] == [0, 0, 0]
         assert 'n_excluded: 10' in fig.get_suptitle()
         assert 'n_clusters: 0' in fig.get_suptitle()
+
+
+class Test_plot_session_match_fraction:
+    """
+    The match-fraction matrix and the mean over session pairs at each gap,
+    on a case small enough to compute by hand.
+    """
+
+    ## Four sessions. Cluster 0 spans sessions 0, 1, and 3; cluster 1
+    ## sessions 0 and 1; cluster 2 sessions 0 and 3. Session 2 has no
+    ## clustered ROIs.
+    LABELS_BYSESSION = [[0, 1, 2, -1], [0, 1, -1], [-1, -1], [0, 2]]
+    ## Entry (i, j): fraction of session i's ROIs whose cluster holds an ROI
+    ## of session j, out of all of session i's ROIs.
+    MATCH_FRACTION = np.array([
+        [np.nan, 2 / 4,  0,      2 / 4],
+        [2 / 3,  np.nan, 0,      1 / 3],
+        [0,      0,      np.nan, 0    ],
+        [2 / 2,  1 / 2,  0,      np.nan],
+    ])
+
+    @pytest.fixture(autouse=True)
+    def _headless_backend(self):
+        import matplotlib
+        import matplotlib.pyplot as plt
+        backend_original = matplotlib.get_backend()
+        matplotlib.use('Agg')
+        yield
+        plt.close('all')
+        matplotlib.use(backend_original)
+
+    @staticmethod
+    def _plot(labels_bySession):
+        from roicat.visualization import plot_session_match_fraction
+        fig, axs = plot_session_match_fraction(labels_bySession=labels_bySession)
+        match_fraction = np.ma.filled(np.ma.asarray(axs[0].images[0].get_array(), dtype=np.float64), np.nan)
+        return fig, axs, match_fraction
+
+    def test_hand_computed_matrix(self):
+        fig, axs, match_fraction = self._plot(self.LABELS_BYSESSION)
+        assert axs.shape == (2,)
+        np.testing.assert_allclose(match_fraction, self.MATCH_FRACTION)
+
+    def test_hand_computed_mean_by_gap(self):
+        """Mean over both orders of each session pair at each gap."""
+        fig, axs, _ = self._plot(self.LABELS_BYSESSION)
+        (line,) = axs[1].get_lines()
+        np.testing.assert_allclose(line.get_xdata(), [1, 2, 3])
+        np.testing.assert_allclose(
+            line.get_ydata(),
+            [
+                (2 / 4 + 2 / 3 + 0 + 0 + 0 + 0) / 6,  ## gap 1: (0, 1), (1, 0), (1, 2), (2, 1), (2, 3), (3, 2)
+                (0 + 0 + 1 / 3 + 1 / 2) / 4,  ## gap 2: (0, 2), (2, 0), (1, 3), (3, 1)
+                (2 / 4 + 2 / 2) / 2,  ## gap 3: (0, 3), (3, 0)
+            ],
+        )
+
+    @pytest.mark.parametrize('container', ['list', 'arrays', 'JSON_List'])
+    def test_lists_and_arrays(self, container):
+        labels_bySession = {
+            'list': self.LABELS_BYSESSION,
+            'arrays': [np.array(labels) for labels in self.LABELS_BYSESSION],
+            'JSON_List': util.JSON_List(self.LABELS_BYSESSION),
+        }[container]
+        _, _, match_fraction = self._plot(labels_bySession)
+        np.testing.assert_allclose(match_fraction, self.MATCH_FRACTION)
+
+    def test_session_without_ROIs(self):
+        """Its row is blank. No cluster holds one of its ROIs, so its column is 0."""
+        _, _, match_fraction = self._plot([[0, 1], [], [0, 1]])
+        np.testing.assert_allclose(match_fraction, [[np.nan, 0, 1], [np.nan, np.nan, np.nan], [1, 0, np.nan]])
+
+    def test_all_ROIs_unclustered(self):
+        _, _, match_fraction = self._plot([[-1, -1], [-1]])
+        np.testing.assert_allclose(match_fraction, [[np.nan, 0], [0, np.nan]])
+
+    def test_one_session_raises(self):
+        with pytest.raises(AssertionError, match='at least 2 sessions'):
+            self._plot([[0, 1, -1]])
+
+
+class Test_compute_colored_FOV_metric:
+    """
+    ROI colors follow their values, NaN values are drawn in ``color_invalid``,
+    and each image is the FOV with a color scale below it.
+    """
+
+    FOV_HEIGHT, FOV_WIDTH = 20, 30
+
+    @classmethod
+    def _footprints(cls, n_roi_bySession):
+        """
+        One ROI per 3 x 3 block, placed in a row along the top of the FOV. The
+        center pixel has intensity 2 and the others 1, so after scaling to a
+        peak of 1 the center is 1 and the others 0.5.
+        """
+        spatialFootprints = []
+        for n_roi in n_roi_bySession:
+            footprints = np.zeros((n_roi, cls.FOV_HEIGHT, cls.FOV_WIDTH), dtype=np.float32)
+            for i_roi in range(n_roi):
+                footprints[i_roi, 1:4, 1 + 4 * i_roi:4 + 4 * i_roi] = 1.0
+                footprints[i_roi, 2, 2 + 4 * i_roi] = 2.0
+            spatialFootprints.append(scipy.sparse.csr_array(footprints.reshape(n_roi, cls.FOV_HEIGHT * cls.FOV_WIDTH)))
+        return spatialFootprints
+
+    @classmethod
+    def _frames(cls, n_roi_bySession, values, **kwargs):
+        from roicat.visualization import compute_colored_FOV_metric
+        return compute_colored_FOV_metric(
+            spatialFootprints=cls._footprints(n_roi_bySession),
+            FOV_height=cls.FOV_HEIGHT,
+            FOV_width=cls.FOV_WIDTH,
+            values=values,
+            **kwargs,
+        )
+
+    @staticmethod
+    def _center(frame, i_roi):
+        return frame[2, 2 + 4 * i_roi]
+
+    def test_shapes(self):
+        frames = self._frames(n_roi_bySession=[3, 2], values=[-1, 0, 1, 0.5, np.nan])
+        assert len(frames) == 2
+        for frame in frames:
+            assert frame.ndim == 3 and frame.shape[2] == 3
+            assert frame.shape[1] == self.FOV_WIDTH
+            assert frame.shape[0] > self.FOV_HEIGHT, 'the color scale is added below the FOV'
+            assert frame.min() >= 0 and frame.max() <= 1
+        ## The color scale is the same on every frame and is not blank
+        np.testing.assert_array_equal(frames[0][self.FOV_HEIGHT:], frames[1][self.FOV_HEIGHT:])
+        assert frames[0][self.FOV_HEIGHT:].max() > 0
+
+    def test_color_follows_value(self):
+        import matplotlib.pyplot as plt
+        cmap = plt.get_cmap('plasma_r')
+        values = [-1.0, 0.0, 0.5, 1.0, 3.0, -7.0]  ## the last two are clipped to vmax and vmin
+        frames = self._frames(n_roi_bySession=[6], values=values, cmap=cmap, vmin=-1.0, vmax=1.0)
+        for i_roi, value in enumerate(values):
+            expected = cmap((np.clip(value, -1, 1) + 1) / 2)[:3]
+            np.testing.assert_allclose(self._center(frames[0], i_roi), expected, atol=1e-6)
+        ## Pixels at half the peak intensity get half the color
+        np.testing.assert_allclose(frames[0][1, 1], np.array(cmap(0.0)[:3]) * 0.5, atol=1e-6)
+
+    def test_vmin_vmax(self):
+        import matplotlib.pyplot as plt
+        frames = self._frames(n_roi_bySession=[2], values=[0.0, 0.25], cmap='viridis', vmin=0.0, vmax=0.5)
+        np.testing.assert_allclose(self._center(frames[0], 0), plt.get_cmap('viridis')(0.0)[:3], atol=1e-6)
+        np.testing.assert_allclose(self._center(frames[0], 1), plt.get_cmap('viridis')(0.5)[:3], atol=1e-6)
+
+    def test_nan_is_drawn_in_color_invalid(self):
+        color_invalid = (0.3, 0.3, 0.3)
+        frames = self._frames(n_roi_bySession=[2, 1], values=[np.nan, 0.5, np.nan], color_invalid=color_invalid)
+        np.testing.assert_allclose(self._center(frames[0], 0), color_invalid, atol=1e-6)
+        np.testing.assert_allclose(self._center(frames[1], 0), color_invalid, atol=1e-6)
+        assert not np.allclose(self._center(frames[0], 1), color_invalid)
+
+    def test_each_session_draws_only_its_ROIs(self):
+        """Session 1 has one ROI, so the second ROI position stays black."""
+        frames = self._frames(n_roi_bySession=[2, 1], values=[0.5, 0.5, 0.5])
+        assert self._center(frames[0], 1).max() > 0
+        np.testing.assert_array_equal(self._center(frames[1], 1), 0)
+
+    def test_session_without_ROIs_is_black(self):
+        frames = self._frames(n_roi_bySession=[2, 0, 1], values=[0.5, 0.5, 0.5])
+        assert len(frames) == 3
+        np.testing.assert_array_equal(frames[1][:self.FOV_HEIGHT], 0)
+
+    def test_values_as_list_and_array(self):
+        values = [-0.5, 0.2, np.nan]
+        frames_list = self._frames(n_roi_bySession=[3], values=values)
+        frames_array = self._frames(n_roi_bySession=[3], values=np.array(values))
+        np.testing.assert_array_equal(frames_list[0], frames_array[0])
+
+    def test_wrong_number_of_values_raises(self):
+        with pytest.raises(AssertionError, match='values must have shape'):
+            self._frames(n_roi_bySession=[3, 2], values=[0.1, 0.2, 0.3, 0.4])
+
+    def test_session_number_can_be_drawn(self):
+        """The pipeline draws the session number on these images with
+        helpers.add_text_to_images."""
+        frames = self._frames(n_roi_bySession=[2, 1], values=[0.5, -0.5, np.nan])
+        images = helpers.add_text_to_images(
+            images=[(f * 255).astype(np.uint8) for f in frames],
+            text=[[f"{ii}",] for ii in range(len(frames))],
+            font_size=1,  ## an integer, because the text position is computed from it
+            line_width=1,
+            position=(10, 10),
+        )
+        assert len(images) == 2
+        assert images[0].shape == frames[0].shape
+
+
+class Test_add_text_to_images:
+    """
+    ``cv2.putText`` draws in place and needs a contiguous array. The helper
+    draws on one channel at a time, and a channel of a C-ordered (H, W, 3)
+    frame is a strided view, which used to raise a cv2 error. Frames stored
+    channel-first in memory, as ``compute_colored_FOV`` returns them, must give
+    the same result as before.
+    """
+
+    KWARGS = dict(text=[['0'], ['12']], position=(5, 30), font_size=1, color=(255, 255, 255), line_width=2)
+
+    @staticmethod
+    def _frames():
+        rng = np.random.default_rng(0)
+        return [rng.integers(0, 50, size=(40, 60, 3), dtype=np.uint8) for _ in range(2)]
+
+    @staticmethod
+    def _reference(frames):
+        """Draw directly on each contiguous channel, as the helper did before
+        the fix for channel-first frames."""
+        import cv2
+        out = []
+        for frame, text in zip(frames, Test_add_text_to_images.KWARGS['text']):
+            frame_channelFirst = np.ascontiguousarray(frame.transpose(2, 0, 1))  ## shape: (3, H, W)
+            for channel in frame_channelFirst:
+                cv2.putText(channel, text[0], [5, 30], cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            out.append(frame_channelFirst.transpose(1, 2, 0))
+        return out
+
+    def test_C_contiguous_frames(self):
+        frames = self._frames()
+        assert all(f.flags['C_CONTIGUOUS'] for f in frames)
+        out = helpers.add_text_to_images(images=frames, **self.KWARGS)
+        for frame_in, frame_out, frame_ref in zip(frames, out, self._reference(frames)):
+            assert frame_out.shape == frame_in.shape
+            assert np.any(frame_out != frame_in), 'no text was drawn'
+            np.testing.assert_array_equal(frame_out, frame_ref)
+
+    def test_channel_first_frames(self):
+        frames = [np.ascontiguousarray(f.transpose(2, 0, 1)).transpose(1, 2, 0) for f in self._frames()]  ## (H, W, 3) views of (3, H, W) arrays
+        assert not any(f.flags['C_CONTIGUOUS'] for f in frames)
+        out = helpers.add_text_to_images(images=frames, **self.KWARGS)
+        for frame_out, frame_ref in zip(out, self._reference(self._frames())):
+            np.testing.assert_array_equal(frame_out, frame_ref)
+
+    def test_input_is_not_modified(self):
+        frames = self._frames()
+        frames_copy = [f.copy() for f in frames]
+        helpers.add_text_to_images(images=frames, **self.KWARGS)
+        for f, f_copy in zip(frames, frames_copy):
+            np.testing.assert_array_equal(f, f_copy)

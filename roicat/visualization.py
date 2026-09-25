@@ -279,6 +279,210 @@ def compute_colored_FOV(
     return rois_c_bySessions_FOV
 
 
+def compute_colored_FOV_metric(
+    spatialFootprints: List[scipy.sparse.csr_array],
+    FOV_height: int,
+    FOV_width: int,
+    values: Union[np.ndarray, List[float]],
+    cmap: Union[str, object] = 'plasma_r',
+    vmin: float = -1.0,
+    vmax: float = 1.0,
+    color_invalid: Tuple[float, float, float] = (0.35, 0.35, 0.35),
+) -> List[np.ndarray]:
+    """
+    Computes one image per session of the field of view (FOV), with each ROI
+    colored by a value such as its ``sample_silhouette``. A color scale
+    labeled at ``vmin``, 0, and ``vmax`` is added below each FOV.
+    RH 2026
+
+    ROIs are drawn as in ``compute_colored_FOV``. Each ROI is scaled to a peak
+    of 1 and its color is weighted by the footprint intensity. Each pixel takes
+    the maximum over ROIs, one color channel at a time, so the colors of
+    overlapping ROIs mix.
+
+    Args:
+        spatialFootprints (List[scipy.sparse.csr_array]):
+            Spatial footprints, one sparse array per session. (shape of each:
+            *(n_roi_session, FOV_height * FOV_width)*)
+        FOV_height (int):
+            Height of the field of view.
+        FOV_width (int):
+            Width of the field of view.
+        values (Union[np.ndarray, List[float]]):
+            Value of each ROI, concatenated across sessions. ROIs with a NaN
+            value are drawn in ``color_invalid``. To grey out other ROIs, such
+            as unclustered ones, set their values to NaN. (shape:
+            *(n_roi_total,)*)
+        cmap (Union[str, object]):
+            A matplotlib colormap or its name. The default, ``'plasma_r'``,
+            draws low values in bright yellow and high values in dark
+            purple, so on the black background low values stand out most.
+            (Default is ``'plasma_r'``)
+        vmin (float):
+            Value at the low end of the colormap. Lower values are clipped to
+            it. (Default is ``-1.0``)
+        vmax (float):
+            Value at the high end of the colormap. Higher values are clipped to
+            it. (Default is ``1.0``)
+        color_invalid (Tuple[float, float, float]):
+            RGB color, from 0 to 1, of ROIs with a NaN value. (Default is
+            ``(0.35, 0.35, 0.35)``)
+
+    Returns:
+        (List[np.ndarray]):
+            FOVs_colored (List[np.ndarray]):
+                One RGB image per session, with values from 0 to 1. The FOV is
+                ``image[:FOV_height]``, and the rows below it hold the color
+                scale. (shape of each: *(FOV_height + height_colorScale,
+                FOV_width, 3)*)
+    """
+    import cv2
+
+    ## Check inputs
+    assert all(scipy.sparse.issparse(sf) for sf in spatialFootprints), "spatialFootprints must be a list of scipy.sparse arrays"
+    assert all(sf.shape[1] == FOV_height * FOV_width for sf in spatialFootprints), f"Each spatial footprint array must have FOV_height * FOV_width = {FOV_height * FOV_width} columns"
+    n_sessions = len(spatialFootprints)
+    n_roi_bySession = np.array([sf.shape[0] for sf in spatialFootprints], dtype=np.int64)
+    values = np.asarray(values, dtype=np.float64)
+    assert values.shape == (n_roi_bySession.sum(),), f"values must have shape (n_roi_total,) = ({n_roi_bySession.sum()},). Got {values.shape}"
+    assert vmin < vmax, f"vmin={vmin} must be less than vmax={vmax}"
+
+    ## One color per ROI
+    cmap = plt.get_cmap(cmap)
+    colors = cmap(np.clip((values - vmin) / (vmax - vmin), 0, 1))[:, :3]  ## shape: (n_roi_total, 3)
+    colors[np.isnan(values)] = color_invalid
+
+    ## Intensity of each footprint pixel, with each ROI scaled to a peak of 1
+    rois = scipy.sparse.vstack(spatialFootprints, format='csr')  ## shape: (n_roi_total, FOV_height * FOV_width)
+    idx_roi_byNonzero = np.repeat(np.arange(rois.shape[0]), np.diff(rois.indptr))  ## shape: (n_nonzero,)
+    rois_max = rois.max(axis=1).toarray().reshape(-1)  ## shape: (n_roi_total,)
+    rois_max[rois_max == 0] = np.nan  ## empty footprints stay black
+    intensity = np.nan_to_num(rois.data / rois_max[idx_roi_byNonzero])  ## shape: (n_nonzero,)
+
+    ## Max over the ROIs of each session at each pixel, one channel at a time.
+    ## np.maximum.at on a flat (session, pixel) index is faster than a sparse
+    ## max per session, and a session with no ROIs comes out black.
+    idx_session_byNonzero = np.repeat(np.arange(n_sessions), n_roi_bySession)[idx_roi_byNonzero]  ## shape: (n_nonzero,)
+    idx_pixel = idx_session_byNonzero * (FOV_height * FOV_width) + rois.indices  ## index into the flattened (n_sessions, FOV_height, FOV_width)
+    FOVs = np.zeros((3, n_sessions * FOV_height * FOV_width), dtype=np.float32)
+    for i_channel in range(3):
+        np.maximum.at(FOVs[i_channel], idx_pixel, (intensity * colors[idx_roi_byNonzero, i_channel]).astype(np.float32))
+    FOVs = FOVs.reshape(3, n_sessions, FOV_height, FOV_width).transpose(1, 2, 3, 0)  ## shape: (n_sessions, FOV_height, FOV_width, 3)
+
+    ## Color scale: a gradient bar with a label under vmin, 0, and vmax. Sizes
+    ## are set for a 512 pixel FOV and scaled to this one.
+    scale = min(FOV_height, FOV_width) / 512
+    font, font_scale, thickness = cv2.FONT_HERSHEY_SIMPLEX, 1.2 * scale, max(1, round(2 * scale))
+    margin, height_bar = round(20 * scale), round(24 * scale)
+    values_label = [vmin, 0.0, vmax] if vmin < 0 < vmax else [vmin, vmax]
+    height_text = max(cv2.getTextSize(f'{v:g}', font, font_scale, thickness)[0][1] for v in values_label)
+    colorScale = np.zeros((2 * margin + height_bar + height_text + margin // 2, FOV_width, 3), dtype=np.uint8)  ## cv2.putText needs uint8
+    width_bar = FOV_width - 2 * margin
+    colorScale[margin:margin + height_bar, margin:margin + width_bar] = (cmap(np.linspace(0, 1, width_bar))[None, :, :3] * 255).astype(np.uint8)
+    for v in values_label:
+        text = f'{v:g}'
+        width_text = cv2.getTextSize(text, font, font_scale, thickness)[0][0]
+        x_value = margin + (v - vmin) / (vmax - vmin) * (width_bar - 1)
+        x_text = int(np.clip(x_value - width_text / 2, 0, FOV_width - width_text))  ## centered under its value, inside the image
+        cv2.putText(colorScale, text, (x_text, colorScale.shape[0] - margin), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+    colorScale = colorScale.astype(np.float32) / 255  ## shape: (height_colorScale, FOV_width, 3)
+
+    return [np.concatenate([FOV, colorScale], axis=0) for FOV in FOVs]
+
+
+def plot_session_match_fraction(
+    labels_bySession: List[Union[np.ndarray, List[int]]],
+) -> Tuple[plt.Figure, np.ndarray]:
+    """
+    Plots, for each pair of sessions, the fraction of ROIs matched across them.
+    RH 2026
+
+    Entry (i, j) of the matrix on the left is the fraction of session i's ROIs
+    whose cluster also holds an ROI from session j. The denominator counts all
+    of session i's ROIs, clustered or not, so the matrix is not symmetric. The
+    diagonal is blank, as is the row of a session with no ROIs. The panel on
+    the right plots every entry against the session gap ``|i - j|`` as a faint
+    point, jittered along x, and the mean over session pairs at each gap as a
+    line.
+
+    This plot shows how often ROIs were linked across sessions. It does not
+    show whether the links are right: a wrong match counts the same as a
+    correct one. A session that failed to align often shows up as a pale row
+    and column.
+
+    Args:
+        labels_bySession (List[Union[np.ndarray, List[int]]]):
+            Cluster label of each ROI, one list or array per session. ``-1``
+            marks unclustered ROIs. This is ``labels_bySession`` in the
+            tracking results.
+
+    Returns:
+        (tuple): tuple containing:
+            fig (plt.Figure):
+                The figure.
+            axs (np.ndarray):
+                The matrix axes and the session gap axes. (shape: *(2,)*)
+    """
+    labels_bySession = [np.asarray(labels).astype(np.int64) for labels in labels_bySession]
+    assert all(labels.ndim == 1 for labels in labels_bySession), "Each element of labels_bySession must be a 1-D list or array of labels"
+    n_sessions = len(labels_bySession)
+    assert n_sessions >= 2, f"Need at least 2 sessions. Got {n_sessions}"
+    n_roi_bySession = np.array([len(labels) for labels in labels_bySession], dtype=np.int64)
+    labels = np.concatenate(labels_bySession)  ## shape: (n_roi_total,)
+    assert np.all(labels >= -1), "Labels must be >= -1. -1 marks unclustered ROIs."
+    idx_session = np.repeat(np.arange(n_sessions), n_roi_bySession)  ## shape: (n_roi_total,)
+
+    ## n_matched[i, j] is the number of session i's ROIs whose cluster holds an
+    ## ROI of session j. It is the product of the ROI counts in each (session,
+    ## cluster) and the presence of each cluster in each session.
+    bool_clustered = labels != -1
+    _, idx_cluster = np.unique(labels[bool_clustered], return_inverse=True)  ## shape: (n_roi_clustered,)
+    n_roi_bySessionCluster = scipy.sparse.csr_array(
+        (np.ones(len(idx_cluster)), (idx_session[bool_clustered], idx_cluster)),
+        shape=(n_sessions, idx_cluster.max(initial=-1) + 1),
+    )  ## shape: (n_sessions, n_clusters)
+    bool_clusterInSession = (n_roi_bySessionCluster > 0).astype(np.float64)  ## shape: (n_sessions, n_clusters)
+    n_matched = (n_roi_bySessionCluster @ bool_clusterInSession.T).toarray()  ## shape: (n_sessions, n_sessions)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        match_fraction = n_matched / n_roi_bySession[:, None]  ## shape: (n_sessions, n_sessions)
+    np.fill_diagonal(match_fraction, np.nan)
+
+    ## Every off-diagonal entry and its session gap, and the mean at each gap
+    idx_i, idx_j = np.nonzero(~np.eye(n_sessions, dtype=bool))
+    gap = np.abs(idx_i - idx_j)  ## shape: (n_sessions * (n_sessions - 1),)
+    fraction_pair = match_fraction[idx_i, idx_j]
+    bool_valid = ~np.isnan(fraction_pair)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        mean_byGap = (
+            np.bincount(gap[bool_valid], weights=fraction_pair[bool_valid], minlength=n_sessions)
+            / np.bincount(gap[bool_valid], minlength=n_sessions)
+        )[1:]  ## shape: (n_sessions - 1,)
+
+    fig, axs = plt.subplots(ncols=2, figsize=(14, 6), layout='constrained')  ## constrained layout leaves room for the suptitle and colorbar
+
+    im = axs[0].imshow(match_fraction, cmap=plt.get_cmap('viridis').with_extremes(bad='lightgrey'), vmin=0, vmax=1, interpolation='nearest')
+    fig.colorbar(im, ax=axs[0], label='match fraction')
+    axs[0].xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    axs[0].yaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    axs[0].set_xlabel('session j')
+    axs[0].set_ylabel('session i')
+    axs[0].set_title("fraction of session i's ROIs whose cluster\nholds an ROI of session j")
+
+    jitter = np.random.default_rng(0).uniform(-0.2, 0.2, size=len(gap))  ## fixed seed, so the figure is reproducible
+    axs[1].scatter(gap + jitter, fraction_pair, s=4, color='grey', alpha=0.3, label='session pair (i, j)')
+    axs[1].plot(np.arange(1, n_sessions), mean_byGap, color='C3', label='mean over session pairs')
+    axs[1].set_xlim(0.5, n_sessions - 0.5)
+    axs[1].set_ylim(0, 1.02)
+    axs[1].xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    axs[1].set_xlabel('session gap |i - j|')
+    axs[1].set_ylabel('match fraction')
+    axs[1].set_title('match fraction vs. session gap')
+    axs[1].legend(loc='best')
+
+    fig.suptitle('Session match fraction: how often ROIs were linked, correct or not')
+    return fig, axs
+
+
 def crop_cluster_ims(ims: np.ndarray) -> np.ndarray:
     """
     Crops the images to the smallest rectangle containing all non-zero pixels.

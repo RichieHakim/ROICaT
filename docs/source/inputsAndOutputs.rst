@@ -216,3 +216,13 @@ row has one value per cluster. The bottom row is computed from each ROI.
 - **Bottom right:** Fraction of each session's ROIs that were placed in a
   cluster. A session far below the others may be badly aligned.
 
+The pipeline also saves these outputs:
+
+- ``visualization/clustering/session_match_fraction.png``: For each pair of
+  sessions, the fraction of one session's ROIs matched to an ROI of the other,
+  also plotted against the session gap. Wrong matches count too, so it shows
+  how often ROIs were linked, not whether the links are right.
+- ``visualization/FOV_sample_silhouette.gif``: Each session's ROIs colored by
+  ``sample_silhouette``, from yellow (low) to purple (high). Unclustered ROIs
+  are grey.
+
