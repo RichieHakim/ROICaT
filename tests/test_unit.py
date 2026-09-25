@@ -3748,6 +3748,17 @@ class Test_Preprocessor_ROI_images:
             preprocessor.scale_normalize_images(ROI_images=images, um_per_pixel=1.0), images,
         )
 
+    def test_multiple_sessions_share_one_progress_bar(self, capsys):
+        """Resizing several sessions shows one progress bar over all their ROIs, and verbosity does not change the output."""
+        from roicat.ROInet import Preprocessor_ROI_images
+        sessions = [self._images(n_roi=3, seed=0), self._images(n_roi=4, seed=1), self._images(n_roi=5, seed=2)]
+        out = Preprocessor_ROI_images(verbose=True).scale_normalize_images(ROI_images=sessions, um_per_pixel=[1.0, 2.0, 3.0])
+        err = capsys.readouterr().err
+        assert '12/12' in err
+        assert all(f'{n}/{n}' not in err for n in (3, 4, 5)), err
+        out_quiet = Preprocessor_ROI_images(verbose=False).scale_normalize_images(ROI_images=sessions, um_per_pixel=[1.0, 2.0, 3.0])
+        assert np.array_equal(out, out_quiet)
+
     def test_multiple_sessions_use_own_um_per_pixel(self):
         from roicat.ROInet import Preprocessor_ROI_images
         preprocessor = Preprocessor_ROI_images(verbose=False)
