@@ -12,6 +12,8 @@ To run the tests, use the command (in a terminal):
 
 from pathlib import Path
 
+import concurrent.futures
+import os
 import warnings
 import pytest
 
@@ -1262,6 +1264,22 @@ class Test__find_optimal_parameters_DE:
             clusterer_with_data._find_optimal_parameters_DE(
                 seed=42, de_kwargs={'maxiter': 1, 'popsize': 5, 'workers': 0},
             )
+
+    def test_workers_omitted_uses_all_cores(self, clusterer_with_data, monkeypatch):
+        """A ``de_kwargs`` without ``workers`` still runs on all available cores."""
+        maxWorkers_used = []
+
+        class ThreadPoolExecutor_recording(concurrent.futures.ThreadPoolExecutor):
+            def __init__(self, max_workers=None, **kwargs):
+                maxWorkers_used.append(max_workers)
+                super().__init__(max_workers=max_workers, **kwargs)
+
+        monkeypatch.setattr(concurrent.futures, 'ThreadPoolExecutor', ThreadPoolExecutor_recording)
+        clusterer_with_data._find_optimal_parameters_DE(
+            seed=42, de_kwargs={'maxiter': 1, 'popsize': 5, 'polish': False},
+        )
+        n_cores = len(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else os.cpu_count()
+        assert maxWorkers_used == [n_cores]
 
     def test_loss_history(self, clusterer_with_data):
         """One best loss per generation, ending at the returned loss."""

@@ -404,9 +404,9 @@ class Clusterer(util.ROICaT_Module):
                   objectives are piecewise-constant in the parameters.
                 * ``workers`` (int): Threads that evaluate each
                   generation's candidates in parallel. ``-1`` uses all
-                  available cores. Any value uses scipy's
-                  ``updating='deferred'`` scheme, so the result does not
-                  depend on the number of workers.
+                  available cores, as does omitting the key. Any value
+                  uses scipy's ``updating='deferred'`` scheme, so the
+                  result does not depend on the number of workers.
             n_bins (Optional[int]):
                 Overwrites ``n_bins`` from ``__init__``. It reaches the
                 differential evolution *directly* only when
@@ -663,9 +663,9 @@ class Clusterer(util.ROICaT_Module):
                   objectives are piecewise-constant in the parameters.
                 * ``workers`` (int): Threads that evaluate each
                   generation's candidates in parallel. ``-1`` uses all
-                  available cores. Any value uses scipy's
-                  ``updating='deferred'`` scheme, so the result does not
-                  depend on the number of workers.
+                  available cores, as does omitting the key. Any value
+                  uses scipy's ``updating='deferred'`` scheme, so the
+                  result does not depend on the number of workers.
             n_bins (Optional[int]):
                 Overwrites ``n_bins`` from __init__. Used by the DE
                 directly only when ``objective='histogram_overlap'``, but
@@ -1063,7 +1063,9 @@ class Clusterer(util.ROICaT_Module):
         ## Threads evaluate each generation's candidates; numpy's sort and
         ## torch's kernels release the GIL. The deferred update is used for
         ## every worker count so that the result does not depend on it.
-        n_workers = de_kwargs_use.pop('workers', 1)
+        ## Omitting ``workers`` means all cores, even when the caller
+        ## replaces the default ``de_kwargs`` wholesale.
+        n_workers = de_kwargs_use.pop('workers', -1)
         if not (isinstance(n_workers, int) and ((n_workers >= 1) or (n_workers == -1))):
             raise ValueError(f"de_kwargs['workers'] must be a positive int or -1, got {n_workers!r}.")
         if n_workers == -1:
