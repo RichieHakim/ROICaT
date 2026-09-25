@@ -233,7 +233,7 @@ def get_default_parameters(
                     'n_bins': None,  ## Number of bins for histograms. None = heuristic. Reaches the DE directly only when objective is 'histogram_overlap', but it also sets the resolution of the naive-Bayes calibration that freezes the sigmoid, so it moves the fit under either objective; used downstream by the pruning too.
                     'smoothing_window_bins': None,  ## Smoothing window for distributions. None = heuristic. Same three-way reach as n_bins: legacy objective, naive-Bayes calibration behind the frozen sigmoid, downstream pruning.
                     'subsample_pairs': None,  ## Subsample this many pairs for speedup. None = use all.
-                    'freeze_sigmoid': True,  ## True: sigmoid (mu, b) fixed by a Fisher-discriminant grid search over the bounds below. False: (mu, b) are DE variables too.
+                    'freeze_sigmoid': True,  ## True: sigmoid (mu, b) fixed by a maximum-likelihood grid search over the bounds below. False: (mu, b) are DE variables too.
                     'n_grid_sigmoid_mu': 50,  ## Number of mu values in that grid search. Only used when freeze_sigmoid is True.
                     'n_grid_sigmoid_b': 30,  ## Number of b values in that grid search. Only used when freeze_sigmoid is True.
                     'bounds_findParameters': {

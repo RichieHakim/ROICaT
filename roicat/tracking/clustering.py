@@ -347,9 +347,9 @@ class Clusterer(util.ROICaT_Module):
 
         1. **Naive Bayes calibration**: For each similarity feature, estimates
            ``P(same | s_k)`` from histogram subtraction. The resulting
-           per-feature calibration curves are used to analytically estimate
-           optimal sigmoid parameters ``(mu, b)`` via Fisher's linear
-           discriminant.
+           per-feature calibration curves are used to estimate the sigmoid
+           parameters ``(mu, b)`` by maximum likelihood (Platt scaling on the
+           calibration histogram).
         2. **Differential evolution**: With sigmoid parameters frozen from
            stage 1 (``freeze_sigmoid=True``, the default), optimizes the
            remaining parameters (one ``power_<name>`` per metric with
@@ -432,7 +432,7 @@ class Clusterer(util.ROICaT_Module):
                 Random seed for reproducibility.
             freeze_sigmoid (bool):
                 If ``True``, the sigmoid parameters ``(mu, b)`` are estimated
-                once by :meth:`_estimate_sigmoid_params` (a Fisher-discriminant
+                once by :meth:`_estimate_sigmoid_params` (a maximum-likelihood
                 grid search over the bounds above) and held fixed, so the DE
                 searches only the ``power_<name>`` values and ``p_norm``. If
                 ``False``, ``(mu, b)`` become DE variables too, bounded by the
@@ -491,7 +491,7 @@ class Clusterer(util.ROICaT_Module):
 
         ## Bounds are merged over the defaults inside _find_optimal_parameters_DE,
         ## so a partial dict or None is passed straight through.
-        ## NB calibration → Fisher sigmoid estimation → N-param DE.
+        ## NB calibration → maximum-likelihood sigmoid estimation → N-param DE.
         return self._find_optimal_parameters_DE(
             bounds_findParameters=bounds_findParameters,
             de_kwargs=de_kwargs,
@@ -624,8 +624,8 @@ class Clusterer(util.ROICaT_Module):
         Find optimal mixing parameters using scipy differential evolution.
 
         When ``freeze_sigmoid=True`` (default), sigmoid parameters ``(mu, b)``
-        are estimated from NB calibration curves via Fisher's linear
-        discriminant and held fixed. The search is then over
+        are estimated from NB calibration curves by maximum likelihood and
+        held fixed. The search is then over
         ``power_<name>`` for each metric with ``optimize_power=True``, plus
         ``p_norm``. When ``False``, sigmoid params are also optimized.
 
@@ -1166,8 +1166,10 @@ class Clusterer(util.ROICaT_Module):
         Given raw similarity values for all pairs and the intra-session
         (known-different) subset, estimates the "same" distribution as the
         residual after subtracting the scaled intra-session distribution
-        from the overall distribution. Monotonicity is enforced (higher
-        similarity → higher P(same)).
+        from the overall distribution. The bins hold equal numbers of pairs
+        (edges at the pooled values' quantiles), so a few outliers cannot
+        set their width. Monotonicity is enforced (higher similarity →
+        higher P(same)).
         RH 2025
 
         Args:
@@ -1194,10 +1196,18 @@ class Clusterer(util.ROICaT_Module):
         n_intra = int(intra_mask.sum().item())
         scale = n_all / n_intra
 
-        ## Bin edges spanning the data range with small margin
-        lo = float(s_data.min()) - 1e-6
-        hi = float(s_data.max()) + 1e-6
-        edges = torch.linspace(lo, hi, n_bins + 1, dtype=torch.float32)
+        ## Equal-mass bin edges: the quantiles of the pooled values, with a
+        ## small margin at both ends. Equal-width edges over [min, max] let a
+        ## few outliers set the bin width; on heavy-tailed z-scores (range
+        ## hundreds of IQRs) the whole bulk then fell into one bin and the
+        ## calibration could not see it. Quantile edges depend only on the
+        ## ranks, as P(same | s) itself does. Repeated values can repeat an
+        ## edge, which leaves an empty zero-width bin and keeps n_bins fixed.
+        edges = np.quantile(
+            s_data.numpy().astype(np.float64), np.linspace(0.0, 1.0, n_bins + 1),
+        )  ## shape (n_bins + 1,)
+        edges[0], edges[-1] = edges[0] - 1e-6, edges[-1] + 1e-6
+        edges = torch.as_tensor(edges, dtype=torch.float32)
 
         ## Histogram all values and intra-session values
         counts_all, _ = torch.histogram(s_data, edges)
@@ -1344,8 +1354,12 @@ class Clusterer(util.ROICaT_Module):
             ## then store result as numpy for serialization safety.
             edges_t = torch.as_tensor(cal['edges'])
             p_same_bins_t = torch.as_tensor(cal['p_same_bins'])
+            ## right=True puts a value equal to an edge in the bin to its
+            ## right, the bin torch.histogram counted it in. Equal-mass edges
+            ## repeat where many pairs share one value, so the lookup and the
+            ## counts must follow the same rule.
             bin_idx = torch.searchsorted(
-                edges_t[1:-1].contiguous(), s_data,
+                edges_t[1:-1].contiguous(), s_data, right=True,
             )
             bin_idx = torch.clamp(bin_idx, 0, n_bins - 1)
             p_same_per_pair = p_same_bins_t[bin_idx]  ## torch, shape (nnz,)
@@ -1413,12 +1427,24 @@ class Clusterer(util.ROICaT_Module):
     ) -> Dict[str, Dict[str, float]]:
         """
         Estimate sigmoid parameters (mu, b) for NN and SWT from
-        NB calibration curves using Fisher's linear discriminant.
+        NB calibration curves by maximum likelihood.
 
-        For each feature, finds the sigmoid ``sigma(b * (s - mu))`` that
-        best separates "same" and "different" distributions in the
-        calibration histogram. Uses a grid search over (mu, b) to maximize
-        the Fisher discriminant ratio in sigmoid-transformed space.
+        For each feature, finds the sigmoid ``sigma(b * (s - mu))`` that,
+        read as ``P(same | s)``, best explains the "same" and "different"
+        distributions of the calibration histogram, each weighted to equal
+        total mass: a grid search over (mu, b) maximizing the class-balanced
+        Bernoulli log-likelihood (Platt scaling on the histogram).
+
+        The log-likelihood is a proper scoring rule, so the slope ``b`` it
+        returns measures how fast the evidence for "same" actually rises.
+        The Fisher ratio this replaced is not: in sigmoid space it tends to
+        grow as the sigmoid sharpens into a step (lower within-class
+        variance), so ``b`` often ran to its upper bound, and where the
+        histogram could not resolve the step ``b`` was an argmax tie. A step
+        placed above most of the data maps those pairs to an activation of
+        (near) zero, and under the negative ``p_norm`` of
+        :meth:`_pNorm` a single near-zero activation drives ``sConj`` to
+        zero whatever the other metrics say.
 
         Requires :meth:`make_naive_bayes_distance_matrix` to have been
         called first.
@@ -1430,8 +1456,9 @@ class Clusterer(util.ROICaT_Module):
                 ``sig_<name>_kwargs_mu`` and ``sig_<name>_kwargs_b`` keys.
                 Merged over the defaults by
                 :meth:`_prepare_bounds_findParameters`, so a partial dict or
-                ``None`` is fine. A ``mu`` bound of ``None`` means "span the
-                calibration bin centers", which is the historical behavior.
+                ``None`` is fine. A ``mu`` bound of ``None`` spaces the ``mu``
+                grid evenly over the (equal-mass) calibration bins, i.e.
+                evenly in rank, from the first bin center to the last.
             n_grid_sigmoid_mu (int):
                 Number of ``mu`` values in the grid.
             n_grid_sigmoid_b (int):
@@ -1473,8 +1500,8 @@ class Clusterer(util.ROICaT_Module):
             w_same = counts_same / (counts_same.sum() + 1e-10)
             w_diff = counts_diff / (counts_diff.sum() + 1e-10)
 
-            ## Vectorized grid search over (mu, b) to maximize Fisher
-            ## discriminant in sigmoid-transformed space.
+            ## Vectorized grid search over (mu, b) maximizing the balanced
+            ## Bernoulli log-likelihood of sigma(b * (s - mu)) as P(same | s).
             ## Grid endpoints come from the user-facing bounds. A `None` mu
             ## bound spans the observed range of the calibration bin centers.
             bound_mu = bounds_findParameters.get(f'sig_{name}_kwargs_mu')
@@ -1484,43 +1511,46 @@ class Clusterer(util.ROICaT_Module):
                     f"bounds_findParameters['sig_{name}_kwargs_b'] is None. The "
                     f"sigmoid slope bound must be a [low, high] pair."
                 )
+            ## A `None` mu bound spaces the grid evenly over the calibration's
+            ## (equal-mass) bins, i.e. evenly in rank, rather than evenly in
+            ## value across an outlier-set range.
             if bound_mu is None:
-                bound_mu = [float(centers_np.min()), float(centers_np.max())]
-
-            ## Grid shapes: mu (M,), b (B,) → sig_vals (M, B, n_bins)
-            mu_grid = np.linspace(
-                float(bound_mu[0]), float(bound_mu[1]), int(n_grid_sigmoid_mu),
-            )
+                mu_grid = np.interp(
+                    np.linspace(0.0, len(centers_np) - 1.0, int(n_grid_sigmoid_mu)),
+                    np.arange(len(centers_np), dtype=np.float64),
+                    centers_np.astype(np.float64),
+                )  ## shape (M,)
+            else:
+                mu_grid = np.linspace(
+                    float(bound_mu[0]), float(bound_mu[1]), int(n_grid_sigmoid_mu),
+                )
             b_grid = np.linspace(
                 float(bound_b[0]), float(bound_b[1]), int(n_grid_sigmoid_b),
             )
-            ## Broadcasting: (M,1,1) * ((1,1,n_bins) - (M,1,1))
-            sig_vals = 1.0 / (1.0 + np.exp(
-                -b_grid[None, :, None] * (centers_np[None, None, :] - mu_grid[:, None, None])
-            ))  ## shape (M, B, n_bins)
+            ## Broadcasting: (1,B,1) * ((1,1,n_bins) - (M,1,1))
+            logits = b_grid[None, :, None] * (
+                centers_np[None, None, :] - mu_grid[:, None, None]
+            )  ## shape (M, B, n_bins)
 
-            ## Weighted moments in sigmoid-transformed space
-            mu_same_sig = np.sum(w_same[None, None, :] * sig_vals, axis=2)  ## (M, B)
-            mu_diff_sig = np.sum(w_diff[None, None, :] * sig_vals, axis=2)  ## (M, B)
-            var_same_sig = np.sum(w_same[None, None, :] * (sig_vals - mu_same_sig[:, :, None]) ** 2, axis=2)
-            var_diff_sig = np.sum(w_diff[None, None, :] * (sig_vals - mu_diff_sig[:, :, None]) ** 2, axis=2)
-
-            ## Fisher discriminant ratio, shape (M, B)
-            denom = var_same_sig + var_diff_sig + 1e-12
-            fisher_grid = (mu_same_sig - mu_diff_sig) ** 2 / denom
+            ## log(sigma(z)) = -log(1 + e^-z) and log(1 - sigma(z)) = -log(1 + e^z),
+            ## written with logaddexp so that neither overflows nor rounds to log(0).
+            loglik_grid = (
+                np.sum(w_same[None, None, :] * -np.logaddexp(0.0, -logits), axis=2)
+                + np.sum(w_diff[None, None, :] * -np.logaddexp(0.0, logits), axis=2)
+            )  ## shape (M, B)
 
             ## Find best (mu, b)
-            best_idx = np.unravel_index(fisher_grid.argmax(), fisher_grid.shape)
+            best_idx = np.unravel_index(loglik_grid.argmax(), loglik_grid.shape)
             best_mu = float(mu_grid[best_idx[0]])
             best_b = float(b_grid[best_idx[1]])
-            best_fisher = float(fisher_grid[best_idx])
+            best_loglik = float(loglik_grid[best_idx])
 
             result[name] = {'mu': best_mu, 'b': best_b}
 
             print(
                 f'  Sigmoid estimate for {name}: '
                 f'mu={best_mu:.4f}, b={best_b:.2f} '
-                f'(Fisher={best_fisher:.4f})'
+                f'(log-likelihood={best_loglik:.4f})'
             ) if self._verbose else None
 
         return result
