@@ -97,8 +97,10 @@ used in their study:
 
 For my own data, I often use the following inclusion criteria:
 
-- **cluster_silhouette > 0.2**: Discard all clusters with scores below this
-  threshold.
+- **cluster_silhouette > somewhere around -0.1**: Discard all clusters with
+  scores below this threshold. Higher thresholds, up to about 0.2, remove more
+  tracking errors but also discard many correctly tracked cells, so choose based
+  on how much identity error your analysis can tolerate.
 - **sample_silhouette > 0.1**: Discard all ROIs with scores below this
   threshold. You can set their label to -1 to signify that they are unclustered
   samples.
