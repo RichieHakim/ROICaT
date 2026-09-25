@@ -1407,6 +1407,35 @@ class Test_estimate_sigmoid_params:
 class Test_naive_bayes_distance_matrix:
     """Tests for Clusterer.make_naive_bayes_distance_matrix."""
 
+    def test_tied_values_look_up_the_bin_that_counted_them(self):
+        """Pairs tied at one value get P(same) from the bin that counted them.
+
+        Equal-mass edges repeat where many pairs share one value, as in a
+        clipped or discrete metric. torch.histogram counts a value equal to an
+        edge in the bin to its right, and the per-pair lookup must use that
+        same bin, not the (empty) bins left of the repeated edges.
+        """
+        n_cell = 20
+        clusterer, sims = _make_clusterer_weak_metrics(seed=0, n_session=6, n_cell=n_cell, frac_outlier=0.0)
+        s = sims['swt']
+        assert np.array_equal(s.indices, sims['sf'].indices) and np.array_equal(s.indptr, sims['sf'].indptr)
+        ## Tie every match and ~20% of the other inter-session pairs at 2.0,
+        ## so the tied bin has a high P(same) and the bins below it a low one
+        is_match = sims['sf'].data > 0.5  ## sf is in [0.5, 0.9] for matches, [0, 0.2] otherwise
+        idx_session = np.arange(s.shape[0]) // n_cell  ## shape: (n_roi,)
+        is_intra = idx_session[np.repeat(np.arange(s.shape[0]), np.diff(s.indptr))] == idx_session[s.indices]  ## shape: (nnz,)
+        is_tied = is_match | (~is_intra & (np.random.default_rng(0).random(s.nnz) < 0.2))
+        s.data[is_tied] = 2.0
+
+        _, _, calibrations = clusterer.make_naive_bayes_distance_matrix()
+        cal = calibrations['features']['swt']
+        idx_edgesAtTie = np.flatnonzero(cal['edges'] == 2.0)
+        assert len(idx_edgesAtTie) >= 2, "precondition: the ties must repeat an edge"
+        idx_binCounted = idx_edgesAtTie.max()  ## bin [2.0, next edge), where torch.histogram counts the ties
+        idx_binLeft = idx_edgesAtTie.min() - 1  ## bin [previous edge, 2.0), below the ties
+        assert cal['p_same_bins'][idx_binCounted] != cal['p_same_bins'][idx_binLeft], "precondition: a wrong lookup must be visible"
+        np.testing.assert_array_equal(cal['p_same_per_pair'][is_tied], cal['p_same_bins'][idx_binCounted])
+
     def test_returns_correct_types(self, clusterer_with_data):
         """Should return (dConj, sConj, calibrations) with correct types."""
         import scipy.sparse

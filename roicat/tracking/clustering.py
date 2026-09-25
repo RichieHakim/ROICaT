@@ -1352,8 +1352,12 @@ class Clusterer(util.ROICaT_Module):
             ## then store result as numpy for serialization safety.
             edges_t = torch.as_tensor(cal['edges'])
             p_same_bins_t = torch.as_tensor(cal['p_same_bins'])
+            ## right=True puts a value equal to an edge in the bin to its
+            ## right, the bin torch.histogram counted it in. Equal-mass edges
+            ## repeat where many pairs share one value, so the lookup and the
+            ## counts must follow the same rule.
             bin_idx = torch.searchsorted(
-                edges_t[1:-1].contiguous(), s_data,
+                edges_t[1:-1].contiguous(), s_data, right=True,
             )
             bin_idx = torch.clamp(bin_idx, 0, n_bins - 1)
             p_same_per_pair = p_same_bins_t[bin_idx]  ## torch, shape (nnz,)
