@@ -12,6 +12,8 @@ To run the tests, use the command (in a terminal):
 
 from pathlib import Path
 
+import concurrent.futures
+import os
 import warnings
 import pytest
 
@@ -384,6 +386,15 @@ class Test_Equivalence_checker:
         sb = (s != 0).astype(bool)
         assert checker(sb, sb)[0] == True
 
+    def test_sparse_bool_different(self):
+        """Differing boolean sparse arrays report a mismatch instead of raising TypeError on subtraction."""
+        checker = helpers.Equivalence_checker()
+        s1 = scipy.sparse.csr_array(np.array([[0, 1, 1], [1, 0, 0]], dtype=bool))
+        s2 = scipy.sparse.csr_array(np.array([[0, 1, 0], [1, 0, 1]], dtype=bool))
+        result = checker(s1, s2)
+        assert result[0] == False
+        assert 'n_mismatches=2' in result[1]
+
     def test_sparse_in_nested_dict(self):
         checker = helpers.Equivalence_checker()
         s = scipy.sparse.random_array((10, 10), density=0.5, format='csr', rng=0)
@@ -644,6 +655,85 @@ class Test_flatten_dict:
 ######################################################################################################################################
 
 
+class Test_save_webp:
+    """Tests for helpers.save_webp."""
+
+    def test_roundtrip_is_lossless(self, tmp_path):
+        """Float color and uint8 grayscale frames come back pixel-exact, with the frame rate and loop count."""
+        from PIL import Image
+        rng = np.random.default_rng(0)
+        frames_color = rng.random((3, 40, 50, 3))  ## float, scale 0 to 1
+        frames_gray = rng.integers(0, 256, (3, 40, 50), dtype=np.uint8)
+        cases = [
+            (frames_color, (frames_color * 255).astype(np.uint8)),
+            (list(frames_gray), np.repeat(frames_gray[..., None], 3, axis=-1)),  ## grayscale is saved as RGB
+        ]
+        for i_case, (frames, expected) in enumerate(cases):
+            path = str(tmp_path / f'case_{i_case}' / 'anim.webp')  ## parent directory is created
+            helpers.save_webp(array=frames, path=path, frame_rate=4.0, loop=2)
+            with Image.open(path) as im:
+                assert im.n_frames == 3
+                assert im.info['loop'] == 2
+                for i_frame in range(3):
+                    im.seek(i_frame)
+                    np.testing.assert_array_equal(np.asarray(im.convert('RGB')), expected[i_frame])
+                    assert im.info['duration'] == 250  ## set once the frame is decoded
+
+
+
+class Test_display_toggle_image_stack:
+    """Tests for visualization.display_toggle_image_stack."""
+
+    @staticmethod
+    def _render(monkeypatch, images, **kwargs):
+        """Run the function as if in a notebook. Returns the slider HTML and its decoded frames."""
+        import base64
+        import io
+        import re
+        import sys
+        import types
+        import IPython.display
+        from PIL import Image
+        from roicat import visualization
+        htmls = []
+        monkeypatch.setitem(sys.modules, 'ipykernel', sys.modules.get('ipykernel', types.ModuleType('ipykernel')))
+        monkeypatch.setattr(IPython.display, 'display', lambda obj: htmls.append(obj.data))
+        visualization.display_toggle_image_stack(images, **kwargs)
+        b64s = re.findall(r"'([A-Za-z0-9+/=]+)'", re.search(r"let base64_images = (\[.*?\]);", htmls[0], re.S).group(1))
+        return htmls[0], [Image.open(io.BytesIO(base64.b64decode(b))) for b in b64s]
+
+    def test_frames_are_native_size_and_browser_scales(self, monkeypatch):
+        """Non-square frames keep their native shape; the display box is (height, width) scaled."""
+        rng = np.random.default_rng(0)
+        images_gray = list(rng.random((2, 30, 50)))  ## (height, width)
+        images_rgb = list(rng.random((2, 30, 50, 3)))
+        cases = [
+            (images_gray, {'image_size': 2.0}, 'pixelated'),
+            (images_rgb, {'image_size': (60, 100), 'interpolation': 'bilinear'}, 'auto'),
+        ]
+        for images, kwargs, rendering in cases:
+            html, frames = self._render(monkeypatch, images, **kwargs)
+            assert len(frames) == 2
+            assert all((f.format == 'WEBP') and (f.size == (50, 30)) for f in frames)  ## PIL size is (width, height)
+            assert f'width: 100px; height: 60px; image-rendering: {rendering};' in html
+            assert ('image/png' not in html) and (html.count('data:image/webp;base64,') == 2)
+
+    def test_lossless_by_default(self, monkeypatch):
+        """By default the normalized frames are embedded exactly; a quality makes them lossy."""
+        image = np.arange(30 * 50, dtype=np.float64).reshape(30, 50)
+        expected = ((image - image.min()) / (image.max() - image.min()) * 255).astype(np.uint8)
+        _, frames = self._render(monkeypatch, [image])
+        np.testing.assert_array_equal(np.asarray(frames[0].convert('L')), expected)
+        _, frames_lossy = self._render(monkeypatch, [image], quality=50)
+        assert not np.array_equal(np.asarray(frames_lossy[0].convert('L')), expected)
+
+    def test_invalid_inputs_raise(self, monkeypatch):
+        with pytest.raises(ValueError, match='quality'):
+            self._render(monkeypatch, [np.zeros((4, 4))], quality=101)
+        with pytest.raises(ValueError, match='16383'):
+            self._render(monkeypatch, [np.zeros((1, 16384))])
+
+
 class Test_ROI_Blurrer:
     """Tests for ROI_Blurrer using sparse_convolution library."""
 
@@ -726,6 +816,38 @@ class Test_ROI_Blurrer:
         actual = blurrer.ROIs_blurred[0].toarray().reshape(32, 32)
 
         np.testing.assert_allclose(actual, expected, atol=1e-6)
+
+    @pytest.mark.parametrize(
+        "frame_shape,dtype_idx", [((512, 512), np.int32), ((50_000, 50_000), np.int64)],
+    )
+    def test_fov_size_invariance(self, frame_shape, dtype_idx):
+        """Blurring gives the same ROIs in small and >2**31-pixel FOVs."""
+        from roicat.tracking.blurring import ROI_Blurrer
+
+        ## Reference: ROIs in a 64x64 FOV, away from the edges
+        rng = np.random.default_rng(0)
+        x_ref = np.zeros((5, 64, 64), dtype=np.float32)  ## shape: (n_roi, H, W)
+        mask = rng.random((5, 10, 15)) > 0.5
+        x_ref[:, 20:30, 25:40] = rng.random((5, 10, 15)) * mask
+        blurrer_ref = ROI_Blurrer(frame_shape=(64, 64), kernel_halfWidth=4, verbose=False)
+        out_ref = blurrer_ref.blur_ROIs([scipy.sparse.csr_array(x_ref.reshape(5, -1))])[0]
+
+        ## Same ROIs shifted to the bottom-right corner of the test FOV
+        H, W = frame_shape
+        idx_roi, r, c = np.nonzero(x_ref)
+        x = scipy.sparse.csr_array(
+            (x_ref[idx_roi, r, c], (idx_roi, (r + H - 64) * np.int64(W) + c + W - 64)),
+            shape=(5, H * W),
+        )
+        blurrer = ROI_Blurrer(frame_shape=frame_shape, kernel_halfWidth=4, verbose=False)
+        out = blurrer.blur_ROIs([x])[0]
+        assert out.indices.dtype == dtype_idx
+
+        ## Shift back and compare
+        r_out, c_out = np.divmod(out.indices.astype(np.int64), W)
+        np.testing.assert_array_equal(np.diff(out.indptr), np.diff(out_ref.indptr))
+        np.testing.assert_array_equal((r_out - H + 64) * 64 + c_out - W + 64, out_ref.indices)
+        np.testing.assert_array_equal(out.data, out_ref.data)
 
     def test_max_intensity_projection(self):
         """get_ROIsBlurred_maxIntensityProjection returns correct shape."""
@@ -1263,6 +1385,22 @@ class Test__find_optimal_parameters_DE:
                 seed=42, de_kwargs={'maxiter': 1, 'popsize': 5, 'workers': 0},
             )
 
+    def test_workers_omitted_uses_all_cores(self, clusterer_with_data, monkeypatch):
+        """A ``de_kwargs`` without ``workers`` still runs on all available cores."""
+        maxWorkers_used = []
+
+        class ThreadPoolExecutor_recording(concurrent.futures.ThreadPoolExecutor):
+            def __init__(self, max_workers=None, **kwargs):
+                maxWorkers_used.append(max_workers)
+                super().__init__(max_workers=max_workers, **kwargs)
+
+        monkeypatch.setattr(concurrent.futures, 'ThreadPoolExecutor', ThreadPoolExecutor_recording)
+        clusterer_with_data._find_optimal_parameters_DE(
+            seed=42, de_kwargs={'maxiter': 1, 'popsize': 5, 'polish': False},
+        )
+        n_cores = len(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else os.cpu_count()
+        assert maxWorkers_used == [n_cores]
+
     def test_loss_history(self, clusterer_with_data):
         """One best loss per generation, ending at the returned loss."""
         clusterer_with_data._find_optimal_parameters_DE(
@@ -1292,6 +1430,47 @@ class Test__find_optimal_parameters_DE:
         assert len(calls) == 1
         assert clusterer_with_data._de_result.nit == 1
 
+
+
+def _make_clusterer_weak_metrics(seed, n_session, n_cell, frac_outlier):
+    """
+    A fully connected synthetic graph: ``sf`` separates matches cleanly, while
+    ``nn`` and ``swt`` are weak z-scored metrics (matches shifted by half a
+    standard deviation). ``frac_outlier`` of their values are replaced by
+    +-[50, 1500], the heavy tails that a z-score over a tiny reference set
+    produces. Returns the Clusterer and its similarity dict.
+    """
+    from roicat import tracking
+    from roicat.tracking.similarity_graph import DEFAULT_METRICS
+    rng = np.random.default_rng(seed)
+    n_roi = n_session * n_cell
+    sess = np.repeat(np.arange(n_session), n_cell)
+    cell = np.tile(np.arange(n_cell), n_session)
+    iu, ju = np.triu_indices(n_roi, k=1)
+    same_session = sess[iu] == sess[ju]
+    match = (~same_session) & (cell[iu] == cell[ju])
+
+    def weak_z():
+        z = rng.normal(0, 1, iu.size) + 0.5 * match
+        is_outlier = rng.random(iu.size) < frac_outlier
+        z[is_outlier] = rng.choice([-1, 1], is_outlier.sum()) * rng.uniform(50, 1500, is_outlier.sum())
+        return z
+
+    def symmetric(v, dtype):
+        rows, cols = np.concatenate([iu, ju]), np.concatenate([ju, iu])
+        return scipy.sparse.csr_array((np.concatenate([v, v]).astype(dtype), (rows, cols)), shape=(n_roi, n_roi))
+
+    sims = {
+        'sf': symmetric(np.where(match, rng.uniform(0.5, 0.9, iu.size), rng.uniform(0.0, 0.2, iu.size)), np.float64),
+        'nn': symmetric(weak_z(), np.float32),
+        'swt': symmetric(weak_z(), np.float32),
+    }
+    s_sesh = symmetric((~same_session).astype(np.float64), np.float64)
+    s_sesh = scipy.sparse.csr_array((s_sesh.data.astype(bool), s_sesh.indices, s_sesh.indptr), shape=s_sesh.shape)
+    clusterer = tracking.clustering.Clusterer(
+        similarities=sims, metric_configs=DEFAULT_METRICS, s_sesh=s_sesh, verbose=False,
+    )
+    return clusterer, sims
 
 
 class Test_estimate_sigmoid_params:
@@ -1337,9 +1516,63 @@ class Test_estimate_sigmoid_params:
         with pytest.raises(AssertionError, match="make_naive_bayes_distance_matrix"):
             fresh._estimate_sigmoid_params()
 
+    @pytest.mark.parametrize('seed, n_session, n_cell, frac_outlier', [(0, 14, 30, 0.0), (1, 14, 30, 0.0), (0, 6, 10, 0.0), (0, 6, 10, 0.03), (1, 6, 10, 0.03)])
+    def test_weak_metric_sigmoid_does_not_saturate(self, seed, n_session, n_cell, frac_outlier):
+        """A weak metric's frozen sigmoid must not map most pairs to ~0.
+
+        Under the negative ``p_norm`` a single near-zero activation drives
+        ``sConj`` to zero, so a frozen sigmoid that sits above most of a weak
+        metric's values vetoes the strong one and the mixed similarity
+        collapses. The Fisher-ratio pre-fit did exactly that here (a step with
+        ``b`` at its upper bound, up to 64% of pairs below 1e-6; 99% with
+        heavy tails).
+        """
+        clusterer, sims = _make_clusterer_weak_metrics(
+            seed=seed, n_session=n_session, n_cell=n_cell, frac_outlier=frac_outlier,
+        )
+        clusterer.make_naive_bayes_distance_matrix()
+        params = clusterer._estimate_sigmoid_params()
+        for name in ('nn', 'swt'):
+            x = np.asarray(sims[name].data, dtype=np.float64)
+            logsig = -np.logaddexp(0.0, -params[name]['b'] * (x - params[name]['mu']))
+            frac_saturated = float((logsig < np.log(1e-6)).mean())
+            assert frac_saturated < 0.05, (
+                f"{name}: frozen sigmoid (mu={params[name]['mu']:.3g}, b={params[name]['b']:.3g}) "
+                f"puts {frac_saturated:.1%} of pairs below 1e-6"
+            )
+
 
 class Test_naive_bayes_distance_matrix:
     """Tests for Clusterer.make_naive_bayes_distance_matrix."""
+
+    def test_tied_values_look_up_the_bin_that_counted_them(self):
+        """Pairs tied at one value get P(same) from the bin that counted them.
+
+        Equal-mass edges repeat where many pairs share one value, as in a
+        clipped or discrete metric. torch.histogram counts a value equal to an
+        edge in the bin to its right, and the per-pair lookup must use that
+        same bin, not the (empty) bins left of the repeated edges.
+        """
+        n_cell = 20
+        clusterer, sims = _make_clusterer_weak_metrics(seed=0, n_session=6, n_cell=n_cell, frac_outlier=0.0)
+        s = sims['swt']
+        assert np.array_equal(s.indices, sims['sf'].indices) and np.array_equal(s.indptr, sims['sf'].indptr)
+        ## Tie every match and ~20% of the other inter-session pairs at 2.0,
+        ## so the tied bin has a high P(same) and the bins below it a low one
+        is_match = sims['sf'].data > 0.5  ## sf is in [0.5, 0.9] for matches, [0, 0.2] otherwise
+        idx_session = np.arange(s.shape[0]) // n_cell  ## shape: (n_roi,)
+        is_intra = idx_session[np.repeat(np.arange(s.shape[0]), np.diff(s.indptr))] == idx_session[s.indices]  ## shape: (nnz,)
+        is_tied = is_match | (~is_intra & (np.random.default_rng(0).random(s.nnz) < 0.2))
+        s.data[is_tied] = 2.0
+
+        _, _, calibrations = clusterer.make_naive_bayes_distance_matrix()
+        cal = calibrations['features']['swt']
+        idx_edgesAtTie = np.flatnonzero(cal['edges'] == 2.0)
+        assert len(idx_edgesAtTie) >= 2, "precondition: the ties must repeat an edge"
+        idx_binCounted = idx_edgesAtTie.max()  ## bin [2.0, next edge), where torch.histogram counts the ties
+        idx_binLeft = idx_edgesAtTie.min() - 1  ## bin [previous edge, 2.0), below the ties
+        assert cal['p_same_bins'][idx_binCounted] != cal['p_same_bins'][idx_binLeft], "precondition: a wrong lookup must be visible"
+        np.testing.assert_array_equal(cal['p_same_per_pair'][is_tied], cal['p_same_bins'][idx_binCounted])
 
     def test_returns_correct_types(self, clusterer_with_data):
         """Should return (dConj, sConj, calibrations) with correct types."""
@@ -3515,6 +3748,17 @@ class Test_Preprocessor_ROI_images:
             preprocessor.scale_normalize_images(ROI_images=images, um_per_pixel=1.0), images,
         )
 
+    def test_multiple_sessions_share_one_progress_bar(self, capsys):
+        """Resizing several sessions shows one progress bar over all their ROIs, and verbosity does not change the output."""
+        from roicat.ROInet import Preprocessor_ROI_images
+        sessions = [self._images(n_roi=3, seed=0), self._images(n_roi=4, seed=1), self._images(n_roi=5, seed=2)]
+        out = Preprocessor_ROI_images(verbose=True).scale_normalize_images(ROI_images=sessions, um_per_pixel=[1.0, 2.0, 3.0])
+        err = capsys.readouterr().err
+        assert '12/12' in err
+        assert all(f'{n}/{n}' not in err for n in (3, 4, 5)), err
+        out_quiet = Preprocessor_ROI_images(verbose=False).scale_normalize_images(ROI_images=sessions, um_per_pixel=[1.0, 2.0, 3.0])
+        assert np.array_equal(out, out_quiet)
+
     def test_multiple_sessions_use_own_um_per_pixel(self):
         from roicat.ROInet import Preprocessor_ROI_images
         preprocessor = Preprocessor_ROI_images(verbose=False)
@@ -4074,3 +4318,64 @@ class Test_plot_quality_metrics_panels:
         assert [p.get_height() for p in axs[1, 2].patches] == [0, 0, 0]
         assert 'n_excluded: 10' in fig.get_suptitle()
         assert 'n_clusters: 0' in fig.get_suptitle()
+
+
+@pytest.mark.parametrize('n_pixels, dtype_idx, n_workers', [(512 * 512, np.int32, 1), (2**33, np.int64, 1), (512 * 512, np.int32, -1)])
+def test_manhattan_similarity_index_dtypes(n_pixels, dtype_idx, n_workers):
+    """The spatial footprint similarity must work with int32 pixel indices
+    (typical FOVs) and int64 ones beyond int32 (FOVs over ~46k x 46k), with
+    one or all cores, and equal 1 - L1 on the normalized rows."""
+    from roicat.tracking.similarity_graph import ROI_graph, DEFAULT_METRICS
+    rng = np.random.default_rng(0)
+    n_roi, n_perRoi = 30, 40
+    idx_row = np.repeat(np.arange(n_roi), n_perRoi)  ## shape: (n_roi * n_perRoi,)
+    idx_col = rng.integers(n_pixels // 2, n_pixels, size=n_roi * n_perRoi, dtype=np.int64)
+    idx_col[::3] = idx_col[0]  ## shared pixels so some similarities are nonzero
+    sf = scipy.sparse.csr_array((rng.random(idx_col.size, dtype=np.float32), (idx_row, idx_col)), shape=(n_roi, n_pixels))
+    sf.sum_duplicates()
+    sf = scipy.sparse.csr_array((sf.data, sf.indices.astype(dtype_idx), sf.indptr.astype(dtype_idx)), shape=sf.shape)
+    assert sf.indices.dtype == dtype_idx
+
+    graph = ROI_graph(n_workers=n_workers, frame_height=1, frame_width=1, block_height=1, block_width=1, verbose=False)
+    graph._sf_maskPower = 1.0
+    s_sf = graph._compute_manhattan_similarity(spatialFootprints=sf, config=DEFAULT_METRICS[0])
+    assert isinstance(s_sf, scipy.sparse.csr_array)
+    assert s_sf.has_sorted_indices
+
+    ## Dense reference on the used columns only
+    _, idx_colUsed = np.unique(sf.indices, return_inverse=True)
+    x = scipy.sparse.csr_array((sf.data.astype(np.float64), idx_colUsed, sf.indptr), shape=(n_roi, idx_colUsed.max() + 1)).toarray()
+    x = 0.5 * x / x.sum(1, keepdims=True)  ## shape: (n_roi, n_colUsed)
+    s_ref = 1 - np.abs(x[:, None, :] - x[None, :, :]).sum(-1)  ## shape: (n_roi, n_roi)
+    s_ref[s_ref < 1e-5] = 0
+    np.fill_diagonal(s_ref, 0)
+    assert s_sf.nnz > 0
+    assert np.allclose(s_sf.toarray(), s_ref, atol=1e-6)
+
+
+@pytest.mark.parametrize('n_workers', [0, -2, 1.0])
+def test_roi_graph_invalid_n_workers_raises(n_workers):
+    from roicat.tracking.similarity_graph import ROI_graph
+    with pytest.raises(ValueError, match='n_workers'):
+        ROI_graph(n_workers=n_workers, frame_height=1, frame_width=1, block_height=1, block_width=1, verbose=False)
+
+
+def test_manhattan_similarity_kernel_cache_loads_in_new_process():
+    """A second Python process loads the compiled kernel from numba's cache.
+
+    A jitted function that captures another dispatcher from its enclosing
+    scope gets a new cache key in every process, so it recompiles and writes
+    a new cache file on every run.
+    """
+    import subprocess
+    import sys
+    code = (
+        "import numpy as np\n"
+        "from roicat.tracking.similarity_graph import _get_manhattan_similarity_kernel\n"
+        "k = _get_manhattan_similarity_kernel()\n"
+        "k(np.array([0, 1], np.int64), np.array([0.5]), np.array([0], np.int64), np.array([0, 1], np.int64),"
+        " np.array([0], np.int64), np.array([0.5]), np.array([0.5]), 1e-5)\n"
+        "print(sum(k.stats.cache_hits.values()))\n"
+    )
+    hits = [int(subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, check=True).stdout.strip().splitlines()[-1]) for _ in range(2)]
+    assert hits[1] == 1, f"cache hits per process: {hits}"
