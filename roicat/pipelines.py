@@ -460,6 +460,8 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         )
         (Path(dir_save).resolve() / 'visualization' / 'clustering').mkdir(parents=True, exist_ok=True)
         fig.savefig(str(Path(dir_save).resolve() / 'visualization' / 'clustering' / 'quality_metrics.png'))
+        fig, axs = visualization.plot_session_match_fraction(labels_bySession=labels_bySession)
+        fig.savefig(str(Path(dir_save).resolve() / 'visualization' / 'clustering' / 'session_match_fraction.png'))
         
         ### Save an animation of the ROIs
         FOV_clusters = visualization.compute_colored_FOV(
@@ -484,6 +486,28 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
             frame_rate=params['results_saving']['frame_rate'],
             loop=0,
         )
+
+        ### Save an animation of the ROIs colored by sample_silhouette. Unclustered ROIs
+        ### have no meaningful score, so they are set to NaN and drawn grey.
+        if quality_metrics['sample_silhouette'] is not None:  ## None if there were fewer than 2 labels
+            FOV_sample_silhouette = visualization.compute_colored_FOV_metric(
+                spatialFootprints=results_all['ROIs']['ROIs_aligned'],
+                FOV_height=results_all['ROIs']['frame_height'],
+                FOV_width=results_all['ROIs']['frame_width'],
+                values=np.where(np.asarray(labels_squeezed) == -1, np.nan, np.asarray(quality_metrics['sample_silhouette'], dtype=np.float64)),
+            )
+            helpers.save_webp(
+                array=helpers.add_text_to_images(
+                    images=[(f * 255).astype(np.uint8) for f in FOV_sample_silhouette],
+                    text=[[f"{ii}",] for ii in range(len(FOV_sample_silhouette))],
+                    font_size=3,
+                    line_width=10,
+                    position=(30, 90),
+                ),
+                path=str(Path(dir_save).resolve() / 'visualization' / 'FOV_sample_silhouette.webp'),
+                frame_rate=params['results_saving']['frame_rate'],
+                loop=0,
+            )
 
         ### Save animations of the FOVs at different stages of alignment
         helpers.save_webp(

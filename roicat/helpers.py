@@ -4933,7 +4933,13 @@ def add_text_to_images(
         for i_t, t in enumerate(text[i_f]):
             fn_putText = lambda frame_gray: cv2.putText(frame_gray, t, [position[0] , position[1] + i_t*font_size*30], font, font_size, color, line_width)
             if frame.ndim == 3:
-                [fn_putText(frame[:,:,ii]) for ii in range(frame.shape[2])]
+                ## cv2.putText draws in place and needs a contiguous array, but a
+                ## channel of a C-ordered (H, W, C) frame is a strided view. Draw
+                ## on a contiguous copy of each channel and write it back.
+                for ii in range(frame.shape[2]):
+                    frame_channel = np.ascontiguousarray(frame[:,:,ii])
+                    fn_putText(frame_channel)
+                    frame[:,:,ii] = frame_channel
             else:
                 fn_putText(frame)
     return images_cp
