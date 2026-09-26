@@ -94,7 +94,7 @@ installation process, please make a [github
 issue](https://github.com/RichieHakim/ROICaT/issues) with the error.
 
 ### 0. Requirements
-- **Python 3.11, 3.12, or 3.13**.
+- **Python 3.12, 3.13, or 3.14**.
 - [Anaconda](https://www.anaconda.com/distribution/) or
   [Miniconda](https://docs.conda.io/en/latest/miniconda.html).
 - The below commands should be run in the terminal (Mac/Linux) or Anaconda
@@ -102,7 +102,7 @@ issue](https://github.com/RichieHakim/ROICaT/issues) with the error.
 
 ### 1. (Recommended) Create a new conda environment
 ```
-conda create -n roicat python=3.12
+conda create -n roicat python=3.13
 conda activate roicat
 ```
 You will need to activate the environment with `conda activate roicat` each time
@@ -226,6 +226,7 @@ sudo docker run -it -p 7860:7860 --platform=linux/amd64 --shm-size=10g registry.
 - [x] Switch off pickling optuna save file
 - [ ] Try training on cellpose datasets
 - [x] Python 3.13
+- [x] Python 3.14
 #### other:
 - [ ] Write the paper
 - [ ] Make tweet about it
