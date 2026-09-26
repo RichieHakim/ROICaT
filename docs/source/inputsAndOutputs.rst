@@ -95,6 +95,8 @@ used in their study:
    an inclusion criterion was set using the 'cs_sil' metric **('cluster similarity
    silhouette score') of 0.2**.
 
+The ``cs_sil`` metric in this quote is now called ``cluster_silhouette``.
+
 For my own data, I often use the following inclusion criteria:
 
 - **cluster_silhouette > somewhere around -0.1**: Discard all clusters with
@@ -102,65 +104,115 @@ For my own data, I often use the following inclusion criteria:
   tracking errors but also discard many correctly tracked cells, so choose based
   on how much identity error your analysis can tolerate.
 - **sample_silhouette > 0.1**: Discard all ROIs with scores below this
-  threshold. You can set their label to -1 to signify that they are unclustered
-  samples.
+  threshold. You can set their label to -1 to mark them as unclustered. This
+  removes single poorly matched ROIs and keeps the rest of their cluster.
+
+**When precision matters most**, raise the ``sample_silhouette`` cutoff to
+about 0.3 first. We tested these cutoffs on 55 animals with ground truth, across
+8 datasets. On 6 of the 8 datasets, filtering ROIs by ``sample_silhouette`` gave
+a better trade-off between removing errors and keeping correct matches than
+raising the ``cluster_silhouette`` cutoff. On the 5 datasets with curated
+ground truth, a ``sample_silhouette`` cutoff of 0.3 removed 16 to 50% of
+tracking errors and cost 2 to 7% of correct matches, compared with no
+filtering. When we chose the cutoff on some datasets and tested it on the
+others, the chosen value landed between 0.18 and 0.34.
+
+Lowering ``stringency`` does little for precision. Going from 1.0 to 0.5 raised
+precision by at most 0.05 and lowered recall by up to 0.2.
+
+No single cutoff of any metric gives the same precision on every dataset. Look
+at some clusters from your own data before you settle on a cutoff. The quality
+metrics figure described below shows how many ROIs each cutoff keeps.
 
 Quality Metrics
 ~~~~~~~~~~~~~~~
 
-- **cs_min:** Intra-cluster minimum similarity. Defined as the lowest pairwise
-  similarity within a cluster. *shape:* (n_clusters,).
+The tracking results store these metrics in the ``quality_metrics``
+dictionary. The ``cluster_*`` metrics have one value per entry of
+``cluster_labels_unique``. That list includes -1 when some ROIs were not
+clustered. The ``sample_*`` metrics have one value per ROI, across all sessions.
+
+- **cluster_intra_mins:** Intra-cluster minimum similarity. Defined as the
+  lowest pairwise similarity within a cluster. *shape:* (n_clusters,).
 
 .. image:: ../media/cluster_quality_metric_images/cs_min.png
    :align: right
    :width: 100
-   :alt: cs_min
+   :alt: cluster_intra_mins
 
 |
 
-- **cs_max:** Intra-cluster maximum similarity. Defined as the highest
-  similarity within a cluster. *shape:* (n_clusters,).
+- **cluster_intra_maxs:** Intra-cluster maximum similarity. Defined as the
+  highest similarity within a cluster. *shape:* (n_clusters,).
 
 .. image:: ../media/cluster_quality_metric_images/cs_max.png
    :align: right
    :width: 100
-   :alt: cs_max
+   :alt: cluster_intra_maxs
 
 |
 
-- **cs_mean:** Mean intra-cluster similarity. Defined as the average similarity
-  within a cluster. *shape:* (n_clusters,).
+- **cluster_intra_means:** Mean intra-cluster similarity. Defined as the
+  average similarity within a cluster. *shape:* (n_clusters,).
 
 .. image:: ../media/cluster_quality_metric_images/cs_mean.png
    :align: right
    :width: 100
-   :alt: cs_mean
+   :alt: cluster_intra_means
 
 |
 
-- **cs_sil:** Cluster silhouette score. A measure of how similar an ROI is to
-  its own cluster compared to other clusters, which can be indicative of the
-  appropriateness of the cluster assignment. Defined as ``(intra - inter) /
-  np.maximum(intra, inter)`` where ``intra=cs_intra_mean`` and
-  ``inter=cs_inter_maxOfMaxes``. *shape:* (n_clusters,).
+- **cluster_silhouette:** Cluster silhouette score. A measure of how similar
+  the ROIs in a cluster are to each other compared to ROIs in other clusters,
+  which can be indicative of the appropriateness of the cluster assignment.
+  Defined as ``(intra - inter) / np.maximum(intra, inter)``, where ``intra`` is
+  ``cluster_intra_means`` and ``inter`` is the highest similarity between an
+  ROI in the cluster and an ROI in any other cluster. *shape:* (n_clusters,).
 
 .. image:: ../media/cluster_quality_metric_images/cs_sil.png
    :align: right
    :width: 100
-   :alt: cs_sil
+   :alt: cluster_silhouette
 
 |
 
-- **sample_sil:** Sample silhouette score. See `sklearn.metrics.silhouette_score
-  <https://scikit-learn.org/stable/modules/generated/sklearn.metrics.silhouette_score.html>`_
-  documentation for more details. A measure of how well each ROI is clustered
-  with its label, providing a perspective on the overall clustering quality.
-  Defined using ``sklearn.metrics.silhouette_score``. *shape:* (n_ROIs_total,).
+- **sample_silhouette:** Sample silhouette score. See
+  `sklearn.metrics.silhouette_samples
+  <https://scikit-learn.org/stable/modules/generated/sklearn.metrics.silhouette_samples.html>`_
+  documentation for more details. A measure of how well each ROI fits its own
+  cluster compared to the nearest other cluster. Computed like
+  ``sklearn.metrics.silhouette_samples``, on the sparse distance graph. ROIs
+  labeled -1 are scored as if they formed one cluster, so ignore their scores.
+  *shape:* (n_ROIs_total,).
 
 .. image:: ../media/cluster_quality_metric_images/sample_sil.png
    :align: right
    :width: 100
-   :alt: sample_sil
+   :alt: sample_silhouette
 
 |
+
+- **sample_probabilities:** HDBSCAN membership strength of each ROI, from 0
+  to 1. ``None`` when the clustering used single-linkage or the Hungarian
+  method. *shape:* (n_ROIs_total,).
+- **hdbscan:** A dictionary of other HDBSCAN outputs, such as outlier scores.
+  ``None`` when the clustering used single-linkage or the Hungarian method.
+
+Quality Metrics Figure
+~~~~~~~~~~~~~~~~~~~~~~
+
+The tracking pipeline saves a figure of these metrics to
+``visualization/clustering/quality_metrics.png`` in the save directory. You can
+also draw it with ``roicat.tracking.clustering.plot_quality_metrics``. The top
+row has one value per cluster. The bottom row is computed from each ROI.
+
+- **Top left:** Histogram of ``cluster_silhouette``.
+- **Top middle:** Histogram of ``cluster_intra_means``.
+- **Top right:** Number of clusters that span each number of sessions.
+- **Bottom left:** Histogram of ``sample_silhouette`` for clustered ROIs.
+- **Bottom middle:** Fraction of clustered ROIs kept at each cutoff, for a
+  ``sample_silhouette`` cutoff and for a ``cluster_silhouette`` cutoff. Use it
+  to see how many ROIs a cutoff removes before you apply it.
+- **Bottom right:** Fraction of each session's ROIs that were placed in a
+  cluster. A session far below the others may be badly aligned.
 

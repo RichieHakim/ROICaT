@@ -456,6 +456,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
             quality_metrics=quality_metrics, 
             labels=labels_squeezed, 
             n_sessions=data.n_sessions,
+            n_roi_bySession=data.n_roi,
         )
         (Path(dir_save).resolve() / 'visualization' / 'clustering').mkdir(parents=True, exist_ok=True)
         fig.savefig(str(Path(dir_save).resolve() / 'visualization' / 'clustering' / 'quality_metrics.png'))
