@@ -4525,57 +4525,26 @@ def make_label_variants(
 
 def plot_quality_metrics(
     quality_metrics: dict,
-    labels: Union[np.ndarray, list],
-    n_sessions: int,
-    n_roi_bySession: Optional[List[int]] = None,
+    labels_bySession: List[Union[np.ndarray, List[int]]],
 ) -> Tuple[plt.Figure, np.ndarray]:
     """
-    Plots a summary of the clustering quality metrics.
+    Plots the distributions of the clustering quality metrics.
+    RH 2026
 
-    The top row has one value per cluster. The bottom row has values computed
-    from each ROI. The panels are:
-
-    * ``axs[0, 0]``: Histogram of ``cluster_silhouette``.
-    * ``axs[0, 1]``: Histogram of ``cluster_intra_means``.
-    * ``axs[0, 2]``: Number of clusters of each size, in ROIs. A cluster
-      holds at most one ROI per session, so its size is also the number of
-      sessions it spans.
-    * ``axs[1, 0]``: Histogram of ``sample_silhouette`` over clustered ROIs.
-    * ``axs[1, 1]``: Fraction of clustered ROIs kept at each cutoff *x* by
-      the filters ``sample_silhouette > x`` and ``cluster_silhouette > x``.
-      For the second filter, each ROI takes the value of its cluster. Use
-      this panel to see what a cutoff costs before applying it.
-    * ``axs[1, 2]``: Fraction of each session's ROIs that were placed in a
-      cluster. A session far below the others may be badly aligned.
-
-    Label ``-1`` marks unclustered ROIs. The ``-1`` entry of the cluster
-    metrics is not a real cluster, so it is left out of the top row. ROIs
-    labeled ``-1`` are left out of ``axs[1, 0]`` and ``axs[1, 1]``.
-
-    NaN values are left out of the histograms, and a note above the panel
-    gives their count. In ``axs[1, 1]``, an ROI with a NaN value fails every
-    cutoff, as it would with a ``values > x`` filter, so that curve starts
-    below 1.
+    Top row, one value per cluster: ``cluster_silhouette``,
+    ``cluster_intra_means``, and the number of sessions in each cluster.
+    Bottom row, one value per ROI: ``sample_silhouette`` of the clustered ROIs,
+    the fraction of clustered ROIs above a ``sample_silhouette`` or
+    ``cluster_silhouette`` cutoff, and the fraction of each session's ROIs that
+    were clustered.
 
     Args:
         quality_metrics (dict):
-            Output of ``Clusterer.compute_quality_metrics``. Uses the keys
-            ``'cluster_silhouette'``, ``'cluster_intra_means'``,
-            ``'sample_silhouette'``, and ``'cluster_labels_unique'``. Values
-            may be lists or arrays. ``'sample_silhouette'`` may be ``None``.
-            ``'cluster_labels_unique'`` gives the label of each entry of the
-            cluster metrics, with or without ``-1``. If that key is missing,
-            the entries are taken to follow ``np.unique(labels)``, with or
-            without ``-1`` according to their count.
-        labels (Union[np.ndarray, list]):
-            Cluster label of each ROI, concatenated across sessions. ``-1``
-            marks unclustered ROIs. (shape: *(n_roi_total,)*)
-        n_sessions (int):
-            Number of sessions.
-        n_roi_bySession (Optional[List[int]]):
-            Number of ROIs in each session, in the order they appear in
-            ``labels``. Needed for ``axs[1, 2]``. If ``None``, that panel
-            shows a note instead. (Default is ``None``)
+            Output of ``Clusterer.compute_quality_metrics``, computed from the
+            same labels.
+        labels_bySession (List[Union[np.ndarray, List[int]]]):
+            Cluster label of each ROI, one array per session. ``-1`` marks
+            unclustered ROIs.
 
     Returns:
         (tuple): tuple containing:
@@ -4584,132 +4553,60 @@ def plot_quality_metrics(
             axs (np.ndarray):
                 The axes. (shape: *(2, 3)*)
     """
-    ## The pipeline passes the JSON_List that make_label_variants returns, and on a
-    ## list `labels == -1` is the scalar False rather than a boolean mask, so every
-    ## count in the suptitle below came out as 0 / 1 / 1 regardless of the data.
-    labels = np.asarray(labels).astype(np.int64)
-    bool_clustered = labels != -1
-    labels_clustered = labels[bool_clustered]
+    labels_bySession = [np.asarray(labels, dtype=np.int64) for labels in labels_bySession]
+    labels = np.concatenate(labels_bySession)  ## shape: (n_roi_total,)
+    n_sessions = len(labels_bySession)
+    bool_clustered = labels != -1  ## shape: (n_roi_total,)
 
-    cluster_silhouette = np.asarray(quality_metrics['cluster_silhouette'], dtype=np.float64)
-    cluster_intra_means = np.asarray(quality_metrics['cluster_intra_means'], dtype=np.float64)
+    ## Cluster metrics are ordered by np.unique(labels). Drop the -1 entry, which pools the unclustered ROIs.
+    labels_unique = np.asarray(quality_metrics['cluster_labels_unique'], dtype=np.int64)
+    assert np.array_equal(labels_unique, np.unique(labels)), "quality_metrics must be computed from the same labels as labels_bySession"
+    bool_notNoise = labels_unique != -1
+    cluster_silhouette = np.asarray(quality_metrics['cluster_silhouette'], dtype=np.float64)[bool_notNoise]  ## shape: (n_clusters,)
+    cluster_intra_means = np.asarray(quality_metrics['cluster_intra_means'], dtype=np.float64)[bool_notNoise]  ## shape: (n_clusters,)
+
+    ## Values of the clustered ROIs. sample_silhouette is None if it was not computed.
+    cluster_silhouette_byROI = cluster_silhouette[np.searchsorted(labels_unique[bool_notNoise], labels[bool_clustered])]  ## shape: (n_roi_clustered,)
     sample_silhouette = quality_metrics['sample_silhouette']
-    if sample_silhouette is not None:
-        sample_silhouette = np.asarray(sample_silhouette, dtype=np.float64)
-        assert len(sample_silhouette) == len(labels), (
-            f"len(sample_silhouette)={len(sample_silhouette)} != len(labels)={len(labels)}"
-        )
-
-    ## Find the label of each cluster-metric entry. compute_quality_metrics
-    ## orders the entries by np.unique(labels), which includes -1 whenever some
-    ## ROIs are unclustered.
-    labels_unique_metrics = quality_metrics.get('cluster_labels_unique', None)
-    if labels_unique_metrics is None:
-        labels_unique_all = np.unique(labels)
-        labels_unique_metrics = (
-            labels_unique_all
-            if len(labels_unique_all) == len(cluster_silhouette)
-            else labels_unique_all[labels_unique_all != -1]
-        )
-    labels_unique_metrics = np.asarray(labels_unique_metrics).astype(np.int64)
-    assert len(labels_unique_metrics) == len(cluster_silhouette) == len(cluster_intra_means), (
-        f"Cluster metrics must have one entry per cluster label. Got "
-        f"{len(labels_unique_metrics)} labels, {len(cluster_silhouette)} cluster_silhouette "
-        f"values, and {len(cluster_intra_means)} cluster_intra_means values."
-    )
-
-    ## The -1 entry pools the unclustered ROIs and is not a cluster.
-    bool_realCluster = labels_unique_metrics != -1
-    labels_clusters = labels_unique_metrics[bool_realCluster]
-    cluster_silhouette = cluster_silhouette[bool_realCluster]
-    cluster_intra_means = cluster_intra_means[bool_realCluster]
-
-    ## Give each clustered ROI its cluster's silhouette, matched by label rather
-    ## than by position.
-    idx_sort = np.argsort(labels_clusters)
-    idx_inSorted = np.searchsorted(labels_clusters[idx_sort], labels_clustered)  ## shape: (n_roi_clustered,)
-    assert np.all(idx_inSorted < len(labels_clusters)) and np.array_equal(labels_clusters[idx_sort][idx_inSorted], labels_clustered), (
-        "Every label in `labels` other than -1 must appear in quality_metrics['cluster_labels_unique']."
-    )
-    cluster_silhouette_byROI = cluster_silhouette[idx_sort[idx_inSorted]]  ## shape: (n_roi_clustered,)
-
-    cutoffs = np.linspace(-1, 1, 201)
-    def fraction_kept(values):
-        """Fraction of ``values`` above each cutoff. NaN counts as removed."""
-        values_sorted = np.sort(values[~np.isnan(values)])
-        n_kept = len(values_sorted) - np.searchsorted(values_sorted, cutoffs, side='right')  ## shape: (n_cutoffs,)
-        return n_kept / len(values)
-
-    def note(ax, text):
-        ax.text(0.5, 0.5, text, transform=ax.transAxes, ha='center', va='center')
-
-    def hist_nonNaN(ax, values, bins, text_empty):
-        is_nan = np.isnan(values)
-        ax.hist(values[~is_nan], bins=bins)
-        if is_nan.any():
-            ax.set_title(f'{int(is_nan.sum())} NaN not shown', loc='right', fontsize='small')
-        if (~is_nan).sum() == 0:
-            note(ax, text_empty)
+    sample_silhouette = np.asarray(sample_silhouette, dtype=np.float64)[bool_clustered] if sample_silhouette is not None else None  ## shape: (n_roi_clustered,)
 
     fig, axs = plt.subplots(nrows=2, ncols=3, figsize=(18, 8))
     bins_silhouette = np.linspace(-1, 1, 51)
 
     ## Top row: one value per cluster
-    hist_nonNaN(ax=axs[0, 0], values=cluster_silhouette, bins=bins_silhouette, text_empty='no clusters')
-    axs[0, 0].set_xlim(-1, 1)
-    axs[0, 0].set_xlabel('cluster_silhouette')
-    axs[0, 0].set_ylabel('cluster counts')
+    axs[0,0].hist(cluster_silhouette[np.isfinite(cluster_silhouette)], bins=bins_silhouette)
+    axs[0,0].set_xlabel('cluster_silhouette')
+    axs[0,0].set_ylabel('cluster counts')
 
-    hist_nonNaN(ax=axs[0, 1], values=cluster_intra_means, bins=50, text_empty='no clusters')
-    axs[0, 1].set_xlabel('cluster_intra_means')
-    axs[0, 1].set_ylabel('cluster counts')
+    axs[0,1].hist(cluster_intra_means[np.isfinite(cluster_intra_means)], bins=50)
+    axs[0,1].set_xlabel('cluster_intra_means')
+    axs[0,1].set_ylabel('cluster counts')
 
-    _, n_roi_byCluster = np.unique(labels_clustered, return_counts=True)
-    n_clusters_bySize = np.bincount(n_roi_byCluster, minlength=int(n_sessions) + 1)  ## index is the cluster size
-    axs[0, 2].bar(np.arange(1, len(n_clusters_bySize)), n_clusters_bySize[1:])
-    axs[0, 2].xaxis.set_major_locator(plt.MaxNLocator(integer=True))
-    axs[0, 2].set_xlabel('n_sessions in cluster')
-    axs[0, 2].set_ylabel('cluster counts')
+    _, n_roi_byCluster = np.unique(labels[bool_clustered], return_counts=True)  ## a cluster holds at most one ROI per session
+    n_clusters_bySize = np.bincount(n_roi_byCluster, minlength=n_sessions + 1)  ## index is the cluster size
+    axs[0,2].bar(np.arange(1, len(n_clusters_bySize)), n_clusters_bySize[1:])
+    axs[0,2].set_xlabel('n_sessions in cluster')
+    axs[0,2].set_ylabel('cluster counts')
 
-    ## Bottom row: computed from each ROI
+    ## Bottom row: one value per ROI
     if sample_silhouette is not None:
-        hist_nonNaN(ax=axs[1, 0], values=sample_silhouette[bool_clustered], bins=bins_silhouette, text_empty='no clustered ROIs')
-    else:
-        note(axs[1, 0], 'sample_silhouette was not computed')
-    axs[1, 0].set_xlim(-1, 1)
-    axs[1, 0].set_xlabel('sample_silhouette')
-    axs[1, 0].set_ylabel('clustered ROI counts')
+        axs[1,0].hist(sample_silhouette[np.isfinite(sample_silhouette)], bins=bins_silhouette)
+    axs[1,0].set_xlabel('sample_silhouette')
+    axs[1,0].set_ylabel('clustered ROI counts')
 
-    if len(labels_clustered) > 0:
+    ## Fraction of clustered ROIs above each cutoff. NaN is below every cutoff.
+    cutoffs = np.linspace(-1, 1, 201)
+    if bool_clustered.any():
         if sample_silhouette is not None:
-            axs[1, 1].plot(cutoffs, fraction_kept(sample_silhouette[bool_clustered]), label='sample_silhouette > cutoff')
-        axs[1, 1].plot(cutoffs, fraction_kept(cluster_silhouette_byROI), label='cluster_silhouette > cutoff')
-        axs[1, 1].legend(loc='lower left')
-    else:
-        note(axs[1, 1], 'no clustered ROIs')
-    axs[1, 1].set_xlim(-1, 1)
-    axs[1, 1].set_ylim(0, 1.02)
-    axs[1, 1].grid(True, alpha=0.4)
-    axs[1, 1].set_xlabel('cutoff')
-    axs[1, 1].set_ylabel('fraction of clustered ROIs kept')
+            axs[1,1].plot(cutoffs, [np.mean(sample_silhouette > c) for c in cutoffs], label='sample_silhouette > cutoff')
+        axs[1,1].plot(cutoffs, [np.mean(cluster_silhouette_byROI > c) for c in cutoffs], label='cluster_silhouette > cutoff')
+        axs[1,1].legend()
+    axs[1,1].set_xlabel('cutoff')
+    axs[1,1].set_ylabel('fraction of clustered ROIs kept')
 
-    if n_roi_bySession is not None:
-        n_roi_bySession = np.asarray(n_roi_bySession, dtype=np.int64)
-        assert len(n_roi_bySession) == n_sessions, f"len(n_roi_bySession)={len(n_roi_bySession)} != n_sessions={n_sessions}"
-        assert n_roi_bySession.sum() == len(labels), f"sum(n_roi_bySession)={n_roi_bySession.sum()} != len(labels)={len(labels)}"
-        idx_session_byROI = np.repeat(np.arange(len(n_roi_bySession)), n_roi_bySession)  ## shape: (n_roi_total,)
-        n_clustered_bySession = np.bincount(idx_session_byROI, weights=bool_clustered, minlength=len(n_roi_bySession))
-        with np.errstate(divide='ignore', invalid='ignore'):
-            fraction_clustered_bySession = n_clustered_bySession / n_roi_bySession
-        axs[1, 2].bar(np.arange(len(n_roi_bySession)), fraction_clustered_bySession)
-        axs[1, 2].xaxis.set_major_locator(plt.MaxNLocator(integer=True))
-        axs[1, 2].set_ylim(0, 1)
-    else:
-        note(axs[1, 2], 'Pass n_roi_bySession\nto plot this panel')
-        axs[1, 2].set_xticks([])
-        axs[1, 2].set_yticks([])
-    axs[1, 2].set_xlabel('session')
-    axs[1, 2].set_ylabel('fraction of ROIs in a cluster')
+    axs[1,2].bar(np.arange(n_sessions), [np.mean(labels_session != -1) for labels_session in labels_bySession])
+    axs[1,2].set_xlabel('session')
+    axs[1,2].set_ylabel('fraction of ROIs in a cluster')
 
     # Make the title include the number of excluded (label==-1) ROIs
     fig.suptitle(f'Quality metrics n_excluded: {np.sum(labels==-1)}, n_included: {np.sum(labels!=-1)}, n_total: {len(labels)}, n_clusters: {len(np.unique(labels[labels!=-1]))}, n_sessions: {n_sessions}')
