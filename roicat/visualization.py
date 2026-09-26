@@ -20,28 +20,45 @@ def display_toggle_image_stack(
     image_size: Optional[Union[Tuple[int, int], int, float]] = None,
     clim: Optional[Tuple[float, float]] = None,
     interpolation: str = 'nearest',
+    quality: Optional[int] = None,
 ) -> None:
     """
-    Displays images in a slider using Jupyter Notebook. 
+    Displays images in a slider using Jupyter Notebook. Frames are embedded
+    at their native resolution as WebP, and the browser scales them to
+    ``image_size``.
     RH 2023
 
     Args:
         images (Union[List[np.ndarray], List[torch.Tensor]]): 
-            List of images as numpy arrays or PyTorch tensors.
+            List of images as numpy arrays or PyTorch tensors. Shape of each:
+            *(height, width)* or *(height, width, channels)*.
         image_size (Optional[Tuple[int, int]]): 
-            Tuple of *(width, height)* for resizing images.\n
-            If ``None``, images are not resized.\n
-            If a single integer or float is provided, the images are resized by
-            that factor.\n
+            Displayed size of the images.\n
+            If a tuple, it is *(height, width)* in pixels.\n
+            If ``None``, images are displayed at their native size.\n
+            If a single integer or float is provided, the native size is
+            scaled by that factor.\n
             (Default is ``None``)
         clim (Optional[Tuple[float, float]]): 
             Tuple of *(min, max)* values for scaling pixel intensities. If
             ``None``, min and max values are computed from the images and used
             as bounds for scaling. (Default is ``None``)
         interpolation (str): 
-            String specifying the interpolation method for resizing. Options are
-            'nearest', 'box', 'bilinear', 'hamming', 'bicubic', 'lanczos'. Uses
-            the Image.Resampling.* methods from PIL. (Default is 'nearest')
+            How the browser scales the images to ``image_size``. ``'nearest'``
+            keeps pixels sharp (CSS ``image-rendering: pixelated``). The
+            other options, ``'box'``, ``'bilinear'``, ``'hamming'``,
+            ``'bicubic'`` and ``'lanczos'``, all use the browser's smooth
+            scaling. (Default is ``'nearest'``)
+        quality (Optional[int]):
+            WebP quality in ``[0, 100]`` for lossy frames. ``None`` embeds
+            them losslessly. Lossy frames make a notebook of noisy images
+            such as FOVs about half as large, but shift colors, most visibly
+            in bright colored ROIs. (Default is ``None``)
+
+    Raises:
+        ValueError:
+            If an image side exceeds WebP's limit of 16383 pixels. Downsample
+            such images before displaying them.
     """
     from IPython.display import display, HTML
     import numpy as np
@@ -53,15 +70,16 @@ def display_toggle_image_stack(
     import hashlib
     import sys
     
-    # Get the image size for display
+    # Get the displayed size: (height, width)
+    shape_native = tuple(images[0].shape[:2])
     if image_size is None:
-        image_size = images[0].shape[:2]  
+        image_size = shape_native
     elif isinstance(image_size, (int, float)):
-        image_size = tuple((np.array(images[0].shape[:2]) * image_size).astype(np.int64))
+        image_size = tuple((np.array(shape_native) * image_size).astype(np.int64))
     elif isinstance(image_size, (tuple, list)):
         image_size = tuple(image_size)
     else:
-        raise ValueError("Invalid image size. Must be a tuple of (width, height) or a single integer or float.")
+        raise ValueError("Invalid image size. Must be a tuple of (height, width) or a single integer or float.")
 
     def normalize_image(image, clim=None):
         """Normalize the input image using the min-max scaling method. Optionally, use the given clim values for scaling."""
@@ -69,58 +87,42 @@ def display_toggle_image_stack(
             image = image.detach().cpu().numpy()
 
         if clim is None:
-            clim = (np.min(image), np.max(image))
+            clim = (np.nanmin(image), np.nanmax(image))
 
         norm_image = (image - clim[0]) / (clim[1] - clim[0])
-        norm_image = np.clip(norm_image, 0, 1)
+        norm_image = np.nan_to_num(np.clip(norm_image, 0, 1), nan=0.0)
         return (norm_image * 255).astype(np.uint8)
-    def resize_image(image, new_size, interpolation):
-        """Resize the given image to the specified new size using the specified interpolation method."""
-        if isinstance(image, torch.Tensor):
-            image = image.detach().cpu().numpy()
-
-        pil_image = Image.fromarray(image.astype(np.uint8))
-        resized_image = pil_image.resize(new_size, resample=interpolation)
-        return np.array(resized_image)
     def numpy_to_base64(numpy_array):
-        """Convert a numpy array to a base64 encoded string."""
+        """Convert a numpy array to a base64 encoded WebP string."""
+        if max(numpy_array.shape[:2]) > 16383:
+            raise ValueError(f"Image of shape {numpy_array.shape} exceeds WebP's limit of 16383 pixels per side. Downsample it before displaying.")
         img = Image.fromarray(numpy_array.astype('uint8'))
         buffered = BytesIO()
-        img.save(buffered, format="PNG")
+        kwargs_webp = {'lossless': True} if quality is None else {'quality': quality}
+        img.save(buffered, format="WEBP", **kwargs_webp)
         return base64.b64encode(buffered.getvalue()).decode("ascii")
     def process_image(image):
-        """Normalize, resize, and convert image to base64."""
-        # Normalize image
-        norm_image = normalize_image(image, clim)
-
-        # Resize image if requested
-        if image_size is not None:
-            norm_image = resize_image(norm_image, image_size, interpolation_method)
-
-        # Convert image to base64
-        return numpy_to_base64(norm_image)
+        """Normalize and convert image to base64. The browser does the resizing."""
+        return numpy_to_base64(normalize_image(image, clim))
 
 
     # Check if being called from a Jupyter notebook
     if 'ipykernel' not in sys.modules:
         raise RuntimeError("This function must be called from a Jupyter notebook.")
 
-    # Create a dictionary to map interpolation string inputs to Image objects
-    interpolation_methods = {
-        'nearest': Image.Resampling.NEAREST,
-        'box': Image.Resampling.BOX,
-        'bilinear': Image.Resampling.BILINEAR,
-        'hamming': Image.Resampling.HAMMING,
-        'bicubic': Image.Resampling.BICUBIC,
-        'lanczos': Image.Resampling.LANCZOS,
+    # Map the interpolation option to the CSS image-rendering the browser scales with
+    renderings_css = {
+        'nearest': 'pixelated',
+        'box': 'auto',
+        'bilinear': 'auto',
+        'hamming': 'auto',
+        'bicubic': 'auto',
+        'lanczos': 'auto',
     }
-
-    # Check if provided interpolation method is valid
-    if interpolation not in interpolation_methods:
+    if interpolation not in renderings_css:
         raise ValueError("Invalid interpolation method. Choose from 'nearest', 'box', 'bilinear', 'hamming', 'bicubic', or 'lanczos'.")
-
-    # Get the actual Image object for the specified interpolation method
-    interpolation_method = interpolation_methods[interpolation]
+    if (quality is not None) and not (isinstance(quality, int) and (0 <= quality <= 100)):
+        raise ValueError(f"quality must be an int in [0, 100] or None (lossless), got {quality!r}.")
 
     # Generate a unique identifier for the slider
     slider_id = hashlib.sha256(str(datetime.datetime.now()).encode()).hexdigest()
@@ -132,7 +134,7 @@ def display_toggle_image_stack(
     html_code = f"""
     <div>
         <input type="range" id="imageSlider_{slider_id}" min="0" max="{len(base64_images) - 1}" value="0">
-        <img id="displayedImage_{slider_id}" src="data:image/png;base64,{base64_images[0]}" style="width: {image_size[1]}px; height: {image_size[0]}px;">
+        <img id="displayedImage_{slider_id}" src="data:image/webp;base64,{base64_images[0]}" style="width: {image_size[1]}px; height: {image_size[0]}px; image-rendering: {renderings_css[interpolation]};">
         <span id="imageNumber_{slider_id}">Image 0/{len(base64_images) - 1}</span>
     </div>
 
@@ -145,7 +147,7 @@ def display_toggle_image_stack(
                 let slider = document.getElementById("imageSlider_{slider_id}");
                 current_image = parseInt(slider.value);
                 let displayedImage = document.getElementById("displayedImage_{slider_id}");
-                displayedImage.src = "data:image/png;base64," + base64_images[current_image];
+                displayedImage.src = "data:image/webp;base64," + base64_images[current_image];
                 let imageNumber = document.getElementById("imageNumber_{slider_id}");
                 imageNumber.innerHTML = "Image " + current_image + "/{len(base64_images) - 1}";
             }}
@@ -277,6 +279,99 @@ def compute_colored_FOV(
     rois_c_bySessions_FOV = [r.max(0).toarray().reshape(4, h, w).transpose(1,2,0)[:,:,:3] for r in rois_c_bySessions]
 
     return rois_c_bySessions_FOV
+
+
+def plot_session_match_fraction(
+    labels_bySession: List[Union[np.ndarray, List[int]]],
+) -> Tuple[plt.Figure, np.ndarray]:
+    """
+    Plots, for each pair of sessions, the fraction of ROIs matched across them.
+    RH 2026
+
+    Entry (i, j) of the matrix on the left is the fraction of session i's ROIs
+    whose cluster also holds an ROI from session j. The denominator counts all
+    of session i's ROIs, clustered or not, so the matrix is not symmetric. The
+    diagonal is blank, as is the row of a session with no ROIs. The panel on
+    the right plots every entry against the session gap ``|i - j|`` as a faint
+    point, jittered along x, and the mean over session pairs at each gap as a
+    line.
+
+    This plot shows how often ROIs were linked across sessions. It does not
+    show whether the links are right: a wrong match counts the same as a
+    correct one. A session that failed to align often shows up as a pale row
+    and column.
+
+    Args:
+        labels_bySession (List[Union[np.ndarray, List[int]]]):
+            Cluster label of each ROI, one list or array per session. ``-1``
+            marks unclustered ROIs. This is ``labels_bySession`` in the
+            tracking results.
+
+    Returns:
+        (tuple): tuple containing:
+            fig (plt.Figure):
+                The figure.
+            axs (np.ndarray):
+                The matrix axes and the session gap axes. (shape: *(2,)*)
+    """
+    labels_bySession = [np.asarray(labels).astype(np.int64) for labels in labels_bySession]
+    assert all(labels.ndim == 1 for labels in labels_bySession), "Each element of labels_bySession must be a 1-D list or array of labels"
+    n_sessions = len(labels_bySession)
+    assert n_sessions >= 2, f"Need at least 2 sessions. Got {n_sessions}"
+    n_roi_bySession = np.array([len(labels) for labels in labels_bySession], dtype=np.int64)
+    labels = np.concatenate(labels_bySession)  ## shape: (n_roi_total,)
+    assert np.all(labels >= -1), "Labels must be >= -1. -1 marks unclustered ROIs."
+    idx_session = np.repeat(np.arange(n_sessions), n_roi_bySession)  ## shape: (n_roi_total,)
+
+    ## n_matched[i, j] is the number of session i's ROIs whose cluster holds an
+    ## ROI of session j. It is the product of the ROI counts in each (session,
+    ## cluster) and the presence of each cluster in each session.
+    bool_clustered = labels != -1
+    _, idx_cluster = np.unique(labels[bool_clustered], return_inverse=True)  ## shape: (n_roi_clustered,)
+    n_roi_bySessionCluster = scipy.sparse.csr_array(
+        (np.ones(len(idx_cluster)), (idx_session[bool_clustered], idx_cluster)),
+        shape=(n_sessions, idx_cluster.max(initial=-1) + 1),
+    )  ## shape: (n_sessions, n_clusters)
+    bool_clusterInSession = (n_roi_bySessionCluster > 0).astype(np.float64)  ## shape: (n_sessions, n_clusters)
+    n_matched = (n_roi_bySessionCluster @ bool_clusterInSession.T).toarray()  ## shape: (n_sessions, n_sessions)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        match_fraction = n_matched / n_roi_bySession[:, None]  ## shape: (n_sessions, n_sessions)
+    np.fill_diagonal(match_fraction, np.nan)
+
+    ## Every off-diagonal entry and its session gap, and the mean at each gap
+    idx_i, idx_j = np.nonzero(~np.eye(n_sessions, dtype=bool))
+    gap = np.abs(idx_i - idx_j)  ## shape: (n_sessions * (n_sessions - 1),)
+    fraction_pair = match_fraction[idx_i, idx_j]
+    bool_valid = ~np.isnan(fraction_pair)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        mean_byGap = (
+            np.bincount(gap[bool_valid], weights=fraction_pair[bool_valid], minlength=n_sessions)
+            / np.bincount(gap[bool_valid], minlength=n_sessions)
+        )[1:]  ## shape: (n_sessions - 1,)
+
+    fig, axs = plt.subplots(ncols=2, figsize=(14, 6), layout='constrained')  ## constrained layout leaves room for the suptitle and colorbar
+
+    im = axs[0].imshow(match_fraction, cmap=plt.get_cmap('viridis').with_extremes(bad='lightgrey'), vmin=0, vmax=1, interpolation='nearest')
+    fig.colorbar(im, ax=axs[0], label='match fraction')
+    axs[0].xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    axs[0].yaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    axs[0].set_xlabel('session j')
+    axs[0].set_ylabel('session i')
+    axs[0].set_title("fraction of session i's ROIs whose cluster\nholds an ROI of session j")
+
+    jitter = np.random.default_rng(0).uniform(-0.2, 0.2, size=len(gap))  ## fixed seed, so the figure is reproducible
+    axs[1].scatter(gap + jitter, fraction_pair, s=4, color='grey', alpha=0.3, label='session pair (i, j)')
+    axs[1].plot(np.arange(1, n_sessions), mean_byGap, color='C3', label='mean over session pairs')
+    axs[1].set_xlim(0.5, n_sessions - 0.5)
+    axs[1].set_ylim(0, 1.02)
+    axs[1].xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    axs[1].set_xlabel('session gap |i - j|')
+    axs[1].set_ylabel('match fraction')
+    axs[1].set_title('match fraction vs. session gap')
+    axs[1].legend(loc='best')
+
+    fig.suptitle('Session match fraction: how often ROIs were linked, correct or not')
+    return fig, axs
 
 
 def crop_cluster_ims(ims: np.ndarray) -> np.ndarray:

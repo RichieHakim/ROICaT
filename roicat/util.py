@@ -215,7 +215,6 @@ def get_default_parameters(
                     'n_workers': -1,  ## Number of CPU cores to use. -1 for all.
                     'block_height': 128,  ## size of a block
                     'block_width': 128,  ## size of a block
-                    'algorithm_nearestNeigbors_spatialFootprints': 'brute',  ## algorithm used to find the pairwise similarity for s_sf. ('brute' is slow but exact. See docs for others.)
                 },
                 'compute_similarity': {
                     'spatialFootprint_maskPower': 1.0,  ##  An exponent to raise the spatial footprints to to care more or less about bright pixels
@@ -233,7 +232,7 @@ def get_default_parameters(
                     'n_bins': None,  ## Number of bins for histograms. None = heuristic. Reaches the DE directly only when objective is 'histogram_overlap', but it also sets the resolution of the naive-Bayes calibration that freezes the sigmoid, so it moves the fit under either objective; used downstream by the pruning too.
                     'smoothing_window_bins': None,  ## Smoothing window for distributions. None = heuristic. Same three-way reach as n_bins: legacy objective, naive-Bayes calibration behind the frozen sigmoid, downstream pruning.
                     'subsample_pairs': None,  ## Subsample this many pairs for speedup. None = use all.
-                    'freeze_sigmoid': True,  ## True: sigmoid (mu, b) fixed by a Fisher-discriminant grid search over the bounds below. False: (mu, b) are DE variables too.
+                    'freeze_sigmoid': True,  ## True: sigmoid (mu, b) fixed by a maximum-likelihood grid search over the bounds below. False: (mu, b) are DE variables too.
                     'n_grid_sigmoid_mu': 50,  ## Number of mu values in that grid search. Only used when freeze_sigmoid is True.
                     'n_grid_sigmoid_b': 30,  ## Number of b values in that grid search. Only used when freeze_sigmoid is True.
                     'bounds_findParameters': {
@@ -252,6 +251,7 @@ def get_default_parameters(
                         'mutation': [0.5, 1.5],  ## DE mutation range
                         'recombination': 0.7,  ## DE crossover probability
                         'polish': True,  ## L-BFGS-B polish after DE
+                        'workers': -1,  ## Threads evaluating each DE generation in parallel. -1 = all available cores. The result does not depend on it.
                     },
                 },
                 'parameters_manual_mixing': {
@@ -265,12 +265,12 @@ def get_default_parameters(
                 },
                 'pruning': {
                     'd_cutoff': None,  ## Optionally manually specify a distance cutoff
-                    'stringency': 1.0,  ## How to scale the d_cuttoff. This is a scalaing factor. Smaller numbers result in more pruning.
+                    'stringency': 1.0,  ## How to scale the d_cutoff. This is a scaling factor. Smaller numbers result in more pruning. Lowering it is a weak way to raise precision; filter ROIs by sample_silhouette instead.
                     'convert_to_probability': False,  ## Whether or not to convert the similarity matrix and distance matrix to a probability matrix
                 },
                 'cluster_method': {
-                    'method': 'automatic',  ## 'automatic', 'hdbscan', or 'sequential_hungarian'. 'automatic': selects which clustering algorithm to use (generally if n_sessions >=8 then hdbscan, else sequential_hungarian)
-                    'n_sessions_switch': 6, ## Number of sessions to switch from sequential_hungarian to hdbscan
+                    'method': 'automatic',  ## 'automatic', 'hdbscan', 'single_linkage', or 'sequential_hungarian'. 'automatic': selects which clustering algorithm to use (if n_sessions >= n_sessions_switch then hdbscan, else single_linkage)
+                    'n_sessions_switch': 6, ## Number of sessions to switch from single_linkage to hdbscan
                 },
                 'hdbscan': {
                     'min_cluster_size': 2,  ## Minimum number of ROIs that can be considered a 'cluster'
@@ -286,6 +286,10 @@ def get_default_parameters(
                     'discard_failed_pruning': True,  ## (advanced) Whether or not to set all ROIs that could be separated from clusters with ROIs from the same sessions to label=-1
                     'n_steps_clusterSplit': 100,  ## (advanced) How finely to step through distances to remove violations
                 },
+                'single_linkage': {
+                    'min_cluster_size': 2,  ## Minimum number of ROIs that can be considered a 'cluster'
+                    'd_clusterMerge': None,  ## Single linkage cut height: only edges with a distance below this are merged. None defaults to d_cutoff (pruning threshold).
+                },
                 'sequential_hungarian': {
                     'thresh_cost': None, ## Threshold for the cost matrix. Lower numbers result in more clusters. None defaults to d_cutoff (pruning threshold).
                 },
@@ -294,7 +298,7 @@ def get_default_parameters(
                 'dir_save': None,  ## Directory to save results to. If None, will not save.
                 'prefix_name_save': str(datetime.datetime.now().strftime("%Y%m%d_%H%M%S")),  ## Prefix to append to the saved files
                 'richfile_backend': 'zip',  ## Backend for saving richfile data. Options: 'directory', 'sqlar', 'zip' (default), 'tar'. Archive backends produce a single file instead of a directory tree.
-                'gif_frame_rate': 10.0 ## Frame rate for any GIFs saved
+                'frame_rate': 5.0 ## Frame rate for the saved animations
             },
         }
 

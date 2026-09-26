@@ -280,13 +280,6 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
     )
     tocs.append(('make_conjunctive_distance', time.time() - tic_start))
 
-    def choose_clustering_method(method='automatic', n_sessions_switch=8, n_sessions=None):
-        if method == 'automatic':
-            method_out = 'hdbscan'.upper() if n_sessions >= n_sessions_switch else 'sequential_hungarian'.upper()
-        else:
-            method_out = method.upper()
-        assert method_out.upper() in ['hdbscan'.upper(), 'sequential_hungarian'.upper()]
-        return method_out
     method_clustering = choose_clustering_method(
         method=params['clustering']['cluster_method']['method'],
         n_sessions_switch=params['clustering']['cluster_method']['n_sessions_switch'],
@@ -298,6 +291,12 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
             d_conj=clusterer.dConj_pruned,  ## Input distance matrix
             session_bool=data.session_bool,  ## Boolean array of which ROIs belong to which sessions
             **params['clustering']['hdbscan'],
+        )
+    elif method_clustering == 'single_linkage'.upper():
+        labels = clusterer.fit_singleLinkage(
+            d_conj=clusterer.dConj_pruned,  ## Input distance matrix
+            session_bool=data.session_bool,  ## Boolean array of which ROIs belong to which sessions
+            **params['clustering']['single_linkage'],
         )
     elif method_clustering == 'sequential_hungarian'.upper():
         labels = clusterer.fit_sequentialHungarian(
@@ -410,7 +409,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
             from PIL import Image
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             Image.fromarray(to_uint8(array, normalize=normalize)).save(path)
-        ## Bind the max intensity projections once; they are reused below for the gifs
+        ## Bind the max intensity projections once; they are reused below for the animations
         ims_ROIs = data.get_maxIntensityProjection_spatialFootprints()
         ims_ROIs_aligned = aligner.get_ROIsAligned_maxIntensityProjection(normalize=True)
         ims_ROIs_aligned_blurred = blurrer.get_ROIsBlurred_maxIntensityProjection()
@@ -455,13 +454,14 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         #### Save the clustering results
         fig, axs = tracking.clustering.plot_quality_metrics(
             quality_metrics=quality_metrics, 
-            labels=labels_squeezed, 
-            n_sessions=data.n_sessions,
+            labels_bySession=labels_bySession,
         )
         (Path(dir_save).resolve() / 'visualization' / 'clustering').mkdir(parents=True, exist_ok=True)
         fig.savefig(str(Path(dir_save).resolve() / 'visualization' / 'clustering' / 'quality_metrics.png'))
+        fig, axs = visualization.plot_session_match_fraction(labels_bySession=labels_bySession)
+        fig.savefig(str(Path(dir_save).resolve() / 'visualization' / 'clustering' / 'session_match_fraction.png'))
         
-        ### Save a gif of the ROIs
+        ### Save an animation of the ROIs
         FOV_clusters = visualization.compute_colored_FOV(
             spatialFootprints=[r.power(1.0) for r in results_all['ROIs']['ROIs_aligned']],  ## Spatial footprint sparse arrays
             FOV_height=results_all['ROIs']['frame_height'],
@@ -472,7 +472,7 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         #     alphas_labels=(clusterer.quality_metrics['cluster_silhouette'] > 0) * (clusterer.quality_metrics['cluster_intra_means'] > 0.4),
         #     alphas_sf=clusterer.quality_metrics['sample_silhouette'],  ## Set brightness of each ROI based on some 1-D array
         )
-        helpers.save_gif(
+        helpers.save_webp(
             array=helpers.add_text_to_images(
                 images=[(f * 255).astype(np.uint8) for f in FOV_clusters], 
                 text=[[f"{ii}",] for ii in range(len(FOV_clusters))], 
@@ -480,13 +480,13 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
                 line_width=10,
                 position=(30, 90),
             ), 
-            path=str(Path(dir_save).resolve() / 'visualization' / 'FOV_clusters.gif'),
-            frameRate=params['results_saving']['gif_frame_rate'],
+            path=str(Path(dir_save).resolve() / 'visualization' / 'FOV_clusters.webp'),
+            frame_rate=params['results_saving']['frame_rate'],
             loop=0,
         )
 
-        ### Save gifs of the FOVs at different stages of alignment
-        helpers.save_gif(
+        ### Save animations of the FOVs at different stages of alignment
+        helpers.save_webp(
             array=helpers.add_text_to_images(
                 images=[to_uint8(f) for f in FOV_images], 
                 text=[[f"{ii}",] for ii in range(len(FOV_clusters))], 
@@ -494,12 +494,12 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
                 line_width=10,
                 position=(30, 90),
             ), 
-            path=str(Path(dir_save).resolve() / 'visualization' / 'FOV_images' / 'FOV_images.gif'),
-            frameRate=params['results_saving']['gif_frame_rate'],
+            path=str(Path(dir_save).resolve() / 'visualization' / 'FOV_images' / 'FOV_images.webp'),
+            frame_rate=params['results_saving']['frame_rate'],
             loop=0,
         )
 
-        helpers.save_gif(
+        helpers.save_webp(
             array=helpers.add_text_to_images(
                 images=[to_uint8(f) for f in aligner.ims_registered_geo], 
                 text=[[f"{ii}",] for ii in range(len(FOV_clusters))], 
@@ -507,13 +507,13 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
                 line_width=10,
                 position=(30, 90),
             ), 
-            path=str(Path(dir_save).resolve() / 'visualization' / 'FOV_images_aligned_geometric' / 'FOV_images_aligned_geometric.gif'),
-            frameRate=params['results_saving']['gif_frame_rate'],
+            path=str(Path(dir_save).resolve() / 'visualization' / 'FOV_images_aligned_geometric' / 'FOV_images_aligned_geometric.webp'),
+            frame_rate=params['results_saving']['frame_rate'],
             loop=0,
         )
 
         if params['alignment']['fit_nonrigid']['method']:
-            helpers.save_gif(
+            helpers.save_webp(
                 array=helpers.add_text_to_images(
                     images=[to_uint8(f) for f in aligner.ims_registered_nonrigid], 
                     text=[[f"{ii}",] for ii in range(len(FOV_clusters))], 
@@ -521,13 +521,13 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
                     line_width=10,
                     position=(30, 90),
                 ), 
-                path=str(Path(dir_save).resolve() / 'visualization' / 'FOV_images_aligned_nonrigid' / 'FOV_images_aligned_nonrigid.gif'),
-                frameRate=params['results_saving']['gif_frame_rate'],
+                path=str(Path(dir_save).resolve() / 'visualization' / 'FOV_images_aligned_nonrigid' / 'FOV_images_aligned_nonrigid.webp'),
+                frame_rate=params['results_saving']['frame_rate'],
                 loop=0,
             )
 
-        ### Save gifs of the ROIs at different stages of alignment
-        helpers.save_gif(
+        ### Save animations of the ROIs at different stages of alignment
+        helpers.save_webp(
             array=helpers.add_text_to_images(
                 images=[to_uint8(f) for f in ims_ROIs],
                 text=[[f"{ii}",] for ii in range(len(FOV_clusters))],
@@ -535,12 +535,12 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
                 line_width=10,
                 position=(30, 90),
             ),
-            path=str(Path(dir_save).resolve() / 'visualization' / 'ROIs' / 'ROIs.gif'),
-            frameRate=params['results_saving']['gif_frame_rate'],
+            path=str(Path(dir_save).resolve() / 'visualization' / 'ROIs' / 'ROIs.webp'),
+            frame_rate=params['results_saving']['frame_rate'],
             loop=0,
         )
 
-        helpers.save_gif(
+        helpers.save_webp(
             array=helpers.add_text_to_images(
                 images=[to_uint8(f) for f in ims_ROIs_aligned],
                 text=[[f"{ii}",] for ii in range(len(FOV_clusters))],
@@ -548,12 +548,12 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
                 line_width=10,
                 position=(30, 90),
             ),
-            path=str(Path(dir_save).resolve() / 'visualization' / 'ROIs_aligned' / 'ROIs_aligned.gif'),
-            frameRate=params['results_saving']['gif_frame_rate'],
+            path=str(Path(dir_save).resolve() / 'visualization' / 'ROIs_aligned' / 'ROIs_aligned.webp'),
+            frame_rate=params['results_saving']['frame_rate'],
             loop=0,
         )
 
-        helpers.save_gif(
+        helpers.save_webp(
             array=helpers.add_text_to_images(
                 images=[to_uint8(f) for f in ims_ROIs_aligned_blurred],
                 text=[[f"{ii}",] for ii in range(len(FOV_clusters))],
@@ -561,8 +561,8 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
                 line_width=10,
                 position=(30, 90),
             ),
-            path=str(Path(dir_save).resolve() / 'visualization' / 'ROIs_aligned_blurred' / 'ROIs_aligned_blurred.gif'),
-            frameRate=params['results_saving']['gif_frame_rate'],
+            path=str(Path(dir_save).resolve() / 'visualization' / 'ROIs_aligned_blurred' / 'ROIs_aligned_blurred.webp'),
+            frame_rate=params['results_saving']['frame_rate'],
             loop=0,
         )
 
@@ -584,3 +584,34 @@ def pipeline_tracking(params: dict, custom_data: data_importing.Data_roicat = No
         print("=" * 50)
 
     return results_all, run_data, params
+
+
+def choose_clustering_method(method: str, n_sessions_switch: int, n_sessions: int) -> str:
+    """
+    Chooses the clustering method used by ``pipeline_tracking``.
+
+    Args:
+        method (str):
+            ``'automatic'``, ``'hdbscan'``, ``'single_linkage'``, or
+            ``'sequential_hungarian'``. ``'automatic'`` selects ``'hdbscan'``
+            if ``n_sessions >= n_sessions_switch``, else
+            ``'single_linkage'``.
+        n_sessions_switch (int):
+            Number of sessions at which ``'automatic'`` switches from
+            ``'single_linkage'`` to ``'hdbscan'``.
+        n_sessions (int):
+            Number of sessions in the data.
+
+    Returns:
+        (str):
+            method_out (str):
+                Upper-case name of the chosen method.
+    """
+    if method == 'automatic':
+        method_out = 'hdbscan'.upper() if n_sessions >= n_sessions_switch else 'single_linkage'.upper()
+    else:
+        method_out = method.upper()
+    assert method_out.upper() in ['hdbscan'.upper(), 'single_linkage'.upper(), 'sequential_hungarian'.upper()], (
+        f"cluster_method.method must be 'automatic', 'hdbscan', 'single_linkage', or 'sequential_hungarian'. Got: {method!r}"
+    )
+    return method_out

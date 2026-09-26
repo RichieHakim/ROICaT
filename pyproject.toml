@@ -20,15 +20,15 @@ core = [
     ## Numerics and data handling.
     "numpy==2.4.6",
     "scipy==1.17.1",
-    "scikit-learn==1.9.0",
+    "scikit-learn==1.9.1",
     "scikit-image==0.26.0",
-    "pandas==3.0.5",
+    "pandas==3.0.6",
     "sparse==0.19.2",
-    "sparse_convolution==0.4.0",  ## Toeplitz convolution used by tracking/blurring.py.
-    "numba==0.67.0",  ## roicat/tracking/clustering.py compiles two hot loops with @numba.njit.
-    "torch==2.13.0",
-    "torchvision==0.28.0",
-    "optuna==4.9.0",
+    "sparse_convolution==0.4.2",  ## Toeplitz convolution used by tracking/blurring.py.
+    "numba==0.67.0",
+    "torch==2.14.0",
+    "torchvision==0.29.0",
+    "optuna==5.0.0",
 
     ## File formats and I/O.
     "richfile==0.6.2",  ## 0.6.2 introduced the type-registry API roicat/util.py uses.
@@ -36,7 +36,7 @@ core = [
     "mat73==0.65",
     "PyYAML==6.0.3",
     "requests==2.34.2",  ## Downloading ROInet weights in roicat/helpers.py.
-    "roiextractors==0.9.0",
+    "roiextractors==0.10.0",
     "Pillow==12.3.0",
 
     ## Alignment and tracking.
@@ -61,13 +61,13 @@ core = [
     "skl2onnx==1.20.0",
     ## The upper bound is inherited from before this reorganization; the commit
     ## that added it does not record what broke.
-    "onnx>=1.17.0,<1.23.0",
-    "onnxruntime==1.29.0",
+    "onnx>=1.17.0,<1.24.0",
+    "onnxruntime==1.30.0",
 
     ## Plotting, interactive selection and the notebooks. The interactive
     ## labelling and region-drawing tools are the documented way to use the
     ## classification pipeline, so the notebook stack is not optional.
-    "matplotlib==3.11.1",
+    "matplotlib==3.11.2",
     "seaborn==0.13.2",
     "bokeh==3.9.2",
     "holoviews[recommended]==1.23.2",
@@ -77,10 +77,10 @@ core = [
     ## Imported at module scope by roicat/pipelines.py. `jupyter` happens to
     ## pull it in via ipykernel, but that is a coincidence of packaging, not
     ## something to depend on.
-    "ipython==9.16.1",
+    "ipython==9.17.1",
 
     ## Progress bars and system introspection.
-    "tqdm==4.70.0",
+    "tqdm==4.70.1",
     "natsort==8.4.0",
     "psutil==7.2.2",
     "py-cpuinfo==9.0.0",
@@ -137,7 +137,7 @@ latest = [
 dev = [
     "roicat[core]",
     "pytest==9.1.1",
-    "selenium==4.47.0",
+    "selenium==4.49.0",
     "xxhash==4.0.1",
 ]
 dev_latest = [

@@ -33,8 +33,8 @@ class SimilarityMetric:
             How to compute pairwise similarity from raw features: \n
             * ``'cosine'``: L2-normalize, then matmul. For dense feature
               vectors.
-            * ``'manhattan'``: sklearn NearestNeighbors with manhattan
-              metric. For sparse spatial footprints.
+            * ``'manhattan'``: 1 - L1 distance between footprints
+              normalized to sum 0.5. For sparse spatial footprints.
             * ``Callable``: Custom function with signature
               ``(features_block, **kwargs) -> similarity_matrix``.
               Must return a matrix (dense or sparse) of shape
@@ -63,9 +63,8 @@ class SimilarityMetric:
             Bounds for the power parameter in DE optimization. Only used
             when ``optimize_power=True``.
         similarity_fn_kwargs (dict):
-            Additional keyword arguments passed to ``similarity_fn``.
-            For ``'manhattan'``: can include ``'algorithm'``,
-            ``'n_jobs'``, etc.
+            Additional keyword arguments passed to a callable
+            ``similarity_fn``. Ignored by ``'manhattan'`` and ``'cosine'``.
         post_process (Optional[Dict[str, Any]]):
             Per-metric post-processing after similarity computation.
             Supported keys: \n
@@ -164,19 +163,11 @@ class ROI_graph(util.ROICaT_Module):
             The width of the block. (Default is ``100``)
         overlapping_width_Multiplier (float):
             The multiplier for the overlapping width. (Default is ``0.0``)
-        algorithm_nearestNeigbors_spatialFootprints (str):
-            The algorithm to use for the nearest neighbors computation. See
-            sklearn.neighbors.NearestNeighbors for more information. (Default
-            is ``'brute'``)
         verbose (bool):
             If set to ``True``, outputs will be verbose. (Default is ``True``)
         metric_configs (Optional[List[SimilarityMetric]]):
             Pluggable metric configurations. If ``None``, defaults to
             ``DEFAULT_METRICS`` at compute time. (Default is ``None``)
-        kwargs_nearestNeigbors_spatialFootprints (dict):
-            The keyword arguments to use for the nearest neighbors. See
-            sklearn.neighbors.NearestNeighbors for more information.
-            (Optional)
 
     Attributes:
         similarities (Dict[str, scipy.sparse.csr_array]):
@@ -197,10 +188,8 @@ class ROI_graph(util.ROICaT_Module):
         block_height: int = 100,
         block_width: int = 100,
         overlapping_width_Multiplier: float = 0.0,
-        algorithm_nearestNeigbors_spatialFootprints: str = 'brute',
         verbose: bool = True,
         metric_configs: Optional[List[SimilarityMetric]] = None,
-        kwargs_nearestNeigbors_spatialFootprints: dict = {},
     ):
         """
         Initializes the ROI_graph class with the given parameters.
@@ -218,15 +207,9 @@ class ROI_graph(util.ROICaT_Module):
                 'block_height',
                 'block_width',
                 'overlapping_width_Multiplier',
-                'algorithm_nearestNeigbors_spatialFootprints',
                 'verbose',
-                'kwargs_nearestNeigbors_spatialFootprints',
             ],
         )
-
-        ## Store NN algorithm settings (used as fallback for manhattan metrics)
-        self._algo_sf = algorithm_nearestNeigbors_spatialFootprints
-        self._kwargs_sf = kwargs_nearestNeigbors_spatialFootprints
 
         ## Store metric configs directly as SimilarityMetric objects.
         ## RichFile_ROICaT has a registered type handler for SimilarityMetric
@@ -235,6 +218,8 @@ class ROI_graph(util.ROICaT_Module):
         self._metric_configs_stored = list(metric_configs) if metric_configs is not None else None
 
         self._verbose = verbose
+        if not (isinstance(n_workers, int) and ((n_workers >= 1) or (n_workers == -1))):
+            raise ValueError(f"n_workers must be a positive int or -1, got {n_workers!r}.")
         self._n_workers = mp.cpu_count() if n_workers == -1 else n_workers
 
         self._frame_height = frame_height
@@ -706,77 +691,74 @@ class ROI_graph(util.ROICaT_Module):
         config: SimilarityMetric,
     ) -> scipy.sparse.csr_array:
         """
-        Computes pairwise manhattan-distance-based similarity between spatial
-        footprints. maskPower is applied ONCE here.
+        Computes pairwise manhattan similarity (1 - L1 distance) between
+        spatial footprints normalized to sum 0.5. maskPower is applied ONCE
+        here.
 
-        Steps:
-            1. Apply maskPower to spatial footprints
-            2. Normalize each footprint to sum to 0.5
-            3. Compute all-pairs manhattan distance via sklearn NearestNeighbors
-            4. Convert distance to similarity: s = 1 - d
-            5. Zero out self-similarities and near-zero values
+        For non-negative a, b: ``L1(a, b) = sum(a) + sum(b) - 2 * sum(min(a,
+        b))``. ``sum(min)`` is a sparse product over the (+, min) semiring, so
+        a numba kernel visits only ROI pairs that share a pixel. Pixel indices
+        may be int32 or int64.
 
         Args:
             spatialFootprints (scipy.sparse.csr_array):
-                Raw (un-powered) spatial footprints. Shape:
+                Raw (un-powered), non-negative spatial footprints. Shape:
                 *(n_roi_block, n_pixels)*.
             config (SimilarityMetric):
-                Metric configuration. ``similarity_fn_kwargs`` may contain
-                ``'algorithm'`` and other kwargs for sklearn NearestNeighbors.
+                Metric configuration. Unused.
 
         Returns:
-            scipy.sparse.csr_array:
-                Pairwise similarity matrix. Shape:
-                *(n_roi_block, n_roi_block)*.
+            (scipy.sparse.csr_array):
+                s_sf (scipy.sparse.csr_array):
+                    Pairwise similarity, zero diagonal, values below 1e-5
+                    removed, sorted indices. Shape:
+                    *(n_roi_block, n_roi_block)*.
         """
-        ## Apply maskPower ONCE (fixes the double-application bug)
-        sf = spatialFootprints.power(self._sf_maskPower)  ## shape: (n_roi_block, n_pixels)
+        import numba
 
-        ## Normalize each footprint so rows sum to 0.5
-        sf = sf.multiply(0.5 / np.asarray(sf.sum(1)).reshape(-1, 1))  ## shape: (n_roi_block, n_pixels)
-        sf = scipy.sparse.csr_array(sf)
+        ## Apply maskPower ONCE, then normalize each footprint to sum to 0.5.
+        ## float64 throughout: s is a difference of sums near the 1e-5 cutoff.
+        sf = scipy.sparse.csr_array(spatialFootprints, dtype=np.float64)
+        sf = sf.power(self._sf_maskPower)  ## shape: (n_roi_block, n_pixels)
+        sf = scipy.sparse.csr_array(sf.multiply(0.5 / np.asarray(sf.sum(1)).reshape(-1, 1)))  ## shape: (n_roi_block, n_pixels)
+        sf.sum_duplicates()
+        assert np.all(sf.data >= 0), "Spatial footprints must be non-negative."
+        data = sf.data  ## shape: (nnz,)
 
-        ## Resolve algorithm kwargs: config overrides, fall back to instance defaults
-        algo = config.similarity_fn_kwargs.get('algorithm', self._algo_sf)
-        extra_kwargs = {
-            k: v for k, v in config.similarity_fn_kwargs.items()
-            if k != 'algorithm'
-        }
-        ## Merge with instance-level kwargs (config takes precedence)
-        merged_kwargs = {**self._kwargs_sf, **extra_kwargs}
+        ## Group CSR entries by pixel. Sorting the nnz-length index array
+        ## avoids allocating anything of length n_pixels (e.g. a CSC indptr).
+        n_roi_block = sf.shape[0]
+        order_byPixel = np.argsort(sf.indices, kind='stable')  ## shape: (nnz,)
+        ptr_pixel = np.concatenate((
+            [0], np.flatnonzero(np.diff(sf.indices[order_byPixel])) + 1, [sf.nnz],
+        ))  ## shape: (n_pixels_used + 1,)
+        idx_pixel = np.empty(sf.nnz, dtype=np.int64)  ## shape: (nnz,), pixel group of each CSR entry
+        idx_pixel[order_byPixel] = np.repeat(np.arange(len(ptr_pixel) - 1), np.diff(ptr_pixel))
+        idx_row = np.repeat(np.arange(n_roi_block), np.diff(sf.indptr))  ## shape: (nnz,)
 
-        ## Compute all-pairs manhattan distance
-        n_roi_block = sf.shape[0]  ## scalar
-        d_sf = sklearn.neighbors.NearestNeighbors(
-            algorithm=algo,
-            n_neighbors=n_roi_block,
-            metric='manhattan',
-            p=1,
-            n_jobs=self._n_workers,
-            **merged_kwargs,
-        ).fit(sf).kneighbors_graph(
-            sf,
-            n_neighbors=n_roi_block,
-            mode='distance',
-        )  ## shape: (n_roi_block, n_roi_block)
+        ## Compute similarity with n_workers threads
+        n_threads_prev = numba.get_num_threads()
+        numba.set_num_threads(min(self._n_workers, numba.config.NUMBA_NUM_THREADS))
+        try:
+            indptr_s, indices_s, data_s = _get_manhattan_similarity_kernel()(
+                indptr=sf.indptr.astype(np.int64),
+                data=data,
+                idx_pixel=idx_pixel,
+                ptr_pixel=ptr_pixel.astype(np.int64),
+                idxRow_byPixel=idx_row[order_byPixel].astype(np.int64),
+                data_byPixel=data[order_byPixel],
+                sums_row=np.asarray(sf.sum(1)).reshape(-1),  ## shape: (n_roi_block,)
+                threshold=1e-5,  ## rectify near-zero values
+            )
+        finally:
+            numba.set_num_threads(n_threads_prev)
 
-        ## Convert distance to similarity: s = 1 - d
-        s_sf = d_sf.copy()
-        s_sf.data = 1 - s_sf.data
-
-        ## Rectify near-zero values (numerical artifacts from float arithmetic)
-        s_sf.data[s_sf.data < 1e-5] = 0
-
-        ## Zero out self-similarities (diagonal)
-        s_sf[range(n_roi_block), range(n_roi_block)] = 0
-        s_sf.eliminate_zeros()
-
-        ## Canonicalize CSR storage order. kneighbors_graph emits elements in
-        ## KD-tree traversal order, which can flip on tied distances across
-        ## platforms. Sorted column indices give a deterministic `data` array
-        ## for serialization and downstream comparisons.
-        s_sf.sort_indices()
-
+        ## int32 indices when they fit, as scipy does
+        dtype_idx = np.int32 if max(n_roi_block, len(data_s)) <= np.iinfo(np.int32).max else np.int64
+        s_sf = scipy.sparse.csr_array(
+            (data_s, indices_s.astype(dtype_idx), indptr_s.astype(dtype_idx)),
+            shape=(n_roi_block, n_roi_block),
+        )
         return s_sf  ## shape: (n_roi_block, n_roi_block)
 
 
@@ -1174,7 +1156,6 @@ def get_idx_in_kRange(
         metric='euclidean',
         p=2,
         n_jobs=n_workers,
-    #     **self._kwargs_sf
     ).fit(X).kneighbors_graph(
         X,
         n_neighbors=k_max,
@@ -1214,3 +1195,70 @@ def cosine_similarity_customIdx(
     out = torch.stack([f[ii] @ f[idx[ii]].T for ii in tqdm(range(f.shape[0]))], dim=0)
     return out
 
+
+## Lazy-compiled numba kernel, like the weighted Jaccard kernel in
+## clustering.py (avoids importing numba at module load).
+_manhattan_similarity_kernel = None
+
+def _get_manhattan_similarity_kernel():
+    """
+    Lazily compile and cache the numba kernel for
+    ``ROI_graph._compute_manhattan_similarity``.
+    """
+    global _manhattan_similarity_kernel
+    if _manhattan_similarity_kernel is not None:
+        return _manhattan_similarity_kernel
+
+    import numba
+
+    ## The (+, min) accumulation is written out in both passes rather than
+    ## called from a second njit function: a jitted function that captures
+    ## another dispatcher from this enclosing scope gets a new cache key in
+    ## every process, so cache=True would recompile and write a new cache
+    ## file on every run.
+    @numba.njit(parallel=True, cache=True)
+    def kernel(indptr, data, idx_pixel, ptr_pixel, idxRow_byPixel, data_byPixel, sums_row, threshold):
+        """
+        CSR manhattan similarity ``s_ij = 1 - (sums_row[i] + sums_row[j] - 2 *
+        sumMin_ij)``, kept where ``j != i`` and ``s_ij >= threshold``. Two
+        passes over rows: count, then fill. Each thread owns whole rows, so
+        writes never race and the output is deterministic.
+
+        Returns:
+            (Tuple[np.ndarray, np.ndarray, np.ndarray]):
+                indptr, indices, data of the CSR output, indices sorted.
+        """
+        n = len(indptr) - 1
+        counts = np.zeros(n, dtype=np.int64)  ## shape: (n,)
+        for i in numba.prange(n):
+            ## sumMin[j] = sum over pixels p of min(x[i, p], x[j, p])
+            sumMin = np.zeros(n)  ## shape: (n,)
+            for k in range(indptr[i], indptr[i + 1]):
+                for m in range(ptr_pixel[idx_pixel[k]], ptr_pixel[idx_pixel[k] + 1]):
+                    sumMin[idxRow_byPixel[m]] += min(data[k], data_byPixel[m])
+            c = 0
+            for j in range(n):
+                if (j != i) and (sumMin[j] > 0) and (1 - (sums_row[i] + sums_row[j] - 2 * sumMin[j]) >= threshold):
+                    c += 1
+            counts[i] = c
+
+        out_indptr = np.zeros(n + 1, dtype=np.int64)  ## shape: (n + 1,)
+        out_indptr[1:] = np.cumsum(counts)
+        out_indices = np.empty(out_indptr[-1], dtype=np.int64)  ## shape: (nnz_out,)
+        out_data = np.empty(out_indptr[-1], dtype=np.float64)  ## shape: (nnz_out,)
+        for i in numba.prange(n):
+            sumMin = np.zeros(n)  ## shape: (n,)
+            for k in range(indptr[i], indptr[i + 1]):
+                for m in range(ptr_pixel[idx_pixel[k]], ptr_pixel[idx_pixel[k] + 1]):
+                    sumMin[idxRow_byPixel[m]] += min(data[k], data_byPixel[m])
+            c = out_indptr[i]
+            for j in range(n):
+                s = 1 - (sums_row[i] + sums_row[j] - 2 * sumMin[j])
+                if (j != i) and (sumMin[j] > 0) and (s >= threshold):
+                    out_indices[c] = j
+                    out_data[c] = s
+                    c += 1
+        return out_indptr, out_indices, out_data
+
+    _manhattan_similarity_kernel = kernel
+    return _manhattan_similarity_kernel

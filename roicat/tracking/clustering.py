@@ -1,3 +1,6 @@
+import concurrent.futures
+import inspect
+import os
 import warnings
 from typing import Union, Tuple, List, Dict, Optional, Any
 
@@ -5,7 +8,6 @@ import numpy as np
 import scipy
 import scipy.optimize
 import scipy.sparse
-import scipy.stats
 import sklearn
 import sklearn.isotonic
 import matplotlib.pyplot as plt
@@ -43,11 +45,14 @@ def auroc_crossCloserThanSame(
 
         AUROC = P(d_cross < d_same) + 0.5 * P(d_cross == d_same)
 
-    so cross-session-closer scores above 0.5. It is computed from the pooled
-    mid-rank sum (``scipy.stats.rankdata(method='average')``) rather than an
+    so cross-session-closer scores above 0.5. It is computed from the
+    same-session pairs' mid-ranks in the pooled sample rather than an
     ``O(n_cross * n_same)`` comparison, so every tie contributes exactly 0.5
     and a fully collapsed distance vector (all values identical) scores
-    exactly 0.5.
+    exactly 0.5. The mid-ranks come from one sort of the pooled values and
+    two binary searches per same-session value, counted in integers, so the
+    result is exact and matches ``scipy.stats.rankdata(method='average')``
+    bit for bit at about a tenth of its cost.
     RH 2025
 
     Args:
@@ -67,7 +72,7 @@ def auroc_crossCloserThanSame(
     Raises:
         ValueError:
             If either arm is empty, in which case the statistic is
-            undefined.
+            undefined, or if any distance is NaN.
     """
     n_cross, n_same = int(d_crossSession.size), int(d_sameSession.size)
     if (n_cross == 0) or (n_same == 0):
@@ -76,13 +81,21 @@ def auroc_crossCloserThanSame(
             f" and n_sameSession={n_same}."
         )
 
-    ## Pooled mid-ranks; ranks[:n_cross] are the cross-session pairs' ranks.
-    ranks = scipy.stats.rankdata(
-        np.concatenate([d_crossSession, d_sameSession]),
-        method='average',
-    )  ## shape: (n_cross + n_same,)
-    ## Mann-Whitney U counting (cross > same) pairs, each tie worth 0.5.
-    u_crossGreater = float(ranks[:n_cross].sum()) - (n_cross * (n_cross + 1) / 2.0)
+    pooled_sorted = np.sort(np.concatenate([d_crossSession, d_sameSession]))  ## shape: (n_cross + n_same,)
+    if np.isnan(pooled_sorted[-1]):  ## NaNs sort last
+        raise ValueError("AUROC inputs contain NaN distances.")
+    ## Sorted keys keep the binary searches cache-friendly.
+    same_sorted = np.sort(d_sameSession)  ## shape: (n_same,)
+    ## 2 * mid-rank (1-based) of a same-session value = n_less + n_lessOrEqual + 1
+    rank2_sum_same = (
+        int(np.searchsorted(pooled_sorted, same_sorted, side='left').sum())
+        + int(np.searchsorted(pooled_sorted, same_sorted, side='right').sum())
+        + n_same
+    )
+    ## Mann-Whitney U counting (same > cross) pairs, doubled; each tie worth 0.5.
+    u2_sameGreater = rank2_sum_same - (n_same * (n_same + 1))
+    ## U counting (cross > same) pairs, via U_cross + U_same = n_cross * n_same.
+    u_crossGreater = ((2 * n_cross * n_same) - u2_sameGreater) / 2.0
     return float(1.0 - (u_crossGreater / (n_cross * n_same)))
 
 
@@ -94,6 +107,8 @@ class Clusterer(util.ROICaT_Module):
             * self.make_pruned_similarity_graphs()
         * Clustering:
             * self.fit(): Which uses a modified HDBSCAN
+            * self.fit_singleLinkage(): Which uses single linkage with
+              same-session cannot-link constraints.
             * self.fit_sequentialHungarian: Which uses a method similar to
               CaImAn's clustering method.
         * Quality control:
@@ -314,6 +329,7 @@ class Clusterer(util.ROICaT_Module):
             'mutation': (0.5, 1.5),
             'recombination': 0.7,
             'polish': True,
+            'workers': -1,
         },
         n_bins: Optional[int] = None,
         smoothing_window_bins: Optional[int] = None,
@@ -331,9 +347,9 @@ class Clusterer(util.ROICaT_Module):
 
         1. **Naive Bayes calibration**: For each similarity feature, estimates
            ``P(same | s_k)`` from histogram subtraction. The resulting
-           per-feature calibration curves are used to analytically estimate
-           optimal sigmoid parameters ``(mu, b)`` via Fisher's linear
-           discriminant.
+           per-feature calibration curves are used to estimate the sigmoid
+           parameters ``(mu, b)`` by maximum likelihood (Platt scaling on the
+           calibration histogram).
         2. **Differential evolution**: With sigmoid parameters frozen from
            stage 1 (``freeze_sigmoid=True``, the default), optimizes the
            remaining parameters (one ``power_<name>`` per metric with
@@ -386,6 +402,11 @@ class Clusterer(util.ROICaT_Module):
                 * ``polish`` (bool): If ``True``, run L-BFGS-B from
                   the best DE solution. Often has no effect: both
                   objectives are piecewise-constant in the parameters.
+                * ``workers`` (int): Threads that evaluate each
+                  generation's candidates in parallel. ``-1`` uses all
+                  available cores, as does omitting the key. Any value
+                  uses scipy's ``updating='deferred'`` scheme, so the
+                  result does not depend on the number of workers.
             n_bins (Optional[int]):
                 Overwrites ``n_bins`` from ``__init__``. It reaches the
                 differential evolution *directly* only when
@@ -411,7 +432,7 @@ class Clusterer(util.ROICaT_Module):
                 Random seed for reproducibility.
             freeze_sigmoid (bool):
                 If ``True``, the sigmoid parameters ``(mu, b)`` are estimated
-                once by :meth:`_estimate_sigmoid_params` (a Fisher-discriminant
+                once by :meth:`_estimate_sigmoid_params` (a maximum-likelihood
                 grid search over the bounds above) and held fixed, so the DE
                 searches only the ``power_<name>`` values and ``p_norm``. If
                 ``False``, ``(mu, b)`` become DE variables too, bounded by the
@@ -470,7 +491,7 @@ class Clusterer(util.ROICaT_Module):
 
         ## Bounds are merged over the defaults inside _find_optimal_parameters_DE,
         ## so a partial dict or None is passed straight through.
-        ## NB calibration → Fisher sigmoid estimation → N-param DE.
+        ## NB calibration → maximum-likelihood sigmoid estimation → N-param DE.
         return self._find_optimal_parameters_DE(
             bounds_findParameters=bounds_findParameters,
             de_kwargs=de_kwargs,
@@ -588,6 +609,7 @@ class Clusterer(util.ROICaT_Module):
             'mutation': (0.5, 1.5),
             'recombination': 0.7,
             'polish': True,
+            'workers': -1,
         },
         n_bins: Optional[int] = None,
         smoothing_window_bins: Optional[int] = None,
@@ -602,15 +624,18 @@ class Clusterer(util.ROICaT_Module):
         Find optimal mixing parameters using scipy differential evolution.
 
         When ``freeze_sigmoid=True`` (default), sigmoid parameters ``(mu, b)``
-        are estimated from NB calibration curves via Fisher's linear
-        discriminant and held fixed. The search is then over
+        are estimated from NB calibration curves by maximum likelihood and
+        held fixed. The search is then over
         ``power_<name>`` for each metric with ``optimize_power=True``, plus
         ``p_norm``. When ``False``, sigmoid params are also optimized.
 
         The inner loop operates entirely on precomputed torch tensors — no
         scipy sparse operations per evaluation. When subsampling is active,
         the subsample is redrawn each DE generation to reduce overfitting
-        to a specific pair subset.
+        to a specific pair subset. A progress bar tracks the generations
+        when verbose, and the best loss after each generation is kept in
+        ``self.de_loss_history``. With subsampling, each generation's loss
+        is scored on a different subsample, so the history is noisy.
         RH 2025
 
         Args:
@@ -636,6 +661,11 @@ class Clusterer(util.ROICaT_Module):
                 * ``polish`` (bool): If ``True``, run L-BFGS-B from
                   the best DE solution. Often has no effect: both
                   objectives are piecewise-constant in the parameters.
+                * ``workers`` (int): Threads that evaluate each
+                  generation's candidates in parallel. ``-1`` uses all
+                  available cores, as does omitting the key. Any value
+                  uses scipy's ``updating='deferred'`` scheme, so the
+                  result does not depend on the number of workers.
             n_bins (Optional[int]):
                 Overwrites ``n_bins`` from __init__. Used by the DE
                 directly only when ``objective='histogram_overlap'``, but
@@ -837,6 +867,11 @@ class Clusterer(util.ROICaT_Module):
             ).clone()
             for name, sim in self.similarities.items()
         }  ## Dict[str, Tensor(nnz,)]
+        ## Apply the frozen sigmoids once here instead of in every evaluation.
+        names_sigmoidFrozen = set(_frozen_sig) if _frozen_sig is not None else set()
+        for name in names_sigmoidFrozen:
+            mu, b = _frozen_sig[name]['mu'], _frozen_sig[name]['b']
+            tensors_full[name] = torch.sigmoid(b * (tensors_full[name] - mu))
 
         ## Boolean mask for intra-session (known-different) pairs
         if not hasattr(self, '_intra_mask') or self._intra_mask is None:
@@ -911,7 +946,7 @@ class Clusterer(util.ROICaT_Module):
         ################################################################
         _generation_counter = [0]
 
-        def _resample_callback(xk, convergence=None):
+        def _resample_callback():
             """Redraw subsample at the start of each generation."""
             gen = _generation_counter[0]
             _generation_counter[0] += 1
@@ -981,25 +1016,23 @@ class Clusterer(util.ROICaT_Module):
             for name, cfg in _cached_configs.items():
                 s_w = _state['tensors'][name]
 
-                ## Apply sigmoid if configured
-                if cfg.optimize_sigmoid:
-                    if _frozen_sig is not None and name in _frozen_sig:
-                        mu = _frozen_sig[name]['mu']
-                        b = _frozen_sig[name]['b']
-                    elif name in sig_params_live:
+                ## Apply sigmoid if configured. Frozen ones are already in the tensors.
+                if cfg.optimize_sigmoid and (name not in names_sigmoidFrozen):
+                    if name in sig_params_live:
                         mu = sig_params_live[name]['mu']
                         b = sig_params_live[name]['b']
                     else:
                         mu, b = 0.0, 1.0
                     s_w = torch.sigmoid(b * (s_w - mu))
 
-                ## Apply power if optimized
+                ## Apply power if optimized. Clamp at 0 like `_activation_function`,
+                ## so the DE scores the same distances that clustering uses.
                 if cfg.optimize_power:
                     power = float(x[param_idx])
                     param_idx += 1
-                    s_w = torch.clamp(s_w, min=1e-8).pow(power)
+                    s_w = torch.clamp(s_w, min=0).pow(power)
                 else:
-                    s_w = torch.clamp(s_w, min=1e-8)
+                    s_w = torch.clamp(s_w, min=0)
 
                 activated.append(s_w)
 
@@ -1025,25 +1058,51 @@ class Clusterer(util.ROICaT_Module):
         de_kwargs_use = dict(de_kwargs)
 
         nnz_full = next(iter(tensors_full.values())).shape[0]
+        is_subsampled = (subsample_pairs is not None) and (subsample_pairs < nnz_full)
 
-        ## Always resample each generation when subsampling
-        if subsample_pairs is not None and subsample_pairs < nnz_full:
-            existing_cb = de_kwargs_use.pop('callback', None)
-            def _combined_callback(xk, convergence=None):
-                _resample_callback(xk, convergence)
-                if existing_cb is not None:
-                    return existing_cb(xk, convergence)  ## propagate stop signal
-            de_kwargs_use['callback'] = _combined_callback
+        ## Threads evaluate each generation's candidates; numpy's sort and
+        ## torch's kernels release the GIL. The deferred update is used for
+        ## every worker count so that the result does not depend on it.
+        ## Omitting ``workers`` means all cores, even when the caller
+        ## replaces the default ``de_kwargs`` wholesale.
+        n_workers = de_kwargs_use.pop('workers', -1)
+        if not (isinstance(n_workers, int) and ((n_workers >= 1) or (n_workers == -1))):
+            raise ValueError(f"de_kwargs['workers'] must be a positive int or -1, got {n_workers!r}.")
+        if n_workers == -1:
+            n_workers = len(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else os.cpu_count()
+        de_kwargs_use.setdefault('updating', 'deferred')
+
+        ## Per-generation callback: redraw the subsample, record the best
+        ## loss, advance the progress bar, then run any user callback.
+        callback_user = de_kwargs_use.pop('callback', None)
+        self.de_loss_history = []  ## best loss after each generation
+        progress_bar = tqdm(total=de_kwargs_use.get('maxiter'), desc='DE generations', disable=not self._verbose)
+
+        def _callback_generation(intermediate_result):
+            if is_subsampled:
+                _resample_callback()
+            self.de_loss_history.append(float(intermediate_result.fun))
+            progress_bar.set_postfix(loss_best=f'{intermediate_result.fun:.6g}', refresh=False)
+            progress_bar.update(1)
+            if callback_user is None:
+                return False
+            ## Same dispatch as scipy: new-style callbacks take only `intermediate_result`.
+            if set(inspect.signature(callback_user).parameters) == {'intermediate_result'}:
+                return callback_user(intermediate_result=intermediate_result)
+            return callback_user(np.copy(intermediate_result.x), intermediate_result.convergence)  ## truthy stops the DE
 
         ## Coerce seed to int for scipy DE; leave None for random behavior
         de_seed = int(seed) if seed is not None else None
 
-        self._de_result = scipy.optimize.differential_evolution(
-            func=objective_scalar,
-            bounds=scipy_bounds,
-            seed=de_seed,
-            **de_kwargs_use,
-        )
+        with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as pool, progress_bar:
+            self._de_result = scipy.optimize.differential_evolution(
+                func=objective_scalar,
+                bounds=scipy_bounds,
+                seed=de_seed,
+                callback=_callback_generation,
+                workers=pool.map,
+                **de_kwargs_use,
+            )
 
         ## Extract best parameters from DE result
         x_best = self._de_result.x
@@ -1109,8 +1168,10 @@ class Clusterer(util.ROICaT_Module):
         Given raw similarity values for all pairs and the intra-session
         (known-different) subset, estimates the "same" distribution as the
         residual after subtracting the scaled intra-session distribution
-        from the overall distribution. Monotonicity is enforced (higher
-        similarity → higher P(same)).
+        from the overall distribution. The bins hold equal numbers of pairs
+        (edges at the pooled values' quantiles), so a few outliers cannot
+        set their width. Monotonicity is enforced (higher similarity →
+        higher P(same)).
         RH 2025
 
         Args:
@@ -1137,10 +1198,18 @@ class Clusterer(util.ROICaT_Module):
         n_intra = int(intra_mask.sum().item())
         scale = n_all / n_intra
 
-        ## Bin edges spanning the data range with small margin
-        lo = float(s_data.min()) - 1e-6
-        hi = float(s_data.max()) + 1e-6
-        edges = torch.linspace(lo, hi, n_bins + 1, dtype=torch.float32)
+        ## Equal-mass bin edges: the quantiles of the pooled values, with a
+        ## small margin at both ends. Equal-width edges over [min, max] let a
+        ## few outliers set the bin width; on heavy-tailed z-scores (range
+        ## hundreds of IQRs) the whole bulk then fell into one bin and the
+        ## calibration could not see it. Quantile edges depend only on the
+        ## ranks, as P(same | s) itself does. Repeated values can repeat an
+        ## edge, which leaves an empty zero-width bin and keeps n_bins fixed.
+        edges = np.quantile(
+            s_data.numpy().astype(np.float64), np.linspace(0.0, 1.0, n_bins + 1),
+        )  ## shape (n_bins + 1,)
+        edges[0], edges[-1] = edges[0] - 1e-6, edges[-1] + 1e-6
+        edges = torch.as_tensor(edges, dtype=torch.float32)
 
         ## Histogram all values and intra-session values
         counts_all, _ = torch.histogram(s_data, edges)
@@ -1287,8 +1356,12 @@ class Clusterer(util.ROICaT_Module):
             ## then store result as numpy for serialization safety.
             edges_t = torch.as_tensor(cal['edges'])
             p_same_bins_t = torch.as_tensor(cal['p_same_bins'])
+            ## right=True puts a value equal to an edge in the bin to its
+            ## right, the bin torch.histogram counted it in. Equal-mass edges
+            ## repeat where many pairs share one value, so the lookup and the
+            ## counts must follow the same rule.
             bin_idx = torch.searchsorted(
-                edges_t[1:-1].contiguous(), s_data,
+                edges_t[1:-1].contiguous(), s_data, right=True,
             )
             bin_idx = torch.clamp(bin_idx, 0, n_bins - 1)
             p_same_per_pair = p_same_bins_t[bin_idx]  ## torch, shape (nnz,)
@@ -1356,12 +1429,24 @@ class Clusterer(util.ROICaT_Module):
     ) -> Dict[str, Dict[str, float]]:
         """
         Estimate sigmoid parameters (mu, b) for NN and SWT from
-        NB calibration curves using Fisher's linear discriminant.
+        NB calibration curves by maximum likelihood.
 
-        For each feature, finds the sigmoid ``sigma(b * (s - mu))`` that
-        best separates "same" and "different" distributions in the
-        calibration histogram. Uses a grid search over (mu, b) to maximize
-        the Fisher discriminant ratio in sigmoid-transformed space.
+        For each feature, finds the sigmoid ``sigma(b * (s - mu))`` that,
+        read as ``P(same | s)``, best explains the "same" and "different"
+        distributions of the calibration histogram, each weighted to equal
+        total mass: a grid search over (mu, b) maximizing the class-balanced
+        Bernoulli log-likelihood (Platt scaling on the histogram).
+
+        The log-likelihood is a proper scoring rule, so the slope ``b`` it
+        returns measures how fast the evidence for "same" actually rises.
+        The Fisher ratio this replaced is not: in sigmoid space it tends to
+        grow as the sigmoid sharpens into a step (lower within-class
+        variance), so ``b`` often ran to its upper bound, and where the
+        histogram could not resolve the step ``b`` was an argmax tie. A step
+        placed above most of the data maps those pairs to an activation of
+        (near) zero, and under the negative ``p_norm`` of
+        :meth:`_pNorm` a single near-zero activation drives ``sConj`` to
+        zero whatever the other metrics say.
 
         Requires :meth:`make_naive_bayes_distance_matrix` to have been
         called first.
@@ -1373,8 +1458,9 @@ class Clusterer(util.ROICaT_Module):
                 ``sig_<name>_kwargs_mu`` and ``sig_<name>_kwargs_b`` keys.
                 Merged over the defaults by
                 :meth:`_prepare_bounds_findParameters`, so a partial dict or
-                ``None`` is fine. A ``mu`` bound of ``None`` means "span the
-                calibration bin centers", which is the historical behavior.
+                ``None`` is fine. A ``mu`` bound of ``None`` spaces the ``mu``
+                grid evenly over the (equal-mass) calibration bins, i.e.
+                evenly in rank, from the first bin center to the last.
             n_grid_sigmoid_mu (int):
                 Number of ``mu`` values in the grid.
             n_grid_sigmoid_b (int):
@@ -1416,8 +1502,8 @@ class Clusterer(util.ROICaT_Module):
             w_same = counts_same / (counts_same.sum() + 1e-10)
             w_diff = counts_diff / (counts_diff.sum() + 1e-10)
 
-            ## Vectorized grid search over (mu, b) to maximize Fisher
-            ## discriminant in sigmoid-transformed space.
+            ## Vectorized grid search over (mu, b) maximizing the balanced
+            ## Bernoulli log-likelihood of sigma(b * (s - mu)) as P(same | s).
             ## Grid endpoints come from the user-facing bounds. A `None` mu
             ## bound spans the observed range of the calibration bin centers.
             bound_mu = bounds_findParameters.get(f'sig_{name}_kwargs_mu')
@@ -1427,43 +1513,46 @@ class Clusterer(util.ROICaT_Module):
                     f"bounds_findParameters['sig_{name}_kwargs_b'] is None. The "
                     f"sigmoid slope bound must be a [low, high] pair."
                 )
+            ## A `None` mu bound spaces the grid evenly over the calibration's
+            ## (equal-mass) bins, i.e. evenly in rank, rather than evenly in
+            ## value across an outlier-set range.
             if bound_mu is None:
-                bound_mu = [float(centers_np.min()), float(centers_np.max())]
-
-            ## Grid shapes: mu (M,), b (B,) → sig_vals (M, B, n_bins)
-            mu_grid = np.linspace(
-                float(bound_mu[0]), float(bound_mu[1]), int(n_grid_sigmoid_mu),
-            )
+                mu_grid = np.interp(
+                    np.linspace(0.0, len(centers_np) - 1.0, int(n_grid_sigmoid_mu)),
+                    np.arange(len(centers_np), dtype=np.float64),
+                    centers_np.astype(np.float64),
+                )  ## shape (M,)
+            else:
+                mu_grid = np.linspace(
+                    float(bound_mu[0]), float(bound_mu[1]), int(n_grid_sigmoid_mu),
+                )
             b_grid = np.linspace(
                 float(bound_b[0]), float(bound_b[1]), int(n_grid_sigmoid_b),
             )
-            ## Broadcasting: (M,1,1) * ((1,1,n_bins) - (M,1,1))
-            sig_vals = 1.0 / (1.0 + np.exp(
-                -b_grid[None, :, None] * (centers_np[None, None, :] - mu_grid[:, None, None])
-            ))  ## shape (M, B, n_bins)
+            ## Broadcasting: (1,B,1) * ((1,1,n_bins) - (M,1,1))
+            logits = b_grid[None, :, None] * (
+                centers_np[None, None, :] - mu_grid[:, None, None]
+            )  ## shape (M, B, n_bins)
 
-            ## Weighted moments in sigmoid-transformed space
-            mu_same_sig = np.sum(w_same[None, None, :] * sig_vals, axis=2)  ## (M, B)
-            mu_diff_sig = np.sum(w_diff[None, None, :] * sig_vals, axis=2)  ## (M, B)
-            var_same_sig = np.sum(w_same[None, None, :] * (sig_vals - mu_same_sig[:, :, None]) ** 2, axis=2)
-            var_diff_sig = np.sum(w_diff[None, None, :] * (sig_vals - mu_diff_sig[:, :, None]) ** 2, axis=2)
-
-            ## Fisher discriminant ratio, shape (M, B)
-            denom = var_same_sig + var_diff_sig + 1e-12
-            fisher_grid = (mu_same_sig - mu_diff_sig) ** 2 / denom
+            ## log(sigma(z)) = -log(1 + e^-z) and log(1 - sigma(z)) = -log(1 + e^z),
+            ## written with logaddexp so that neither overflows nor rounds to log(0).
+            loglik_grid = (
+                np.sum(w_same[None, None, :] * -np.logaddexp(0.0, -logits), axis=2)
+                + np.sum(w_diff[None, None, :] * -np.logaddexp(0.0, logits), axis=2)
+            )  ## shape (M, B)
 
             ## Find best (mu, b)
-            best_idx = np.unravel_index(fisher_grid.argmax(), fisher_grid.shape)
+            best_idx = np.unravel_index(loglik_grid.argmax(), loglik_grid.shape)
             best_mu = float(mu_grid[best_idx[0]])
             best_b = float(b_grid[best_idx[1]])
-            best_fisher = float(fisher_grid[best_idx])
+            best_loglik = float(loglik_grid[best_idx])
 
             result[name] = {'mu': best_mu, 'b': best_b}
 
             print(
                 f'  Sigmoid estimate for {name}: '
                 f'mu={best_mu:.4f}, b={best_b:.2f} '
-                f'(Fisher={best_fisher:.4f})'
+                f'(log-likelihood={best_loglik:.4f})'
             ) if self._verbose else None
 
         return result
@@ -1488,7 +1577,9 @@ class Clusterer(util.ROICaT_Module):
                 Modifies the threshold for pruning the distance matrix. A higher
                 value results in less pruning, a lower value leads to more
                 pruning. This value is multiplied by the inferred threshold to
-                generate a new one. (Default is *1.0*)
+                generate a new one. Lowering it raises precision only a little,
+                so to remove tracking errors, filter ROIs by
+                ``sample_silhouette`` instead. (Default is *1.0*)
             mixing_params (Optional[Dict]):
                 Mixing parameters for
                 ``self.make_conjunctive_distance_matrix``. If ``None``,
@@ -2293,6 +2384,107 @@ class Clusterer(util.ROICaT_Module):
         ## Set clusters with too few ROIs to -1
         u, c = np.unique(labels, return_counts=True)
         labels[np.isin(labels, u[c<2])] = -1
+        labels = helpers.squeeze_integers(labels)
+
+        self.labels = labels
+        return self.labels
+
+    def fit_singleLinkage(
+        self,
+        d_conj: scipy.sparse.csr_array,
+        session_bool: np.ndarray,
+        min_cluster_size: int = 2,
+        d_clusterMerge: Optional[float] = None,
+    ) -> np.ndarray:
+        """
+        Session-constrained single linkage clustering, cut at
+        ``d_clusterMerge``.
+
+        Inter-session edges are merged in order of increasing distance
+        (Kruskal), skipping any edge that would put two ROIs from the same
+        session into one cluster, and merging stops at ``d_clusterMerge``. The
+        tracking pipeline uses this method instead of ``fit`` when there are
+        few sessions (see ``n_sessions_switch``).
+
+        Runs on ``fast_hdbscan``'s cannot-link Kruskal. With ``min_samples=1``
+        every core distance is 0, so edges merge in plain distance order, and
+        ``dbscan_clustering`` cuts the resulting tree. Every node of that tree
+        lies within one session-disjoint component, so no cut can join two
+        ROIs from the same session.
+
+        RH 2026
+
+        Args:
+            d_conj (scipy.sparse.csr_array):
+                Conjunctive distance matrix. Shape: *(n_rois, n_rois)*.
+            session_bool (np.ndarray):
+                Boolean array indicating which ROIs belong to which session.
+                Shape: *(n_rois, n_sessions)*. Each row should contain
+                exactly one ``True``.
+            min_cluster_size (int):
+                Clusters with fewer ROIs than this are set to *-1*. (Default
+                is *2*)
+            d_clusterMerge (Optional[float]):
+                Cut height. Only edges with a distance below this are merged.
+                If ``None``, defaults to ``self.d_cutoff`` (the pruning
+                threshold from ``make_pruned_similarity_graphs``).
+                (Default is ``None``)
+
+        Returns:
+            (np.ndarray):
+                labels (np.ndarray):
+                    Cluster labels for each ROI, shape: *(n_rois_total)*.
+
+        Raises:
+            ValueError:
+                If ``d_clusterMerge`` is ``None`` and ``self.d_cutoff`` has not
+                been set, i.e. ``make_pruned_similarity_graphs`` has not been
+                run.
+        """
+        ## Store parameter (but not data) args as attributes
+        self.params['fit_singleLinkage'] = self._locals_to_params(
+            locals_dict=locals(),
+            keys=['min_cluster_size', 'd_clusterMerge',],)
+
+        ## Resolve d_clusterMerge default: use d_cutoff from pruning
+        if d_clusterMerge is None:
+            if getattr(self, 'd_cutoff', None) is None:
+                raise ValueError(
+                    "d_clusterMerge=None ties the cut to the pruning cutoff, but "
+                    "`self.d_cutoff` is not set. Call `make_pruned_similarity_graphs` "
+                    "first, or pass `d_clusterMerge` as a float."
+                )
+            d_clusterMerge = float(self.d_cutoff)
+
+        ## Mask to inter-session pairs only (same as fit)
+        d = d_conj.copy().multiply(self.s_sesh)
+
+        if d.nnz == 0:
+            print('No edges in graph. Returning all -1 labels.') if self._verbose else None
+            self.labels = np.ones(d.shape[0], dtype=int) * -1
+            return self.labels
+
+        ## Session index per ROI, used as the cannot-link group label
+        n_sessions_per_roi = np.asarray(session_bool.sum(axis=1)).ravel()
+        assert np.all(n_sessions_per_roi == 1), "session_bool must contain exactly one True per ROI"
+        cannot_link_groups = np.asarray(np.argmax(session_bool, axis=1), dtype=np.int32)
+
+        print(f'Clustering with session-constrained single linkage, d_clusterMerge={d_clusterMerge:.2f}') if self._verbose else None
+        import fast_hdbscan
+        hdbs = fast_hdbscan.HDBSCAN(
+            min_cluster_size=min_cluster_size,
+            min_samples=1,  ## Core distances are 0, so edges merge in plain distance order
+            metric='precomputed',
+            algorithm='kruskal',
+            cannot_link_groups=cannot_link_groups,
+        ).fit(d)
+        ## Merges with height < d_clusterMerge. With min_samples=1, singletons
+        ## get their own label rather than -1.
+        labels = np.asarray(hdbs.dbscan_clustering(epsilon=d_clusterMerge), dtype=np.int64)
+
+        ## Set clusters below min_cluster_size to -1
+        u, c = np.unique(labels, return_counts=True)
+        labels[np.isin(labels, u[c < min_cluster_size])] = -1
         labels = helpers.squeeze_integers(labels)
 
         self.labels = labels
@@ -4331,33 +4523,98 @@ def make_label_variants(
     return labels_squeezed, labels_bySession, labels_bool, labels_bool_bySession, labels_dict
 
 
-def plot_quality_metrics(quality_metrics: dict, labels: Union[np.ndarray, list], n_sessions: int) -> None:
-    ## The pipeline passes the JSON_List that make_label_variants returns, and on a
-    ## list `labels == -1` is the scalar False rather than a boolean mask, so every
-    ## count in the suptitle below came out as 0 / 1 / 1 regardless of the data.
-    labels = np.asarray(labels)
+def plot_quality_metrics(
+    quality_metrics: dict,
+    labels_bySession: List[Union[np.ndarray, List[int]]],
+) -> Tuple[plt.Figure, np.ndarray]:
+    """
+    Plots the distributions of the clustering quality metrics.
+    RH 2026
 
-    fig, axs = plt.subplots(nrows=2, ncols=2, figsize=(15,7))
+    Top row, one value per cluster: ``cluster_silhouette``,
+    ``cluster_intra_means``, and the number of sessions in each cluster.
+    Bottom row, one value per ROI: ``sample_silhouette`` of the clustered ROIs,
+    the fraction of clustered ROIs above a ``sample_silhouette`` or
+    ``cluster_silhouette`` cutoff, and the fraction of each session's ROIs that
+    were clustered.
 
-    axs[0,0].hist(quality_metrics['cluster_silhouette'], 50);
-    axs[0,0].set_xlabel('cluster_silhouette');
-    axs[0,0].set_ylabel('cluster counts');
+    Args:
+        quality_metrics (dict):
+            Output of ``Clusterer.compute_quality_metrics``, computed from the
+            same labels.
+        labels_bySession (List[Union[np.ndarray, List[int]]]):
+            Cluster label of each ROI, one array per session. ``-1`` marks
+            unclustered ROIs.
 
-    axs[0,1].hist(quality_metrics['cluster_intra_means'], 50);
-    axs[0,1].set_xlabel('cluster_intra_means');
-    axs[0,1].set_ylabel('cluster counts');
+    Returns:
+        (tuple): tuple containing:
+            fig (plt.Figure):
+                The figure.
+            axs (np.ndarray):
+                The axes. (shape: *(2, 3)*)
+    """
+    labels_bySession = [np.asarray(labels, dtype=np.int64) for labels in labels_bySession]
+    labels = np.concatenate(labels_bySession)  ## shape: (n_roi_total,)
+    n_sessions = len(labels_bySession)
+    bool_clustered = labels != -1  ## shape: (n_roi_total,)
 
-    axs[1,0].hist(quality_metrics['sample_silhouette'], 50);
-    axs[1,0].set_xlabel('sample_silhouette score');
-    axs[1,0].set_ylabel('roi sample counts');
+    ## Cluster metrics are ordered by np.unique(labels). Drop the -1 entry, which pools the unclustered ROIs.
+    labels_unique = np.asarray(quality_metrics['cluster_labels_unique'], dtype=np.int64)
+    assert np.array_equal(labels_unique, np.unique(labels)), "quality_metrics must be computed from the same labels as labels_bySession"
+    bool_notNoise = labels_unique != -1
+    cluster_silhouette = np.asarray(quality_metrics['cluster_silhouette'], dtype=np.float64)[bool_notNoise]  ## shape: (n_clusters,)
+    cluster_intra_means = np.asarray(quality_metrics['cluster_intra_means'], dtype=np.float64)[bool_notNoise]  ## shape: (n_clusters,)
 
-    u, c = np.unique(labels[labels!=-1], return_counts=True)
-    n_sesh = np.bincount(c)
+    ## Values of the clustered ROIs. sample_silhouette is None if it was not computed.
+    cluster_silhouette_byROI = cluster_silhouette[np.searchsorted(labels_unique[bool_notNoise], labels[bool_clustered])]  ## shape: (n_roi_clustered,)
+    sample_silhouette = quality_metrics['sample_silhouette']
+    sample_silhouette = np.asarray(sample_silhouette, dtype=np.float64)[bool_clustered] if sample_silhouette is not None else None  ## shape: (n_roi_clustered,)
 
-    axs[1,1].bar(np.arange(len(n_sesh)), n_sesh);
-    axs[1,1].set_xlabel('n_sessions')
-    axs[1,1].set_ylabel('cluster counts');
-    
+    fig, axs = plt.subplots(nrows=2, ncols=3, figsize=(24, 12))
+    bins_silhouette = np.linspace(-1, 1, 51)
+    fontsize = 30
+
+    ## Top row: one value per cluster
+    axs[0,0].hist(cluster_silhouette[np.isfinite(cluster_silhouette)], bins=bins_silhouette)
+    axs[0,0].set_xlabel('cluster_silhouette', fontsize=fontsize)
+    axs[0,0].set_ylabel('cluster counts', fontsize=fontsize)
+
+    axs[0,1].hist(cluster_intra_means[np.isfinite(cluster_intra_means)], bins=50)
+    axs[0,1].set_xlabel('cluster_intra_means', fontsize=fontsize)
+    axs[0,1].set_ylabel('cluster counts', fontsize=fontsize)
+
+    _, n_roi_byCluster = np.unique(labels[bool_clustered], return_counts=True)  ## a cluster holds at most one ROI per session
+    n_clusters_bySize = np.bincount(n_roi_byCluster, minlength=n_sessions + 1)  ## index is the cluster size
+    axs[0,2].bar(np.arange(1, len(n_clusters_bySize)), n_clusters_bySize[1:])
+    axs[0,2].xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    axs[0,2].set_xlabel('n_sessions in cluster', fontsize=fontsize)
+    axs[0,2].set_ylabel('cluster counts', fontsize=fontsize)
+
+    ## Bottom row: one value per ROI
+    if sample_silhouette is not None:
+        axs[1,0].hist(sample_silhouette[np.isfinite(sample_silhouette)], bins=bins_silhouette)
+    axs[1,0].set_xlabel('sample_silhouette', fontsize=fontsize)
+    axs[1,0].set_ylabel('clustered ROI counts', fontsize=fontsize)
+
+    ## Fraction of clustered ROIs above each cutoff. NaN is below every cutoff.
+    cutoffs = np.linspace(-1, 1, 201)
+    if bool_clustered.any():
+        if sample_silhouette is not None:
+            axs[1,1].plot(cutoffs, [np.mean(sample_silhouette > c) for c in cutoffs], label='sample_silhouette > cutoff')
+        axs[1,1].plot(cutoffs, [np.mean(cluster_silhouette_byROI > c) for c in cutoffs], label='cluster_silhouette > cutoff')
+        axs[1,1].legend(fontsize=fontsize * 0.8)
+    axs[1,1].set_xlabel('cutoff', fontsize=fontsize)
+    axs[1,1].set_ylabel('fraction of clustered ROIs kept', fontsize=fontsize)
+
+    axs[1,2].bar(np.arange(n_sessions), [np.mean(labels_session != -1) for labels_session in labels_bySession])
+    axs[1,2].xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    axs[1,2].set_xlabel('session', fontsize=fontsize)
+    axs[1,2].set_ylabel('fraction of ROIs in a cluster', fontsize=fontsize)
+
+    for ax in axs.flat:
+        ax.tick_params(labelsize=fontsize)
+
     # Make the title include the number of excluded (label==-1) ROIs
-    fig.suptitle(f'Quality metrics n_excluded: {np.sum(labels==-1)}, n_included: {np.sum(labels!=-1)}, n_total: {len(labels)}, n_clusters: {len(np.unique(labels[labels!=-1]))}, n_sessions: {n_sessions}')
+    fig.suptitle(f'Quality metrics n_excluded: {np.sum(labels==-1)}, n_included: {np.sum(labels!=-1)}, n_total: {len(labels)}, n_clusters: {len(np.unique(labels[labels!=-1]))}, n_sessions: {n_sessions}', fontsize=fontsize * 0.8)
+    fig.tight_layout()
     return fig, axs
