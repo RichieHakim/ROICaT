@@ -4570,29 +4570,31 @@ def plot_quality_metrics(
     sample_silhouette = quality_metrics['sample_silhouette']
     sample_silhouette = np.asarray(sample_silhouette, dtype=np.float64)[bool_clustered] if sample_silhouette is not None else None  ## shape: (n_roi_clustered,)
 
-    fig, axs = plt.subplots(nrows=2, ncols=3, figsize=(18, 8))
+    fig, axs = plt.subplots(nrows=2, ncols=3, figsize=(24, 12))
     bins_silhouette = np.linspace(-1, 1, 51)
+    fontsize = 30
 
     ## Top row: one value per cluster
     axs[0,0].hist(cluster_silhouette[np.isfinite(cluster_silhouette)], bins=bins_silhouette)
-    axs[0,0].set_xlabel('cluster_silhouette')
-    axs[0,0].set_ylabel('cluster counts')
+    axs[0,0].set_xlabel('cluster_silhouette', fontsize=fontsize)
+    axs[0,0].set_ylabel('cluster counts', fontsize=fontsize)
 
     axs[0,1].hist(cluster_intra_means[np.isfinite(cluster_intra_means)], bins=50)
-    axs[0,1].set_xlabel('cluster_intra_means')
-    axs[0,1].set_ylabel('cluster counts')
+    axs[0,1].set_xlabel('cluster_intra_means', fontsize=fontsize)
+    axs[0,1].set_ylabel('cluster counts', fontsize=fontsize)
 
     _, n_roi_byCluster = np.unique(labels[bool_clustered], return_counts=True)  ## a cluster holds at most one ROI per session
     n_clusters_bySize = np.bincount(n_roi_byCluster, minlength=n_sessions + 1)  ## index is the cluster size
     axs[0,2].bar(np.arange(1, len(n_clusters_bySize)), n_clusters_bySize[1:])
-    axs[0,2].set_xlabel('n_sessions in cluster')
-    axs[0,2].set_ylabel('cluster counts')
+    axs[0,2].xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    axs[0,2].set_xlabel('n_sessions in cluster', fontsize=fontsize)
+    axs[0,2].set_ylabel('cluster counts', fontsize=fontsize)
 
     ## Bottom row: one value per ROI
     if sample_silhouette is not None:
         axs[1,0].hist(sample_silhouette[np.isfinite(sample_silhouette)], bins=bins_silhouette)
-    axs[1,0].set_xlabel('sample_silhouette')
-    axs[1,0].set_ylabel('clustered ROI counts')
+    axs[1,0].set_xlabel('sample_silhouette', fontsize=fontsize)
+    axs[1,0].set_ylabel('clustered ROI counts', fontsize=fontsize)
 
     ## Fraction of clustered ROIs above each cutoff. NaN is below every cutoff.
     cutoffs = np.linspace(-1, 1, 201)
@@ -4600,15 +4602,19 @@ def plot_quality_metrics(
         if sample_silhouette is not None:
             axs[1,1].plot(cutoffs, [np.mean(sample_silhouette > c) for c in cutoffs], label='sample_silhouette > cutoff')
         axs[1,1].plot(cutoffs, [np.mean(cluster_silhouette_byROI > c) for c in cutoffs], label='cluster_silhouette > cutoff')
-        axs[1,1].legend()
-    axs[1,1].set_xlabel('cutoff')
-    axs[1,1].set_ylabel('fraction of clustered ROIs kept')
+        axs[1,1].legend(fontsize=fontsize * 0.8)
+    axs[1,1].set_xlabel('cutoff', fontsize=fontsize)
+    axs[1,1].set_ylabel('fraction of clustered ROIs kept', fontsize=fontsize)
 
     axs[1,2].bar(np.arange(n_sessions), [np.mean(labels_session != -1) for labels_session in labels_bySession])
-    axs[1,2].set_xlabel('session')
-    axs[1,2].set_ylabel('fraction of ROIs in a cluster')
+    axs[1,2].xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    axs[1,2].set_xlabel('session', fontsize=fontsize)
+    axs[1,2].set_ylabel('fraction of ROIs in a cluster', fontsize=fontsize)
+
+    for ax in axs.flat:
+        ax.tick_params(labelsize=fontsize)
 
     # Make the title include the number of excluded (label==-1) ROIs
-    fig.suptitle(f'Quality metrics n_excluded: {np.sum(labels==-1)}, n_included: {np.sum(labels!=-1)}, n_total: {len(labels)}, n_clusters: {len(np.unique(labels[labels!=-1]))}, n_sessions: {n_sessions}')
+    fig.suptitle(f'Quality metrics n_excluded: {np.sum(labels==-1)}, n_included: {np.sum(labels!=-1)}, n_total: {len(labels)}, n_clusters: {len(np.unique(labels[labels!=-1]))}, n_sessions: {n_sessions}', fontsize=fontsize * 0.8)
     fig.tight_layout()
     return fig, axs
