@@ -117,10 +117,11 @@ class Aligner(util.ROICaT_Module):
         CLAHE_grid_block_size: int = 10,
         CLAHE_clipLimit: int = 1,
         CLAHE_normalize: bool = True,
+        local_norm_cell_diameter_um: Optional[float] = 12.0,
     ) -> None:
         """
         Augments the FOV images by mixing the FOV with the ROI images and
-        optionally applying CLAHE.
+        optionally applying CLAHE and local brightness normalization.
         RH 2023
 
         Args:
@@ -149,11 +150,20 @@ class Aligner(util.ROICaT_Module):
             CLAHE_normalize (bool):
                 Whether to normalize the CLAHE output. See alignment.clahe for
                 more details. (Default is ``True``)
+            local_norm_cell_diameter_um (Optional[float]):
+                Cell diameter in micrometers. As the last step, the brightness
+                and contrast of each image are evened out over space (see
+                ``normalize_local_brightness``) with a Gaussian of ``sigma =
+                local_norm_cell_diameter_um / um_per_pixel`` pixels, so that
+                uneven illumination (e.g. vignetting) is not fit as motion by
+                the alignment steps. Output images are in [0, 1]. If ``None``,
+                no normalization. (Default is *12.0*)
 
         Returns:
             List[np.ndarray]:
                 The augmented FOV images.
         """
+        assert (local_norm_cell_diameter_um is None) or (isinstance(local_norm_cell_diameter_um, (int, float, np.number)) and not isinstance(local_norm_cell_diameter_um, bool) and local_norm_cell_diameter_um > 0), f"local_norm_cell_diameter_um must be None or a positive number, not {local_norm_cell_diameter_um}"
         ## Warn if roi_FOV_mixing_factor = 0 but spatialFootprints is not None
         if (roi_FOV_mixing_factor == 0) and (spatialFootprints is not None):
             warnings.warn("roi_FOV_mixing_factor = 0 but spatialFootprints is not None. The ROI images will not be used.")
@@ -171,6 +181,7 @@ class Aligner(util.ROICaT_Module):
                 'CLAHE_grid_block_size',
                 'CLAHE_clipLimit',
                 'CLAHE_normalize',
+                'local_norm_cell_diameter_um',
             ],
         )
         
@@ -196,6 +207,12 @@ class Aligner(util.ROICaT_Module):
             mixing_factor_final = roi_FOV_mixing_factor * np.mean(np.concatenate([im.reshape(-1) for im in FOV_images]))
             fn_mix = lambda im, sf, f: (1 - f) * im + np.array((f) * mixing_factor_final * sf.multiply(1/np.maximum(sf.max(axis=1).toarray().reshape(-1, 1), util.SPARSE_NORMALIZATION_FLOOR)).sum(0).reshape(h, w))
             FOV_images = [fn_mix(f, s, roi_FOV_mixing_factor) for f, s in zip(FOV_images, sf)]
+
+        ## Even out the local brightness last, so the ROI footprints mixed in above are normalized with the FOV
+        if local_norm_cell_diameter_um is not None:
+            sigma_px = local_norm_cell_diameter_um / self.um_per_pixel
+            print(f'Normalizing local brightness: sigma = {sigma_px:.2f} px ({local_norm_cell_diameter_um} um cell diameter / {self.um_per_pixel} um per pixel)') if self._verbose else None
+            FOV_images = [normalize_local_brightness(im, sigma=sigma_px) for im in FOV_images]
 
         return FOV_images
 
@@ -778,9 +795,12 @@ class Aligner(util.ROICaT_Module):
         self._HW = (H,W) if self._HW is None else self._HW
 
         ims_moving, template = self._fix_input_images(ims_moving=ims_moving, template=template, template_method=template_method)
-        norm_factor = np.nanmax([np.nanmax(im) for im in ims_moving])
-        template_norm   = np.array(template * (template > 0) * (1/norm_factor) * 255, dtype=np.uint8) if template_method == 'image' else None
-        ims_moving_norm = [np.array(im * (im > 0) * (1/np.nanmax(im)) * 255, dtype=np.uint8) for im in ims_moving]
+
+        ## One scale factor for the template and all moving images, so that they keep their relative brightness. The methods' _prepare_image convert to uint8; the images must stay in [0, 1] or the uint8 values wrap.
+        norm_factor = np.nanmax([np.nanmax(im) for im in ims_moving] + ([np.nanmax(template)] if template_method == 'image' else []))
+        fn_scale = lambda im: (im * (im > 0) / norm_factor).astype(np.float32)
+        template_norm   = fn_scale(template) if template_method == 'image' else None
+        ims_moving_norm = [fn_scale(im) for im in ims_moving]
 
         print(f'Finding nonrigid registration warps with mode: {method}, template_method: {template_method}') if self._verbose else None
         remappingIdx_raw = []
@@ -1349,6 +1369,65 @@ def clahe(
     return im_c
 
 
+def normalize_local_brightness(
+    im: np.ndarray,
+    sigma: float,
+    fraction_std_floor: float = 0.05,
+    clip_z: float = 3.0,
+) -> np.ndarray:
+    """
+    Evens out the brightness and contrast of an image over space. Each pixel
+    becomes a local z-score: \n
+    ``z = (im - local_mean) / (local_std + fraction_std_floor * std(im))`` \n
+    The local mean and std are Gaussian-weighted over ``sigma`` pixels. The
+    floor added to the local std keeps dim, flat regions from amplifying noise.
+    ``z`` is clipped to ``[-clip_z, clip_z]`` and mapped linearly to [0, 1] by
+    the same rule for every image, so ``z = 0`` maps to 0.5. Used before
+    alignment so that uneven illumination (e.g. vignetting) is not fit as
+    motion.
+    RH 2026
+
+    Args:
+        im (np.ndarray):
+            Input image. *(H, W)*
+        sigma (float):
+            Standard deviation of the Gaussian in pixels. About one cell
+            diameter.
+        fraction_std_floor (float):
+            Floor added to the local std, as a fraction of the global std of the
+            image.
+        clip_z (float):
+            ``z`` is clipped to ``[-clip_z, clip_z]`` before the mapping to
+            [0, 1].
+
+    Returns:
+        (np.ndarray):
+            im_out (np.ndarray):
+                Normalized image, float32 in [0, 1]. NaN pixels and flat
+                (constant) images map to 0.5. *(H, W)*
+    """
+    assert im.ndim == 2, f'im must be 2D, not {im.ndim}D'
+    assert sigma > 0, f'sigma must be positive, not {sigma}'
+
+    im_float = im.astype(np.float64)
+    mask_nan = np.isnan(im_float)
+    ## Flat image: nothing to normalize. The blurs' rounding errors would otherwise be divided by a ~0 std.
+    if mask_nan.all() or (np.nanmax(im_float) == np.nanmin(im_float)):
+        return np.full(im.shape, 0.5, dtype=np.float32)
+    ## Fill NaN pixels with the image mean so that they do not spread through the blurs
+    im_float = np.where(mask_nan, np.nanmean(im_float), im_float)
+
+    ## Gaussian-weighted local mean and std
+    mean_local = cv2.GaussianBlur(im_float, ksize=(0, 0), sigmaX=sigma, borderType=cv2.BORDER_REFLECT)
+    var_local = cv2.GaussianBlur(im_float * im_float, ksize=(0, 0), sigmaX=sigma, borderType=cv2.BORDER_REFLECT) - mean_local**2
+    std_local = np.sqrt(np.maximum(var_local, 0.0))
+
+    ## Local z-score, clipped and mapped to [0, 1]
+    z = (im_float - mean_local) / (std_local + fraction_std_floor * im_float.std())
+    z[mask_nan] = 0.0
+    return ((np.clip(z, -clip_z, clip_z) + clip_z) / (2 * clip_z)).astype(np.float32)
+
+
 def adaptive_brute_force_matcher(
     features_template: torch.Tensor,
     features_moving: torch.Tensor,
@@ -1881,6 +1960,7 @@ class RoMa(ImageRegistrationMethod):
         """
         if isinstance(image, torch.Tensor):
             image = image.cpu().numpy()
+        assert np.issubdtype(image.dtype, np.floating), f"image must have a floating dtype with data in [0, 1], not {image.dtype}. A uint8 image would be multiplied by 255 and wrap."
         return PIL.Image.fromarray(image * 255).convert("RGB")
 
 
@@ -2103,7 +2183,7 @@ class DeepFlow(ImageRegistrationMethod):
         """
         if isinstance(image, torch.Tensor):
             image = image.cpu().numpy()
-        
+        assert np.issubdtype(image.dtype, np.floating), f"image must have a floating dtype with data in [0, 1], not {image.dtype}. A uint8 image would be multiplied by 255 and wrap."
         return (image * 255).astype(np.uint8)
 
 
@@ -2200,7 +2280,7 @@ class OpticalFlowFarneback(ImageRegistrationMethod):
         """
         if isinstance(image, torch.Tensor):
             image = image.cpu().numpy()
-        
+        assert np.issubdtype(image.dtype, np.floating), f"image must have a floating dtype with data in [0, 1], not {image.dtype}. A uint8 image would be multiplied by 255 and wrap."
         return (image * 255).astype(np.uint8)
     
 

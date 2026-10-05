@@ -3528,6 +3528,258 @@ class Test_Aligner_match_search:
 
 
 ######################################################################################################################################
+################################### ALIGNER: INPUT IMAGES (augment_FOV_images, fit_nonrigid) ########################################
+######################################################################################################################################
+
+
+def _make_textured_image(hw=(96, 128), seed=0, shift_yx=(0, 0), gradient=(0.5, 1.0)):
+    """
+    Smooth random texture times a left-to-right brightness gradient (like
+    vignetting), in [0, 1]. Images with the same seed are crops of one canvas,
+    so ``shift_yx=(dy, dx)`` gives ``im[y, x] = im_unshifted[y + dy, x + dx]``.
+    """
+    import scipy.ndimage
+    rng = np.random.default_rng(seed)
+    pad = 8
+    canvas = scipy.ndimage.gaussian_filter(rng.standard_normal((hw[0] + 2 * pad, hw[1] + 2 * pad)), sigma=2)
+    texture = canvas[pad + shift_yx[0]:pad + shift_yx[0] + hw[0], pad + shift_yx[1]:pad + shift_yx[1] + hw[1]]
+    im = (1 + 3 * texture) * np.linspace(gradient[0], gradient[1], hw[1])[None, :]  ## (H, W)
+    im = im - im.min()
+    return (im / im.max()).astype(np.float32)
+
+
+class Test_normalize_local_brightness:
+    """
+    ``alignment.normalize_local_brightness``: the local z-score, mapped to
+    [0, 1], that ``Aligner.augment_FOV_images`` applies by default.
+    """
+
+    @staticmethod
+    def _fn():
+        from roicat.tracking.alignment import normalize_local_brightness
+        return normalize_local_brightness
+
+    def test_shape_dtype_and_range(self):
+        im = _make_textured_image()
+        out = self._fn()(im, sigma=6.0)
+        assert out.shape == im.shape
+        assert out.dtype == np.float32
+        assert out.min() >= 0 and out.max() <= 1
+        ## Clipping at |z| = 3 spends the range on both sides of 0.5
+        assert out.min() < 0.25 and out.max() > 0.75
+
+    def test_removes_brightness_gradient(self):
+        """The left (dim) and right (bright) halves come out with the same mean."""
+        out = self._fn()(_make_textured_image(gradient=(0.1, 1.0)), sigma=6.0)
+        w = out.shape[1]
+        assert abs(out[:, :w // 2].mean() - out[:, w // 2:].mean()) < 0.02
+
+    def test_invariant_to_scale_and_offset(self):
+        im = _make_textured_image()
+        out = self._fn()(im, sigma=6.0)
+        ## Scaling by a power of 2 is exact in floating point
+        np.testing.assert_array_equal(self._fn()(im * np.float32(4), sigma=6.0), out)
+        ## An offset changes only the rounding
+        np.testing.assert_allclose(self._fn()(im + np.float32(10), sigma=6.0), out, rtol=0, atol=1e-5)
+
+    def test_nan_pixels(self):
+        """One NaN pixel becomes mid-gray and leaves the rest of the image intact."""
+        im = _make_textured_image()
+        im_nan = im.copy()
+        im_nan[10, 20] = np.nan
+        out = self._fn()(im_nan, sigma=6.0)
+        out_clean = self._fn()(im, sigma=6.0)
+        assert np.isfinite(out).all()
+        assert out[10, 20] == 0.5
+        far = np.ones(im.shape, dtype=bool)
+        far[:40, :50] = False
+        np.testing.assert_allclose(out[far], out_clean[far], rtol=0, atol=0.01)
+
+    @pytest.mark.parametrize('value', [0.0, 0.1, 3.0, 1234.5678, np.nan])
+    def test_constant_image_is_mid_gray(self, value):
+        out = self._fn()(np.full((32, 48), value, dtype=np.float32), sigma=6.0)
+        np.testing.assert_array_equal(out, np.full((32, 48), 0.5, dtype=np.float32))
+
+    def test_constant_with_nan_is_mid_gray(self):
+        im = np.full((32, 48), 0.1, dtype=np.float32)
+        im[5, 5] = np.nan
+        np.testing.assert_array_equal(self._fn()(im, sigma=6.0), np.full((32, 48), 0.5, dtype=np.float32))
+
+
+class Test_augment_FOV_images_local_norm:
+    """
+    ``Aligner.augment_FOV_images`` ends with ``normalize_local_brightness`` by
+    default, so both alignment steps see evened images.
+    """
+
+    UM_PER_PIXEL = 2.0
+
+    @staticmethod
+    def _inputs(n_sessions=3, n_rois=6, hw=(96, 128), seed=0):
+        """Raw-scale FOV images with different brightness gradients, and sparse ROI footprints (n_rois, H * W)."""
+        rng = np.random.default_rng(seed)
+        FOV_images = [1000 * _make_textured_image(hw=hw, seed=seed, shift_yx=(ii, -ii), gradient=(0.3 + 0.2 * ii, 1.0)) for ii in range(n_sessions)]
+        yy, xx = np.mgrid[:hw[0], :hw[1]]
+        spatialFootprints = []
+        for _ in range(n_sessions):
+            centers = rng.uniform(low=(10, 10), high=(hw[0] - 10, hw[1] - 10), size=(n_rois, 2))
+            rois = np.stack([np.exp(-((yy - cy)**2 + (xx - cx)**2) / (2 * 3.0**2)) * ((yy - cy)**2 + (xx - cx)**2 < 36) for cy, cx in centers])  ## (n_rois, H, W)
+            spatialFootprints.append(scipy.sparse.csr_array(rois.reshape(n_rois, -1).astype(np.float32)))
+        return FOV_images, spatialFootprints
+
+    def _aligner(self):
+        from roicat.tracking import alignment
+        return alignment.Aligner(um_per_pixel=self.UM_PER_PIXEL, verbose=False)
+
+    def test_on_normalizes_the_augmented_images(self):
+        """The last step normalizes the mixed images, with sigma = cell diameter / um_per_pixel."""
+        from roicat.tracking.alignment import normalize_local_brightness
+        FOV_images, spatialFootprints = self._inputs()
+        aligner = self._aligner()
+        out = aligner.augment_FOV_images(FOV_images=FOV_images, spatialFootprints=spatialFootprints)  ## default: 12 um
+        assert aligner.params['augment_FOV_images']['local_norm_cell_diameter_um'] == 12.0
+        expected_off = aligner.augment_FOV_images(FOV_images=FOV_images, spatialFootprints=spatialFootprints, local_norm_cell_diameter_um=None)
+        for im_out, im_off in zip(out, expected_off):
+            assert im_out.dtype == np.float32
+            assert im_out.min() >= 0 and im_out.max() <= 1
+            np.testing.assert_array_equal(im_out, normalize_local_brightness(im_off, sigma=12.0 / self.UM_PER_PIXEL))
+
+    @pytest.mark.parametrize('value', [0.0, -1.0, True, 'a'])
+    def test_invalid_cell_diameter_raises(self, value):
+        FOV_images, spatialFootprints = self._inputs()
+        with pytest.raises(AssertionError):
+            self._aligner().augment_FOV_images(FOV_images=FOV_images, spatialFootprints=spatialFootprints, local_norm_cell_diameter_um=value)
+
+    @pytest.mark.parametrize('value', [12, 12.0, np.float32(12), np.int64(12)])
+    def test_numpy_cell_diameter_accepted(self, value):
+        FOV_images, spatialFootprints = self._inputs(n_sessions=2)
+        out = self._aligner().augment_FOV_images(FOV_images=FOV_images, spatialFootprints=spatialFootprints, local_norm_cell_diameter_um=value)
+        assert len(out) == 2
+
+    def test_default_wiring(self):
+        import inspect
+        from roicat.tracking import alignment
+        default_signature = inspect.signature(alignment.Aligner.augment_FOV_images).parameters['local_norm_cell_diameter_um'].default
+        assert default_signature == util.get_default_parameters()['alignment']['augment']['local_norm_cell_diameter_um']
+
+
+class Test_prepare_image_nonrigid:
+    """
+    ``_prepare_image`` of the nonrigid methods multiplies by 255, so a uint8
+    image (already scaled to 0-255) would wrap. It must raise instead. Called
+    unbound, so RoMa's weights are not loaded.
+    """
+
+    @pytest.mark.parametrize('name_method', ['DeepFlow', 'OpticalFlowFarneback', 'RoMa'])
+    def test_uint8_raises(self, name_method):
+        from roicat.tracking import alignment
+        fn = getattr(alignment, name_method)._prepare_image
+        im_float = _make_textured_image()
+        fn(None, im_float)  ## float in [0, 1] is accepted
+        with pytest.raises(AssertionError):
+            fn(None, (im_float * 255).astype(np.uint8))
+
+
+class Test_fit_nonrigid_input_images:
+    """
+    The images that ``Aligner.fit_nonrigid`` hands to the optical flow call.
+    Until this fix the images were scaled to uint8 twice, which wrapped and
+    inverted them. The flow calls are replaced by recorders, so these tests
+    check the images at the last step before OpenCV.
+    """
+
+    @staticmethod
+    def _install_recorder(monkeypatch, name_method):
+        """Replace the OpenCV flow call by a recorder that returns zero flow. Returns the list of recorded (template, moving)."""
+        from roicat.tracking import alignment
+        calls = []
+
+        def calc(im_template, im_moving):
+            calls.append((im_template, im_moving))
+            return np.zeros((*im_moving.shape, 2), dtype=np.float32)
+
+        if name_method == 'DeepFlow':
+            class FakeDeepFlow:
+                def calc(self, i0, i1, flow):
+                    return calc(i0, i1)
+            monkeypatch.setattr(alignment.cv2.optflow, 'createOptFlow_DeepFlow', lambda: FakeDeepFlow())
+        elif name_method == 'OpticalFlowFarneback':
+            monkeypatch.setattr(alignment.cv2, 'calcOpticalFlowFarneback', lambda prev, next, flow, **kwargs: calc(prev, next))
+        return calls
+
+    def _fit(self, monkeypatch, name_method, ims, template_method='image'):
+        from roicat.tracking import alignment
+        calls = self._install_recorder(monkeypatch=monkeypatch, name_method=name_method)
+        alignment.Aligner(verbose=False).fit_nonrigid(
+            template=1,
+            ims_moving=ims,
+            template_method=template_method,
+            method=name_method,
+            kwargs_method={'DeepFlow': {}, 'OpticalFlowFarneback': {}},
+        )
+        return calls
+
+    @staticmethod
+    def _images(normalized):
+        """Three shifted images, either raw-like or as ``augment_FOV_images`` returns them by default."""
+        from roicat.tracking.alignment import normalize_local_brightness
+        ims = [_make_textured_image(shift_yx=(dy, dx)) for dy, dx in [(0, 0), (1, -2), (-2, 1)]]
+        return [normalize_local_brightness(im, sigma=6.0) for im in ims] if normalized else ims
+
+    @pytest.mark.parametrize('normalized', [True, False])
+    @pytest.mark.parametrize('name_method', ['DeepFlow', 'OpticalFlowFarneback'])
+    def test_images_not_inverted(self, monkeypatch, name_method, normalized):
+        """Template and moving images reach OpenCV as uint8 and positively correlated with the input."""
+        ims = self._images(normalized=normalized)
+        calls = self._fit(monkeypatch, name_method, ims)
+        assert len(calls) == len(ims)
+        for im, (im_template_cv2, im_moving_cv2) in zip(ims, calls):
+            assert im_template_cv2.dtype == np.uint8 and im_moving_cv2.dtype == np.uint8
+            assert np.corrcoef(im_template_cv2.ravel(), ims[1].ravel())[0, 1] > 0.9
+            assert np.corrcoef(im_moving_cv2.ravel(), im.ravel())[0, 1] > 0.9
+
+    @pytest.mark.parametrize('scale_template', [0.5, 2.0])
+    def test_one_norm_factor(self, monkeypatch, scale_template):
+        """One factor, the max over the template and the moving images, scales all images. A template brighter than the moving images must not wrap."""
+        ims = self._images(normalized=False)
+        ims = [ims[0], scale_template * ims[1], ims[2]]  ## session 1 is the template
+        calls = self._fit(monkeypatch, 'DeepFlow', ims)
+        norm_factor = max(im.max() for im in ims)
+        to_uint8 = lambda im: (im / norm_factor * np.float32(255)).astype(np.uint8)
+        for im, (im_template_cv2, im_moving_cv2) in zip(ims, calls):
+            ## the uint8 levels may differ by 1 from the test's float rounding
+            assert np.abs(im_template_cv2.astype(int) - to_uint8(ims[1]).astype(int)).max() <= 1
+            assert np.abs(im_moving_cv2.astype(int) - to_uint8(im).astype(int)).max() <= 1
+
+    def test_sequential_template(self, monkeypatch):
+        ims = self._images(normalized=True)
+        calls = self._fit(monkeypatch, 'DeepFlow', ims, template_method='sequential')
+        assert len(calls) == len(ims)
+        assert all(i0.dtype == np.uint8 and i1.dtype == np.uint8 for i0, i1 in calls)
+
+    @pytest.mark.parametrize('normalized', [True, False])
+    def test_deepflow_recovers_shift(self, normalized):
+        """Real DeepFlow: the remap undoes a known shift, with the moving image under a different brightness gradient."""
+        from roicat.tracking import alignment
+        dy, dx = 1, -2
+        ims = [_make_textured_image(seed=1), _make_textured_image(seed=1, shift_yx=(dy, dx), gradient=(1.0, 0.6))]
+        if normalized:
+            ims = [alignment.normalize_local_brightness(im, sigma=6.0) for im in ims]
+        remap = alignment.Aligner(verbose=False).fit_nonrigid(
+            template=0,
+            ims_moving=ims,
+            template_method='image',
+            method='DeepFlow',
+            kwargs_method={'DeepFlow': {}},
+        )[1]  ## (H, W, 2) as (x_src, y_src)
+        h, w = ims[0].shape
+        grid = np.stack(np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32), indexing='xy'), axis=-1)
+        shift_median = np.median((remap - grid)[h // 4:3 * h // 4, w // 4:3 * w // 4].reshape(-1, 2), axis=0)
+        ## moving[y, x] = template[y + dy, x + dx], so the remap samples the moving image at (x - dx, y - dy)
+        np.testing.assert_allclose(shift_median, [-dx, -dy], atol=0.3)
+
+
+######################################################################################################################################
 ########################################################## ROInet ####################################################################
 ######################################################################################################################################
 
