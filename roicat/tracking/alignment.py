@@ -113,7 +113,7 @@ class Aligner(util.ROICaT_Module):
         spatialFootprints: Optional[List[scipy.sparse.csr_array]] = None,
         normalize_FOV_intensities: bool = True,
         roi_FOV_mixing_factor: float = 0.5,
-        use_CLAHE: bool = True,
+        use_CLAHE: bool = False,
         CLAHE_grid_block_size: int = 10,
         CLAHE_clipLimit: int = 1,
         CLAHE_normalize: bool = True,
@@ -138,7 +138,10 @@ class Aligner(util.ROICaT_Module):
                 The factor by which to mix the ROI images into the FOV images.
                 If 0, then no mixing will be performed. (Default is *0.5*)
             use_CLAHE (bool):
-                Whether to apply CLAHE to the images. (Default is ``True``)
+                Whether to apply CLAHE to the images. Off by default: ROICaT's
+                CLAHE darkens textureless dim regions and creates edges that
+                nonrigid flow follows. ``local_norm_cell_diameter_um`` evens
+                out brightness instead. (Default is ``False``)
             CLAHE_grid_block_size (int):
                 The size of the blocks in the grid for CLAHE. Used to divide the
                 image into small blocks and create the grid_size parameter for

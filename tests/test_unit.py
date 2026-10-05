@@ -3662,6 +3662,13 @@ class Test_augment_FOV_images_local_norm:
         default_signature = inspect.signature(alignment.Aligner.augment_FOV_images).parameters['local_norm_cell_diameter_um'].default
         assert default_signature == util.get_default_parameters()['alignment']['augment']['local_norm_cell_diameter_um']
 
+    def test_default_wiring_CLAHE_off(self):
+        import inspect
+        from roicat.tracking import alignment
+        default_signature = inspect.signature(alignment.Aligner.augment_FOV_images).parameters['use_CLAHE'].default
+        assert default_signature is False
+        assert util.get_default_parameters()['alignment']['augment']['use_CLAHE'] is False
+
 
 class Test_prepare_image_nonrigid:
     """
