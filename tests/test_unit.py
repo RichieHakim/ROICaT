@@ -4629,3 +4629,74 @@ def test_manhattan_similarity_kernel_cache_loads_in_new_process():
     )
     hits = [int(subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, check=True).stdout.strip().splitlines()[-1]) for _ in range(2)]
     assert hits[1] == 1, f"cache hits per process: {hits}"
+
+
+######################################################################################################################################
+################################################# ALIGNER: NONRIGID ALIGNMENT SCORES #################################################
+######################################################################################################################################
+
+
+class Test_Aligner_alignment_check:
+    """
+    The alignment scores that ``Aligner.transform_images_nonrigid`` computes
+    with ``ImageAlignmentChecker``.
+    """
+
+    UM_PER_PIXEL = 2.5
+    RADIUS_IN_UM = 5.0
+    RADIUS_OUT_UM = 25.0
+
+    @staticmethod
+    def _spy_checker(monkeypatch):
+        """
+        Replace ``helpers.ImageAlignmentChecker`` with a spy that records its
+        init kwargs and the images passed to ``score_alignment``. Returns the
+        record dict.
+        """
+        from roicat import helpers
+        record = {'init_kwargs': [], 'images_scored': []}
+        ImageAlignmentChecker_real = helpers.ImageAlignmentChecker
+
+        class SpyChecker(ImageAlignmentChecker_real):
+            def __init__(self, **kwargs):
+                record['init_kwargs'].append(kwargs)
+                super().__init__(**kwargs)
+
+            def score_alignment(self, images, **kwargs):
+                record['images_scored'].append(np.stack([np.asarray(im) for im in images], axis=0))
+                return super().score_alignment(images=images, **kwargs)
+
+        monkeypatch.setattr(helpers, 'ImageAlignmentChecker', SpyChecker)
+        return record
+
+    def _aligner(self):
+        from roicat.tracking import alignment
+        return alignment.Aligner(
+            radius_in=self.RADIUS_IN_UM,
+            radius_out=self.RADIUS_OUT_UM,
+            um_per_pixel=self.UM_PER_PIXEL,
+            use_match_search=False,
+            device='cpu',
+            verbose=False,
+        )
+
+    def _nonrigid_setup(self, shift_px):
+        """Aligner with geometric images and a nonrigid warp that shifts every image by ``shift_px`` pixels in x."""
+        from roicat import helpers
+        images = [_make_textured_image(seed=0) for _ in range(2)]
+        aligner = self._aligner()
+        aligner._HW = images[0].shape
+        H, W = aligner._HW
+        aligner.ims_registered_geo = [im.copy() for im in images]
+        warp_matrix = np.array([[1, 0, shift_px], [0, 1, 0], [0, 0, 1]], dtype=np.float32)
+        aligner.remappingIdx_nonrigid = [helpers.warp_matrix_to_remappingIdx(warp_matrix=warp_matrix, x=W, y=H) for _ in images]
+        return aligner, images
+
+    def test_transform_images_nonrigid_scores_nonrigid_images(self, monkeypatch):
+        """The final nonrigid scores are computed on the nonrigid-registered images, not the geometric ones."""
+        record = self._spy_checker(monkeypatch=monkeypatch)
+        aligner, images = self._nonrigid_setup(shift_px=10)
+        aligner.transform_images_nonrigid(ims_moving=images)
+        images_scored = record['images_scored'][0]
+        np.testing.assert_array_equal(images_scored, np.stack(aligner.ims_registered_nonrigid, axis=0))
+        assert not np.allclose(images_scored, np.stack(aligner.ims_registered_geo, axis=0))

@@ -915,7 +915,7 @@ class Aligner(util.ROICaT_Module):
             order=self.order,
             device='cpu',
         )
-        score_all_to_all_final = iac_nonrigid.score_alignment(images=self.ims_registered_geo, verbose=self._verbose, desc='Final nonrigid: all-to-all alignment scores')['z_in']
+        score_all_to_all_final = iac_nonrigid.score_alignment(images=self.ims_registered_nonrigid, verbose=self._verbose, desc='Final nonrigid: all-to-all alignment scores')['z_in']
         alignment_all_to_all_final = score_all_to_all_final > self.z_threshold
 
         ## Prepare outputs
