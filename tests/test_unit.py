@@ -3429,7 +3429,7 @@ class Test_Aligner_match_search:
           warp, so it has no path. While any image has no path, the dense
           search used to discard every path it found, image 2's included.
         * 4: image 0 plus faint noise. Every registration involving it returns
-          a wrong warp, but it is aligned as it is.
+          a wrong warp, so it has no path; only the identity would align it.
     """
 
     SIZE_PX = 128
@@ -3512,19 +3512,19 @@ class Test_Aligner_match_search:
         translations = self._translations(aligner)
         np.testing.assert_allclose(translations[1], [-15, 0], atol=1e-5)
         np.testing.assert_allclose(translations[2], [-30, 0], atol=1e-5)
-        ## No warp aligns image 3, so it keeps identity
-        np.testing.assert_allclose(translations[3], [0, 0], atol=1e-5)
+        ## No path reaches image 3, so it keeps its direct warp
+        np.testing.assert_allclose(translations[3], self.WARP_WRONG_XY, atol=1e-5)
         assert aligner.results_geometric['final']['alignment_template_to_all'].tolist() == [True, True, True, False]
 
-    def test_first_round_success_skips_dense_search(self, monkeypatch):
-        """Image 4 fails direct registration but is aligned on identity, so the dense search never runs."""
+    def test_image_without_path_keeps_direct_warp(self, monkeypatch):
+        """Image 4 has no path, so it keeps its direct warp instead of the identity and the dense search runs."""
         aligner, n_registrations = self._fit(idx_images=[0, 1, 4], monkeypatch=monkeypatch)
         assert aligner.results_geometric['direct']['alignment_template_to_all'].tolist() == [True, True, False]
 
-        np.testing.assert_allclose(self._translations(aligner)[2], [0, 0], atol=1e-5)
-        assert aligner.results_geometric['final']['alignment_template_to_all'].tolist() == [True, True, True]
-        ## 3 direct registrations + 3 onto the failed image; a dense search would add 6
-        assert n_registrations == 6
+        np.testing.assert_allclose(self._translations(aligner)[2], self.WARP_WRONG_XY, atol=1e-5)
+        assert aligner.results_geometric['final']['alignment_template_to_all'].tolist() == [True, True, False]
+        ## 3 direct registrations + 3 onto the failed image + 6 of the dense search
+        assert n_registrations == 12
 
 
 ######################################################################################################################################
