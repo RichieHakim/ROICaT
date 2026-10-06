@@ -4750,3 +4750,83 @@ class Test_Aligner_alignment_check:
         np.testing.assert_array_equal(images_scored[~mask_nan], images_nonrigid[~mask_nan])
         np.testing.assert_allclose(images_scored[mask_nan], np.repeat([im.mean() for im in images], mask_nan[0].sum()))
         assert np.isfinite(aligner.results_nonrigid['final']['score_all_to_all']).all()
+
+
+class Test_Aligner_match_search_warp_choice:
+    """
+    Which warp ``Aligner.fit_geometric`` keeps per session when the direct check fails for some session and the match
+    search runs. The registration returns a distinct translation per session, the z scores are faked per scoring call,
+    and the path composition returns a marker warp, so each session's final warp shows which candidate was kept.
+    """
+
+    N_SESSIONS = 4
+    Z_DIRECT = np.array([100.0, 5.0, 5.0, 1.0])  ## sessions 1 and 2 pass the check (threshold 4), session 3 fails
+    MARKER_WARP = np.array([[1, 0, 7.0], [0, 1, 0], [0, 0, 1]], dtype=np.float32)  ## returned for every composed path
+
+    def _fit(self, monkeypatch, z_match_search, z_composed, use_match_search=True):
+        """
+        Run ``fit_geometric`` on ``N_SESSIONS`` images, template 0. Session ii registers directly to the template with
+        a translation of ``ii`` pixels in x. ``z_in`` against the template is faked: ``Z_DIRECT`` for the initial check,
+        ``z_match_search`` for every pair scored in the search, and one entry of ``z_composed`` (a list) for each
+        scoring of composed warps (match search round 1, then the dense round). Returns the final warps, shape (N, 3, 3).
+        """
+        from roicat import helpers
+        from roicat.tracking import alignment
+
+        images = [_make_textured_image(seed=0, shift_yx=(ii, 2 * ii)) for ii in range(self.N_SESSIONS)]
+        z_composed = iter(z_composed)
+
+        def score_alignment(self_checker, images, desc=None, **kwargs):
+            if desc.startswith('Initial alignment'):
+                z = self.Z_DIRECT
+            elif desc.startswith('Match search'):
+                z = z_match_search
+            elif desc.startswith('Path-finding'):
+                z = next(z_composed)
+            else:
+                return {'z_in': np.ones((len(images), 1))}
+            return {'z_in': np.asarray(z, dtype=np.float64)[:, None]}
+
+        def fit_rigid(self_model, im_template, im_moving, **kwargs):
+            idx = [ii for ii, im in enumerate(images) if np.array_equal(im, im_moving)][0]
+            return np.array([[1, 0, idx], [0, 1, 0], [0, 0, 1]], dtype=np.float32)
+
+        monkeypatch.setattr(helpers.ImageAlignmentChecker, 'score_alignment', score_alignment)
+        monkeypatch.setattr(alignment.PhaseCorrelationRegistration, 'fit_rigid', fit_rigid)
+        monkeypatch.setattr(alignment.Aligner, '_compose_warps', lambda self_aligner, **kwargs: self.MARKER_WARP)
+        aligner = alignment.Aligner(use_match_search=use_match_search, um_per_pixel=1.0, device='cpu', verbose=False)
+        aligner.fit_geometric(
+            template=0,
+            ims_moving=images,
+            template_method='image',
+            method='PhaseCorrelation',
+            kwargs_method={'PhaseCorrelation': {}},
+            kwargs_RANSAC={},
+            compute_final_all_to_all=False,
+            verbose=False,
+        )
+        return np.stack([np.asarray(w) for w in aligner.results_geometric['warp_matrices']], axis=0)
+
+    def _warps_direct(self, monkeypatch):
+        return self._fit(monkeypatch, z_match_search=None, z_composed=[], use_match_search=False)
+
+    def test_passed_sessions_keep_direct_warp(self, monkeypatch):
+        """Sessions that passed the direct check keep their direct warp although composed warps score higher."""
+        warps_direct = self._warps_direct(monkeypatch)
+        warps = self._fit(monkeypatch, z_match_search=np.full(self.N_SESSIONS, 50.0), z_composed=[self.Z_DIRECT, [100.0, 90.0, 90.0, 90.0]])
+        np.testing.assert_allclose(warps[[0, 1, 2]], warps_direct[[0, 1, 2]], atol=1e-6)
+
+    @pytest.mark.parametrize('z_composed_failed, expect_composed', [(3.0, True), (0.5, False)])
+    def test_failed_session_takes_composed_warp_only_if_it_scores_higher(self, monkeypatch, z_composed_failed, expect_composed):
+        """A session that failed the direct check takes the composed warp only if its z exceeds the direct z."""
+        warps_direct = self._warps_direct(monkeypatch)
+        warps = self._fit(monkeypatch, z_match_search=np.full(self.N_SESSIONS, 50.0), z_composed=[self.Z_DIRECT, [100.0, 90.0, 90.0, z_composed_failed]])
+        expected = self.MARKER_WARP if expect_composed else warps_direct[3]
+        np.testing.assert_allclose(warps[3], expected, atol=1e-6)
+
+    def test_failed_session_without_path_keeps_direct_warp(self, monkeypatch):
+        """With no pair passing the check there is no path to the template; the session keeps its direct warp, not the identity."""
+        warps_direct = self._warps_direct(monkeypatch)
+        assert not np.allclose(warps_direct[3], np.eye(3), atol=1e-3)
+        warps = self._fit(monkeypatch, z_match_search=np.zeros(self.N_SESSIONS), z_composed=[[100.0, 90.0, 90.0, 90.0]] * 2)
+        np.testing.assert_allclose(warps, warps_direct, atol=1e-6)
