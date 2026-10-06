@@ -494,8 +494,8 @@ class Aligner(util.ROICaT_Module):
         ## Prepare the ImageAlignmentChecker object
         iac_geo = helpers.ImageAlignmentChecker(
             hw=tuple(self._HW),
-            radius_in=self.radius_in * self.um_per_pixel,
-            radius_out=self.radius_out * self.um_per_pixel,
+            radius_in=self.radius_in / self.um_per_pixel,
+            radius_out=self.radius_out / self.um_per_pixel,
             order=self.order,
             device='cpu',
         )
@@ -910,8 +910,8 @@ class Aligner(util.ROICaT_Module):
         ### Compute the new alignment scores
         iac_nonrigid = helpers.ImageAlignmentChecker(
             hw=tuple(self._HW),
-            radius_in=self.radius_in * self.um_per_pixel,
-            radius_out=self.radius_out * self.um_per_pixel,
+            radius_in=self.radius_in / self.um_per_pixel,
+            radius_out=self.radius_out / self.um_per_pixel,
             order=self.order,
             device='cpu',
         )

@@ -4637,17 +4637,18 @@ def test_manhattan_similarity_kernel_cache_loads_in_new_process():
 
 
 ######################################################################################################################################
-################################################# ALIGNER: NONRIGID ALIGNMENT SCORES #################################################
+################################################### ALIGNER: IMAGE ALIGNMENT CHECK ###################################################
 ######################################################################################################################################
 
 
 class Test_Aligner_alignment_check:
     """
-    The alignment scores that ``Aligner.transform_images_nonrigid`` computes
-    with ``ImageAlignmentChecker``.
+    The ``ImageAlignmentChecker`` that ``Aligner`` builds in ``fit_geometric``
+    and ``transform_images_nonrigid``. ``radius_in`` and ``radius_out`` of the
+    Aligner are in micrometers; the checker takes pixels.
     """
 
-    UM_PER_PIXEL = 1.0
+    UM_PER_PIXEL = 2.5
     RADIUS_IN_UM = 5.0
     RADIUS_OUT_UM = 25.0
 
@@ -4685,6 +4686,25 @@ class Test_Aligner_alignment_check:
             verbose=False,
         )
 
+    def test_fit_geometric_radii_in_pixels(self, monkeypatch):
+        """The checker gets the radii in pixels: micrometers divided by um_per_pixel."""
+        record = self._spy_checker(monkeypatch=monkeypatch)
+        images = [_make_textured_image(seed=0, shift_yx=(0, ii)) for ii in range(2)]
+        aligner = self._aligner()
+        aligner.fit_geometric(
+            template=0,
+            ims_moving=images,
+            template_method='image',
+            method='PhaseCorrelation',
+            kwargs_method={'PhaseCorrelation': {}},
+            kwargs_RANSAC={},
+            compute_final_all_to_all=False,
+            verbose=False,
+        )
+        kwargs = record['init_kwargs'][0]
+        assert kwargs['radius_in'] == pytest.approx(self.RADIUS_IN_UM / self.UM_PER_PIXEL)
+        assert kwargs['radius_out'] == pytest.approx(self.RADIUS_OUT_UM / self.UM_PER_PIXEL)
+
     def _nonrigid_setup(self, shift_px):
         """Aligner with geometric images and a nonrigid warp that shifts every image by ``shift_px`` pixels in x."""
         from roicat import helpers
@@ -4696,6 +4716,15 @@ class Test_Aligner_alignment_check:
         warp_matrix = np.array([[1, 0, shift_px], [0, 1, 0], [0, 0, 1]], dtype=np.float32)
         aligner.remappingIdx_nonrigid = [helpers.warp_matrix_to_remappingIdx(warp_matrix=warp_matrix, x=W, y=H) for _ in images]
         return aligner, images
+
+    def test_transform_images_nonrigid_radii_in_pixels(self, monkeypatch):
+        """The checker gets the radii in pixels: micrometers divided by um_per_pixel."""
+        record = self._spy_checker(monkeypatch=monkeypatch)
+        aligner, images = self._nonrigid_setup(shift_px=0)
+        aligner.transform_images_nonrigid(ims_moving=images)
+        kwargs = record['init_kwargs'][0]
+        assert kwargs['radius_in'] == pytest.approx(self.RADIUS_IN_UM / self.UM_PER_PIXEL)
+        assert kwargs['radius_out'] == pytest.approx(self.RADIUS_OUT_UM / self.UM_PER_PIXEL)
 
     def test_transform_images_nonrigid_scores_nonrigid_images(self, monkeypatch):
         """The final nonrigid scores are computed on the nonrigid-registered images, not the geometric ones."""
