@@ -4642,7 +4642,7 @@ class Test_Aligner_alignment_check:
     with ``ImageAlignmentChecker``.
     """
 
-    UM_PER_PIXEL = 2.5
+    UM_PER_PIXEL = 1.0
     RADIUS_IN_UM = 5.0
     RADIUS_OUT_UM = 25.0
 
@@ -4700,3 +4700,19 @@ class Test_Aligner_alignment_check:
         images_scored = record['images_scored'][0]
         np.testing.assert_array_equal(images_scored, np.stack(aligner.ims_registered_nonrigid, axis=0))
         assert not np.allclose(images_scored, np.stack(aligner.ims_registered_geo, axis=0))
+
+    def test_transform_images_nonrigid_fills_nan_pixels_for_scoring(self, monkeypatch):
+        """NaN pixels in the nonrigid images are filled with each moving image's mean for scoring, and the scores are finite."""
+        record = self._spy_checker(monkeypatch=monkeypatch)
+        aligner, images = self._nonrigid_setup(shift_px=3)
+        for remapIdx in aligner.remappingIdx_nonrigid:
+            remapIdx[np.arange(10, 90, 8), np.arange(10, 90, 8)] = np.nan  ## isolated entries outside the composed warp's domain
+        aligner.transform_images_nonrigid(ims_moving=images)
+        images_nonrigid = np.stack(aligner.ims_registered_nonrigid, axis=0)
+        mask_nan = np.isnan(images_nonrigid)
+        assert mask_nan.any()
+        images_scored = record['images_scored'][0]
+        assert np.isfinite(images_scored).all()
+        np.testing.assert_array_equal(images_scored[~mask_nan], images_nonrigid[~mask_nan])
+        np.testing.assert_allclose(images_scored[mask_nan], np.repeat([im.mean() for im in images], mask_nan[0].sum()))
+        assert np.isfinite(aligner.results_nonrigid['final']['score_all_to_all']).all()

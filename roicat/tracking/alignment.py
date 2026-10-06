@@ -912,7 +912,9 @@ class Aligner(util.ROICaT_Module):
             order=self.order,
             device='cpu',
         )
-        score_all_to_all_final = iac_nonrigid.score_alignment(images=self.ims_registered_nonrigid, verbose=self._verbose, desc='Final nonrigid: all-to-all alignment scores')['z_in']
+        ## Fill NaN pixels (from NaN entries in the composed remapping index) with the geometric warp's border value: each moving image's mean
+        ims_to_score = [np.where(np.isnan(im), np.float32(im_moving.mean()), im) for im, im_moving in zip(self.ims_registered_nonrigid, ims_moving)]
+        score_all_to_all_final = iac_nonrigid.score_alignment(images=ims_to_score, verbose=self._verbose, desc='Final nonrigid: all-to-all alignment scores')['z_in']
         alignment_all_to_all_final = score_all_to_all_final > self.z_threshold
 
         ## Prepare outputs
