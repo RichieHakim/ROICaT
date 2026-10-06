@@ -3534,9 +3534,9 @@ class Test_Aligner_match_search:
 
 def _make_textured_image(hw=(96, 128), seed=0, shift_yx=(0, 0), gradient=(0.5, 1.0)):
     """
-    Smooth random texture times a left-to-right brightness gradient (like
-    vignetting), in [0, 1]. Images with the same seed are crops of one canvas,
-    so ``shift_yx=(dy, dx)`` gives ``im[y, x] = im_unshifted[y + dy, x + dx]``.
+    Smooth random texture times a left-to-right brightness gradient, in [0, 1].
+    Images with the same seed are crops of one canvas, so ``shift_yx=(dy, dx)``
+    gives ``im[y, x] = im_unshifted[y + dy, x + dx]``.
     """
     import scipy.ndimage
     rng = np.random.default_rng(seed)
@@ -3550,8 +3550,7 @@ def _make_textured_image(hw=(96, 128), seed=0, shift_yx=(0, 0), gradient=(0.5, 1
 
 class Test_normalize_local_brightness:
     """
-    ``alignment.normalize_local_brightness``: the local z-score, mapped to
-    [0, 1], that ``Aligner.augment_FOV_images`` applies by default.
+    Tests for ``alignment.normalize_local_brightness``.
     """
 
     @staticmethod
@@ -3565,11 +3564,10 @@ class Test_normalize_local_brightness:
         assert out.shape == im.shape
         assert out.dtype == np.float32
         assert out.min() >= 0 and out.max() <= 1
-        ## Clipping at |z| = 3 spends the range on both sides of 0.5
         assert out.min() < 0.25 and out.max() > 0.75
 
     def test_removes_brightness_gradient(self):
-        """The left (dim) and right (bright) halves come out with the same mean."""
+        """The left and right halves have the same mean."""
         out = self._fn()(_make_textured_image(gradient=(0.1, 1.0)), sigma=6.0)
         w = out.shape[1]
         assert abs(out[:, :w // 2].mean() - out[:, w // 2:].mean()) < 0.02
@@ -3583,7 +3581,7 @@ class Test_normalize_local_brightness:
         np.testing.assert_allclose(self._fn()(im + np.float32(10), sigma=6.0), out, rtol=0, atol=1e-5)
 
     def test_nan_pixels(self):
-        """One NaN pixel becomes mid-gray and leaves the rest of the image intact."""
+        """A NaN pixel becomes 0.5 and leaves the rest of the image unchanged."""
         im = _make_textured_image()
         im_nan = im.copy()
         im_nan[10, 20] = np.nan
@@ -3608,8 +3606,8 @@ class Test_normalize_local_brightness:
 
 class Test_augment_FOV_images_local_norm:
     """
-    ``Aligner.augment_FOV_images`` ends with ``normalize_local_brightness`` by
-    default, so both alignment steps see evened images.
+    Tests for the ``local_norm_cell_diameter_um`` step of
+    ``Aligner.augment_FOV_images``.
     """
 
     UM_PER_PIXEL = 2.0
@@ -3632,7 +3630,7 @@ class Test_augment_FOV_images_local_norm:
         return alignment.Aligner(um_per_pixel=self.UM_PER_PIXEL, verbose=False)
 
     def test_on_normalizes_the_augmented_images(self):
-        """The last step normalizes the mixed images, with sigma = cell diameter / um_per_pixel."""
+        """The last step normalizes the mixed images with sigma = cell diameter / um_per_pixel."""
         from roicat.tracking.alignment import normalize_local_brightness
         FOV_images, spatialFootprints = self._inputs()
         aligner = self._aligner()
@@ -3672,9 +3670,8 @@ class Test_augment_FOV_images_local_norm:
 
 class Test_prepare_image_nonrigid:
     """
-    ``_prepare_image`` of the nonrigid methods multiplies by 255, so a uint8
-    image (already scaled to 0-255) would wrap. It must raise instead. Called
-    unbound, so RoMa's weights are not loaded.
+    ``_prepare_image`` of the nonrigid methods accepts float images and raises
+    on uint8 images. Called unbound, so RoMa's weights are not loaded.
     """
 
     @pytest.mark.parametrize('name_method', ['DeepFlow', 'OpticalFlowFarneback', 'RoMa'])
@@ -3690,9 +3687,8 @@ class Test_prepare_image_nonrigid:
 class Test_fit_nonrigid_input_images:
     """
     The images that ``Aligner.fit_nonrigid`` hands to the optical flow call.
-    Until this fix the images were scaled to uint8 twice, which wrapped and
-    inverted them. The flow calls are replaced by recorders, so these tests
-    check the images at the last step before OpenCV.
+    The flow calls are replaced by recorders, so these tests check the images
+    at the last step before OpenCV.
     """
 
     @staticmethod
@@ -3728,7 +3724,7 @@ class Test_fit_nonrigid_input_images:
 
     @staticmethod
     def _images(normalized):
-        """Three shifted images, either raw-like or as ``augment_FOV_images`` returns them by default."""
+        """Three shifted images, either raw or locally normalized."""
         from roicat.tracking.alignment import normalize_local_brightness
         ims = [_make_textured_image(shift_yx=(dy, dx)) for dy, dx in [(0, 0), (1, -2), (-2, 1)]]
         return [normalize_local_brightness(im, sigma=6.0) for im in ims] if normalized else ims
@@ -3736,7 +3732,7 @@ class Test_fit_nonrigid_input_images:
     @pytest.mark.parametrize('normalized', [True, False])
     @pytest.mark.parametrize('name_method', ['DeepFlow', 'OpticalFlowFarneback'])
     def test_images_not_inverted(self, monkeypatch, name_method, normalized):
-        """Template and moving images reach OpenCV as uint8 and positively correlated with the input."""
+        """Template and moving images reach OpenCV as uint8, positively correlated with the input."""
         ims = self._images(normalized=normalized)
         calls = self._fit(monkeypatch, name_method, ims)
         assert len(calls) == len(ims)
@@ -3766,7 +3762,7 @@ class Test_fit_nonrigid_input_images:
 
     @pytest.mark.parametrize('normalized', [True, False])
     def test_deepflow_recovers_shift(self, normalized):
-        """Real DeepFlow: the remap undoes a known shift, with the moving image under a different brightness gradient."""
+        """Real DeepFlow: the remap undoes a known shift under a different brightness gradient."""
         from roicat.tracking import alignment
         dy, dx = 1, -2
         ims = [_make_textured_image(seed=1), _make_textured_image(seed=1, shift_yx=(dy, dx), gradient=(1.0, 0.6))]

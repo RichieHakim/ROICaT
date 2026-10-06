@@ -101,11 +101,11 @@ def get_default_parameters(
                 'augment': {
                     'normalize_FOV_intensities': True,  ## Whether or not to normalize the FOV_images to the max value across all FOV images.
                     'roi_FOV_mixing_factor': 0.5,  ## default: 0.5. Fraction of the max intensity projection of ROIs that is added to the FOV image. 0.0 means only the FOV_images, larger values mean more of the ROIs are added.
-                    'use_CLAHE': False,  ## Whether or not to use 'Contrast Limited Adaptive Histogram Equalization'. Off by default: CLAHE darkens textureless dim regions and creates edges that nonrigid flow follows; local_norm_cell_diameter_um evens out brightness instead. Can help if params['importing']['type_meanImg'] is not a contrast enhanced image (like 'meanImgE' in Suite2p), but check the nonrigid alignment.
+                    'use_CLAHE': False,  ## Whether or not to use 'Contrast Limited Adaptive Histogram Equalization'. Useful if params['importing']['type_meanImg'] is not a contrast enhanced image (like 'meanImgE' in Suite2p)
                     'CLAHE_grid_block_size': 10,  ## Size of the block size for the grid for CLAHE. Smaller values means more local contrast enhancement.
                     'CLAHE_clipLimit': 1.0,  ## Clipping limit for CLAHE. Higher values mean more contrast.
                     'CLAHE_normalize': True,  ## Whether or not to normalize the CLAHE image.
-                    'local_norm_cell_diameter_um': 12.0,  ## Cell diameter in micrometers. As the last augmentation step, the brightness and contrast of each FOV_image are evened out over a Gaussian of sigma = local_norm_cell_diameter_um / um_per_pixel pixels, so that uneven illumination (e.g. vignetting) is not fit as motion by the alignment steps. None means no normalization.
+                    'local_norm_cell_diameter_um': 12.0,  ## Cell diameter in micrometers. As the last augmentation step, the brightness and contrast of each FOV_image are evened out over a Gaussian of sigma = local_norm_cell_diameter_um / um_per_pixel pixels. None means no normalization.
                 },
                 'fit_geometric': {
                     'template': 0.5,  ## Which session to use as a registration template. If input is float (ie 0.0, 0.5, 1.0, etc.), then it is the fractional position of the session to use; if input is int (ie 1, 2, 3), then it is the index of the session to use (0-indexed)

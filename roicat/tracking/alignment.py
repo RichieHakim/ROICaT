@@ -138,10 +138,7 @@ class Aligner(util.ROICaT_Module):
                 The factor by which to mix the ROI images into the FOV images.
                 If 0, then no mixing will be performed. (Default is *0.5*)
             use_CLAHE (bool):
-                Whether to apply CLAHE to the images. Off by default: ROICaT's
-                CLAHE darkens textureless dim regions and creates edges that
-                nonrigid flow follows. ``local_norm_cell_diameter_um`` evens
-                out brightness instead. (Default is ``False``)
+                Whether to apply CLAHE to the images. (Default is ``False``)
             CLAHE_grid_block_size (int):
                 The size of the blocks in the grid for CLAHE. Used to divide the
                 image into small blocks and create the grid_size parameter for
@@ -157,10 +154,9 @@ class Aligner(util.ROICaT_Module):
                 Cell diameter in micrometers. As the last step, the brightness
                 and contrast of each image are evened out over space (see
                 ``normalize_local_brightness``) with a Gaussian of ``sigma =
-                local_norm_cell_diameter_um / um_per_pixel`` pixels, so that
-                uneven illumination (e.g. vignetting) is not fit as motion by
-                the alignment steps. Output images are in [0, 1]. If ``None``,
-                no normalization. (Default is *12.0*)
+                local_norm_cell_diameter_um / um_per_pixel`` pixels. Output
+                images are in [0, 1]. If ``None``, no normalization. (Default
+                is *12.0*)
 
         Returns:
             List[np.ndarray]:
@@ -211,7 +207,7 @@ class Aligner(util.ROICaT_Module):
             fn_mix = lambda im, sf, f: (1 - f) * im + np.array((f) * mixing_factor_final * sf.multiply(1/np.maximum(sf.max(axis=1).toarray().reshape(-1, 1), util.SPARSE_NORMALIZATION_FLOOR)).sum(0).reshape(h, w))
             FOV_images = [fn_mix(f, s, roi_FOV_mixing_factor) for f, s in zip(FOV_images, sf)]
 
-        ## Even out the local brightness last, so the ROI footprints mixed in above are normalized with the FOV
+        ## Local brightness normalization
         if local_norm_cell_diameter_um is not None:
             sigma_px = local_norm_cell_diameter_um / self.um_per_pixel
             print(f'Normalizing local brightness: sigma = {sigma_px:.2f} px ({local_norm_cell_diameter_um} um cell diameter / {self.um_per_pixel} um per pixel)') if self._verbose else None
@@ -799,7 +795,7 @@ class Aligner(util.ROICaT_Module):
 
         ims_moving, template = self._fix_input_images(ims_moving=ims_moving, template=template, template_method=template_method)
 
-        ## One scale factor for the template and all moving images, so that they keep their relative brightness. The methods' _prepare_image convert to uint8; the images must stay in [0, 1] or the uint8 values wrap.
+        ## Scale the images to [0, 1] with one shared factor
         norm_factor = np.nanmax([np.nanmax(im) for im in ims_moving] + ([np.nanmax(template)] if template_method == 'image' else []))
         fn_scale = lambda im: (im * (im > 0) / norm_factor).astype(np.float32)
         template_norm   = fn_scale(template) if template_method == 'image' else None
@@ -1382,12 +1378,9 @@ def normalize_local_brightness(
     Evens out the brightness and contrast of an image over space. Each pixel
     becomes a local z-score: \n
     ``z = (im - local_mean) / (local_std + fraction_std_floor * std(im))`` \n
-    The local mean and std are Gaussian-weighted over ``sigma`` pixels. The
-    floor added to the local std keeps dim, flat regions from amplifying noise.
+    The local mean and std are Gaussian-weighted over ``sigma`` pixels.
     ``z`` is clipped to ``[-clip_z, clip_z]`` and mapped linearly to [0, 1] by
-    the same rule for every image, so ``z = 0`` maps to 0.5. Used before
-    alignment so that uneven illumination (e.g. vignetting) is not fit as
-    motion.
+    the same rule for every image, so ``z = 0`` maps to 0.5.
     RH 2026
 
     Args:
@@ -1414,10 +1407,10 @@ def normalize_local_brightness(
 
     im_float = im.astype(np.float64)
     mask_nan = np.isnan(im_float)
-    ## Flat image: nothing to normalize. The blurs' rounding errors would otherwise be divided by a ~0 std.
+    ## Flat or all-NaN image
     if mask_nan.all() or (np.nanmax(im_float) == np.nanmin(im_float)):
         return np.full(im.shape, 0.5, dtype=np.float32)
-    ## Fill NaN pixels with the image mean so that they do not spread through the blurs
+    ## Fill NaN pixels with the image mean
     im_float = np.where(mask_nan, np.nanmean(im_float), im_float)
 
     ## Gaussian-weighted local mean and std
@@ -1963,7 +1956,7 @@ class RoMa(ImageRegistrationMethod):
         """
         if isinstance(image, torch.Tensor):
             image = image.cpu().numpy()
-        assert np.issubdtype(image.dtype, np.floating), f"image must have a floating dtype with data in [0, 1], not {image.dtype}. A uint8 image would be multiplied by 255 and wrap."
+        assert np.issubdtype(image.dtype, np.floating), f"image must have a floating dtype with data in [0, 1], not {image.dtype}."
         return PIL.Image.fromarray(image * 255).convert("RGB")
 
 
@@ -2186,7 +2179,7 @@ class DeepFlow(ImageRegistrationMethod):
         """
         if isinstance(image, torch.Tensor):
             image = image.cpu().numpy()
-        assert np.issubdtype(image.dtype, np.floating), f"image must have a floating dtype with data in [0, 1], not {image.dtype}. A uint8 image would be multiplied by 255 and wrap."
+        assert np.issubdtype(image.dtype, np.floating), f"image must have a floating dtype with data in [0, 1], not {image.dtype}."
         return (image * 255).astype(np.uint8)
 
 
@@ -2283,7 +2276,7 @@ class OpticalFlowFarneback(ImageRegistrationMethod):
         """
         if isinstance(image, torch.Tensor):
             image = image.cpu().numpy()
-        assert np.issubdtype(image.dtype, np.floating), f"image must have a floating dtype with data in [0, 1], not {image.dtype}. A uint8 image would be multiplied by 255 and wrap."
+        assert np.issubdtype(image.dtype, np.floating), f"image must have a floating dtype with data in [0, 1], not {image.dtype}."
         return (image * 255).astype(np.uint8)
     
 
