@@ -3742,17 +3742,42 @@ class Test_fit_nonrigid_input_images:
             assert np.corrcoef(im_moving_cv2.ravel(), im.ravel())[0, 1] > 0.9
 
     @pytest.mark.parametrize('scale_template', [0.5, 2.0])
-    def test_one_norm_factor(self, monkeypatch, scale_template):
-        """One factor, the max over the template and the moving images, scales all images. A template brighter than the moving images must not wrap."""
+    def test_norm_factor_per_pair_image_template(self, monkeypatch, scale_template):
+        """Each pair is scaled by the max over its template and its moving image."""
         ims = self._images(normalized=False)
-        ims = [ims[0], scale_template * ims[1], ims[2]]  ## session 1 is the template
+        ims = [ims[0], scale_template * ims[1], 0.25 * ims[2]]  ## session 1 is the template
         calls = self._fit(monkeypatch, 'DeepFlow', ims)
-        norm_factor = max(im.max() for im in ims)
-        to_uint8 = lambda im: (im / norm_factor * np.float32(255)).astype(np.uint8)
+        to_uint8 = lambda im, norm_factor: (im / norm_factor * np.float32(255)).astype(np.uint8)
         for im, (im_template_cv2, im_moving_cv2) in zip(ims, calls):
+            norm_factor = max(ims[1].max(), im.max())
             ## the uint8 levels may differ by 1 from the test's float rounding
-            assert np.abs(im_template_cv2.astype(int) - to_uint8(ims[1]).astype(int)).max() <= 1
-            assert np.abs(im_moving_cv2.astype(int) - to_uint8(im).astype(int)).max() <= 1
+            assert np.abs(im_template_cv2.astype(int) - to_uint8(ims[1], norm_factor).astype(int)).max() <= 1
+            assert np.abs(im_moving_cv2.astype(int) - to_uint8(im, norm_factor).astype(int)).max() <= 1
+
+    def test_norm_factor_per_pair_sequential_template(self, monkeypatch):
+        """Each pair is scaled by the max over its neighboring template image and its moving image."""
+        scales = [1.0, 0.5, 2.0, 0.25]
+        ims = [scale * _make_textured_image(shift_yx=(ii, -ii)) for ii, scale in enumerate(scales)]
+        calls = self._fit(monkeypatch, 'DeepFlow', ims, template_method='sequential')  ## template = session 1
+        idx_template = [1, 1, 1, 2]  ## template of each pair: 0 -> 1, 1 -> 1 (itself), 2 -> 1, 3 -> 2
+        assert len(calls) == len(ims)
+        to_uint8 = lambda im, norm_factor: (im / norm_factor * np.float32(255)).astype(np.uint8)
+        for ii, (im_template_cv2, im_moving_cv2) in enumerate(calls):
+            norm_factor = max(ims[idx_template[ii]].max(), ims[ii].max())
+            assert np.abs(im_template_cv2.astype(int) - to_uint8(ims[idx_template[ii]], norm_factor).astype(int)).max() <= 1
+            assert np.abs(im_moving_cv2.astype(int) - to_uint8(ims[ii], norm_factor).astype(int)).max() <= 1
+
+    @pytest.mark.parametrize('template_method', ['image', 'sequential'])
+    def test_dim_session_keeps_texture(self, monkeypatch, template_method):
+        """Sessions 1000x dimmer than another session still have texture as uint8 images when registered to each other."""
+        ims = self._images(normalized=False)
+        ims = [ims[0], 1e-3 * ims[1], 1e-3 * ims[2]]  ## session 1 is the template
+        calls = self._fit(monkeypatch, 'DeepFlow', ims, template_method=template_method)
+        im_template_cv2, im_moving_cv2 = calls[2]  ## the pair of the two dim sessions
+        assert len(np.unique(im_template_cv2)) > 50
+        assert im_moving_cv2.dtype == np.uint8
+        assert len(np.unique(im_moving_cv2)) > 50
+        assert np.corrcoef(im_moving_cv2.ravel(), ims[2].ravel())[0, 1] > 0.9
 
     def test_sequential_template(self, monkeypatch):
         ims = self._images(normalized=True)

@@ -795,31 +795,27 @@ class Aligner(util.ROICaT_Module):
 
         ims_moving, template = self._fix_input_images(ims_moving=ims_moving, template=template, template_method=template_method)
 
-        ## Scale the images to [0, 1] with one shared factor
-        norm_factor = np.nanmax([np.nanmax(im) for im in ims_moving] + ([np.nanmax(template)] if template_method == 'image' else []))
-        fn_scale = lambda im: (im * (im > 0) / norm_factor).astype(np.float32)
-        template_norm   = fn_scale(template) if template_method == 'image' else None
-        ims_moving_norm = [fn_scale(im) for im in ims_moving]
-
         print(f'Finding nonrigid registration warps with mode: {method}, template_method: {template_method}') if self._verbose else None
         remappingIdx_raw = []
-        for ii, im_moving in tqdm(enumerate(ims_moving_norm), desc='Finding nonrigid registration warps', total=len(ims_moving_norm), unit='image', disable=not self._verbose):
+        for ii, im_moving in tqdm(enumerate(ims_moving), desc='Finding nonrigid registration warps', total=len(ims_moving), unit='image', disable=not self._verbose):
             if template_method == 'sequential':
                 ## warp images before template forward (t1->t2->t3->t4)
                 if ii < template:
-                    im_template = ims_moving_norm[ii+1]
+                    im_template = ims_moving[ii+1]
                 ## warp template to itself
                 elif ii == template:
-                    im_template = ims_moving_norm[ii]
+                    im_template = ims_moving[ii]
                 ## warp images after template backward (t4->t3->t2->t1)
                 elif ii > template:
-                    im_template = ims_moving_norm[ii-1]
+                    im_template = ims_moving[ii-1]
             elif template_method == 'image':
-                im_template = template_norm
+                im_template = template
 
+            ## Scale the pair to [0, 1] with one shared factor
+            norm_factor = np.nanmax([np.nanmax(im_template), np.nanmax(im_moving)])
             remappingIdx_raw.append(model.fit_nonrigid(
-                im_template=im_template,
-                im_moving=im_moving,
+                im_template=(im_template * (im_template > 0) / norm_factor).astype(np.float32),
+                im_moving=(im_moving * (im_moving > 0) / norm_factor).astype(np.float32),
             ))
 
         # compose warp transforms
