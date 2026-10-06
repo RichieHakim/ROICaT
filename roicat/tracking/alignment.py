@@ -904,9 +904,6 @@ class Aligner(util.ROICaT_Module):
         print('Applying nonrigid registration warps to images...') if self._verbose else None
         self.ims_registered_nonrigid = self.transform_images(ims_moving=ims_moving, remappingIdx=remappingIdx)
 
-        ### Make the registered images
-        #### Undo any remappingIdx_init
-        self.ims_registered_nonrigid = self.transform_images(ims_moving=ims_moving, remappingIdx=self.remappingIdx_nonrigid)
         ### Compute the new alignment scores
         iac_nonrigid = helpers.ImageAlignmentChecker(
             hw=tuple(self._HW),
