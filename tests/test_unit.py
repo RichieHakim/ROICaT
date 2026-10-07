@@ -4864,9 +4864,9 @@ class Test_Aligner_match_search_three_step:
         """Warp registering session ``idx_moving`` onto ``idx_template``."""
         return cls._G(idx_moving) @ np.linalg.inv(cls._G(idx_template))
 
-    def _fit(self, monkeypatch, z_composed=None, z_onto_3=None, all_to_all=False, z_threshold=4.0):
+    def _fit(self, monkeypatch, z_composed=None, z_onto_3=None, z_direct=None, all_to_all=False, z_threshold=4.0):
         """
-        Run ``fit_geometric`` on ``N_SESSIONS`` images, template 0. Initial check: ``Z_DIRECT``. Scoring all sessions
+        Run ``fit_geometric`` on ``N_SESSIONS`` images, template 0. Initial check: ``z_direct`` (``Z_DIRECT`` if ``None``). Scoring all sessions
         onto session 3: ``z_onto_3``; onto session 0: 50 except for session 3, which fails; onto any other session: 50.
         Each scoring of composed warps returns the next entry of ``z_composed``, a list of z scores. If ``z_composed``
         is ``None``, a session scores 90 when its warp equals its ground-truth warp onto the template, else 1.
@@ -4877,6 +4877,7 @@ class Test_Aligner_match_search_three_step:
 
         images = [_make_textured_image(seed=0, shift_yx=(ii, 2 * ii)) for ii in range(self.N_SESSIONS)]
         z_onto_3 = self.Z_ONTO_3 if z_onto_3 is None else z_onto_3
+        z_direct = self.Z_DIRECT if z_direct is None else z_direct
         z_composed = None if z_composed is None else iter(z_composed)
         calls = []
         warps_scored = []  ## warps of every image passed to the remapping, in order
@@ -4891,7 +4892,7 @@ class Test_Aligner_match_search_three_step:
 
         def score_alignment(self_checker, images, desc=None, **kwargs):
             if desc.startswith('Initial alignment'):
-                z = self.Z_DIRECT
+                z = z_direct
             elif desc.startswith('Match search'):
                 z = np.full(len(images), 50.0)
                 if desc.endswith('idx 3'):
@@ -4977,6 +4978,20 @@ class Test_Aligner_match_search_three_step:
         np.testing.assert_array_equal(score[3], self.Z_ONTO_3)
         assert np.isnan(score[[0, 1, 2]]).all()
         assert np.isnan(alignment[[0, 1, 2]]).all()
+
+    def test_nan_direct_score_takes_step2_warp(self, monkeypatch):
+        """A session whose direct score is NaN takes the warp composed through session 1."""
+        aligner, n_registrations = self._fit(monkeypatch, z_direct=np.array([100.0, 5.0, 5.0, np.nan]))
+        assert n_registrations == 2 * self.N_SESSIONS
+        assert aligner.results_geometric['direct']['alignment_template_to_all'].tolist() == [True, True, True, False]
+        np.testing.assert_allclose(self._warps(aligner)[3], self._warp_true(idx_moving=3, idx_template=0), rtol=1e-4, atol=1e-3)
+
+    def test_nan_score_after_step2_runs_step3(self, monkeypatch):
+        """A session whose score is still NaN after step 2 counts as failed, so step 3 runs."""
+        z_nan = np.array([100.0, 5.0, 5.0, np.nan])
+        _, n_registrations = self._fit(monkeypatch, z_direct=z_nan, z_composed=[z_nan] * 2)
+        n_failed, n_remaining = 1, 3
+        assert n_registrations == self.N_SESSIONS + self.N_SESSIONS * n_failed + self.N_SESSIONS * n_remaining
 
     def test_all_to_all_skips_step3_when_a_session_still_fails(self, monkeypatch):
         """With ``all_to_all=True`` and a session still failing, the composed warps are scored once (no step 3)."""
