@@ -553,7 +553,7 @@ class Aligner(util.ROICaT_Module):
                     ### Make a connection graph by appending the template alignment_matrix (1D) on top of the all_to_all alignment_matrix (N x N)
                     alignment_matrix_all_to_all_and_template = np.concatenate([np.concatenate([np.array(0)[None,], alignment_template_to_all])[None, :], np.concatenate([alignment_template_to_all[:, None], np.nan_to_num(alignment_filled, nan=0.0)], axis=1)], axis=0)
                     ### Make a cost graph
-                    cost_all_to_all_and_template = np.concatenate([np.concatenate([np.array(0)[None,], score_template_to_all])[None, :], np.concatenate([score_template_to_all[:, None], np.nan_to_num(score_filled, nan=0.0)], axis=1)], axis=0)
+                    cost_all_to_all_and_template = np.concatenate([np.concatenate([np.array(0)[None,], np.nan_to_num(score_template_to_all, nan=0.0)])[None, :], np.concatenate([np.nan_to_num(score_template_to_all, nan=0.0)[:, None], np.nan_to_num(score_filled, nan=0.0)], axis=1)], axis=0)
                     cost_all_to_all_and_template[cost_all_to_all_and_template == 0] = np.inf  ## set 0s to inf
                     cost_all_to_all_and_template = (1 / cost_all_to_all_and_template) * alignment_matrix_all_to_all_and_template.astype(np.float32)  ## 0s are disconnected, 1s are connected
                     cost_all_to_all_and_template[np.arange(len(cost_all_to_all_and_template)), np.arange(len(cost_all_to_all_and_template))] = 0.0  ## set the diagonal to 0
@@ -595,8 +595,8 @@ class Aligner(util.ROICaT_Module):
 
                 def _keep_better_warps(warps_current, score_current, warps_new, score_new):
                     ## Images that passed the direct check keep their direct warp. An image that failed it takes
-                    ## the new warp only if the new warp scores higher against the template.
-                    use_new = np.logical_not(alignment_template_to_all) & (score_new > score_current)  ## shape: (N,)
+                    ## the new warp only if the new warp scores higher against the template. A NaN score is the lowest.
+                    use_new = np.logical_not(alignment_template_to_all) & (score_new > np.nan_to_num(score_current, nan=-np.inf))  ## shape: (N,)
                     warps = [warp_new if use else warp_current for warp_current, warp_new, use in zip(warps_current, warps_new, use_new)]
                     return warps, np.where(use_new, score_new, score_current), use_new
                     
@@ -617,7 +617,7 @@ class Aligner(util.ROICaT_Module):
                     warps_new=warp_matrices_all_to_template_new, score_new=score_template_to_all_new,
                 )
                 print(f"Using path-finding warps for images idx: {np.where(use_new)[0]}.") if self._verbose else None
-                idx_no_path = np.where(score_template_to_all_best <= self.z_threshold)[0]
+                idx_no_path = np.where(np.logical_not(score_template_to_all_best > self.z_threshold))[0]  ## NaN scores count as failed
                 if len(idx_no_path) == 0:
                     print('All images aligned successfully after one round of path finding.') if self._verbose else None
                 else:
@@ -638,7 +638,7 @@ class Aligner(util.ROICaT_Module):
                             warps_new=warp_matrices_all_to_template_new, score_new=score_template_to_all_new,
                         )
                         print(f"Using dense-search warps for images idx: {np.where(use_dense)[0]}.") if self._verbose else None
-                        idx_no_path = np.where(score_template_to_all_best <= self.z_threshold)[0]
+                        idx_no_path = np.where(np.logical_not(score_template_to_all_best > self.z_threshold))[0]  ## NaN scores count as failed
                     if len(idx_no_path) == 0:
                         print('All images aligned successfully after dense search.') if self._verbose else None
                     else:
