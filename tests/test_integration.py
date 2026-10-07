@@ -540,7 +540,7 @@ def test_pipeline_tracking_simple(dir_data_test, regenerate_golden):
                 'CLAHE_grid_block_size': 10,  ## Size of the block size for the grid for CLAHE. Smaller values means more local contrast enhancement.
                 'CLAHE_clipLimit': 1.0,  ## Clipping limit for CLAHE. Higher values mean more contrast.
                 'CLAHE_normalize': True,  ## Whether or not to normalize the CLAHE image.
-                'local_norm_cell_diameter_um': 12.0,  ## Cell diameter in micrometers for the local brightness normalization (last augmentation step). None means no normalization.
+                'local_norm_sigma_um': 12.0,  ## Standard deviation in micrometers of the Gaussian window for the local brightness normalization (last augmentation step). Should be roughly the diameter of a cell body. None means no normalization.
             },
             'fit_geometric': {
                 'template': 0.5,  ## Which session to use as a registration template. If input is float (ie 0.0, 0.5, 1.0, etc.), then it is the fractional position of the session to use; if input is int (ie 1, 2, 3), then it is the index of the session to use (0-indexed)
@@ -742,7 +742,7 @@ def _build_test_params(dir_data_test, seed=0, save_results=False):
                 'CLAHE_grid_block_size': 10,
                 'CLAHE_clipLimit': 1.0,
                 'CLAHE_normalize': True,
-                'local_norm_cell_diameter_um': 12.0,
+                'local_norm_sigma_um': 12.0,
             },
             'fit_geometric': {
                 'template': 0.5,

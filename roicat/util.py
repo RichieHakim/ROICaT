@@ -105,7 +105,7 @@ def get_default_parameters(
                     'CLAHE_grid_block_size': 10,  ## Size of the block size for the grid for CLAHE. Smaller values means more local contrast enhancement.
                     'CLAHE_clipLimit': 1.0,  ## Clipping limit for CLAHE. Higher values mean more contrast.
                     'CLAHE_normalize': True,  ## Whether or not to normalize the CLAHE image.
-                    'local_norm_cell_diameter_um': 12.0,  ## Cell diameter in micrometers. As the last augmentation step, the brightness and contrast of each FOV_image are evened out over a Gaussian of sigma = local_norm_cell_diameter_um / um_per_pixel pixels. None means no normalization.
+                    'local_norm_sigma_um': 12.0,  ## Standard deviation in micrometers of the Gaussian window for local brightness normalization. Should be roughly the diameter of a cell body. As the last augmentation step, the brightness and contrast of each FOV_image are evened out over a Gaussian of sigma = local_norm_sigma_um / um_per_pixel pixels. Brightness variations broader than the window are removed. None means no normalization.
                 },
                 'fit_geometric': {
                     'template': 0.5,  ## Which session to use as a registration template. If input is float (ie 0.0, 0.5, 1.0, etc.), then it is the fractional position of the session to use; if input is int (ie 1, 2, 3), then it is the index of the session to use (0-indexed)

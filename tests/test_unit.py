@@ -3606,7 +3606,7 @@ class Test_normalize_local_brightness:
 
 class Test_augment_FOV_images_local_norm:
     """
-    Tests for the ``local_norm_cell_diameter_um`` step of
+    Tests for the ``local_norm_sigma_um`` step of
     ``Aligner.augment_FOV_images``.
     """
 
@@ -3630,35 +3630,35 @@ class Test_augment_FOV_images_local_norm:
         return alignment.Aligner(um_per_pixel=self.UM_PER_PIXEL, verbose=False)
 
     def test_on_normalizes_the_augmented_images(self):
-        """The last step normalizes the mixed images with sigma = cell diameter / um_per_pixel."""
+        """The last step normalizes the mixed images with sigma = local_norm_sigma_um / um_per_pixel."""
         from roicat.tracking.alignment import normalize_local_brightness
         FOV_images, spatialFootprints = self._inputs()
         aligner = self._aligner()
         out = aligner.augment_FOV_images(FOV_images=FOV_images, spatialFootprints=spatialFootprints)  ## default: 12 um
-        assert aligner.params['augment_FOV_images']['local_norm_cell_diameter_um'] == 12.0
-        expected_off = aligner.augment_FOV_images(FOV_images=FOV_images, spatialFootprints=spatialFootprints, local_norm_cell_diameter_um=None)
+        assert aligner.params['augment_FOV_images']['local_norm_sigma_um'] == 12.0
+        expected_off = aligner.augment_FOV_images(FOV_images=FOV_images, spatialFootprints=spatialFootprints, local_norm_sigma_um=None)
         for im_out, im_off in zip(out, expected_off):
             assert im_out.dtype == np.float32
             assert im_out.min() >= 0 and im_out.max() <= 1
             np.testing.assert_array_equal(im_out, normalize_local_brightness(im_off, sigma=12.0 / self.UM_PER_PIXEL))
 
     @pytest.mark.parametrize('value', [0.0, -1.0, True, 'a'])
-    def test_invalid_cell_diameter_raises(self, value):
+    def test_invalid_sigma_raises(self, value):
         FOV_images, spatialFootprints = self._inputs()
         with pytest.raises(AssertionError):
-            self._aligner().augment_FOV_images(FOV_images=FOV_images, spatialFootprints=spatialFootprints, local_norm_cell_diameter_um=value)
+            self._aligner().augment_FOV_images(FOV_images=FOV_images, spatialFootprints=spatialFootprints, local_norm_sigma_um=value)
 
     @pytest.mark.parametrize('value', [12, 12.0, np.float32(12), np.int64(12)])
-    def test_numpy_cell_diameter_accepted(self, value):
+    def test_numpy_sigma_accepted(self, value):
         FOV_images, spatialFootprints = self._inputs(n_sessions=2)
-        out = self._aligner().augment_FOV_images(FOV_images=FOV_images, spatialFootprints=spatialFootprints, local_norm_cell_diameter_um=value)
+        out = self._aligner().augment_FOV_images(FOV_images=FOV_images, spatialFootprints=spatialFootprints, local_norm_sigma_um=value)
         assert len(out) == 2
 
     def test_default_wiring(self):
         import inspect
         from roicat.tracking import alignment
-        default_signature = inspect.signature(alignment.Aligner.augment_FOV_images).parameters['local_norm_cell_diameter_um'].default
-        assert default_signature == util.get_default_parameters()['alignment']['augment']['local_norm_cell_diameter_um']
+        default_signature = inspect.signature(alignment.Aligner.augment_FOV_images).parameters['local_norm_sigma_um'].default
+        assert default_signature == util.get_default_parameters()['alignment']['augment']['local_norm_sigma_um']
 
     def test_default_wiring_CLAHE_off(self):
         import inspect

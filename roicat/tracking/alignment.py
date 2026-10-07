@@ -117,7 +117,7 @@ class Aligner(util.ROICaT_Module):
         CLAHE_grid_block_size: int = 10,
         CLAHE_clipLimit: int = 1,
         CLAHE_normalize: bool = True,
-        local_norm_cell_diameter_um: Optional[float] = 12.0,
+        local_norm_sigma_um: Optional[float] = 12.0,
     ) -> None:
         """
         Augments the FOV images by mixing the FOV with the ROI images and
@@ -150,19 +150,22 @@ class Aligner(util.ROICaT_Module):
             CLAHE_normalize (bool):
                 Whether to normalize the CLAHE output. See alignment.clahe for
                 more details. (Default is ``True``)
-            local_norm_cell_diameter_um (Optional[float]):
-                Cell diameter in micrometers. As the last step, the brightness
-                and contrast of each image are evened out over space (see
+            local_norm_sigma_um (Optional[float]):
+                Standard deviation in micrometers of the Gaussian window used
+                for local brightness normalization. Should be roughly the
+                diameter of a cell body. As the last step, the brightness and
+                contrast of each image are evened out over space (see
                 ``normalize_local_brightness``) with a Gaussian of ``sigma =
-                local_norm_cell_diameter_um / um_per_pixel`` pixels. Output
-                images are in [0, 1]. If ``None``, no normalization. (Default
-                is *12.0*)
+                local_norm_sigma_um / um_per_pixel`` pixels. Brightness
+                variations broader than the window are removed, and structures
+                much broader than the window lose contrast. Output images are
+                in [0, 1]. If ``None``, no normalization. (Default is *12.0*)
 
         Returns:
             List[np.ndarray]:
                 The augmented FOV images.
         """
-        assert (local_norm_cell_diameter_um is None) or (isinstance(local_norm_cell_diameter_um, (int, float, np.number)) and not isinstance(local_norm_cell_diameter_um, bool) and local_norm_cell_diameter_um > 0), f"local_norm_cell_diameter_um must be None or a positive number, not {local_norm_cell_diameter_um}"
+        assert (local_norm_sigma_um is None) or (isinstance(local_norm_sigma_um, (int, float, np.number)) and not isinstance(local_norm_sigma_um, bool) and local_norm_sigma_um > 0), f"local_norm_sigma_um must be None or a positive number, not {local_norm_sigma_um}"
         ## Warn if roi_FOV_mixing_factor = 0 but spatialFootprints is not None
         if (roi_FOV_mixing_factor == 0) and (spatialFootprints is not None):
             warnings.warn("roi_FOV_mixing_factor = 0 but spatialFootprints is not None. The ROI images will not be used.")
@@ -180,7 +183,7 @@ class Aligner(util.ROICaT_Module):
                 'CLAHE_grid_block_size',
                 'CLAHE_clipLimit',
                 'CLAHE_normalize',
-                'local_norm_cell_diameter_um',
+                'local_norm_sigma_um',
             ],
         )
         
@@ -208,9 +211,9 @@ class Aligner(util.ROICaT_Module):
             FOV_images = [fn_mix(f, s, roi_FOV_mixing_factor) for f, s in zip(FOV_images, sf)]
 
         ## Local brightness normalization
-        if local_norm_cell_diameter_um is not None:
-            sigma_px = local_norm_cell_diameter_um / self.um_per_pixel
-            print(f'Normalizing local brightness: sigma = {sigma_px:.2f} px ({local_norm_cell_diameter_um} um cell diameter / {self.um_per_pixel} um per pixel)') if self._verbose else None
+        if local_norm_sigma_um is not None:
+            sigma_px = local_norm_sigma_um / self.um_per_pixel
+            print(f'Normalizing local brightness: sigma = {sigma_px:.2f} px ({local_norm_sigma_um} um / {self.um_per_pixel} um per pixel)') if self._verbose else None
             FOV_images = [normalize_local_brightness(im, sigma=sigma_px) for im in FOV_images]
 
         return FOV_images
@@ -1382,8 +1385,7 @@ def normalize_local_brightness(
         im (np.ndarray):
             Input image. *(H, W)*
         sigma (float):
-            Standard deviation of the Gaussian in pixels. About one cell
-            diameter.
+            Standard deviation of the Gaussian in pixels.
         fraction_std_floor (float):
             Floor added to the local std, as a fraction of the global std of the
             image.
