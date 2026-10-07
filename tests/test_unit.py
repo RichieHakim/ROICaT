@@ -3426,8 +3426,7 @@ class Test_Aligner_match_search:
         * 1: x offset 15. Aligns directly.
         * 2: x offset 30. Too far to align directly, but aligns to image 1.
         * 3: unrelated noise. Every registration involving it returns a wrong
-          warp, so it has no path. While any image has no path, the dense
-          search used to discard every path it found, image 2's included.
+          warp, so it has no path.
         * 4: image 0 plus faint noise. Every registration involving it returns
           a wrong warp, so it has no path; only the identity would align it.
     """
@@ -3504,9 +3503,11 @@ class Test_Aligner_match_search:
         """(N, 2) translation (tx, ty) of each final warp."""
         return np.stack([np.asarray(w)[:2, 2] for w in aligner.results_geometric['warp_matrices']], axis=0)
 
-    def test_path_found_by_dense_search_is_kept(self, monkeypatch):
+    def test_path_found_through_passer_is_kept(self, monkeypatch):
         """Image 2 gets the warp composed through image 1, although image 3 has no path."""
-        aligner, _ = self._fit(idx_images=[0, 1, 2, 3], monkeypatch=monkeypatch)
+        aligner, n_registrations = self._fit(idx_images=[0, 1, 2, 3], monkeypatch=monkeypatch)
+        ## 4 direct registrations + 4 onto each of the 2 failed images + 4 onto each of the 2 remaining images
+        assert n_registrations == 20
         assert aligner.results_geometric['direct']['alignment_template_to_all'].tolist() == [True, True, False, False]
 
         translations = self._translations(aligner)
@@ -4830,3 +4831,154 @@ class Test_Aligner_match_search_warp_choice:
         assert not np.allclose(warps_direct[3], np.eye(3), atol=1e-3)
         warps = self._fit(monkeypatch, z_match_search=np.zeros(self.N_SESSIONS), z_composed=[[100.0, 90.0, 90.0, 90.0]] * 2)
         np.testing.assert_allclose(warps, warps_direct, atol=1e-6)
+
+
+class Test_Aligner_match_search_three_step:
+    """
+    The three steps of the match search in ``Aligner.fit_geometric``: register to the template, register to each failed
+    session, then register to the remaining sessions. Sessions have known non-commuting ground-truth transforms
+    ``G_s``; registering session ``m`` onto ``t`` returns ``G_m @ inv(G_t)``, except that session 3 registers wrongly
+    onto the template. The z scores are faked per scoring call. Session 3 fails the direct check; sessions 1 and 2 pass.
+    """
+
+    N_SESSIONS = 4
+    Z_DIRECT = np.array([100.0, 5.0, 5.0, 1.0])
+    ## Row 3 (all registered onto session 3): sessions 1 and 2 pass, session 0 fails. Session 1 is the cheaper route.
+    Z_ONTO_3 = np.array([0.0, 50.0, 20.0, 50.0])
+    WARP_WRONG = np.array([[1, 0, 9.0], [0, 1, -6.0], [0, 0, 1]], dtype=np.float32)
+    ANGLES_DEG = (0.0, 3.0, -4.0, 5.0)
+    SHIFTS_XY = ((0.0, 0.0), (4.0, -2.0), (-3.0, 5.0), (6.0, 3.0))
+
+    @classmethod
+    def _G(cls, idx):
+        """Ground-truth transform of session ``idx``, shape (3, 3)."""
+        angle = np.deg2rad(cls.ANGLES_DEG[idx])
+        return np.array([
+            [np.cos(angle), -np.sin(angle), cls.SHIFTS_XY[idx][0]],
+            [np.sin(angle), np.cos(angle), cls.SHIFTS_XY[idx][1]],
+            [0, 0, 1],
+        ])
+
+    @classmethod
+    def _warp_true(cls, idx_moving, idx_template):
+        """Warp registering session ``idx_moving`` onto ``idx_template``."""
+        return cls._G(idx_moving) @ np.linalg.inv(cls._G(idx_template))
+
+    def _fit(self, monkeypatch, z_composed=None, z_onto_3=None, all_to_all=False, z_threshold=4.0):
+        """
+        Run ``fit_geometric`` on ``N_SESSIONS`` images, template 0. Initial check: ``Z_DIRECT``. Scoring all sessions
+        onto session 3: ``z_onto_3``; onto session 0: 50 except for session 3, which fails; onto any other session: 50.
+        Each scoring of composed warps returns the next entry of ``z_composed``, a list of z scores. If ``z_composed``
+        is ``None``, a session scores 90 when its warp equals its ground-truth warp onto the template, else 1.
+        Returns the aligner and the number of registrations run.
+        """
+        from roicat import helpers
+        from roicat.tracking import alignment
+
+        images = [_make_textured_image(seed=0, shift_yx=(ii, 2 * ii)) for ii in range(self.N_SESSIONS)]
+        z_onto_3 = self.Z_ONTO_3 if z_onto_3 is None else z_onto_3
+        z_composed = None if z_composed is None else iter(z_composed)
+        calls = []
+        warps_scored = []  ## warps of every image passed to the remapping, in order
+        warp_matrix_to_remappingIdx_original = helpers.warp_matrix_to_remappingIdx
+
+        def warp_matrix_to_remappingIdx(warp_matrix, **kwargs):
+            warps_scored.append(np.vstack([warp_matrix, [0, 0, 1]]) if np.asarray(warp_matrix).shape == (2, 3) else np.asarray(warp_matrix))
+            return warp_matrix_to_remappingIdx_original(warp_matrix=warp_matrix, **kwargs)
+
+        def idx_of(im):
+            return [ii for ii, im_ref in enumerate(images) if np.array_equal(im_ref, im)][0]
+
+        def score_alignment(self_checker, images, desc=None, **kwargs):
+            if desc.startswith('Initial alignment'):
+                z = self.Z_DIRECT
+            elif desc.startswith('Match search'):
+                z = np.full(len(images), 50.0)
+                if desc.endswith('idx 3'):
+                    z = z_onto_3
+                elif desc.endswith('idx 0'):
+                    z[3] = 0.0  ## session 3 registers wrongly onto the template
+            elif desc.startswith('Path-finding'):
+                if z_composed is None:
+                    warps_new = warps_scored[-len(images):]  ## the composed warps, one per session
+                    z = [90.0 if np.allclose(warp, self._warp_true(idx_moving=ii, idx_template=0), rtol=1e-4, atol=1e-3) else 1.0 for ii, warp in enumerate(warps_new)]
+                else:
+                    z = next(z_composed)
+            else:
+                return {'z_in': np.ones((len(images), 1))}
+            return {'z_in': np.asarray(z, dtype=np.float64)[:, None]}
+
+        def fit_rigid(self_model, im_template, im_moving, **kwargs):
+            calls.append(1)
+            idx_template, idx_moving = idx_of(im_template), idx_of(im_moving)
+            if (idx_template == 0) and (idx_moving == 3):
+                return self.WARP_WRONG
+            return self._warp_true(idx_moving=idx_moving, idx_template=idx_template).astype(np.float32)
+
+        monkeypatch.setattr(helpers.ImageAlignmentChecker, 'score_alignment', score_alignment)
+        monkeypatch.setattr(helpers, 'warp_matrix_to_remappingIdx', warp_matrix_to_remappingIdx)
+        monkeypatch.setattr(alignment.PhaseCorrelationRegistration, 'fit_rigid', fit_rigid)
+        aligner = alignment.Aligner(use_match_search=True, all_to_all=all_to_all, z_threshold=z_threshold, um_per_pixel=1.0, device='cpu', verbose=False)
+        aligner.fit_geometric(
+            template=0,
+            ims_moving=images,
+            template_method='image',
+            method='PhaseCorrelation',
+            kwargs_method={'PhaseCorrelation': {}},
+            kwargs_RANSAC={},
+            compute_final_all_to_all=False,
+            verbose=False,
+        )
+        return aligner, len(calls)
+
+    @staticmethod
+    def _warps(aligner):
+        """Final warps as 3x3 matrices, shape (N, 3, 3). Composed warps are stored as 2x3."""
+        return np.stack([np.vstack([w, [0, 0, 1]]) if np.asarray(w).shape == (2, 3) else np.asarray(w) for w in aligner.results_geometric['warp_matrices']], axis=0)
+
+    def test_step2_rescues_failed_session_through_passer(self, monkeypatch):
+        """Session 3 takes the warp composed through session 1: the direct warp of 3 onto 1, then of 1 onto the template."""
+        aligner, n_registrations = self._fit(monkeypatch)
+        assert n_registrations == 2 * self.N_SESSIONS  ## the route uses the inverted warp of session 3 onto session 1, not a dense search
+        warps = self._warps(aligner)
+        expected = self._warp_true(idx_moving=3, idx_template=1) @ self._warp_true(idx_moving=1, idx_template=0)
+        np.testing.assert_allclose(expected, self._warp_true(idx_moving=3, idx_template=0), atol=1e-9)
+        assert not np.allclose(self._warp_true(idx_moving=3, idx_template=1) @ self._warp_true(idx_moving=1, idx_template=0), self._warp_true(idx_moving=1, idx_template=0) @ self._warp_true(idx_moving=3, idx_template=1), atol=1e-2)
+        np.testing.assert_allclose(warps[3], expected, rtol=1e-4, atol=1e-3)
+        for idx in [0, 1, 2]:
+            np.testing.assert_allclose(warps[idx], self._warp_true(idx_moving=idx, idx_template=0), rtol=1e-4, atol=1e-3)
+
+    def test_step3_skipped_when_step2_rescues_everything(self, monkeypatch):
+        """N registrations to the template plus N onto each failed session."""
+        _, n_registrations = self._fit(monkeypatch)
+        n_failed = 1
+        assert n_registrations == self.N_SESSIONS + self.N_SESSIONS * n_failed
+
+    def test_step3_runs_when_step2_leaves_a_failure(self, monkeypatch):
+        """N registrations to the template, N onto each failed session, and N onto each session not yet used as a template."""
+        _, n_registrations = self._fit(monkeypatch, z_composed=[self.Z_DIRECT] * 2)
+        n_failed, n_remaining = 1, 3
+        assert n_registrations == self.N_SESSIONS + self.N_SESSIONS * n_failed + self.N_SESSIONS * n_remaining
+
+    def test_all_to_all_registers_every_pair_and_keeps_warps(self, monkeypatch):
+        """With ``all_to_all=True`` there is one registration per pair, no dense search, and every pair is measured directly."""
+        aligner, n_registrations = self._fit(monkeypatch, all_to_all=True)
+        assert n_registrations == self.N_SESSIONS + self.N_SESSIONS * self.N_SESSIONS
+        assert np.isfinite(aligner.results_geometric['direct']['score_all_to_all']).all()
+        warps = self._warps(aligner)
+        for idx in range(self.N_SESSIONS):
+            np.testing.assert_allclose(warps[idx], self._warp_true(idx_moving=idx, idx_template=0), rtol=1e-4, atol=1e-3)
+
+    def test_direct_scores_stay_nan_for_pairs_not_registered(self, monkeypatch):
+        """Only row 3 of the direct all-to-all scores is measured; the inverted pairs do not appear in it."""
+        aligner, _ = self._fit(monkeypatch)
+        score = aligner.results_geometric['direct']['score_all_to_all']
+        alignment = aligner.results_geometric['direct']['alignment_all_to_all']
+        np.testing.assert_array_equal(score[3], self.Z_ONTO_3)
+        assert np.isnan(score[[0, 1, 2]]).all()
+        assert np.isnan(alignment[[0, 1, 2]]).all()
+
+    def test_all_to_all_skips_step3_when_a_session_still_fails(self, monkeypatch):
+        """With ``all_to_all=True`` and a session still failing, the composed warps are scored once (no step 3)."""
+        _, n_registrations = self._fit(monkeypatch, z_composed=[self.Z_DIRECT], all_to_all=True)  ## a second scoring raises StopIteration
+        assert n_registrations == self.N_SESSIONS + self.N_SESSIONS * self.N_SESSIONS
