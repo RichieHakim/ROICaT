@@ -3603,6 +3603,11 @@ class Test_normalize_local_brightness:
         im[5, 5] = np.nan
         np.testing.assert_array_equal(self._fn()(im, sigma=6.0), np.full((32, 48), 0.5, dtype=np.float32))
 
+    @pytest.mark.parametrize('kwargs', [{'fraction_std_floor': 0.0}, {'fraction_std_floor': -0.05}, {'clip_z': 0.0}, {'clip_z': -3.0}])
+    def test_nonpositive_floor_or_clip_raises(self, kwargs):
+        with pytest.raises(AssertionError):
+            self._fn()(_make_textured_image(), sigma=6.0, **kwargs)
+
 
 class Test_augment_FOV_images_local_norm:
     """

@@ -1401,6 +1401,8 @@ def normalize_local_brightness(
     """
     assert im.ndim == 2, f'im must be 2D, not {im.ndim}D'
     assert sigma > 0, f'sigma must be positive, not {sigma}'
+    assert fraction_std_floor > 0, f'fraction_std_floor must be positive, not {fraction_std_floor}'
+    assert clip_z > 0, f'clip_z must be positive, not {clip_z}'
 
     im_float = im.astype(np.float64)
     mask_nan = np.isnan(im_float)
