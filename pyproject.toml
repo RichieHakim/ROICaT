@@ -26,7 +26,7 @@ core = [
     "sparse==0.19.2",
     "sparse_convolution==0.4.2",  ## Toeplitz convolution used by tracking/blurring.py.
     "numba==0.68.0",
-    "torch==2.14.0",
+    "torch==2.14.1",
     "torchvision==0.29.1",
     "optuna==5.0.0",
 
