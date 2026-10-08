@@ -3528,6 +3528,291 @@ class Test_Aligner_match_search:
 
 
 ######################################################################################################################################
+################################### ALIGNER: INPUT IMAGES (augment_FOV_images, fit_nonrigid) ########################################
+######################################################################################################################################
+
+
+def _make_textured_image(hw=(96, 128), seed=0, shift_yx=(0, 0), gradient=(0.5, 1.0)):
+    """
+    Smooth random texture times a left-to-right brightness gradient, in [0, 1].
+    Images with the same seed are crops of one canvas, so ``shift_yx=(dy, dx)``
+    gives ``im[y, x] = im_unshifted[y + dy, x + dx]``.
+    """
+    import scipy.ndimage
+    rng = np.random.default_rng(seed)
+    pad = 8
+    canvas = scipy.ndimage.gaussian_filter(rng.standard_normal((hw[0] + 2 * pad, hw[1] + 2 * pad)), sigma=2)
+    texture = canvas[pad + shift_yx[0]:pad + shift_yx[0] + hw[0], pad + shift_yx[1]:pad + shift_yx[1] + hw[1]]
+    im = (1 + 3 * texture) * np.linspace(gradient[0], gradient[1], hw[1])[None, :]  ## (H, W)
+    im = im - im.min()
+    return (im / im.max()).astype(np.float32)
+
+
+class Test_normalize_local_brightness:
+    """
+    Tests for ``alignment.normalize_local_brightness``.
+    """
+
+    @staticmethod
+    def _fn():
+        from roicat.tracking.alignment import normalize_local_brightness
+        return normalize_local_brightness
+
+    def test_shape_dtype_and_range(self):
+        im = _make_textured_image()
+        out = self._fn()(im, sigma=6.0)
+        assert out.shape == im.shape
+        assert out.dtype == np.float32
+        assert out.min() >= 0 and out.max() <= 1
+        assert out.min() < 0.25 and out.max() > 0.75
+
+    def test_removes_brightness_gradient(self):
+        """The left and right halves have the same mean."""
+        out = self._fn()(_make_textured_image(gradient=(0.1, 1.0)), sigma=6.0)
+        w = out.shape[1]
+        assert abs(out[:, :w // 2].mean() - out[:, w // 2:].mean()) < 0.02
+
+    def test_invariant_to_scale_and_offset(self):
+        im = _make_textured_image()
+        out = self._fn()(im, sigma=6.0)
+        ## Scaling by a power of 2 is exact in floating point
+        np.testing.assert_array_equal(self._fn()(im * np.float32(4), sigma=6.0), out)
+        ## An offset changes only the rounding
+        np.testing.assert_allclose(self._fn()(im + np.float32(10), sigma=6.0), out, rtol=0, atol=1e-5)
+
+    def test_nan_pixels(self):
+        """A NaN pixel becomes 0.5 and leaves the rest of the image unchanged."""
+        im = _make_textured_image()
+        im_nan = im.copy()
+        im_nan[10, 20] = np.nan
+        out = self._fn()(im_nan, sigma=6.0)
+        out_clean = self._fn()(im, sigma=6.0)
+        assert np.isfinite(out).all()
+        assert out[10, 20] == 0.5
+        far = np.ones(im.shape, dtype=bool)
+        far[:40, :50] = False
+        np.testing.assert_allclose(out[far], out_clean[far], rtol=0, atol=0.01)
+
+    @pytest.mark.parametrize('value', [0.0, 0.1, 3.0, 1234.5678, np.nan])
+    def test_constant_image_is_mid_gray(self, value):
+        out = self._fn()(np.full((32, 48), value, dtype=np.float32), sigma=6.0)
+        np.testing.assert_array_equal(out, np.full((32, 48), 0.5, dtype=np.float32))
+
+    def test_constant_with_nan_is_mid_gray(self):
+        im = np.full((32, 48), 0.1, dtype=np.float32)
+        im[5, 5] = np.nan
+        np.testing.assert_array_equal(self._fn()(im, sigma=6.0), np.full((32, 48), 0.5, dtype=np.float32))
+
+    @pytest.mark.parametrize('kwargs', [{'fraction_std_floor': 0.0}, {'fraction_std_floor': -0.05}, {'clip_z': 0.0}, {'clip_z': -3.0}])
+    def test_nonpositive_floor_or_clip_raises(self, kwargs):
+        with pytest.raises(AssertionError):
+            self._fn()(_make_textured_image(), sigma=6.0, **kwargs)
+
+
+class Test_augment_FOV_images_local_norm:
+    """
+    Tests for the ``local_norm_sigma_um`` step of
+    ``Aligner.augment_FOV_images``.
+    """
+
+    UM_PER_PIXEL = 2.0
+
+    @staticmethod
+    def _inputs(n_sessions=3, n_rois=6, hw=(96, 128), seed=0):
+        """Raw-scale FOV images with different brightness gradients, and sparse ROI footprints (n_rois, H * W)."""
+        rng = np.random.default_rng(seed)
+        FOV_images = [1000 * _make_textured_image(hw=hw, seed=seed, shift_yx=(ii, -ii), gradient=(0.3 + 0.2 * ii, 1.0)) for ii in range(n_sessions)]
+        yy, xx = np.mgrid[:hw[0], :hw[1]]
+        spatialFootprints = []
+        for _ in range(n_sessions):
+            centers = rng.uniform(low=(10, 10), high=(hw[0] - 10, hw[1] - 10), size=(n_rois, 2))
+            rois = np.stack([np.exp(-((yy - cy)**2 + (xx - cx)**2) / (2 * 3.0**2)) * ((yy - cy)**2 + (xx - cx)**2 < 36) for cy, cx in centers])  ## (n_rois, H, W)
+            spatialFootprints.append(scipy.sparse.csr_array(rois.reshape(n_rois, -1).astype(np.float32)))
+        return FOV_images, spatialFootprints
+
+    def _aligner(self):
+        from roicat.tracking import alignment
+        return alignment.Aligner(um_per_pixel=self.UM_PER_PIXEL, verbose=False)
+
+    def test_on_normalizes_the_augmented_images(self):
+        """The last step normalizes the mixed images with sigma = local_norm_sigma_um / um_per_pixel."""
+        from roicat.tracking.alignment import normalize_local_brightness
+        FOV_images, spatialFootprints = self._inputs()
+        aligner = self._aligner()
+        out = aligner.augment_FOV_images(FOV_images=FOV_images, spatialFootprints=spatialFootprints)  ## default: 12 um
+        assert aligner.params['augment_FOV_images']['local_norm_sigma_um'] == 12.0
+        expected_off = aligner.augment_FOV_images(FOV_images=FOV_images, spatialFootprints=spatialFootprints, local_norm_sigma_um=None)
+        for im_out, im_off in zip(out, expected_off):
+            assert im_out.dtype == np.float32
+            assert im_out.min() >= 0 and im_out.max() <= 1
+            np.testing.assert_array_equal(im_out, normalize_local_brightness(im_off, sigma=12.0 / self.UM_PER_PIXEL))
+
+    @pytest.mark.parametrize('value', [0.0, -1.0, True, 'a'])
+    def test_invalid_sigma_raises(self, value):
+        FOV_images, spatialFootprints = self._inputs()
+        with pytest.raises(AssertionError):
+            self._aligner().augment_FOV_images(FOV_images=FOV_images, spatialFootprints=spatialFootprints, local_norm_sigma_um=value)
+
+    @pytest.mark.parametrize('value', [12, 12.0, np.float32(12), np.int64(12)])
+    def test_numpy_sigma_accepted(self, value):
+        FOV_images, spatialFootprints = self._inputs(n_sessions=2)
+        out = self._aligner().augment_FOV_images(FOV_images=FOV_images, spatialFootprints=spatialFootprints, local_norm_sigma_um=value)
+        assert len(out) == 2
+
+    def test_default_wiring(self):
+        import inspect
+        from roicat.tracking import alignment
+        default_signature = inspect.signature(alignment.Aligner.augment_FOV_images).parameters['local_norm_sigma_um'].default
+        assert default_signature == util.get_default_parameters()['alignment']['augment']['local_norm_sigma_um']
+
+    def test_default_wiring_CLAHE_off(self):
+        import inspect
+        from roicat.tracking import alignment
+        default_signature = inspect.signature(alignment.Aligner.augment_FOV_images).parameters['use_CLAHE'].default
+        assert default_signature is False
+        assert util.get_default_parameters()['alignment']['augment']['use_CLAHE'] is False
+
+
+class Test_prepare_image_nonrigid:
+    """
+    ``_prepare_image`` of the nonrigid methods accepts float images and raises
+    on uint8 images. Called unbound, so RoMa's weights are not loaded.
+    """
+
+    @pytest.mark.parametrize('name_method', ['DeepFlow', 'OpticalFlowFarneback', 'RoMa'])
+    def test_uint8_raises(self, name_method):
+        from roicat.tracking import alignment
+        fn = getattr(alignment, name_method)._prepare_image
+        im_float = _make_textured_image()
+        fn(None, im_float)  ## float in [0, 1] is accepted
+        with pytest.raises(AssertionError):
+            fn(None, (im_float * 255).astype(np.uint8))
+
+
+class Test_fit_nonrigid_input_images:
+    """
+    The images that ``Aligner.fit_nonrigid`` hands to the optical flow call.
+    The flow calls are replaced by recorders, so these tests check the images
+    at the last step before OpenCV.
+    """
+
+    @staticmethod
+    def _install_recorder(monkeypatch, name_method):
+        """Replace the OpenCV flow call by a recorder that returns zero flow. Returns the list of recorded (template, moving)."""
+        from roicat.tracking import alignment
+        calls = []
+
+        def calc(im_template, im_moving):
+            calls.append((im_template, im_moving))
+            return np.zeros((*im_moving.shape, 2), dtype=np.float32)
+
+        if name_method == 'DeepFlow':
+            class FakeDeepFlow:
+                def calc(self, i0, i1, flow):
+                    return calc(i0, i1)
+            monkeypatch.setattr(alignment.cv2.optflow, 'createOptFlow_DeepFlow', lambda: FakeDeepFlow())
+        elif name_method == 'OpticalFlowFarneback':
+            monkeypatch.setattr(alignment.cv2, 'calcOpticalFlowFarneback', lambda prev, next, flow, **kwargs: calc(prev, next))
+        return calls
+
+    def _fit(self, monkeypatch, name_method, ims, template_method='image'):
+        from roicat.tracking import alignment
+        calls = self._install_recorder(monkeypatch=monkeypatch, name_method=name_method)
+        alignment.Aligner(verbose=False).fit_nonrigid(
+            template=1,
+            ims_moving=ims,
+            template_method=template_method,
+            method=name_method,
+            kwargs_method={'DeepFlow': {}, 'OpticalFlowFarneback': {}},
+        )
+        return calls
+
+    @staticmethod
+    def _images(normalized):
+        """Three shifted images, either raw or locally normalized."""
+        from roicat.tracking.alignment import normalize_local_brightness
+        ims = [_make_textured_image(shift_yx=(dy, dx)) for dy, dx in [(0, 0), (1, -2), (-2, 1)]]
+        return [normalize_local_brightness(im, sigma=6.0) for im in ims] if normalized else ims
+
+    @pytest.mark.parametrize('normalized', [True, False])
+    @pytest.mark.parametrize('name_method', ['DeepFlow', 'OpticalFlowFarneback'])
+    def test_images_not_inverted(self, monkeypatch, name_method, normalized):
+        """Template and moving images reach OpenCV as uint8, positively correlated with the input."""
+        ims = self._images(normalized=normalized)
+        calls = self._fit(monkeypatch, name_method, ims)
+        assert len(calls) == len(ims)
+        for im, (im_template_cv2, im_moving_cv2) in zip(ims, calls):
+            assert im_template_cv2.dtype == np.uint8 and im_moving_cv2.dtype == np.uint8
+            assert np.corrcoef(im_template_cv2.ravel(), ims[1].ravel())[0, 1] > 0.9
+            assert np.corrcoef(im_moving_cv2.ravel(), im.ravel())[0, 1] > 0.9
+
+    @pytest.mark.parametrize('scale_template', [0.5, 2.0])
+    def test_norm_factor_per_pair_image_template(self, monkeypatch, scale_template):
+        """Each pair is scaled by the max over its template and its moving image."""
+        ims = self._images(normalized=False)
+        ims = [ims[0], scale_template * ims[1], 0.25 * ims[2]]  ## session 1 is the template
+        calls = self._fit(monkeypatch, 'DeepFlow', ims)
+        to_uint8 = lambda im, norm_factor: (im / norm_factor * np.float32(255)).astype(np.uint8)
+        for im, (im_template_cv2, im_moving_cv2) in zip(ims, calls):
+            norm_factor = max(ims[1].max(), im.max())
+            ## the uint8 levels may differ by 1 from the test's float rounding
+            assert np.abs(im_template_cv2.astype(int) - to_uint8(ims[1], norm_factor).astype(int)).max() <= 1
+            assert np.abs(im_moving_cv2.astype(int) - to_uint8(im, norm_factor).astype(int)).max() <= 1
+
+    def test_norm_factor_per_pair_sequential_template(self, monkeypatch):
+        """Each pair is scaled by the max over its neighboring template image and its moving image."""
+        scales = [1.0, 0.5, 2.0, 0.25]
+        ims = [scale * _make_textured_image(shift_yx=(ii, -ii)) for ii, scale in enumerate(scales)]
+        calls = self._fit(monkeypatch, 'DeepFlow', ims, template_method='sequential')  ## template = session 1
+        idx_template = [1, 1, 1, 2]  ## template of each pair: 0 -> 1, 1 -> 1 (itself), 2 -> 1, 3 -> 2
+        assert len(calls) == len(ims)
+        to_uint8 = lambda im, norm_factor: (im / norm_factor * np.float32(255)).astype(np.uint8)
+        for ii, (im_template_cv2, im_moving_cv2) in enumerate(calls):
+            norm_factor = max(ims[idx_template[ii]].max(), ims[ii].max())
+            assert np.abs(im_template_cv2.astype(int) - to_uint8(ims[idx_template[ii]], norm_factor).astype(int)).max() <= 1
+            assert np.abs(im_moving_cv2.astype(int) - to_uint8(ims[ii], norm_factor).astype(int)).max() <= 1
+
+    @pytest.mark.parametrize('template_method', ['image', 'sequential'])
+    def test_dim_session_keeps_texture(self, monkeypatch, template_method):
+        """Sessions 1000x dimmer than another session still have texture as uint8 images when registered to each other."""
+        ims = self._images(normalized=False)
+        ims = [ims[0], 1e-3 * ims[1], 1e-3 * ims[2]]  ## session 1 is the template
+        calls = self._fit(monkeypatch, 'DeepFlow', ims, template_method=template_method)
+        im_template_cv2, im_moving_cv2 = calls[2]  ## the pair of the two dim sessions
+        assert len(np.unique(im_template_cv2)) > 50
+        assert im_moving_cv2.dtype == np.uint8
+        assert len(np.unique(im_moving_cv2)) > 50
+        assert np.corrcoef(im_moving_cv2.ravel(), ims[2].ravel())[0, 1] > 0.9
+
+    def test_sequential_template(self, monkeypatch):
+        ims = self._images(normalized=True)
+        calls = self._fit(monkeypatch, 'DeepFlow', ims, template_method='sequential')
+        assert len(calls) == len(ims)
+        assert all(i0.dtype == np.uint8 and i1.dtype == np.uint8 for i0, i1 in calls)
+
+    @pytest.mark.parametrize('normalized', [True, False])
+    def test_deepflow_recovers_shift(self, normalized):
+        """Real DeepFlow: the remap undoes a known shift under a different brightness gradient."""
+        from roicat.tracking import alignment
+        dy, dx = 1, -2
+        ims = [_make_textured_image(seed=1), _make_textured_image(seed=1, shift_yx=(dy, dx), gradient=(1.0, 0.6))]
+        if normalized:
+            ims = [alignment.normalize_local_brightness(im, sigma=6.0) for im in ims]
+        remap = alignment.Aligner(verbose=False).fit_nonrigid(
+            template=0,
+            ims_moving=ims,
+            template_method='image',
+            method='DeepFlow',
+            kwargs_method={'DeepFlow': {}},
+        )[1]  ## (H, W, 2) as (x_src, y_src)
+        h, w = ims[0].shape
+        grid = np.stack(np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32), indexing='xy'), axis=-1)
+        shift_median = np.median((remap - grid)[h // 4:3 * h // 4, w // 4:3 * w // 4].reshape(-1, 2), axis=0)
+        ## moving[y, x] = template[y + dy, x + dx], so the remap samples the moving image at (x - dx, y - dy)
+        np.testing.assert_allclose(shift_median, [-dx, -dy], atol=0.3)
+
+
+######################################################################################################################################
 ########################################################## ROInet ####################################################################
 ######################################################################################################################################
 
@@ -4349,3 +4634,90 @@ def test_manhattan_similarity_kernel_cache_loads_in_new_process():
     )
     hits = [int(subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, check=True).stdout.strip().splitlines()[-1]) for _ in range(2)]
     assert hits[1] == 1, f"cache hits per process: {hits}"
+
+
+######################################################################################################################################
+################################################# ALIGNER: NONRIGID ALIGNMENT SCORES #################################################
+######################################################################################################################################
+
+
+class Test_Aligner_alignment_check:
+    """
+    The alignment scores that ``Aligner.transform_images_nonrigid`` computes
+    with ``ImageAlignmentChecker``.
+    """
+
+    UM_PER_PIXEL = 1.0
+    RADIUS_IN_UM = 5.0
+    RADIUS_OUT_UM = 25.0
+
+    @staticmethod
+    def _spy_checker(monkeypatch):
+        """
+        Replace ``helpers.ImageAlignmentChecker`` with a spy that records its
+        init kwargs and the images passed to ``score_alignment``. Returns the
+        record dict.
+        """
+        from roicat import helpers
+        record = {'init_kwargs': [], 'images_scored': []}
+        ImageAlignmentChecker_real = helpers.ImageAlignmentChecker
+
+        class SpyChecker(ImageAlignmentChecker_real):
+            def __init__(self, **kwargs):
+                record['init_kwargs'].append(kwargs)
+                super().__init__(**kwargs)
+
+            def score_alignment(self, images, **kwargs):
+                record['images_scored'].append(np.stack([np.asarray(im) for im in images], axis=0))
+                return super().score_alignment(images=images, **kwargs)
+
+        monkeypatch.setattr(helpers, 'ImageAlignmentChecker', SpyChecker)
+        return record
+
+    def _aligner(self):
+        from roicat.tracking import alignment
+        return alignment.Aligner(
+            radius_in=self.RADIUS_IN_UM,
+            radius_out=self.RADIUS_OUT_UM,
+            um_per_pixel=self.UM_PER_PIXEL,
+            use_match_search=False,
+            device='cpu',
+            verbose=False,
+        )
+
+    def _nonrigid_setup(self, shift_px):
+        """Aligner with geometric images and a nonrigid warp that shifts every image by ``shift_px`` pixels in x."""
+        from roicat import helpers
+        images = [_make_textured_image(seed=0) for _ in range(2)]
+        aligner = self._aligner()
+        aligner._HW = images[0].shape
+        H, W = aligner._HW
+        aligner.ims_registered_geo = [im.copy() for im in images]
+        warp_matrix = np.array([[1, 0, shift_px], [0, 1, 0], [0, 0, 1]], dtype=np.float32)
+        aligner.remappingIdx_nonrigid = [helpers.warp_matrix_to_remappingIdx(warp_matrix=warp_matrix, x=W, y=H) for _ in images]
+        return aligner, images
+
+    def test_transform_images_nonrigid_scores_nonrigid_images(self, monkeypatch):
+        """The final nonrigid scores are computed on the nonrigid-registered images, not the geometric ones."""
+        record = self._spy_checker(monkeypatch=monkeypatch)
+        aligner, images = self._nonrigid_setup(shift_px=10)
+        aligner.transform_images_nonrigid(ims_moving=images)
+        images_scored = record['images_scored'][0]
+        np.testing.assert_array_equal(images_scored, np.stack(aligner.ims_registered_nonrigid, axis=0))
+        assert not np.allclose(images_scored, np.stack(aligner.ims_registered_geo, axis=0))
+
+    def test_transform_images_nonrigid_fills_nan_pixels_for_scoring(self, monkeypatch):
+        """NaN pixels in the nonrigid images are filled with each moving image's mean for scoring, and the scores are finite."""
+        record = self._spy_checker(monkeypatch=monkeypatch)
+        aligner, images = self._nonrigid_setup(shift_px=3)
+        for remapIdx in aligner.remappingIdx_nonrigid:
+            remapIdx[np.arange(10, 90, 8), np.arange(10, 90, 8)] = np.nan  ## isolated entries outside the composed warp's domain
+        aligner.transform_images_nonrigid(ims_moving=images)
+        images_nonrigid = np.stack(aligner.ims_registered_nonrigid, axis=0)
+        mask_nan = np.isnan(images_nonrigid)
+        assert mask_nan.any()
+        images_scored = record['images_scored'][0]
+        assert np.isfinite(images_scored).all()
+        np.testing.assert_array_equal(images_scored[~mask_nan], images_nonrigid[~mask_nan])
+        np.testing.assert_allclose(images_scored[mask_nan], np.repeat([im.mean() for im in images], mask_nan[0].sum()))
+        assert np.isfinite(aligner.results_nonrigid['final']['score_all_to_all']).all()

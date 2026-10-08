@@ -113,14 +113,15 @@ class Aligner(util.ROICaT_Module):
         spatialFootprints: Optional[List[scipy.sparse.csr_array]] = None,
         normalize_FOV_intensities: bool = True,
         roi_FOV_mixing_factor: float = 0.5,
-        use_CLAHE: bool = True,
+        use_CLAHE: bool = False,
         CLAHE_grid_block_size: int = 10,
         CLAHE_clipLimit: int = 1,
         CLAHE_normalize: bool = True,
+        local_norm_sigma_um: Optional[float] = 12.0,
     ) -> None:
         """
         Augments the FOV images by mixing the FOV with the ROI images and
-        optionally applying CLAHE.
+        optionally applying CLAHE and local brightness normalization.
         RH 2023
 
         Args:
@@ -137,7 +138,7 @@ class Aligner(util.ROICaT_Module):
                 The factor by which to mix the ROI images into the FOV images.
                 If 0, then no mixing will be performed. (Default is *0.5*)
             use_CLAHE (bool):
-                Whether to apply CLAHE to the images. (Default is ``True``)
+                Whether to apply CLAHE to the images. (Default is ``False``)
             CLAHE_grid_block_size (int):
                 The size of the blocks in the grid for CLAHE. Used to divide the
                 image into small blocks and create the grid_size parameter for
@@ -149,11 +150,22 @@ class Aligner(util.ROICaT_Module):
             CLAHE_normalize (bool):
                 Whether to normalize the CLAHE output. See alignment.clahe for
                 more details. (Default is ``True``)
+            local_norm_sigma_um (Optional[float]):
+                Standard deviation in micrometers of the Gaussian window used
+                for local brightness normalization. Should be roughly the
+                diameter of a cell body. As the last step, the brightness and
+                contrast of each image are evened out over space (see
+                ``normalize_local_brightness``) with a Gaussian of ``sigma =
+                local_norm_sigma_um / um_per_pixel`` pixels. Brightness
+                variations broader than the window are removed, and structures
+                much broader than the window lose contrast. Output images are
+                in [0, 1]. If ``None``, no normalization. (Default is *12.0*)
 
         Returns:
             List[np.ndarray]:
                 The augmented FOV images.
         """
+        assert (local_norm_sigma_um is None) or (isinstance(local_norm_sigma_um, (int, float, np.number)) and not isinstance(local_norm_sigma_um, bool) and local_norm_sigma_um > 0), f"local_norm_sigma_um must be None or a positive number, not {local_norm_sigma_um}"
         ## Warn if roi_FOV_mixing_factor = 0 but spatialFootprints is not None
         if (roi_FOV_mixing_factor == 0) and (spatialFootprints is not None):
             warnings.warn("roi_FOV_mixing_factor = 0 but spatialFootprints is not None. The ROI images will not be used.")
@@ -171,6 +183,7 @@ class Aligner(util.ROICaT_Module):
                 'CLAHE_grid_block_size',
                 'CLAHE_clipLimit',
                 'CLAHE_normalize',
+                'local_norm_sigma_um',
             ],
         )
         
@@ -196,6 +209,12 @@ class Aligner(util.ROICaT_Module):
             mixing_factor_final = roi_FOV_mixing_factor * np.mean(np.concatenate([im.reshape(-1) for im in FOV_images]))
             fn_mix = lambda im, sf, f: (1 - f) * im + np.array((f) * mixing_factor_final * sf.multiply(1/np.maximum(sf.max(axis=1).toarray().reshape(-1, 1), util.SPARSE_NORMALIZATION_FLOOR)).sum(0).reshape(h, w))
             FOV_images = [fn_mix(f, s, roi_FOV_mixing_factor) for f, s in zip(FOV_images, sf)]
+
+        ## Local brightness normalization
+        if local_norm_sigma_um is not None:
+            sigma_px = local_norm_sigma_um / self.um_per_pixel
+            print(f'Normalizing local brightness: sigma = {sigma_px:.2f} px ({local_norm_sigma_um} um / {self.um_per_pixel} um per pixel)') if self._verbose else None
+            FOV_images = [normalize_local_brightness(im, sigma=sigma_px) for im in FOV_images]
 
         return FOV_images
 
@@ -778,29 +797,28 @@ class Aligner(util.ROICaT_Module):
         self._HW = (H,W) if self._HW is None else self._HW
 
         ims_moving, template = self._fix_input_images(ims_moving=ims_moving, template=template, template_method=template_method)
-        norm_factor = np.nanmax([np.nanmax(im) for im in ims_moving])
-        template_norm   = np.array(template * (template > 0) * (1/norm_factor) * 255, dtype=np.uint8) if template_method == 'image' else None
-        ims_moving_norm = [np.array(im * (im > 0) * (1/np.nanmax(im)) * 255, dtype=np.uint8) for im in ims_moving]
 
         print(f'Finding nonrigid registration warps with mode: {method}, template_method: {template_method}') if self._verbose else None
         remappingIdx_raw = []
-        for ii, im_moving in tqdm(enumerate(ims_moving_norm), desc='Finding nonrigid registration warps', total=len(ims_moving_norm), unit='image', disable=not self._verbose):
+        for ii, im_moving in tqdm(enumerate(ims_moving), desc='Finding nonrigid registration warps', total=len(ims_moving), unit='image', disable=not self._verbose):
             if template_method == 'sequential':
                 ## warp images before template forward (t1->t2->t3->t4)
                 if ii < template:
-                    im_template = ims_moving_norm[ii+1]
+                    im_template = ims_moving[ii+1]
                 ## warp template to itself
                 elif ii == template:
-                    im_template = ims_moving_norm[ii]
+                    im_template = ims_moving[ii]
                 ## warp images after template backward (t4->t3->t2->t1)
                 elif ii > template:
-                    im_template = ims_moving_norm[ii-1]
+                    im_template = ims_moving[ii-1]
             elif template_method == 'image':
-                im_template = template_norm
+                im_template = template
 
+            ## Scale the pair to [0, 1] with one shared factor
+            norm_factor = np.nanmax([np.nanmax(im_template), np.nanmax(im_moving)])
             remappingIdx_raw.append(model.fit_nonrigid(
-                im_template=im_template,
-                im_moving=im_moving,
+                im_template=(im_template * (im_template > 0) / norm_factor).astype(np.float32),
+                im_moving=(im_moving * (im_moving > 0) / norm_factor).astype(np.float32),
             ))
 
         # compose warp transforms
@@ -889,9 +907,6 @@ class Aligner(util.ROICaT_Module):
         print('Applying nonrigid registration warps to images...') if self._verbose else None
         self.ims_registered_nonrigid = self.transform_images(ims_moving=ims_moving, remappingIdx=remappingIdx)
 
-        ### Make the registered images
-        #### Undo any remappingIdx_init
-        self.ims_registered_nonrigid = self.transform_images(ims_moving=ims_moving, remappingIdx=self.remappingIdx_nonrigid)
         ### Compute the new alignment scores
         iac_nonrigid = helpers.ImageAlignmentChecker(
             hw=tuple(self._HW),
@@ -900,7 +915,9 @@ class Aligner(util.ROICaT_Module):
             order=self.order,
             device='cpu',
         )
-        score_all_to_all_final = iac_nonrigid.score_alignment(images=self.ims_registered_geo, verbose=self._verbose, desc='Final nonrigid: all-to-all alignment scores')['z_in']
+        ## Fill NaN pixels (from NaN entries in the composed remapping index) with the geometric warp's border value: each moving image's mean
+        ims_to_score = [np.where(np.isnan(im), np.float32(im_moving.mean()), im) for im, im_moving in zip(self.ims_registered_nonrigid, ims_moving)]
+        score_all_to_all_final = iac_nonrigid.score_alignment(images=ims_to_score, verbose=self._verbose, desc='Final nonrigid: all-to-all alignment scores')['z_in']
         alignment_all_to_all_final = score_all_to_all_final > self.z_threshold
 
         ## Prepare outputs
@@ -1347,6 +1364,63 @@ def clahe(
         im_c = (im_c / (2**8 - 1)) * val_max
     im_c = im_c.astype(dtype_in)
     return im_c
+
+
+def normalize_local_brightness(
+    im: np.ndarray,
+    sigma: float,
+    fraction_std_floor: float = 0.05,
+    clip_z: float = 3.0,
+) -> np.ndarray:
+    """
+    Evens out the brightness and contrast of an image over space. Each pixel
+    becomes a local z-score: \n
+    ``z = (im - local_mean) / (local_std + fraction_std_floor * std(im))`` \n
+    The local mean and std are Gaussian-weighted over ``sigma`` pixels.
+    ``z`` is clipped to ``[-clip_z, clip_z]`` and mapped linearly to [0, 1] by
+    the same rule for every image, so ``z = 0`` maps to 0.5.
+    RH 2026
+
+    Args:
+        im (np.ndarray):
+            Input image. *(H, W)*
+        sigma (float):
+            Standard deviation of the Gaussian in pixels.
+        fraction_std_floor (float):
+            Floor added to the local std, as a fraction of the global std of the
+            image.
+        clip_z (float):
+            ``z`` is clipped to ``[-clip_z, clip_z]`` before the mapping to
+            [0, 1].
+
+    Returns:
+        (np.ndarray):
+            im_out (np.ndarray):
+                Normalized image, float32 in [0, 1]. NaN pixels and flat
+                (constant) images map to 0.5. *(H, W)*
+    """
+    assert im.ndim == 2, f'im must be 2D, not {im.ndim}D'
+    assert sigma > 0, f'sigma must be positive, not {sigma}'
+    assert fraction_std_floor > 0, f'fraction_std_floor must be positive, not {fraction_std_floor}'
+    assert clip_z > 0, f'clip_z must be positive, not {clip_z}'
+
+    im_float = im.astype(np.float64)
+    mask_nan = np.isnan(im_float)
+    ## Flat or all-NaN image
+    if mask_nan.all() or (np.nanmax(im_float) == np.nanmin(im_float)):
+        return np.full(im.shape, 0.5, dtype=np.float32)
+    ## Fill NaN pixels with the image mean
+    im_float = np.where(mask_nan, np.nanmean(im_float), im_float)
+
+    ## Gaussian-weighted local mean and std
+    mean_local = cv2.GaussianBlur(im_float, ksize=(0, 0), sigmaX=sigma, borderType=cv2.BORDER_REFLECT)
+    var_local = cv2.GaussianBlur(im_float * im_float, ksize=(0, 0), sigmaX=sigma, borderType=cv2.BORDER_REFLECT) - mean_local**2
+    std_local = np.sqrt(np.maximum(var_local, 0.0))
+
+    ## Local z-score, clipped and mapped to [0, 1]
+    z = (im_float - mean_local) / (std_local + fraction_std_floor * im_float.std())
+    z[mask_nan] = 0.0
+    return ((np.clip(z, -clip_z, clip_z) + clip_z) / (2 * clip_z)).astype(np.float32)
 
 
 def adaptive_brute_force_matcher(
@@ -1881,6 +1955,7 @@ class RoMa(ImageRegistrationMethod):
         """
         if isinstance(image, torch.Tensor):
             image = image.cpu().numpy()
+        assert np.issubdtype(image.dtype, np.floating), f"image must have a floating dtype with data in [0, 1], not {image.dtype}."
         return PIL.Image.fromarray(image * 255).convert("RGB")
 
 
@@ -2103,7 +2178,7 @@ class DeepFlow(ImageRegistrationMethod):
         """
         if isinstance(image, torch.Tensor):
             image = image.cpu().numpy()
-        
+        assert np.issubdtype(image.dtype, np.floating), f"image must have a floating dtype with data in [0, 1], not {image.dtype}."
         return (image * 255).astype(np.uint8)
 
 
@@ -2200,7 +2275,7 @@ class OpticalFlowFarneback(ImageRegistrationMethod):
         """
         if isinstance(image, torch.Tensor):
             image = image.cpu().numpy()
-        
+        assert np.issubdtype(image.dtype, np.floating), f"image must have a floating dtype with data in [0, 1], not {image.dtype}."
         return (image * 255).astype(np.uint8)
     
 
