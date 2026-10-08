@@ -3426,10 +3426,9 @@ class Test_Aligner_match_search:
         * 1: x offset 15. Aligns directly.
         * 2: x offset 30. Too far to align directly, but aligns to image 1.
         * 3: unrelated noise. Every registration involving it returns a wrong
-          warp, so it has no path. While any image has no path, the dense
-          search used to discard every path it found, image 2's included.
+          warp, so it has no path.
         * 4: image 0 plus faint noise. Every registration involving it returns
-          a wrong warp, but it is aligned as it is.
+          a wrong warp, so it has no path; only the identity would align it.
     """
 
     SIZE_PX = 128
@@ -3504,27 +3503,314 @@ class Test_Aligner_match_search:
         """(N, 2) translation (tx, ty) of each final warp."""
         return np.stack([np.asarray(w)[:2, 2] for w in aligner.results_geometric['warp_matrices']], axis=0)
 
-    def test_path_found_by_dense_search_is_kept(self, monkeypatch):
+    def test_path_found_through_passer_is_kept(self, monkeypatch):
         """Image 2 gets the warp composed through image 1, although image 3 has no path."""
-        aligner, _ = self._fit(idx_images=[0, 1, 2, 3], monkeypatch=monkeypatch)
+        aligner, n_registrations = self._fit(idx_images=[0, 1, 2, 3], monkeypatch=monkeypatch)
+        ## 4 direct registrations + 4 onto each of the 2 failed images + 4 onto each of the 2 remaining images
+        assert n_registrations == 20
         assert aligner.results_geometric['direct']['alignment_template_to_all'].tolist() == [True, True, False, False]
 
         translations = self._translations(aligner)
         np.testing.assert_allclose(translations[1], [-15, 0], atol=1e-5)
         np.testing.assert_allclose(translations[2], [-30, 0], atol=1e-5)
-        ## No warp aligns image 3, so it keeps identity
-        np.testing.assert_allclose(translations[3], [0, 0], atol=1e-5)
+        ## No path reaches image 3, so it keeps its direct warp
+        np.testing.assert_allclose(translations[3], self.WARP_WRONG_XY, atol=1e-5)
         assert aligner.results_geometric['final']['alignment_template_to_all'].tolist() == [True, True, True, False]
 
-    def test_first_round_success_skips_dense_search(self, monkeypatch):
-        """Image 4 fails direct registration but is aligned on identity, so the dense search never runs."""
+    def test_image_without_path_keeps_direct_warp(self, monkeypatch):
+        """Image 4 has no path, so it keeps its direct warp instead of the identity and the dense search runs."""
         aligner, n_registrations = self._fit(idx_images=[0, 1, 4], monkeypatch=monkeypatch)
         assert aligner.results_geometric['direct']['alignment_template_to_all'].tolist() == [True, True, False]
 
-        np.testing.assert_allclose(self._translations(aligner)[2], [0, 0], atol=1e-5)
-        assert aligner.results_geometric['final']['alignment_template_to_all'].tolist() == [True, True, True]
-        ## 3 direct registrations + 3 onto the failed image; a dense search would add 6
-        assert n_registrations == 6
+        np.testing.assert_allclose(self._translations(aligner)[2], self.WARP_WRONG_XY, atol=1e-5)
+        assert aligner.results_geometric['final']['alignment_template_to_all'].tolist() == [True, True, False]
+        ## 3 direct registrations + 3 onto the failed image + 6 of the dense search
+        assert n_registrations == 12
+
+
+######################################################################################################################################
+################################### ALIGNER: INPUT IMAGES (augment_FOV_images, fit_nonrigid) ########################################
+######################################################################################################################################
+
+
+def _make_textured_image(hw=(96, 128), seed=0, shift_yx=(0, 0), gradient=(0.5, 1.0)):
+    """
+    Smooth random texture times a left-to-right brightness gradient, in [0, 1].
+    Images with the same seed are crops of one canvas, so ``shift_yx=(dy, dx)``
+    gives ``im[y, x] = im_unshifted[y + dy, x + dx]``.
+    """
+    import scipy.ndimage
+    rng = np.random.default_rng(seed)
+    pad = 8
+    canvas = scipy.ndimage.gaussian_filter(rng.standard_normal((hw[0] + 2 * pad, hw[1] + 2 * pad)), sigma=2)
+    texture = canvas[pad + shift_yx[0]:pad + shift_yx[0] + hw[0], pad + shift_yx[1]:pad + shift_yx[1] + hw[1]]
+    im = (1 + 3 * texture) * np.linspace(gradient[0], gradient[1], hw[1])[None, :]  ## (H, W)
+    im = im - im.min()
+    return (im / im.max()).astype(np.float32)
+
+
+class Test_normalize_local_brightness:
+    """
+    Tests for ``alignment.normalize_local_brightness``.
+    """
+
+    @staticmethod
+    def _fn():
+        from roicat.tracking.alignment import normalize_local_brightness
+        return normalize_local_brightness
+
+    def test_shape_dtype_and_range(self):
+        im = _make_textured_image()
+        out = self._fn()(im, sigma=6.0)
+        assert out.shape == im.shape
+        assert out.dtype == np.float32
+        assert out.min() >= 0 and out.max() <= 1
+        assert out.min() < 0.25 and out.max() > 0.75
+
+    def test_removes_brightness_gradient(self):
+        """The left and right halves have the same mean."""
+        out = self._fn()(_make_textured_image(gradient=(0.1, 1.0)), sigma=6.0)
+        w = out.shape[1]
+        assert abs(out[:, :w // 2].mean() - out[:, w // 2:].mean()) < 0.02
+
+    def test_invariant_to_scale_and_offset(self):
+        im = _make_textured_image()
+        out = self._fn()(im, sigma=6.0)
+        ## Scaling by a power of 2 is exact in floating point
+        np.testing.assert_array_equal(self._fn()(im * np.float32(4), sigma=6.0), out)
+        ## An offset changes only the rounding
+        np.testing.assert_allclose(self._fn()(im + np.float32(10), sigma=6.0), out, rtol=0, atol=1e-5)
+
+    def test_nan_pixels(self):
+        """A NaN pixel becomes 0.5 and leaves the rest of the image unchanged."""
+        im = _make_textured_image()
+        im_nan = im.copy()
+        im_nan[10, 20] = np.nan
+        out = self._fn()(im_nan, sigma=6.0)
+        out_clean = self._fn()(im, sigma=6.0)
+        assert np.isfinite(out).all()
+        assert out[10, 20] == 0.5
+        far = np.ones(im.shape, dtype=bool)
+        far[:40, :50] = False
+        np.testing.assert_allclose(out[far], out_clean[far], rtol=0, atol=0.01)
+
+    @pytest.mark.parametrize('value', [0.0, 0.1, 3.0, 1234.5678, np.nan])
+    def test_constant_image_is_mid_gray(self, value):
+        out = self._fn()(np.full((32, 48), value, dtype=np.float32), sigma=6.0)
+        np.testing.assert_array_equal(out, np.full((32, 48), 0.5, dtype=np.float32))
+
+    def test_constant_with_nan_is_mid_gray(self):
+        im = np.full((32, 48), 0.1, dtype=np.float32)
+        im[5, 5] = np.nan
+        np.testing.assert_array_equal(self._fn()(im, sigma=6.0), np.full((32, 48), 0.5, dtype=np.float32))
+
+    @pytest.mark.parametrize('kwargs', [{'fraction_std_floor': 0.0}, {'fraction_std_floor': -0.05}, {'clip_z': 0.0}, {'clip_z': -3.0}])
+    def test_nonpositive_floor_or_clip_raises(self, kwargs):
+        with pytest.raises(AssertionError):
+            self._fn()(_make_textured_image(), sigma=6.0, **kwargs)
+
+
+class Test_augment_FOV_images_local_norm:
+    """
+    Tests for the ``local_norm_sigma_um`` step of
+    ``Aligner.augment_FOV_images``.
+    """
+
+    UM_PER_PIXEL = 2.0
+
+    @staticmethod
+    def _inputs(n_sessions=3, n_rois=6, hw=(96, 128), seed=0):
+        """Raw-scale FOV images with different brightness gradients, and sparse ROI footprints (n_rois, H * W)."""
+        rng = np.random.default_rng(seed)
+        FOV_images = [1000 * _make_textured_image(hw=hw, seed=seed, shift_yx=(ii, -ii), gradient=(0.3 + 0.2 * ii, 1.0)) for ii in range(n_sessions)]
+        yy, xx = np.mgrid[:hw[0], :hw[1]]
+        spatialFootprints = []
+        for _ in range(n_sessions):
+            centers = rng.uniform(low=(10, 10), high=(hw[0] - 10, hw[1] - 10), size=(n_rois, 2))
+            rois = np.stack([np.exp(-((yy - cy)**2 + (xx - cx)**2) / (2 * 3.0**2)) * ((yy - cy)**2 + (xx - cx)**2 < 36) for cy, cx in centers])  ## (n_rois, H, W)
+            spatialFootprints.append(scipy.sparse.csr_array(rois.reshape(n_rois, -1).astype(np.float32)))
+        return FOV_images, spatialFootprints
+
+    def _aligner(self):
+        from roicat.tracking import alignment
+        return alignment.Aligner(um_per_pixel=self.UM_PER_PIXEL, verbose=False)
+
+    def test_on_normalizes_the_augmented_images(self):
+        """The last step normalizes the mixed images with sigma = local_norm_sigma_um / um_per_pixel."""
+        from roicat.tracking.alignment import normalize_local_brightness
+        FOV_images, spatialFootprints = self._inputs()
+        aligner = self._aligner()
+        out = aligner.augment_FOV_images(FOV_images=FOV_images, spatialFootprints=spatialFootprints)  ## default: 12 um
+        assert aligner.params['augment_FOV_images']['local_norm_sigma_um'] == 12.0
+        expected_off = aligner.augment_FOV_images(FOV_images=FOV_images, spatialFootprints=spatialFootprints, local_norm_sigma_um=None)
+        for im_out, im_off in zip(out, expected_off):
+            assert im_out.dtype == np.float32
+            assert im_out.min() >= 0 and im_out.max() <= 1
+            np.testing.assert_array_equal(im_out, normalize_local_brightness(im_off, sigma=12.0 / self.UM_PER_PIXEL))
+
+    @pytest.mark.parametrize('value', [0.0, -1.0, True, 'a'])
+    def test_invalid_sigma_raises(self, value):
+        FOV_images, spatialFootprints = self._inputs()
+        with pytest.raises(AssertionError):
+            self._aligner().augment_FOV_images(FOV_images=FOV_images, spatialFootprints=spatialFootprints, local_norm_sigma_um=value)
+
+    @pytest.mark.parametrize('value', [12, 12.0, np.float32(12), np.int64(12)])
+    def test_numpy_sigma_accepted(self, value):
+        FOV_images, spatialFootprints = self._inputs(n_sessions=2)
+        out = self._aligner().augment_FOV_images(FOV_images=FOV_images, spatialFootprints=spatialFootprints, local_norm_sigma_um=value)
+        assert len(out) == 2
+
+    def test_default_wiring(self):
+        import inspect
+        from roicat.tracking import alignment
+        default_signature = inspect.signature(alignment.Aligner.augment_FOV_images).parameters['local_norm_sigma_um'].default
+        assert default_signature == util.get_default_parameters()['alignment']['augment']['local_norm_sigma_um']
+
+    def test_default_wiring_CLAHE_off(self):
+        import inspect
+        from roicat.tracking import alignment
+        default_signature = inspect.signature(alignment.Aligner.augment_FOV_images).parameters['use_CLAHE'].default
+        assert default_signature is False
+        assert util.get_default_parameters()['alignment']['augment']['use_CLAHE'] is False
+
+
+class Test_prepare_image_nonrigid:
+    """
+    ``_prepare_image`` of the nonrigid methods accepts float images and raises
+    on uint8 images. Called unbound, so RoMa's weights are not loaded.
+    """
+
+    @pytest.mark.parametrize('name_method', ['DeepFlow', 'OpticalFlowFarneback', 'RoMa'])
+    def test_uint8_raises(self, name_method):
+        from roicat.tracking import alignment
+        fn = getattr(alignment, name_method)._prepare_image
+        im_float = _make_textured_image()
+        fn(None, im_float)  ## float in [0, 1] is accepted
+        with pytest.raises(AssertionError):
+            fn(None, (im_float * 255).astype(np.uint8))
+
+
+class Test_fit_nonrigid_input_images:
+    """
+    The images that ``Aligner.fit_nonrigid`` hands to the optical flow call.
+    The flow calls are replaced by recorders, so these tests check the images
+    at the last step before OpenCV.
+    """
+
+    @staticmethod
+    def _install_recorder(monkeypatch, name_method):
+        """Replace the OpenCV flow call by a recorder that returns zero flow. Returns the list of recorded (template, moving)."""
+        from roicat.tracking import alignment
+        calls = []
+
+        def calc(im_template, im_moving):
+            calls.append((im_template, im_moving))
+            return np.zeros((*im_moving.shape, 2), dtype=np.float32)
+
+        if name_method == 'DeepFlow':
+            class FakeDeepFlow:
+                def calc(self, i0, i1, flow):
+                    return calc(i0, i1)
+            monkeypatch.setattr(alignment.cv2.optflow, 'createOptFlow_DeepFlow', lambda: FakeDeepFlow())
+        elif name_method == 'OpticalFlowFarneback':
+            monkeypatch.setattr(alignment.cv2, 'calcOpticalFlowFarneback', lambda prev, next, flow, **kwargs: calc(prev, next))
+        return calls
+
+    def _fit(self, monkeypatch, name_method, ims, template_method='image'):
+        from roicat.tracking import alignment
+        calls = self._install_recorder(monkeypatch=monkeypatch, name_method=name_method)
+        alignment.Aligner(verbose=False).fit_nonrigid(
+            template=1,
+            ims_moving=ims,
+            template_method=template_method,
+            method=name_method,
+            kwargs_method={'DeepFlow': {}, 'OpticalFlowFarneback': {}},
+        )
+        return calls
+
+    @staticmethod
+    def _images(normalized):
+        """Three shifted images, either raw or locally normalized."""
+        from roicat.tracking.alignment import normalize_local_brightness
+        ims = [_make_textured_image(shift_yx=(dy, dx)) for dy, dx in [(0, 0), (1, -2), (-2, 1)]]
+        return [normalize_local_brightness(im, sigma=6.0) for im in ims] if normalized else ims
+
+    @pytest.mark.parametrize('normalized', [True, False])
+    @pytest.mark.parametrize('name_method', ['DeepFlow', 'OpticalFlowFarneback'])
+    def test_images_not_inverted(self, monkeypatch, name_method, normalized):
+        """Template and moving images reach OpenCV as uint8, positively correlated with the input."""
+        ims = self._images(normalized=normalized)
+        calls = self._fit(monkeypatch, name_method, ims)
+        assert len(calls) == len(ims)
+        for im, (im_template_cv2, im_moving_cv2) in zip(ims, calls):
+            assert im_template_cv2.dtype == np.uint8 and im_moving_cv2.dtype == np.uint8
+            assert np.corrcoef(im_template_cv2.ravel(), ims[1].ravel())[0, 1] > 0.9
+            assert np.corrcoef(im_moving_cv2.ravel(), im.ravel())[0, 1] > 0.9
+
+    @pytest.mark.parametrize('scale_template', [0.5, 2.0])
+    def test_norm_factor_per_pair_image_template(self, monkeypatch, scale_template):
+        """Each pair is scaled by the max over its template and its moving image."""
+        ims = self._images(normalized=False)
+        ims = [ims[0], scale_template * ims[1], 0.25 * ims[2]]  ## session 1 is the template
+        calls = self._fit(monkeypatch, 'DeepFlow', ims)
+        to_uint8 = lambda im, norm_factor: (im / norm_factor * np.float32(255)).astype(np.uint8)
+        for im, (im_template_cv2, im_moving_cv2) in zip(ims, calls):
+            norm_factor = max(ims[1].max(), im.max())
+            ## the uint8 levels may differ by 1 from the test's float rounding
+            assert np.abs(im_template_cv2.astype(int) - to_uint8(ims[1], norm_factor).astype(int)).max() <= 1
+            assert np.abs(im_moving_cv2.astype(int) - to_uint8(im, norm_factor).astype(int)).max() <= 1
+
+    def test_norm_factor_per_pair_sequential_template(self, monkeypatch):
+        """Each pair is scaled by the max over its neighboring template image and its moving image."""
+        scales = [1.0, 0.5, 2.0, 0.25]
+        ims = [scale * _make_textured_image(shift_yx=(ii, -ii)) for ii, scale in enumerate(scales)]
+        calls = self._fit(monkeypatch, 'DeepFlow', ims, template_method='sequential')  ## template = session 1
+        idx_template = [1, 1, 1, 2]  ## template of each pair: 0 -> 1, 1 -> 1 (itself), 2 -> 1, 3 -> 2
+        assert len(calls) == len(ims)
+        to_uint8 = lambda im, norm_factor: (im / norm_factor * np.float32(255)).astype(np.uint8)
+        for ii, (im_template_cv2, im_moving_cv2) in enumerate(calls):
+            norm_factor = max(ims[idx_template[ii]].max(), ims[ii].max())
+            assert np.abs(im_template_cv2.astype(int) - to_uint8(ims[idx_template[ii]], norm_factor).astype(int)).max() <= 1
+            assert np.abs(im_moving_cv2.astype(int) - to_uint8(ims[ii], norm_factor).astype(int)).max() <= 1
+
+    @pytest.mark.parametrize('template_method', ['image', 'sequential'])
+    def test_dim_session_keeps_texture(self, monkeypatch, template_method):
+        """Sessions 1000x dimmer than another session still have texture as uint8 images when registered to each other."""
+        ims = self._images(normalized=False)
+        ims = [ims[0], 1e-3 * ims[1], 1e-3 * ims[2]]  ## session 1 is the template
+        calls = self._fit(monkeypatch, 'DeepFlow', ims, template_method=template_method)
+        im_template_cv2, im_moving_cv2 = calls[2]  ## the pair of the two dim sessions
+        assert len(np.unique(im_template_cv2)) > 50
+        assert im_moving_cv2.dtype == np.uint8
+        assert len(np.unique(im_moving_cv2)) > 50
+        assert np.corrcoef(im_moving_cv2.ravel(), ims[2].ravel())[0, 1] > 0.9
+
+    def test_sequential_template(self, monkeypatch):
+        ims = self._images(normalized=True)
+        calls = self._fit(monkeypatch, 'DeepFlow', ims, template_method='sequential')
+        assert len(calls) == len(ims)
+        assert all(i0.dtype == np.uint8 and i1.dtype == np.uint8 for i0, i1 in calls)
+
+    @pytest.mark.parametrize('normalized', [True, False])
+    def test_deepflow_recovers_shift(self, normalized):
+        """Real DeepFlow: the remap undoes a known shift under a different brightness gradient."""
+        from roicat.tracking import alignment
+        dy, dx = 1, -2
+        ims = [_make_textured_image(seed=1), _make_textured_image(seed=1, shift_yx=(dy, dx), gradient=(1.0, 0.6))]
+        if normalized:
+            ims = [alignment.normalize_local_brightness(im, sigma=6.0) for im in ims]
+        remap = alignment.Aligner(verbose=False).fit_nonrigid(
+            template=0,
+            ims_moving=ims,
+            template_method='image',
+            method='DeepFlow',
+            kwargs_method={'DeepFlow': {}},
+        )[1]  ## (H, W, 2) as (x_src, y_src)
+        h, w = ims[0].shape
+        grid = np.stack(np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32), indexing='xy'), axis=-1)
+        shift_median = np.median((remap - grid)[h // 4:3 * h // 4, w // 4:3 * w // 4].reshape(-1, 2), axis=0)
+        ## moving[y, x] = template[y + dy, x + dx], so the remap samples the moving image at (x - dx, y - dy)
+        np.testing.assert_allclose(shift_median, [-dx, -dy], atol=0.3)
 
 
 ######################################################################################################################################
@@ -4349,3 +4635,365 @@ def test_manhattan_similarity_kernel_cache_loads_in_new_process():
     )
     hits = [int(subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, check=True).stdout.strip().splitlines()[-1]) for _ in range(2)]
     assert hits[1] == 1, f"cache hits per process: {hits}"
+
+
+######################################################################################################################################
+################################################### ALIGNER: IMAGE ALIGNMENT CHECK ###################################################
+######################################################################################################################################
+
+
+class Test_Aligner_alignment_check:
+    """
+    The ``ImageAlignmentChecker`` that ``Aligner`` builds in ``fit_geometric``
+    and ``transform_images_nonrigid``. ``radius_in`` and ``radius_out`` of the
+    Aligner are in micrometers; the checker takes pixels.
+    """
+
+    UM_PER_PIXEL = 2.5
+    RADIUS_IN_UM = 5.0
+    RADIUS_OUT_UM = 25.0
+
+    @staticmethod
+    def _spy_checker(monkeypatch):
+        """
+        Replace ``helpers.ImageAlignmentChecker`` with a spy that records its
+        init kwargs and the images passed to ``score_alignment``. Returns the
+        record dict.
+        """
+        from roicat import helpers
+        record = {'init_kwargs': [], 'images_scored': []}
+        ImageAlignmentChecker_real = helpers.ImageAlignmentChecker
+
+        class SpyChecker(ImageAlignmentChecker_real):
+            def __init__(self, **kwargs):
+                record['init_kwargs'].append(kwargs)
+                super().__init__(**kwargs)
+
+            def score_alignment(self, images, **kwargs):
+                record['images_scored'].append(np.stack([np.asarray(im) for im in images], axis=0))
+                return super().score_alignment(images=images, **kwargs)
+
+        monkeypatch.setattr(helpers, 'ImageAlignmentChecker', SpyChecker)
+        return record
+
+    def _aligner(self):
+        from roicat.tracking import alignment
+        return alignment.Aligner(
+            radius_in=self.RADIUS_IN_UM,
+            radius_out=self.RADIUS_OUT_UM,
+            um_per_pixel=self.UM_PER_PIXEL,
+            use_match_search=False,
+            device='cpu',
+            verbose=False,
+        )
+
+    def test_fit_geometric_radii_in_pixels(self, monkeypatch):
+        """The checker gets the radii in pixels: micrometers divided by um_per_pixel."""
+        record = self._spy_checker(monkeypatch=monkeypatch)
+        images = [_make_textured_image(seed=0, shift_yx=(0, ii)) for ii in range(2)]
+        aligner = self._aligner()
+        aligner.fit_geometric(
+            template=0,
+            ims_moving=images,
+            template_method='image',
+            method='PhaseCorrelation',
+            kwargs_method={'PhaseCorrelation': {}},
+            kwargs_RANSAC={},
+            compute_final_all_to_all=False,
+            verbose=False,
+        )
+        kwargs = record['init_kwargs'][0]
+        assert kwargs['radius_in'] == pytest.approx(self.RADIUS_IN_UM / self.UM_PER_PIXEL)
+        assert kwargs['radius_out'] == pytest.approx(self.RADIUS_OUT_UM / self.UM_PER_PIXEL)
+
+    def _nonrigid_setup(self, shift_px):
+        """Aligner with geometric images and a nonrigid warp that shifts every image by ``shift_px`` pixels in x."""
+        from roicat import helpers
+        images = [_make_textured_image(seed=0) for _ in range(2)]
+        aligner = self._aligner()
+        aligner._HW = images[0].shape
+        H, W = aligner._HW
+        aligner.ims_registered_geo = [im.copy() for im in images]
+        warp_matrix = np.array([[1, 0, shift_px], [0, 1, 0], [0, 0, 1]], dtype=np.float32)
+        aligner.remappingIdx_nonrigid = [helpers.warp_matrix_to_remappingIdx(warp_matrix=warp_matrix, x=W, y=H) for _ in images]
+        return aligner, images
+
+    def test_transform_images_nonrigid_radii_in_pixels(self, monkeypatch):
+        """The checker gets the radii in pixels: micrometers divided by um_per_pixel."""
+        record = self._spy_checker(monkeypatch=monkeypatch)
+        aligner, images = self._nonrigid_setup(shift_px=0)
+        aligner.transform_images_nonrigid(ims_moving=images)
+        kwargs = record['init_kwargs'][0]
+        assert kwargs['radius_in'] == pytest.approx(self.RADIUS_IN_UM / self.UM_PER_PIXEL)
+        assert kwargs['radius_out'] == pytest.approx(self.RADIUS_OUT_UM / self.UM_PER_PIXEL)
+
+    def test_transform_images_nonrigid_scores_nonrigid_images(self, monkeypatch):
+        """The final nonrigid scores are computed on the nonrigid-registered images, not the geometric ones."""
+        record = self._spy_checker(monkeypatch=monkeypatch)
+        aligner, images = self._nonrigid_setup(shift_px=10)
+        aligner.transform_images_nonrigid(ims_moving=images)
+        images_scored = record['images_scored'][0]
+        np.testing.assert_array_equal(images_scored, np.stack(aligner.ims_registered_nonrigid, axis=0))
+        assert not np.allclose(images_scored, np.stack(aligner.ims_registered_geo, axis=0))
+
+    def test_transform_images_nonrigid_fills_nan_pixels_for_scoring(self, monkeypatch):
+        """NaN pixels in the nonrigid images are filled with each moving image's mean for scoring, and the scores are finite."""
+        record = self._spy_checker(monkeypatch=monkeypatch)
+        aligner, images = self._nonrigid_setup(shift_px=3)
+        for remapIdx in aligner.remappingIdx_nonrigid:
+            remapIdx[np.arange(10, 90, 8), np.arange(10, 90, 8)] = np.nan  ## isolated entries outside the composed warp's domain
+        aligner.transform_images_nonrigid(ims_moving=images)
+        images_nonrigid = np.stack(aligner.ims_registered_nonrigid, axis=0)
+        mask_nan = np.isnan(images_nonrigid)
+        assert mask_nan.any()
+        images_scored = record['images_scored'][0]
+        assert np.isfinite(images_scored).all()
+        np.testing.assert_array_equal(images_scored[~mask_nan], images_nonrigid[~mask_nan])
+        np.testing.assert_allclose(images_scored[mask_nan], np.repeat([im.mean() for im in images], mask_nan[0].sum()))
+        assert np.isfinite(aligner.results_nonrigid['final']['score_all_to_all']).all()
+
+
+class Test_Aligner_match_search_warp_choice:
+    """
+    Which warp ``Aligner.fit_geometric`` keeps per session when the direct check fails for some session and the match
+    search runs. The registration returns a distinct translation per session, the z scores are faked per scoring call,
+    and the path composition returns a marker warp, so each session's final warp shows which candidate was kept.
+    """
+
+    N_SESSIONS = 4
+    Z_DIRECT = np.array([100.0, 5.0, 5.0, 1.0])  ## sessions 1 and 2 pass the check (threshold 4), session 3 fails
+    MARKER_WARP = np.array([[1, 0, 7.0], [0, 1, 0], [0, 0, 1]], dtype=np.float32)  ## returned for every composed path
+
+    def _fit(self, monkeypatch, z_match_search, z_composed, use_match_search=True):
+        """
+        Run ``fit_geometric`` on ``N_SESSIONS`` images, template 0. Session ii registers directly to the template with
+        a translation of ``ii`` pixels in x. ``z_in`` against the template is faked: ``Z_DIRECT`` for the initial check,
+        ``z_match_search`` for every pair scored in the search, and one entry of ``z_composed`` (a list) for each
+        scoring of composed warps (match search round 1, then the dense round). Returns the final warps, shape (N, 3, 3).
+        """
+        from roicat import helpers
+        from roicat.tracking import alignment
+
+        images = [_make_textured_image(seed=0, shift_yx=(ii, 2 * ii)) for ii in range(self.N_SESSIONS)]
+        z_composed = iter(z_composed)
+
+        def score_alignment(self_checker, images, desc=None, **kwargs):
+            if desc.startswith('Initial alignment'):
+                z = self.Z_DIRECT
+            elif desc.startswith('Match search'):
+                z = z_match_search
+            elif desc.startswith('Path-finding'):
+                z = next(z_composed)
+            else:
+                return {'z_in': np.ones((len(images), 1))}
+            return {'z_in': np.asarray(z, dtype=np.float64)[:, None]}
+
+        def fit_rigid(self_model, im_template, im_moving, **kwargs):
+            idx = [ii for ii, im in enumerate(images) if np.array_equal(im, im_moving)][0]
+            return np.array([[1, 0, idx], [0, 1, 0], [0, 0, 1]], dtype=np.float32)
+
+        monkeypatch.setattr(helpers.ImageAlignmentChecker, 'score_alignment', score_alignment)
+        monkeypatch.setattr(alignment.PhaseCorrelationRegistration, 'fit_rigid', fit_rigid)
+        monkeypatch.setattr(alignment.Aligner, '_compose_warps', lambda self_aligner, **kwargs: self.MARKER_WARP)
+        aligner = alignment.Aligner(use_match_search=use_match_search, um_per_pixel=1.0, device='cpu', verbose=False)
+        aligner.fit_geometric(
+            template=0,
+            ims_moving=images,
+            template_method='image',
+            method='PhaseCorrelation',
+            kwargs_method={'PhaseCorrelation': {}},
+            kwargs_RANSAC={},
+            compute_final_all_to_all=False,
+            verbose=False,
+        )
+        return np.stack([np.asarray(w) for w in aligner.results_geometric['warp_matrices']], axis=0)
+
+    def _warps_direct(self, monkeypatch):
+        return self._fit(monkeypatch, z_match_search=None, z_composed=[], use_match_search=False)
+
+    def test_passed_sessions_keep_direct_warp(self, monkeypatch):
+        """Sessions that passed the direct check keep their direct warp although composed warps score higher."""
+        warps_direct = self._warps_direct(monkeypatch)
+        warps = self._fit(monkeypatch, z_match_search=np.full(self.N_SESSIONS, 50.0), z_composed=[self.Z_DIRECT, [100.0, 90.0, 90.0, 90.0]])
+        np.testing.assert_allclose(warps[[0, 1, 2]], warps_direct[[0, 1, 2]], atol=1e-6)
+
+    @pytest.mark.parametrize('z_composed_failed, expect_composed', [(3.0, True), (0.5, False)])
+    def test_failed_session_takes_composed_warp_only_if_it_scores_higher(self, monkeypatch, z_composed_failed, expect_composed):
+        """A session that failed the direct check takes the composed warp only if its z exceeds the direct z."""
+        warps_direct = self._warps_direct(monkeypatch)
+        warps = self._fit(monkeypatch, z_match_search=np.full(self.N_SESSIONS, 50.0), z_composed=[self.Z_DIRECT, [100.0, 90.0, 90.0, z_composed_failed]])
+        expected = self.MARKER_WARP if expect_composed else warps_direct[3]
+        np.testing.assert_allclose(warps[3], expected, atol=1e-6)
+
+    def test_failed_session_without_path_keeps_direct_warp(self, monkeypatch):
+        """With no pair passing the check there is no path to the template; the session keeps its direct warp, not the identity."""
+        warps_direct = self._warps_direct(monkeypatch)
+        assert not np.allclose(warps_direct[3], np.eye(3), atol=1e-3)
+        warps = self._fit(monkeypatch, z_match_search=np.zeros(self.N_SESSIONS), z_composed=[[100.0, 90.0, 90.0, 90.0]] * 2)
+        np.testing.assert_allclose(warps, warps_direct, atol=1e-6)
+
+
+class Test_Aligner_match_search_three_step:
+    """
+    The three steps of the match search in ``Aligner.fit_geometric``: register to the template, register to each failed
+    session, then register to the remaining sessions. Sessions have known non-commuting ground-truth transforms
+    ``G_s``; registering session ``m`` onto ``t`` returns ``G_m @ inv(G_t)``, except that session 3 registers wrongly
+    onto the template. The z scores are faked per scoring call. Session 3 fails the direct check; sessions 1 and 2 pass.
+    """
+
+    N_SESSIONS = 4
+    Z_DIRECT = np.array([100.0, 5.0, 5.0, 1.0])
+    ## Row 3 (all registered onto session 3): sessions 1 and 2 pass, session 0 fails. Session 1 is the cheaper route.
+    Z_ONTO_3 = np.array([0.0, 50.0, 20.0, 50.0])
+    WARP_WRONG = np.array([[1, 0, 9.0], [0, 1, -6.0], [0, 0, 1]], dtype=np.float32)
+    ANGLES_DEG = (0.0, 3.0, -4.0, 5.0)
+    SHIFTS_XY = ((0.0, 0.0), (4.0, -2.0), (-3.0, 5.0), (6.0, 3.0))
+
+    @classmethod
+    def _G(cls, idx):
+        """Ground-truth transform of session ``idx``, shape (3, 3)."""
+        angle = np.deg2rad(cls.ANGLES_DEG[idx])
+        return np.array([
+            [np.cos(angle), -np.sin(angle), cls.SHIFTS_XY[idx][0]],
+            [np.sin(angle), np.cos(angle), cls.SHIFTS_XY[idx][1]],
+            [0, 0, 1],
+        ])
+
+    @classmethod
+    def _warp_true(cls, idx_moving, idx_template):
+        """Warp registering session ``idx_moving`` onto ``idx_template``."""
+        return cls._G(idx_moving) @ np.linalg.inv(cls._G(idx_template))
+
+    def _fit(self, monkeypatch, z_composed=None, z_onto_3=None, z_direct=None, all_to_all=False, z_threshold=4.0):
+        """
+        Run ``fit_geometric`` on ``N_SESSIONS`` images, template 0. Initial check: ``z_direct`` (``Z_DIRECT`` if ``None``). Scoring all sessions
+        onto session 3: ``z_onto_3``; onto session 0: 50 except for session 3, which fails; onto any other session: 50.
+        Each scoring of composed warps returns the next entry of ``z_composed``, a list of z scores. If ``z_composed``
+        is ``None``, a session scores 90 when its warp equals its ground-truth warp onto the template, else 1.
+        Returns the aligner and the number of registrations run.
+        """
+        from roicat import helpers
+        from roicat.tracking import alignment
+
+        images = [_make_textured_image(seed=0, shift_yx=(ii, 2 * ii)) for ii in range(self.N_SESSIONS)]
+        z_onto_3 = self.Z_ONTO_3 if z_onto_3 is None else z_onto_3
+        z_direct = self.Z_DIRECT if z_direct is None else z_direct
+        z_composed = None if z_composed is None else iter(z_composed)
+        calls = []
+        warps_scored = []  ## warps of every image passed to the remapping, in order
+        warp_matrix_to_remappingIdx_original = helpers.warp_matrix_to_remappingIdx
+
+        def warp_matrix_to_remappingIdx(warp_matrix, **kwargs):
+            warps_scored.append(np.vstack([warp_matrix, [0, 0, 1]]) if np.asarray(warp_matrix).shape == (2, 3) else np.asarray(warp_matrix))
+            return warp_matrix_to_remappingIdx_original(warp_matrix=warp_matrix, **kwargs)
+
+        def idx_of(im):
+            return [ii for ii, im_ref in enumerate(images) if np.array_equal(im_ref, im)][0]
+
+        def score_alignment(self_checker, images, desc=None, **kwargs):
+            if desc.startswith('Initial alignment'):
+                z = z_direct
+            elif desc.startswith('Match search'):
+                z = np.full(len(images), 50.0)
+                if desc.endswith('idx 3'):
+                    z = z_onto_3
+                elif desc.endswith('idx 0'):
+                    z[3] = 0.0  ## session 3 registers wrongly onto the template
+            elif desc.startswith('Path-finding'):
+                if z_composed is None:
+                    warps_new = warps_scored[-len(images):]  ## the composed warps, one per session
+                    z = [90.0 if np.allclose(warp, self._warp_true(idx_moving=ii, idx_template=0), rtol=1e-4, atol=1e-3) else 1.0 for ii, warp in enumerate(warps_new)]
+                else:
+                    z = next(z_composed)
+            else:
+                return {'z_in': np.ones((len(images), 1))}
+            return {'z_in': np.asarray(z, dtype=np.float64)[:, None]}
+
+        def fit_rigid(self_model, im_template, im_moving, **kwargs):
+            calls.append(1)
+            idx_template, idx_moving = idx_of(im_template), idx_of(im_moving)
+            if (idx_template == 0) and (idx_moving == 3):
+                return self.WARP_WRONG
+            return self._warp_true(idx_moving=idx_moving, idx_template=idx_template).astype(np.float32)
+
+        monkeypatch.setattr(helpers.ImageAlignmentChecker, 'score_alignment', score_alignment)
+        monkeypatch.setattr(helpers, 'warp_matrix_to_remappingIdx', warp_matrix_to_remappingIdx)
+        monkeypatch.setattr(alignment.PhaseCorrelationRegistration, 'fit_rigid', fit_rigid)
+        aligner = alignment.Aligner(use_match_search=True, all_to_all=all_to_all, z_threshold=z_threshold, um_per_pixel=1.0, device='cpu', verbose=False)
+        aligner.fit_geometric(
+            template=0,
+            ims_moving=images,
+            template_method='image',
+            method='PhaseCorrelation',
+            kwargs_method={'PhaseCorrelation': {}},
+            kwargs_RANSAC={},
+            compute_final_all_to_all=False,
+            verbose=False,
+        )
+        return aligner, len(calls)
+
+    @staticmethod
+    def _warps(aligner):
+        """Final warps as 3x3 matrices, shape (N, 3, 3). Composed warps are stored as 2x3."""
+        return np.stack([np.vstack([w, [0, 0, 1]]) if np.asarray(w).shape == (2, 3) else np.asarray(w) for w in aligner.results_geometric['warp_matrices']], axis=0)
+
+    def test_step2_rescues_failed_session_through_passer(self, monkeypatch):
+        """Session 3 takes the warp composed through session 1: the direct warp of 3 onto 1, then of 1 onto the template."""
+        aligner, n_registrations = self._fit(monkeypatch)
+        assert n_registrations == 2 * self.N_SESSIONS  ## the route uses the inverted warp of session 3 onto session 1, not a dense search
+        warps = self._warps(aligner)
+        expected = self._warp_true(idx_moving=3, idx_template=1) @ self._warp_true(idx_moving=1, idx_template=0)
+        np.testing.assert_allclose(expected, self._warp_true(idx_moving=3, idx_template=0), atol=1e-9)
+        assert not np.allclose(self._warp_true(idx_moving=3, idx_template=1) @ self._warp_true(idx_moving=1, idx_template=0), self._warp_true(idx_moving=1, idx_template=0) @ self._warp_true(idx_moving=3, idx_template=1), atol=1e-2)
+        np.testing.assert_allclose(warps[3], expected, rtol=1e-4, atol=1e-3)
+        for idx in [0, 1, 2]:
+            np.testing.assert_allclose(warps[idx], self._warp_true(idx_moving=idx, idx_template=0), rtol=1e-4, atol=1e-3)
+
+    def test_step3_skipped_when_step2_rescues_everything(self, monkeypatch):
+        """N registrations to the template plus N onto each failed session."""
+        _, n_registrations = self._fit(monkeypatch)
+        n_failed = 1
+        assert n_registrations == self.N_SESSIONS + self.N_SESSIONS * n_failed
+
+    def test_step3_runs_when_step2_leaves_a_failure(self, monkeypatch):
+        """N registrations to the template, N onto each failed session, and N onto each session not yet used as a template."""
+        _, n_registrations = self._fit(monkeypatch, z_composed=[self.Z_DIRECT] * 2)
+        n_failed, n_remaining = 1, 3
+        assert n_registrations == self.N_SESSIONS + self.N_SESSIONS * n_failed + self.N_SESSIONS * n_remaining
+
+    def test_all_to_all_registers_every_pair_and_keeps_warps(self, monkeypatch):
+        """With ``all_to_all=True`` there is one registration per pair, no dense search, and every pair is measured directly."""
+        aligner, n_registrations = self._fit(monkeypatch, all_to_all=True)
+        assert n_registrations == self.N_SESSIONS + self.N_SESSIONS * self.N_SESSIONS
+        assert np.isfinite(aligner.results_geometric['direct']['score_all_to_all']).all()
+        warps = self._warps(aligner)
+        for idx in range(self.N_SESSIONS):
+            np.testing.assert_allclose(warps[idx], self._warp_true(idx_moving=idx, idx_template=0), rtol=1e-4, atol=1e-3)
+
+    def test_direct_scores_stay_nan_for_pairs_not_registered(self, monkeypatch):
+        """Only row 3 of the direct all-to-all scores is measured; the inverted pairs do not appear in it."""
+        aligner, _ = self._fit(monkeypatch)
+        score = aligner.results_geometric['direct']['score_all_to_all']
+        alignment = aligner.results_geometric['direct']['alignment_all_to_all']
+        np.testing.assert_array_equal(score[3], self.Z_ONTO_3)
+        assert np.isnan(score[[0, 1, 2]]).all()
+        assert np.isnan(alignment[[0, 1, 2]]).all()
+
+    def test_nan_direct_score_takes_step2_warp(self, monkeypatch):
+        """A session whose direct score is NaN takes the warp composed through session 1."""
+        aligner, n_registrations = self._fit(monkeypatch, z_direct=np.array([100.0, 5.0, 5.0, np.nan]))
+        assert n_registrations == 2 * self.N_SESSIONS
+        assert aligner.results_geometric['direct']['alignment_template_to_all'].tolist() == [True, True, True, False]
+        np.testing.assert_allclose(self._warps(aligner)[3], self._warp_true(idx_moving=3, idx_template=0), rtol=1e-4, atol=1e-3)
+
+    def test_nan_score_after_step2_runs_step3(self, monkeypatch):
+        """A session whose score is still NaN after step 2 counts as failed, so step 3 runs."""
+        z_nan = np.array([100.0, 5.0, 5.0, np.nan])
+        _, n_registrations = self._fit(monkeypatch, z_direct=z_nan, z_composed=[z_nan] * 2)
+        n_failed, n_remaining = 1, 3
+        assert n_registrations == self.N_SESSIONS + self.N_SESSIONS * n_failed + self.N_SESSIONS * n_remaining
+
+    def test_all_to_all_skips_step3_when_a_session_still_fails(self, monkeypatch):
+        """With ``all_to_all=True`` and a session still failing, the composed warps are scored once (no step 3)."""
+        _, n_registrations = self._fit(monkeypatch, z_composed=[self.Z_DIRECT], all_to_all=True)  ## a second scoring raises StopIteration
+        assert n_registrations == self.N_SESSIONS + self.N_SESSIONS * self.N_SESSIONS
