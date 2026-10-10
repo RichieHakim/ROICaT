@@ -4512,7 +4512,7 @@ def make_label_variants(
 
     ## testing
     assert np.allclose(np.concatenate(labels_bySession), labels_squeezed)
-    assert np.allclose(labels_bool.nonzero()[1] - 1, labels_squeezed)
+    assert np.allclose(labels_bool.nonzero()[1] + labels_squeezed.min(), labels_squeezed)  ## column index = label - smallest label (-1 when ROIs are unclustered)
     assert np.all([np.allclose(np.where(labels_squeezed==u)[0], ldu) for u, ldu in labels_dict.items()])
 
     ## Convert everything to native python types for JSON compatibility
