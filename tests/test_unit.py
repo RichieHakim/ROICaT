@@ -4634,7 +4634,7 @@ def test_compute_similarity_blockwise_keeps_negative_values():
     s_pre = np.minimum(s_pre, s_pre.T).astype(np.float32)  ## shape: (n_roi, n_roi)
 
     similarities = graph.compute_similarity_blockwise(
-        spatialFootprints=sf,
+        spatialFootprints=[sf],
         ROI_session_bool=ROI_session_bool,
         features={},
         precomputed_similarities={'pre': scipy.sparse.csr_array(s_pre)},
