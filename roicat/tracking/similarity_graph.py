@@ -426,26 +426,25 @@ class ROI_graph(util.ROICaT_Module):
 
         ## Merge block-level sparse matrices into a single full-size matrix.
         ## Algorithm:
-        ##   1. Clamp negatives to 1e-10 (sparse format drops true zeros)
-        ##   2. Shift all values positive by a constant
-        ##   3. Remap local block indices → global ROI indices
-        ##   4. Flatten each block to (1, n_roi*n_roi) and vstack
-        ##   5. Take element-wise MAX across blocks (handles overlapping blocks)
-        ##   6. Undo the shift
+        ##   1. Shift all stored values to >= 1 by a constant
+        ##   2. Remap local block indices → global ROI indices
+        ##   3. Flatten each block to (1, n_roi*n_roi) and vstack
+        ##   4. Take element-wise MAX across blocks (handles overlapping blocks)
+        ##   5. Undo the shift
         ## Uses sparse.COO for the max reduction — much faster than scipy.
         def merge_sparse_arrays(s_list, idx_list, shape, shift_val=None):
             def csr_to_coo_idxd(s_csr, idx, shift_val, shape):
-                ## Clamp negatives (z-scored metrics can have negative values
-                ## that would be lost in sparse format without this shift trick)
-                s_csr.data[s_csr.data < 0] = 1e-10
                 s_coo = s_csr.tocoo()
                 ## Remap local block indices to global indices and add shift
                 return scipy.sparse.coo_array(
                     (s_coo.data + shift_val, (idx[s_coo.row], idx[s_coo.col])),
                     shape=shape,  ## (n_roi, n_roi)
                 )
+            ## The max over blocks counts a block that lacks an entry as 0, so
+            ## a stored value <= 0 would lose to it and drop out. Shifting by
+            ## ``1 - min`` puts every stored value, negatives included, at >= 1.
             if shift_val is None:
-                shift_val = min([s.min() for s in s_list]) + 1
+                shift_val = 1 - min([s.min() for s in s_list])
 
             ## Flatten each block to a row vector, stack vertically
             s_flat = scipy.sparse.vstack([
