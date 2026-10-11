@@ -4609,6 +4609,47 @@ def test_manhattan_similarity_index_dtypes(n_pixels, dtype_idx, n_workers):
     assert np.allclose(s_sf.toarray(), s_ref, atol=1e-6)
 
 
+def test_compute_similarity_blockwise_keeps_negative_values():
+    """Merging the blocks keeps every stored entry of a metric with negative
+    values, below -1 too, at its value and in the layout of ``sf``."""
+    from roicat.tracking.similarity_graph import ROI_graph, SimilarityMetric, DEFAULT_METRICS
+    height, width = 8, 16
+    graph = ROI_graph(n_workers=1, frame_height=height, frame_width=width, block_height=8, block_width=8, verbose=False)
+    assert len(graph.blocks) == 2
+
+    ## ROI i covers rows 2-5 and columns 2i to 2i+4, so ROIs 2 and 3 lie in both
+    ## blocks and their pair is merged from two blocks
+    rng = np.random.default_rng(0)
+    n_roi = 6
+    sf = np.zeros((n_roi, height, width), dtype=np.float32)
+    for ii in range(n_roi):
+        sf[ii, 2:6, 2 * ii:2 * ii + 5] = rng.random((4, 5)) + 0.1
+    sf = scipy.sparse.csr_array(sf.reshape(n_roi, -1))  ## shape: (n_roi, height * width)
+    ROI_session_bool = torch.as_tensor(np.arange(n_roi)[:, None] % 2 == np.arange(2)[None, :])  ## shape: (n_roi, 2)
+
+    ## Symmetric, no zeros. The most negative value is in one block only.
+    s_pre = rng.uniform(0.1, 1.0, size=(n_roi, n_roi))
+    for (ii, jj), value in {(0, 1): -1.5, (1, 2): -0.2, (2, 3): -0.7, (2, 4): -2.2, (3, 5): -0.05, (4, 5): -3.0}.items():
+        s_pre[ii, jj] = value
+    s_pre = np.minimum(s_pre, s_pre.T).astype(np.float32)  ## shape: (n_roi, n_roi)
+
+    similarities = graph.compute_similarity_blockwise(
+        spatialFootprints=[sf],
+        ROI_session_bool=ROI_session_bool,
+        features={},
+        precomputed_similarities={'pre': scipy.sparse.csr_array(s_pre)},
+        metric_configs=[DEFAULT_METRICS[0], SimilarityMetric(name='pre', similarity_fn=None, is_sparsity_source=False)],
+    )
+    s_sf, s_merged = similarities['sf'], similarities['pre']
+    s_sf.sort_indices()
+    s_merged.sort_indices()
+    assert s_sf.nnz == 2 * 9  ## 9 overlapping pairs, both orders
+    np.testing.assert_array_equal(s_merged.indptr, s_sf.indptr)
+    np.testing.assert_array_equal(s_merged.indices, s_sf.indices)
+    idx_row = np.repeat(np.arange(n_roi), np.diff(s_sf.indptr))  ## shape: (nnz,)
+    np.testing.assert_allclose(s_merged.data, s_pre[idx_row, s_sf.indices], rtol=0, atol=1e-6)
+
+
 @pytest.mark.parametrize('n_workers', [0, -2, 1.0])
 def test_roi_graph_invalid_n_workers_raises(n_workers):
     from roicat.tracking.similarity_graph import ROI_graph
