@@ -1396,16 +1396,22 @@ class Clusterer(util.ROICaT_Module):
         logit_prior = float(np.log(prior / (1.0 - prior)))
         logit_combined = logit_sum - (K - 1) * logit_prior
 
-        ## Convert back to probability
+        ## Convert back to probability. float64, and the distance is computed
+        ## as sigmoid(-logit) rather than 1 - sigmoid(logit): in float32 the
+        ## sigmoid rounds to exactly 1.0 for strong evidence, so 1 - P would
+        ## be exactly 0, and sparse products (``d_conj.multiply(s_sesh)``)
+        ## drop stored zeros, losing the most confident pairs.
+        logit_combined = logit_combined.to(torch.float64)
         p_same_combined = torch.sigmoid(logit_combined).numpy()
-        calibrations['p_same_combined'] = p_same_combined
+        d_different_combined = torch.sigmoid(-logit_combined).numpy()
+        calibrations['p_same_combined'] = p_same_combined.astype(np.float32)  ## keeps the stored dtype
 
         ## Build sparse similarity and distance matrices
         sConj = self._s_sparsity.copy()
-        sConj.data = p_same_combined.astype(np.float64)
+        sConj.data = p_same_combined
 
         dConj = sConj.copy()
-        dConj.data = 1.0 - dConj.data
+        dConj.data = d_different_combined
 
         ## Store for downstream use
         self.dConj = dConj
