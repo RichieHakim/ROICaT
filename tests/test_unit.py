@@ -4997,3 +4997,24 @@ class Test_Aligner_match_search_three_step:
         """With ``all_to_all=True`` and a session still failing, the composed warps are scored once (no step 3)."""
         _, n_registrations = self._fit(monkeypatch, z_composed=[self.Z_DIRECT], all_to_all=True)  ## a second scoring raises StopIteration
         assert n_registrations == self.N_SESSIONS + self.N_SESSIONS * self.N_SESSIONS
+
+
+class Test_make_label_variants:
+    """Tests for ``clustering.make_label_variants``."""
+
+    @pytest.mark.parametrize("labels", [
+        [-1, 0, 1, 0, -1, 1],  ## some ROIs unclustered
+        [0, 1, 1, 0, 2, 2],  ## every ROI clustered: no -1 label
+        [3, 5, 5, 3, 7, 7],  ## no -1 label, labels not starting at 0
+    ])
+    def test_unclustered_rois_are_optional(self, labels):
+        from roicat.tracking.clustering import make_label_variants
+
+        labels_squeezed, labels_bySession, labels_bool, labels_bool_bySession, labels_dict = make_label_variants(
+            labels=labels, n_roi_bySession=[3, 3],
+        )
+        assert labels_squeezed == helpers.squeeze_integers(np.array(labels)).tolist()
+        assert [len(l) for l in labels_bySession] == [3, 3]
+        assert labels_bool.shape == (6, len(set(labels)))
+        assert [m.shape[0] for m in labels_bool_bySession] == [3, 3]
+        assert sum(len(v) for v in labels_dict.values()) == 6
