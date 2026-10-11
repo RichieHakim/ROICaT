@@ -1574,6 +1574,57 @@ class Test_naive_bayes_distance_matrix:
         assert cal['p_same_bins'][idx_binCounted] != cal['p_same_bins'][idx_binLeft], "precondition: a wrong lookup must be visible"
         np.testing.assert_array_equal(cal['p_same_per_pair'][is_tied], cal['p_same_bins'][idx_binCounted])
 
+    def test_overwhelming_evidence_keeps_positive_distance(self):
+        """Pairs with overwhelming evidence keep a small positive distance.
+
+        In float32, ``sigmoid(logit)`` rounds to exactly 1.0 for strong
+        evidence, so ``1 - P`` is 0 and ``d_conj.multiply(s_sesh)`` (the first
+        step of ``fit``) drops the most confident matches.
+        """
+        import scipy.sparse
+        from roicat import tracking
+        from roicat.tracking.similarity_graph import DEFAULT_METRICS
+        rng = np.random.default_rng(0)
+        n_cell, n_intra, n_cross = 60, 120, 20
+        n_roi = 2 * n_cell
+        ## Few pairs, so that the true matches fill several equal-mass bins
+        ## and the top bins have P(same) at the clip. Pairs: every match
+        ## (cell c in session 0 with cell c in session 1), intra-session
+        ## pairs, and a few cross-session non-matches.
+        pairs_match = [(c, n_cell + c) for c in range(n_cell)]
+        pairs_other = set()
+        while len(pairs_other) < n_intra + n_cross:
+            a, b = (int(x) for x in rng.integers(0, n_roi, 2))
+            is_intra = (a < n_cell) == (b < n_cell)
+            n_have_intra = sum((p[0] < n_cell) == (p[1] < n_cell) for p in pairs_other)
+            if (a == b) or (a % n_cell == b % n_cell) or (is_intra and n_have_intra >= n_intra) or ((not is_intra) and (len(pairs_other) - n_have_intra >= n_cross)):
+                continue
+            pairs_other.add((min(a, b), max(a, b)))
+        pairs = np.array(pairs_match + sorted(pairs_other))  ## shape: (n_pair, 2)
+        is_match = np.arange(len(pairs)) < n_cell
+        is_intra = (pairs[:, 0] < n_cell) == (pairs[:, 1] < n_cell)
+
+        def symmetric(v, dtype):
+            rows, cols = np.concatenate([pairs[:, 0], pairs[:, 1]]), np.concatenate([pairs[:, 1], pairs[:, 0]])
+            return scipy.sparse.csr_array((np.concatenate([v, v]).astype(dtype), (rows, cols)), shape=(n_roi, n_roi))
+
+        sims = {
+            'sf': symmetric(np.where(is_match, rng.uniform(0.8, 0.9, len(pairs)), rng.uniform(0.0, 0.2, len(pairs))), np.float64),
+            'nn': symmetric(np.where(is_match, 1000.0, rng.normal(0, 1, len(pairs))), np.float32),
+            'swt': symmetric(np.where(is_match, 1000.0, rng.normal(0, 1, len(pairs))), np.float32),
+        }
+        s_sesh = symmetric(~is_intra, np.float64).astype(bool)
+        clusterer = tracking.clustering.Clusterer(
+            similarities=sims, metric_configs=DEFAULT_METRICS, s_sesh=s_sesh, verbose=False,
+        )
+
+        dConj, sConj, _ = clusterer.make_naive_bayes_distance_matrix()
+        is_match_data = sims['sf'].data > 0.7  ## shape: (nnz,), aligned with dConj.data
+        assert (dConj.data[is_match_data] > 0.0).all()
+        assert (sConj.data[is_match_data] > 0.5).all()
+        ## Every cross-session pair must survive the product
+        assert dConj.multiply(s_sesh).nnz == s_sesh.sum()
+
     def test_returns_correct_types(self, clusterer_with_data):
         """Should return (dConj, sConj, calibrations) with correct types."""
         import scipy.sparse
