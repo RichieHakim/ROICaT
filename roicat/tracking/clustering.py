@@ -3220,8 +3220,9 @@ class Clusterer(util.ROICaT_Module):
         rs_sil = None
         hdbscan_metrics = None
         if include_sample_metrics:
-            ## Missing distances represent pruned-away pairs and are therefore
-            ## assigned a value far beyond every stored edge. Keep the caller's
+            ## Missing distances represent pairs whose footprints do not touch
+            ## and are assigned the largest possible distance, 1 (P = 0), the
+            ## same value cluster_quality_metrics gives a missing pair. Keep the caller's
             ## CSR matrix in place; copy only on the exceptional upstream-bug
             ## path where negative distances must be clipped.
             d_for_sil = dist_mat.tocsr(copy=False)
@@ -3237,11 +3238,7 @@ class Clusterer(util.ROICaT_Module):
                 d_for_sil = d_for_sil.copy()
                 d_for_sil.data = np.clip(d_for_sil.data, 0, None)
 
-            fill_value = (
-                float(d_for_sil.data.max()) * 1000.0
-                if d_for_sil.data.size > 0
-                else 1.0
-            )
+            fill_value = 1.0  ## d = 1 - P, so P = 0 gives d = 1
             if len(labels_unique) < 2:
                 warnings.warn(
                     "Silhouette samples calculation requires at least 2 "
