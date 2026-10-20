@@ -37,7 +37,7 @@ core = [
     "PyYAML==6.0.3",
     "requests==2.34.2",  ## Downloading ROInet weights in roicat/helpers.py.
     "roiextractors==0.10.0",
-    "Pillow==12.3.0",
+    "Pillow==13.0.0",
 
     ## Alignment and tracking.
     ## An upper bound rather than an exact pin, as it was before this
