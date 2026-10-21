@@ -11,10 +11,7 @@ import zipfile
 import gc
 from functools import partial
 
-import tkinter as tk
-from tkinter import ttk
 import PIL
-from PIL import ImageTk
 import csv
 import warnings
 import time
@@ -28,7 +25,6 @@ import scipy.interpolate
 import sparse
 from tqdm.auto import tqdm
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.widgets import LassoSelector
 from matplotlib.path import Path as mplPath
 import yaml
@@ -2680,6 +2676,10 @@ class ImageLabeler:
         Runs the image labeler. Opens a tkinter window and displays the first
         image.
         """
+        ## Imported here, not at module level, because some Python builds
+        ## lack tkinter and roicat must still import there (#726).
+        import tkinter as tk
+
         try:
             self._root = tk.Tk()
             self._img_label = tk.Label(self._root)
@@ -2711,6 +2711,8 @@ class ImageLabeler:
 
     def next_img(self, event=None):
         """Displays the next image in the array, and resizes the image."""
+        from PIL import ImageTk  ## Imports tkinter; see ImageLabeler.run.
+
         ## Display the image
         ### End the session if there are no more images
         self._index += 1
@@ -2985,6 +2987,12 @@ class IntegratedLabeler:
         """
         Runs the image labeler with both image display and matplotlib panels.
         """
+        ## Imported here, not at module level, because some Python builds
+        ## lack tkinter and roicat must still import there (#726).
+        import tkinter as tk
+        from tkinter import ttk
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
         try:
             self._root = tk.Tk()
             self._root.title("Image Labeler")
