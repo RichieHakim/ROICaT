@@ -94,7 +94,7 @@ installation process, please make a [github
 issue](https://github.com/RichieHakim/ROICaT/issues) with the error.
 
 ### 0. Requirements
-- **Python 3.12, 3.13, or 3.14**.
+- **Python 3.12, 3.13, 3.14, or 3.15**.
 - [Anaconda](https://www.anaconda.com/distribution/) or
   [Miniconda](https://docs.conda.io/en/latest/miniconda.html).
 - The below commands should be run in the terminal (Mac/Linux) or Anaconda
@@ -227,6 +227,7 @@ sudo docker run -it -p 7860:7860 --platform=linux/amd64 --shm-size=10g registry.
 - [ ] Try training on cellpose datasets
 - [x] Python 3.13
 - [x] Python 3.14
+- [x] Python 3.15
 #### other:
 - [ ] Write the paper
 - [ ] Make tweet about it
