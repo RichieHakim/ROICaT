@@ -650,6 +650,25 @@ class Test_flatten_dict:
         assert helpers.flatten_dict({}) == {}
 
 
+def test_roicat_imports_without_tkinter():
+    """roicat imports on a Python built without tkinter (#726).
+
+    Linux distributions package tkinter separately (``python3-tk`` on Ubuntu),
+    while conda and every CI runner include it, so only this test catches a
+    module-level tkinter import.
+    """
+    import subprocess
+    import sys
+    code = (
+        "import sys\n"
+        "sys.modules['tkinter'] = None\n"  ## A None entry makes `import tkinter` raise ImportError.
+        "sys.modules['_tkinter'] = None\n"
+        "import roicat\n"
+    )
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
 ######################################################################################################################################
 ########################################################## BLURRING ##################################################################
 ######################################################################################################################################
