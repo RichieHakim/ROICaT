@@ -9,7 +9,7 @@ description = "A library for classifying and tracking ROIs."
 readme = "README.md"
 license = "GPL-3.0-only"
 license-files = ["LICENSE.md"]
-requires-python = ">=3.11, <3.14"
+requires-python = ">=3.12, <3.15"
 authors = [{name = "Richard Hakim"}]
 keywords = ["neuroscience", "neuroimaging", "machine learning", "deep learning"]
 
@@ -46,16 +46,17 @@ core = [
     "fast-hdbscan==0.3.2",
     "kymatio==0.3.0",
     "kornia==0.8.3",
-    ## The 'fused-local-corr' extra publishes x86_64 Linux wheels only, with no
-    ## source distribution, so on ARM Linux the requirement cannot resolve at
-    ## all and the whole install fails. Ask for it only where it exists; RoMa
-    ## runs without it, more slowly.
-    ##
-    ## A floor rather than an exact pin: these two lines are the same
-    ## requirement split by platform, and only one of them applies on any given
-    ## machine.
-    "romatch-roicat[fused-local-corr]>=0.1.2.post1; sys_platform == 'linux' and platform_machine == 'x86_64'",
-    "romatch-roicat>=0.1.2.post1; sys_platform != 'linux' or platform_machine != 'x86_64'",
+    ## RoMa's fused local-correlation kernel (romatch-roicat's 'fused-local-corr'
+    ## extra) is switched off; see RoMa.__init__ in roicat/tracking/alignment.py.
+    ## Each kernel release is built for one exact torch version, and none exists
+    ## for the torch pinned here or for Python 3.14.
+    "romatch-roicat>=0.1.2.post1",
+    ## To bring the kernel back, restore these two lines in place of the one
+    ## above. The kernel publishes x86_64 Linux wheels only, with no source
+    ## distribution, so the requirement is split by platform; asked for
+    ## everywhere, the install fails on ARM Linux.
+    # "romatch-roicat[fused-local-corr]>=0.1.2.post1; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # "romatch-roicat>=0.1.2.post1; sys_platform != 'linux' or platform_machine != 'x86_64'",
 
     ## Exporting and running packaged classifiers.
     "skl2onnx==1.20.0",
@@ -111,8 +112,10 @@ latest = [
     "fast-hdbscan",
     "kymatio",
     "kornia",
-    "romatch-roicat[fused-local-corr]; sys_platform == 'linux' and platform_machine == 'x86_64'",
-    "romatch-roicat; sys_platform != 'linux' or platform_machine != 'x86_64'",
+    "romatch-roicat",
+    ## Fused kernel switched off; see the 'core' extra.
+    # "romatch-roicat[fused-local-corr]; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # "romatch-roicat; sys_platform != 'linux' or platform_machine != 'x86_64'",
 
     "skl2onnx",
     "onnx",
