@@ -3709,6 +3709,55 @@ class Test_prepare_image_nonrigid:
             fn(None, (im_float * 255).astype(np.uint8))
 
 
+class Test_RoMa_forward_nonrigid:
+    """
+    ``RoMa._forward_nonrigid`` turns romatch's warp into a remapping index.
+    romatch's ``match`` is replaced by a stub returning a warp in romatch's
+    layout, and ``__init__`` is skipped, so no weights are loaded.
+    """
+
+    @staticmethod
+    def _warp_romatch(hw_warp, shift_x):
+        """
+        A warp in the layout romatch-roicat's ``match`` returns: (1, H, 2W, 4),
+        in [-1, 1] coordinates. The left half is (template coords, where they
+        land in the moving image), here shifted right by ``shift_x``. The right
+        half is (moving-to-template warp, moving coords), left as the identity
+        so that reading the wrong half gives no shift.
+        """
+        h, w = hw_warp
+        grid = torch.stack(torch.meshgrid(
+            torch.linspace(-1 + 1 / w, 1 - 1 / w, w),
+            torch.linspace(-1 + 1 / h, 1 - 1 / h, h),
+            indexing='xy',
+        ), dim=-1)  ## (H, W, 2), last dim (x, y)
+        warp_left = torch.cat([grid, grid + torch.as_tensor([shift_x, 0.0])], dim=-1)
+        warp_right = torch.cat([grid, grid], dim=-1)
+        return torch.cat([warp_left, warp_right], dim=1)[None]  ## (1, H, 2W, 4)
+
+    def _remap(self, hw_im, hw_warp, shift_x):
+        from roicat.tracking import alignment
+        roma = object.__new__(alignment.RoMa)
+        roma.device = 'cpu'
+        roma._match = lambda im1, im2, device=None: (
+            self._warp_romatch(hw_warp=hw_warp, shift_x=shift_x),
+            torch.ones(1, hw_warp[0], 2 * hw_warp[1]),
+        )
+        im = np.zeros(hw_im, dtype=np.float32)
+        return roma._forward_nonrigid(im_template=im, im_moving=im)
+
+    def test_shift_reaches_remapping_index(self):
+        """A shift in the warp moves every remapping index by that many pixels of the input image."""
+        ## The warp's grid differs from the image's, as RoMa's does (864 x 864).
+        hw_im, hw_warp, shift_px = (40, 50), (48, 64), 3.0
+        shift_x = shift_px * 2 / (hw_im[1] - 1)  ## pixels -> [-1, 1] units
+        ri_shifted = self._remap(hw_im=hw_im, hw_warp=hw_warp, shift_x=shift_x)
+        ri_identity = self._remap(hw_im=hw_im, hw_warp=hw_warp, shift_x=0.0)
+        assert ri_shifted.shape == (*hw_im, 2)
+        np.testing.assert_allclose(ri_shifted[..., 0] - ri_identity[..., 0], shift_px, atol=1e-4)
+        np.testing.assert_allclose(ri_shifted[..., 1] - ri_identity[..., 1], 0.0, atol=1e-4)
+
+
 class Test_fit_nonrigid_input_images:
     """
     The images that ``Aligner.fit_nonrigid`` hands to the optical flow call.
