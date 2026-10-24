@@ -1895,9 +1895,12 @@ class RoMa(ImageRegistrationMethod):
         ## Pass images through RoMa model to get flow field
         ff, certainty = self._match(im_template, im_moving, device=self.device)
 
-        ## Convert flow field to remappingIdx
+        ## Convert flow field to remappingIdx.
+        ## ff: (1, H, 2W, 4), batched since romatch-roicat 0.1.2. The left half
+        ## is the template-to-moving warp; its last two channels are where each
+        ## template pixel lands in the moving image, in [-1, 1] coordinates.
         remappingIdx = helpers.resize_remappingIdx(
-            ri=helpers.pytorchFlowField_to_cv2RemappingIdx(ff.cpu()[:, :ff.shape[1]//2, 2:]),
+            ri=helpers.pytorchFlowField_to_cv2RemappingIdx(ff.cpu()[0, :, :ff.shape[2]//2, 2:]),  ## (H, W, 2)
             new_shape=(h, w),
             interpolation='BILINEAR',
         )
