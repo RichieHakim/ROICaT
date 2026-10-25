@@ -2556,6 +2556,45 @@ class TestSingleLinkage:
         assert quality_metrics['hdbscan'] is None
         assert quality_metrics['sample_probabilities'] is None
 
+    def test_sample_silhouette_missing_pair_counts_as_p_zero(self):
+        """A pair of cluster-mates that do not touch has distance 1 (P = 0), not 1000x the largest stored distance."""
+        import sklearn.metrics
+
+        clusterer = _make_random_graph_clusterer()[0]
+        ## Cluster 0 = ROIs 0, 1, 2 with 0-1 and 1-2 touching and 0-2 not touching.
+        ## Cluster 1 = ROIs 3, 4, 5, all touching. ROI 0 also touches ROIs 3, 4, 5.
+        d_dense = np.zeros((6, 6))
+        for i, j, dist in [(0, 1, 0.1), (1, 2, 0.1), (3, 4, 0.1), (4, 5, 0.1), (3, 5, 0.1), (0, 3, 0.9), (0, 4, 0.9), (0, 5, 0.9)]:
+            d_dense[i, j] = d_dense[j, i] = dist
+        labels = np.array([0, 0, 0, 1, 1, 1])
+        d_sparse = scipy.sparse.csr_array(d_dense)
+        s_sparse = d_sparse.copy()
+        s_sparse.data = 1.0 - s_sparse.data
+
+        sil = clusterer.compute_quality_metrics(sim_mat=s_sparse, dist_mat=d_sparse, labels=labels)['sample_silhouette']
+
+        ## Dense reference with every missing pair (off-diagonal) set to d = 1
+        d_ref = np.where(d_dense > 0, d_dense, 1.0)
+        np.fill_diagonal(d_ref, 0.0)
+        sil_ref = sklearn.metrics.silhouette_samples(d_ref, labels, metric='precomputed')
+        np.testing.assert_allclose(sil, sil_ref, atol=1e-6)
+        ## ROI 0: a = (0.1 + 1) / 2, b = 0.9, so about 0.39 (was about -1 with the 1000x fill)
+        assert sil[0] == pytest.approx((0.9 - 0.55) / 0.9, abs=1e-6)
+
+    def test_sample_silhouette_rejects_distances_above_one(self):
+        """A dist_mat on another scale would make the fill of 1 rank missing pairs as close, so it must raise."""
+        clusterer = _make_random_graph_clusterer()[0]
+        d_dense = np.array([
+            [0.0, 2.0, 4.0],
+            [2.0, 0.0, 3.0],
+            [4.0, 3.0, 0.0],
+        ])
+        d_sparse = scipy.sparse.csr_array(d_dense)
+        s_sparse = d_sparse.copy()
+        s_sparse.data = 1.0 / s_sparse.data
+        with pytest.raises(ValueError, match='1 - P'):
+            clusterer.compute_quality_metrics(sim_mat=s_sparse, dist_mat=d_sparse, labels=np.array([0, 0, 1]))
+
     def test_pipeline_automatic_choice(self):
         """'automatic' picks single linkage below n_sessions_switch and HDBSCAN at or above it."""
         from roicat import pipelines

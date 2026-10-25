@@ -3147,8 +3147,10 @@ class Clusterer(util.ROICaT_Module):
                 If ``None`` then self.sConj must exist. (Default is ``None``)
             dist_mat (Optional[object]): 
                 Distance matrix of shape *(n_samples, n_samples)* used by
-                per-sample silhouette. If ``None`` and sample metrics are
-                enabled, self.dConj must exist. (Default is ``None``)
+                per-sample silhouette. Distances must be ``1 - P``, between 0
+                and 1; a pair missing from the sparse matrix counts as 1
+                (P = 0). If ``None`` and sample metrics are enabled,
+                self.dConj must exist. (Default is ``None``)
             labels (Optional[np.ndarray]): 
                 Cluster labels of shape *(n_samples,)*. 
                 If ``None``, then self.labels must exist. (Default is ``None``)
@@ -3226,11 +3228,18 @@ class Clusterer(util.ROICaT_Module):
         rs_sil = None
         hdbscan_metrics = None
         if include_sample_metrics:
-            ## Missing distances represent pruned-away pairs and are therefore
-            ## assigned a value far beyond every stored edge. Keep the caller's
+            ## Missing distances represent pairs whose footprints do not touch
+            ## and are assigned the largest possible distance, 1 (P = 0), the
+            ## same value cluster_quality_metrics gives a missing pair. Keep the caller's
             ## CSR matrix in place; copy only on the exceptional upstream-bug
             ## path where negative distances must be clipped.
             d_for_sil = dist_mat.tocsr(copy=False)
+            if d_for_sil.data.size > 0 and d_for_sil.data.max() > 1:
+                raise ValueError(
+                    f"compute_quality_metrics: dist_mat must be 1 - P, between 0 "
+                    f"and 1, because missing pairs are filled with 1. Found a "
+                    f"maximum of {float(d_for_sil.data.max()):.3e}."
+                )
             if d_for_sil.data.size > 0 and d_for_sil.data.min() < 0:
                 n_neg = int((d_for_sil.data < 0).sum())
                 most_neg = float(d_for_sil.data.min())
@@ -3243,11 +3252,7 @@ class Clusterer(util.ROICaT_Module):
                 d_for_sil = d_for_sil.copy()
                 d_for_sil.data = np.clip(d_for_sil.data, 0, None)
 
-            fill_value = (
-                float(d_for_sil.data.max()) * 1000.0
-                if d_for_sil.data.size > 0
-                else 1.0
-            )
+            fill_value = 1.0  ## d = 1 - P, so P = 0 gives d = 1
             if len(labels_unique) < 2:
                 warnings.warn(
                     "Silhouette samples calculation requires at least 2 "
