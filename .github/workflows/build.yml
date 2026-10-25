@@ -46,6 +46,7 @@ jobs:
           "3.12",
           "3.13",
           "3.14",
+          "3.15",
         ]
         extra: [
           ## `dev` and `dev_latest` are `core` / `latest` plus the test tooling,
