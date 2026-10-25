@@ -2511,6 +2511,20 @@ class TestSingleLinkage:
         ## ROI 0: a = (0.1 + 1) / 2, b = 0.9, so about 0.39 (was about -1 with the 1000x fill)
         assert sil[0] == pytest.approx((0.9 - 0.55) / 0.9, abs=1e-6)
 
+    def test_sample_silhouette_rejects_distances_above_one(self):
+        """A dist_mat on another scale would make the fill of 1 rank missing pairs as close, so it must raise."""
+        clusterer = _make_random_graph_clusterer()[0]
+        d_dense = np.array([
+            [0.0, 2.0, 4.0],
+            [2.0, 0.0, 3.0],
+            [4.0, 3.0, 0.0],
+        ])
+        d_sparse = scipy.sparse.csr_array(d_dense)
+        s_sparse = d_sparse.copy()
+        s_sparse.data = 1.0 / s_sparse.data
+        with pytest.raises(ValueError, match='1 - P'):
+            clusterer.compute_quality_metrics(sim_mat=s_sparse, dist_mat=d_sparse, labels=np.array([0, 0, 1]))
+
     def test_pipeline_automatic_choice(self):
         """'automatic' picks single linkage below n_sessions_switch and HDBSCAN at or above it."""
         from roicat import pipelines
