@@ -99,6 +99,42 @@ def auroc_crossCloserThanSame(
     return float(1.0 - (u_crossGreater / (n_cross * n_same)))
 
 
+def _histogram_counts(
+    values: torch.Tensor,
+    edges: torch.Tensor,
+) -> torch.Tensor:
+    """
+    ``torch.histogram`` counts, without its float32 count limit.
+
+    ``torch.histogram`` counts in the dtype of its input, and a float32 count
+    stops increasing at 2**24 (16,777,216). A bin holding more values than
+    that is silently undercounted: on one thread, as under deterministic mode,
+    and on several threads once one thread's share of a bin passes the limit
+    (issue #725). ``np.histogram`` counts in int64 and bins values the same
+    way: each bin includes its left edge, the last bin also includes the
+    right edge, a value equal to a repeated edge goes to the bin after the
+    last copy, and NaN or values outside the edges are dropped. It is also
+    about 10x faster than ``torch.histogram`` on one thread.
+    RH 2026
+
+    Args:
+        values (torch.Tensor):
+            Values to bin, on the CPU. Shape: *(n,)*.
+        edges (torch.Tensor):
+            Non-decreasing bin edges, same dtype as ``values``. Shape:
+            *(n_bins + 1,)*.
+
+    Returns:
+        (torch.Tensor):
+            counts (torch.Tensor):
+                Count per bin, in the dtype of ``values``. Shape: *(n_bins,)*.
+    """
+    if values.dtype != edges.dtype:
+        raise TypeError(f"values and edges must have the same dtype, as in torch.histogram. Got {values.dtype} and {edges.dtype}.")
+    counts, _ = np.histogram(values.numpy(), bins=edges.numpy())  ## int64, shape: (n_bins,)
+    return torch.as_tensor(counts).to(values.dtype)
+
+
 class Clusterer(util.ROICaT_Module):
     """
     Class for clustering algorithms. Performs:
@@ -1212,8 +1248,8 @@ class Clusterer(util.ROICaT_Module):
         edges = torch.as_tensor(edges, dtype=torch.float32)
 
         ## Histogram all values and intra-session values
-        counts_all, _ = torch.histogram(s_data, edges)
-        counts_intra, _ = torch.histogram(s_data[intra_mask], edges)
+        counts_all = _histogram_counts(values=s_data, edges=edges)
+        counts_intra = _histogram_counts(values=s_data[intra_mask], edges=edges)
 
         ## Scale intra counts to estimate the full "different" distribution
         counts_diff = counts_intra * scale
@@ -1357,7 +1393,7 @@ class Clusterer(util.ROICaT_Module):
             edges_t = torch.as_tensor(cal['edges'])
             p_same_bins_t = torch.as_tensor(cal['p_same_bins'])
             ## right=True puts a value equal to an edge in the bin to its
-            ## right, the bin torch.histogram counted it in. Equal-mass edges
+            ## right, the bin _histogram_counts counted it in. Equal-mass edges
             ## repeat where many pairs share one value, so the lookup and the
             ## counts must follow the same rule.
             bin_idx = torch.searchsorted(
@@ -2936,8 +2972,8 @@ class Clusterer(util.ROICaT_Module):
                     shape ``(n_bins,)``.
         """
         ## Histogram all distances and intra-session distances
-        counts_all, _ = torch.histogram(distances, edges)
-        counts_intra, _ = torch.histogram(distances[intra_indices], edges)
+        counts_all = _histogram_counts(values=distances, edges=edges)
+        counts_intra = _histogram_counts(values=distances[intra_indices], edges=edges)
 
         ## Scale intra counts to estimate the full 'different' distribution
         dens_diff = counts_intra * scale_factor
@@ -2992,7 +3028,7 @@ class Clusterer(util.ROICaT_Module):
 
         ## Extract all-pairs distances and compute raw histogram
         dist_all = torch.as_tensor(d_conj.data, dtype=torch.float32)
-        dens_all, _ = torch.histogram(dist_all, edges)
+        dens_all = _histogram_counts(values=dist_all, edges=edges)
 
         ## Extract intra-session (known-different) distances via s_sesh_inv mask
         d_intra = d_conj.multiply(self.s_sesh_inv)
@@ -3007,7 +3043,7 @@ class Clusterer(util.ROICaT_Module):
         scale_factor = float(n_all) / max(n_intra, 1)
 
         ## Compute scaled intra (different) distribution
-        counts_intra, _ = torch.histogram(dist_intra, edges)
+        counts_intra = _histogram_counts(values=dist_intra, edges=edges)
         dens_diff = counts_intra * scale_factor
 
         ## Smoothed residual (same) — uses cached smoother in _fn_smooth
