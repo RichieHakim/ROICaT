@@ -5218,3 +5218,84 @@ class Test_make_label_variants:
         assert labels_bool.shape == (6, len(set(labels)))
         assert [m.shape[0] for m in labels_bool_bySession] == [3, 3]
         assert sum(len(v) for v in labels_dict.values()) == 6
+
+
+class Test_ROInet_embedder_download:
+    """``ROInet_embedder`` tries each URL in ``download_url`` until one works. No network access."""
+
+    class _StopAfterDownload(Exception):
+        pass
+
+    def _make(self, monkeypatch, tmp_path, results, **kwargs):
+        """Build an embedder whose download returns ``results[url]`` and stop before unzipping."""
+        from roicat import ROInet
+
+        calls = []
+        def fake_download_file(url, check_local_first, check_hash, **kwargs_download):
+            calls.append({'url': url, 'check_local_first': check_local_first, 'check_hash': check_hash})
+            return results[url]
+        def fake_extract_zip(**kwargs_extract):
+            raise self._StopAfterDownload()
+        monkeypatch.setattr(helpers, 'download_file', fake_download_file)
+        monkeypatch.setattr(helpers, 'extract_zip', fake_extract_zip)
+
+        embedder = ROInet.ROInet_embedder.__new__(ROInet.ROInet_embedder)
+        with pytest.raises(self._StopAfterDownload):
+            embedder.__init__(dir_networkFiles=str(tmp_path), verbose=False, **kwargs)
+        return embedder, calls
+
+    def test_falls_through_to_the_next_url(self, monkeypatch, tmp_path):
+        embedder, calls = self._make(
+            monkeypatch, tmp_path, results={'https://a': False, 'https://b': True},
+            download_url=['https://a', 'https://b'], download_hash='abc',
+        )
+        assert [c['url'] for c in calls] == ['https://a', 'https://b']
+        assert all(c['check_local_first'] and c['check_hash'] for c in calls)
+        assert embedder._download_url == 'https://b'
+
+    def test_stops_at_the_first_url_that_works(self, monkeypatch, tmp_path):
+        embedder, calls = self._make(
+            monkeypatch, tmp_path, results={'https://a': True, 'https://b': True},
+            download_url=['https://a', 'https://b'], download_hash='abc',
+        )
+        assert [c['url'] for c in calls] == ['https://a']
+        assert embedder._download_url == 'https://a'
+
+    def test_raises_when_every_url_fails(self, monkeypatch, tmp_path):
+        from roicat import ROInet
+
+        monkeypatch.setattr(helpers, 'download_file', lambda **kwargs: False)
+        with pytest.raises(RuntimeError, match='https://b'):
+            ROInet.ROInet_embedder(
+                dir_networkFiles=str(tmp_path), verbose=False,
+                download_url=['https://a', 'https://b'], download_hash='abc',
+            )
+
+    def test_single_url_string_still_works(self, monkeypatch, tmp_path):
+        embedder, calls = self._make(
+            monkeypatch, tmp_path, results={'https://a': True},
+            download_url='https://a', download_hash='abc',
+        )
+        assert [c['url'] for c in calls] == ['https://a']
+        assert embedder._download_url == 'https://a'
+
+    def test_without_hash_downloads_without_checking(self, monkeypatch, tmp_path):
+        """``download_file`` returns False after a good download when asked to compare against a missing hash."""
+        _, calls = self._make(
+            monkeypatch, tmp_path, results={'https://a': True},
+            download_url=['https://a'], download_hash=None,
+        )
+        assert calls == [{'url': 'https://a', 'check_local_first': False, 'check_hash': False}]
+
+    def test_force_local_does_not_download(self, monkeypatch, tmp_path):
+        (tmp_path / 'ROInet.zip').write_bytes(b'')
+        _, calls = self._make(
+            monkeypatch, tmp_path, results={None: True},
+            download_url=['https://a'], download_hash='abc', download_method='force_local',
+        )
+        assert [c['url'] for c in calls] == [None]
+
+    def test_default_urls_are_hugging_face_then_osf(self):
+        urls = util.get_default_parameters(pipeline='tracking')['ROInet']['network']['download_url']
+        assert urls[0].startswith('https://huggingface.co/richiehakim/ROInet/resolve/')
+        assert urls[1] == 'https://osf.io/x3fd2/download'

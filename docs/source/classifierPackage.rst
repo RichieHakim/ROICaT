@@ -39,7 +39,7 @@ Every packet records the network it holds:
    >>> packet.embedder_identity
    {'release': 'classification',
     'bundle_md5': '357a8d9b630ec79f3e015d0056a4c2d5',
-    'download_url': 'https://osf.io/c8m3b/download',
+    'download_url': 'https://huggingface.co/richiehakim/ROInet/resolve/9a09b3440a3b23d4857a691e771340fc19ce988b/ROInet_classification_20220902.zip',
     'forward_pass_version': 'head',
     'torchvision_model': 'convnext_tiny',
     'pre_head_fc_sizes': [256, 128],
@@ -120,7 +120,10 @@ for the surrounding workflow, and the API reference for
    roinet = roicat.ROInet.ROInet_embedder(
        device='cpu',
        dir_networkFiles='/tmp',
-       download_url='https://osf.io/c8m3b/download',   ## the classification release
+       download_url=[  ## the classification release, tried in order
+           'https://huggingface.co/richiehakim/ROInet/resolve/9a09b3440a3b23d4857a691e771340fc19ce988b/ROInet_classification_20220902.zip',
+           'https://osf.io/c8m3b/download',
+       ],
        download_hash='357a8d9b630ec79f3e015d0056a4c2d5',
        forward_pass_version='head',
    )
