@@ -149,12 +149,12 @@ _EMBEDDER_KINDS_REJECTED = {
 _RELEASES_ROINET = {
     "7a5fb8ad94b110037785a46b9463ea94": {
         "name": "tracking",
-        "url": "https://osf.io/x3fd2/download",
+        "url": "https://huggingface.co/richiehakim/ROInet/resolve/9a09b3440a3b23d4857a691e771340fc19ce988b/ROInet_tracking_20220527.zip",
         "note": "ROInet_tracking_20220527. Latent width: 256 at 'head', 128 at 'latent'.",
     },
     "357a8d9b630ec79f3e015d0056a4c2d5": {
         "name": "classification",
-        "url": "https://osf.io/c8m3b/download",
+        "url": "https://huggingface.co/richiehakim/ROInet/resolve/9a09b3440a3b23d4857a691e771340fc19ce988b/ROInet_classification_20220902.zip",
         "note": "ROInet_classification_20220902. Latent width: 128 at either forward_pass_version.",
     },
 }
@@ -582,7 +582,7 @@ class ClassifierPackage:
         {'release': 'classification',
          'release_note': 'ROInet_classification_20220902. Latent width: 128 ...',
          'bundle_md5': '357a8d9b630ec79f3e015d0056a4c2d5',
-         'download_url': 'https://osf.io/c8m3b/download',
+         'download_url': 'https://huggingface.co/richiehakim/ROInet/resolve/9a09b3440a3b23d4857a691e771340fc19ce988b/ROInet_classification_20220902.zip',
          'forward_pass_version': 'head',
          'torchvision_model': 'convnext_tiny',
          'pre_head_fc_sizes': [256, 128],

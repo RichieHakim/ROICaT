@@ -42,9 +42,10 @@ jobs:
           # "3.8",
           # "3.9",
           # "3.10",
-          "3.11",
+          # "3.11",
           "3.12",
           "3.13",
+          "3.14",
         ]
         extra: [
           ## `dev` and `dev_latest` are `core` / `latest` plus the test tooling,
@@ -129,6 +130,28 @@ jobs:
         pip list
         ## Below, check which versions of torch and torchvision are installed; and whether CUDA is available
         python -c "import torch, torchvision; print(f'Using versions: torch=={torch.__version__}, torchvision=={torchvision.__version__}');  print('torch.cuda.is_available() = ', torch.cuda.is_available())"
+
+    ## Cache the tracking ROInet weights between runs, so that an outage at the
+    ## hosting sites does not fail the integration tests. The key holds the
+    ## file's MD5. Saving is a separate step so that it happens even if the
+    ## tests fail.
+    - name: Restore ROInet weights from cache
+      id: cache-roinet
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/roicat_ci_cache/ROInet.zip
+        key: roinet-tracking-7a5fb8ad94b110037785a46b9463ea94-${{ runner.os }}
+
+    - name: Put ROInet weights in the temp directory
+      run: |
+        python .github/scripts/prepare_roinet_ci.py
+
+    - name: Save ROInet weights to cache
+      if: steps.cache-roinet.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/roicat_ci_cache/ROInet.zip
+        key: ${{ steps.cache-roinet.outputs.cache-primary-key }}
 
     - name: Run pytest and generate coverage report
       run: |

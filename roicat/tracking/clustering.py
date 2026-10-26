@@ -99,6 +99,42 @@ def auroc_crossCloserThanSame(
     return float(1.0 - (u_crossGreater / (n_cross * n_same)))
 
 
+def _histogram_counts(
+    values: torch.Tensor,
+    edges: torch.Tensor,
+) -> torch.Tensor:
+    """
+    ``torch.histogram`` counts, without its float32 count limit.
+
+    ``torch.histogram`` counts in the dtype of its input, and a float32 count
+    stops increasing at 2**24 (16,777,216). A bin holding more values than
+    that is silently undercounted: on one thread, as under deterministic mode,
+    and on several threads once one thread's share of a bin passes the limit
+    (issue #725). ``np.histogram`` counts in int64 and bins values the same
+    way: each bin includes its left edge, the last bin also includes the
+    right edge, a value equal to a repeated edge goes to the bin after the
+    last copy, and NaN or values outside the edges are dropped. It is also
+    about 10x faster than ``torch.histogram`` on one thread.
+    RH 2026
+
+    Args:
+        values (torch.Tensor):
+            Values to bin, on the CPU. Shape: *(n,)*.
+        edges (torch.Tensor):
+            Non-decreasing bin edges, same dtype as ``values``. Shape:
+            *(n_bins + 1,)*.
+
+    Returns:
+        (torch.Tensor):
+            counts (torch.Tensor):
+                Count per bin, in the dtype of ``values``. Shape: *(n_bins,)*.
+    """
+    if values.dtype != edges.dtype:
+        raise TypeError(f"values and edges must have the same dtype, as in torch.histogram. Got {values.dtype} and {edges.dtype}.")
+    counts, _ = np.histogram(values.numpy(), bins=edges.numpy())  ## int64, shape: (n_bins,)
+    return torch.as_tensor(counts).to(values.dtype)
+
+
 class Clusterer(util.ROICaT_Module):
     """
     Class for clustering algorithms. Performs:
@@ -1212,8 +1248,8 @@ class Clusterer(util.ROICaT_Module):
         edges = torch.as_tensor(edges, dtype=torch.float32)
 
         ## Histogram all values and intra-session values
-        counts_all, _ = torch.histogram(s_data, edges)
-        counts_intra, _ = torch.histogram(s_data[intra_mask], edges)
+        counts_all = _histogram_counts(values=s_data, edges=edges)
+        counts_intra = _histogram_counts(values=s_data[intra_mask], edges=edges)
 
         ## Scale intra counts to estimate the full "different" distribution
         counts_diff = counts_intra * scale
@@ -1357,7 +1393,7 @@ class Clusterer(util.ROICaT_Module):
             edges_t = torch.as_tensor(cal['edges'])
             p_same_bins_t = torch.as_tensor(cal['p_same_bins'])
             ## right=True puts a value equal to an edge in the bin to its
-            ## right, the bin torch.histogram counted it in. Equal-mass edges
+            ## right, the bin _histogram_counts counted it in. Equal-mass edges
             ## repeat where many pairs share one value, so the lookup and the
             ## counts must follow the same rule.
             bin_idx = torch.searchsorted(
@@ -1396,16 +1432,22 @@ class Clusterer(util.ROICaT_Module):
         logit_prior = float(np.log(prior / (1.0 - prior)))
         logit_combined = logit_sum - (K - 1) * logit_prior
 
-        ## Convert back to probability
+        ## Convert back to probability. float64, and the distance is computed
+        ## as sigmoid(-logit) rather than 1 - sigmoid(logit): in float32 the
+        ## sigmoid rounds to exactly 1.0 for strong evidence, so 1 - P would
+        ## be exactly 0, and sparse products (``d_conj.multiply(s_sesh)``)
+        ## drop stored zeros, losing the most confident pairs.
+        logit_combined = logit_combined.to(torch.float64)
         p_same_combined = torch.sigmoid(logit_combined).numpy()
-        calibrations['p_same_combined'] = p_same_combined
+        d_different_combined = torch.sigmoid(-logit_combined).numpy()
+        calibrations['p_same_combined'] = p_same_combined.astype(np.float32)  ## keeps the stored dtype
 
         ## Build sparse similarity and distance matrices
         sConj = self._s_sparsity.copy()
-        sConj.data = p_same_combined.astype(np.float64)
+        sConj.data = p_same_combined
 
         dConj = sConj.copy()
-        dConj.data = 1.0 - dConj.data
+        dConj.data = d_different_combined
 
         ## Store for downstream use
         self.dConj = dConj
@@ -2930,8 +2972,8 @@ class Clusterer(util.ROICaT_Module):
                     shape ``(n_bins,)``.
         """
         ## Histogram all distances and intra-session distances
-        counts_all, _ = torch.histogram(distances, edges)
-        counts_intra, _ = torch.histogram(distances[intra_indices], edges)
+        counts_all = _histogram_counts(values=distances, edges=edges)
+        counts_intra = _histogram_counts(values=distances[intra_indices], edges=edges)
 
         ## Scale intra counts to estimate the full 'different' distribution
         dens_diff = counts_intra * scale_factor
@@ -2986,7 +3028,7 @@ class Clusterer(util.ROICaT_Module):
 
         ## Extract all-pairs distances and compute raw histogram
         dist_all = torch.as_tensor(d_conj.data, dtype=torch.float32)
-        dens_all, _ = torch.histogram(dist_all, edges)
+        dens_all = _histogram_counts(values=dist_all, edges=edges)
 
         ## Extract intra-session (known-different) distances via s_sesh_inv mask
         d_intra = d_conj.multiply(self.s_sesh_inv)
@@ -3001,7 +3043,7 @@ class Clusterer(util.ROICaT_Module):
         scale_factor = float(n_all) / max(n_intra, 1)
 
         ## Compute scaled intra (different) distribution
-        counts_intra, _ = torch.histogram(dist_intra, edges)
+        counts_intra = _histogram_counts(values=dist_intra, edges=edges)
         dens_diff = counts_intra * scale_factor
 
         ## Smoothed residual (same) — uses cached smoother in _fn_smooth
@@ -3141,8 +3183,10 @@ class Clusterer(util.ROICaT_Module):
                 If ``None`` then self.sConj must exist. (Default is ``None``)
             dist_mat (Optional[object]): 
                 Distance matrix of shape *(n_samples, n_samples)* used by
-                per-sample silhouette. If ``None`` and sample metrics are
-                enabled, self.dConj must exist. (Default is ``None``)
+                per-sample silhouette. Distances must be ``1 - P``, between 0
+                and 1; a pair missing from the sparse matrix counts as 1
+                (P = 0). If ``None`` and sample metrics are enabled,
+                self.dConj must exist. (Default is ``None``)
             labels (Optional[np.ndarray]): 
                 Cluster labels of shape *(n_samples,)*. 
                 If ``None``, then self.labels must exist. (Default is ``None``)
@@ -3220,11 +3264,18 @@ class Clusterer(util.ROICaT_Module):
         rs_sil = None
         hdbscan_metrics = None
         if include_sample_metrics:
-            ## Missing distances represent pruned-away pairs and are therefore
-            ## assigned a value far beyond every stored edge. Keep the caller's
+            ## Missing distances represent pairs whose footprints do not touch
+            ## and are assigned the largest possible distance, 1 (P = 0), the
+            ## same value cluster_quality_metrics gives a missing pair. Keep the caller's
             ## CSR matrix in place; copy only on the exceptional upstream-bug
             ## path where negative distances must be clipped.
             d_for_sil = dist_mat.tocsr(copy=False)
+            if d_for_sil.data.size > 0 and d_for_sil.data.max() > 1:
+                raise ValueError(
+                    f"compute_quality_metrics: dist_mat must be 1 - P, between 0 "
+                    f"and 1, because missing pairs are filled with 1. Found a "
+                    f"maximum of {float(d_for_sil.data.max()):.3e}."
+                )
             if d_for_sil.data.size > 0 and d_for_sil.data.min() < 0:
                 n_neg = int((d_for_sil.data < 0).sum())
                 most_neg = float(d_for_sil.data.min())
@@ -3237,11 +3288,7 @@ class Clusterer(util.ROICaT_Module):
                 d_for_sil = d_for_sil.copy()
                 d_for_sil.data = np.clip(d_for_sil.data, 0, None)
 
-            fill_value = (
-                float(d_for_sil.data.max()) * 1000.0
-                if d_for_sil.data.size > 0
-                else 1.0
-            )
+            fill_value = 1.0  ## d = 1 - P, so P = 0 gives d = 1
             if len(labels_unique) < 2:
                 warnings.warn(
                     "Silhouette samples calculation requires at least 2 "

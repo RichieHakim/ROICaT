@@ -4,18 +4,16 @@
     <img src="docs/media/logo1.png" alt="ROICaT" width="200"  align="right"  style="margin-left: 20px"/>
 </div>
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/RichieHakim/ROICaT)
 [![build](https://github.com/RichieHakim/ROICaT/actions/workflows/.github/workflows/build.yml/badge.svg)](https://github.com/RichieHakim/ROICaT/actions/workflows/build.yml) 
 [![PyPI version](https://badge.fury.io/py/roicat.svg)](https://badge.fury.io/py/roicat)
 [![Downloads](https://pepy.tech/badge/roicat)](https://pepy.tech/project/roicat)
-[![build](https://github.com/RichieHakim/ROICaT/actions/workflows/.github/workflows/check_huggingface_space.yml/badge.svg)](https://github.com/RichieHakim/ROICaT/actions/workflows/check_huggingface_space.yml)
+[![Hugging Face Space](https://github.com/RichieHakim/ROICaT/actions/workflows/.github/workflows/check_huggingface_space.yml/badge.svg)](https://github.com/RichieHakim/ROICaT/actions/workflows/check_huggingface_space.yml)
 
 
 **🎉 CONTRIBUTIONS WELCOME! 🎉** \
 See the [TODO](#todo) section
 
 - **Documentation: [https://roicat.readthedocs.io/en/latest/](https://roicat.readthedocs.io/en/latest/)**. 
-- Overview: [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/RichieHakim/ROICaT)
 - Discussion forum: [https://groups.google.com/g/roicat_support](https://groups.google.com/g/roicat_support)
 - Technical support: [Github Issues](https://github.com/RichieHakim/ROICaT/issues)
 
@@ -59,6 +57,10 @@ With ROICaT, you can:
 - [Online App](https://huggingface.co/spaces/richiehakim/ROICaT_tracking): Good for first time users. Try it out without installing anything.
 - [Interactive
   notebook](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/tracking/1_tracking_interactive_notebook.ipynb) (also available in colab) <a target="_blank" href="https://githubtocolab.com/RichieHakim/ROICaT/blob/main/notebooks/tracking/1_tracking_interactive_notebook.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
+- [Notebook - Visualize
+  results](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/tracking/2_tracking_visualize_results.ipynb):  View the results of a run, try different inclusion criteria, and combine classification and tracking results.
+- [Notebook - Handling
+  outputs](https://github.com/RichieHakim/ROICaT/blob/main/notebooks/tracking/3_tracking_handling_outputs.ipynb):  Align your data across sessions using the tracking results, and apply quality control inclusion criteria.
 - [Command line interface script](https://github.com/RichieHakim/ROICaT/blob/main/scripts/run_tracking.sh): 
 ```shell
 roicat --pipeline tracking --path_params /path/to/params.yaml --dir_data /folder/with/data/ --dir_save /folder/save/ --prefix_name_save expName --verbose
@@ -94,7 +96,7 @@ installation process, please make a [github
 issue](https://github.com/RichieHakim/ROICaT/issues) with the error.
 
 ### 0. Requirements
-- **Python 3.11, 3.12, or 3.13**.
+- **Python 3.12, 3.13, or 3.14**.
 - [Anaconda](https://www.anaconda.com/distribution/) or
   [Miniconda](https://docs.conda.io/en/latest/miniconda.html).
 - The below commands should be run in the terminal (Mac/Linux) or Anaconda
@@ -102,7 +104,7 @@ issue](https://github.com/RichieHakim/ROICaT/issues) with the error.
 
 ### 1. (Recommended) Create a new conda environment
 ```
-conda create -n roicat python=3.12
+conda create -n roicat python=3.13
 conda activate roicat
 ```
 You will need to activate the environment with `conda activate roicat` each time
@@ -112,21 +114,16 @@ you want to use ROICaT.
 ```
 pip install roicat[all]
 ```
-That is the whole install. Everything ROICaT needs is included: both pipelines,
-the interactive plots, and Jupyter for running the notebooks. `[core]`,
-`[classification]`, `[tracking]` and `[pinned]` are all names for the same
-complete set, at the exact versions ROICaT is tested against.
-
-**Note on zsh:** if you are using a zsh terminal, change command to: `pip3
-install --user 'roicat[all]'` <br>
+**Note on zsh:** if you are using a zsh terminal, put the package name in
+quotes: `pip install 'roicat[all]'` (and `pip install --upgrade 'roicat[all]'`
+to upgrade) <br>
 **Note on installing GPU support on Windows:** see
 [GPU Troubleshooting](https://roicat.readthedocs.io/en/latest/installation.html#gpu-support-issues)
 documentation.
 <br>
 **Note on opencv:** ROICaT installs the headless build of opencv, which has no
 GUI support and does not need one. If the regular build is already in your
-environment, uninstall it first -- the two provide the same `cv2` module and pip
-cannot tell them apart.
+environment, uninstall it first.
 <br>
 **Note for packages that depend on ROICaT:** use `pip install roicat[latest]`
 instead. It installs the same packages with no version constraints, so ROICaT's
@@ -226,6 +223,7 @@ sudo docker run -it -p 7860:7860 --platform=linux/amd64 --shm-size=10g registry.
 - [x] Switch off pickling optuna save file
 - [ ] Try training on cellpose datasets
 - [x] Python 3.13
+- [x] Python 3.14
 #### other:
 - [ ] Write the paper
 - [ ] Make tweet about it

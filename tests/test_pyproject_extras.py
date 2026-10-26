@@ -69,9 +69,11 @@ MODULES_NOT_DEPENDENCIES = {
     ## Not a distribution at all: a .py file downloaded alongside the ROInet
     ## weights and imported after its directory is added to sys.path.
     'model',
-    ## Ships in romatch-roicat's 'fused-local-corr' extra, which has x86_64
-    ## Linux wheels only. RoMa runs without it, more slowly.
-    'local_corr',
+    ## RoMa's fused kernel is switched off, so nothing imports it; restore this
+    ## entry along with it (see RoMa.__init__ in roicat/tracking/alignment.py).
+    # ## Ships in romatch-roicat's 'fused-local-corr' extra, which has x86_64
+    # ## Linux wheels only. RoMa runs without it, more slowly.
+    # 'local_corr',
     ## The original HDBSCAN, offered as an alternative clusterer. Needs a C++
     ## toolchain to build on Windows; fast-hdbscan is the default and is pure
     ## Python plus numba.

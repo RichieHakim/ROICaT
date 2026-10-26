@@ -1,12 +1,15 @@
-OSF.io links to ROInet versions:
+Links to ROInet versions. Each is hosted on Hugging Face, with the original
+OSF.io copy as a fallback:
 
 * ROInet_tracking:
     * Info: This version does not include occlusions or large
       affine transformations.
-    * Link: https://osf.io/x3fd2/download
+    * Links: https://huggingface.co/richiehakim/ROInet/resolve/9a09b3440a3b23d4857a691e771340fc19ce988b/ROInet_tracking_20220527.zip
+      https://osf.io/x3fd2/download
     * Hash (MD5 hex): 7a5fb8ad94b110037785a46b9463ea94
 * ROInet_classification:
     * Info: This version includes occlusions and large affine
       transformations.
-    * Link: https://osf.io/c8m3b/download
+    * Links: https://huggingface.co/richiehakim/ROInet/resolve/9a09b3440a3b23d4857a691e771340fc19ce988b/ROInet_classification_20220902.zip
+      https://osf.io/c8m3b/download
     * Hash (MD5 hex): 357a8d9b630ec79f3e015d0056a4c2d5

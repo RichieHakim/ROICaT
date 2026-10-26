@@ -1593,6 +1593,57 @@ class Test_naive_bayes_distance_matrix:
         assert cal['p_same_bins'][idx_binCounted] != cal['p_same_bins'][idx_binLeft], "precondition: a wrong lookup must be visible"
         np.testing.assert_array_equal(cal['p_same_per_pair'][is_tied], cal['p_same_bins'][idx_binCounted])
 
+    def test_overwhelming_evidence_keeps_positive_distance(self):
+        """Pairs with overwhelming evidence keep a small positive distance.
+
+        In float32, ``sigmoid(logit)`` rounds to exactly 1.0 for strong
+        evidence, so ``1 - P`` is 0 and ``d_conj.multiply(s_sesh)`` (the first
+        step of ``fit``) drops the most confident matches.
+        """
+        import scipy.sparse
+        from roicat import tracking
+        from roicat.tracking.similarity_graph import DEFAULT_METRICS
+        rng = np.random.default_rng(0)
+        n_cell, n_intra, n_cross = 60, 120, 20
+        n_roi = 2 * n_cell
+        ## Few pairs, so that the true matches fill several equal-mass bins
+        ## and the top bins have P(same) at the clip. Pairs: every match
+        ## (cell c in session 0 with cell c in session 1), intra-session
+        ## pairs, and a few cross-session non-matches.
+        pairs_match = [(c, n_cell + c) for c in range(n_cell)]
+        pairs_other = set()
+        while len(pairs_other) < n_intra + n_cross:
+            a, b = (int(x) for x in rng.integers(0, n_roi, 2))
+            is_intra = (a < n_cell) == (b < n_cell)
+            n_have_intra = sum((p[0] < n_cell) == (p[1] < n_cell) for p in pairs_other)
+            if (a == b) or (a % n_cell == b % n_cell) or (is_intra and n_have_intra >= n_intra) or ((not is_intra) and (len(pairs_other) - n_have_intra >= n_cross)):
+                continue
+            pairs_other.add((min(a, b), max(a, b)))
+        pairs = np.array(pairs_match + sorted(pairs_other))  ## shape: (n_pair, 2)
+        is_match = np.arange(len(pairs)) < n_cell
+        is_intra = (pairs[:, 0] < n_cell) == (pairs[:, 1] < n_cell)
+
+        def symmetric(v, dtype):
+            rows, cols = np.concatenate([pairs[:, 0], pairs[:, 1]]), np.concatenate([pairs[:, 1], pairs[:, 0]])
+            return scipy.sparse.csr_array((np.concatenate([v, v]).astype(dtype), (rows, cols)), shape=(n_roi, n_roi))
+
+        sims = {
+            'sf': symmetric(np.where(is_match, rng.uniform(0.8, 0.9, len(pairs)), rng.uniform(0.0, 0.2, len(pairs))), np.float64),
+            'nn': symmetric(np.where(is_match, 1000.0, rng.normal(0, 1, len(pairs))), np.float32),
+            'swt': symmetric(np.where(is_match, 1000.0, rng.normal(0, 1, len(pairs))), np.float32),
+        }
+        s_sesh = symmetric(~is_intra, np.float64).astype(bool)
+        clusterer = tracking.clustering.Clusterer(
+            similarities=sims, metric_configs=DEFAULT_METRICS, s_sesh=s_sesh, verbose=False,
+        )
+
+        dConj, sConj, _ = clusterer.make_naive_bayes_distance_matrix()
+        is_match_data = sims['sf'].data > 0.7  ## shape: (nnz,), aligned with dConj.data
+        assert (dConj.data[is_match_data] > 0.0).all()
+        assert (sConj.data[is_match_data] > 0.5).all()
+        ## Every cross-session pair must survive the product
+        assert dConj.multiply(s_sesh).nnz == s_sesh.sum()
+
     def test_returns_correct_types(self, clusterer_with_data):
         """Should return (dConj, sConj, calibrations) with correct types."""
         import scipy.sparse
@@ -2504,6 +2555,45 @@ class TestSingleLinkage:
         assert len(quality_metrics['sample_silhouette']) == session_bool.shape[0]
         assert quality_metrics['hdbscan'] is None
         assert quality_metrics['sample_probabilities'] is None
+
+    def test_sample_silhouette_missing_pair_counts_as_p_zero(self):
+        """A pair of cluster-mates that do not touch has distance 1 (P = 0), not 1000x the largest stored distance."""
+        import sklearn.metrics
+
+        clusterer = _make_random_graph_clusterer()[0]
+        ## Cluster 0 = ROIs 0, 1, 2 with 0-1 and 1-2 touching and 0-2 not touching.
+        ## Cluster 1 = ROIs 3, 4, 5, all touching. ROI 0 also touches ROIs 3, 4, 5.
+        d_dense = np.zeros((6, 6))
+        for i, j, dist in [(0, 1, 0.1), (1, 2, 0.1), (3, 4, 0.1), (4, 5, 0.1), (3, 5, 0.1), (0, 3, 0.9), (0, 4, 0.9), (0, 5, 0.9)]:
+            d_dense[i, j] = d_dense[j, i] = dist
+        labels = np.array([0, 0, 0, 1, 1, 1])
+        d_sparse = scipy.sparse.csr_array(d_dense)
+        s_sparse = d_sparse.copy()
+        s_sparse.data = 1.0 - s_sparse.data
+
+        sil = clusterer.compute_quality_metrics(sim_mat=s_sparse, dist_mat=d_sparse, labels=labels)['sample_silhouette']
+
+        ## Dense reference with every missing pair (off-diagonal) set to d = 1
+        d_ref = np.where(d_dense > 0, d_dense, 1.0)
+        np.fill_diagonal(d_ref, 0.0)
+        sil_ref = sklearn.metrics.silhouette_samples(d_ref, labels, metric='precomputed')
+        np.testing.assert_allclose(sil, sil_ref, atol=1e-6)
+        ## ROI 0: a = (0.1 + 1) / 2, b = 0.9, so about 0.39 (was about -1 with the 1000x fill)
+        assert sil[0] == pytest.approx((0.9 - 0.55) / 0.9, abs=1e-6)
+
+    def test_sample_silhouette_rejects_distances_above_one(self):
+        """A dist_mat on another scale would make the fill of 1 rank missing pairs as close, so it must raise."""
+        clusterer = _make_random_graph_clusterer()[0]
+        d_dense = np.array([
+            [0.0, 2.0, 4.0],
+            [2.0, 0.0, 3.0],
+            [4.0, 3.0, 0.0],
+        ])
+        d_sparse = scipy.sparse.csr_array(d_dense)
+        s_sparse = d_sparse.copy()
+        s_sparse.data = 1.0 / s_sparse.data
+        with pytest.raises(ValueError, match='1 - P'):
+            clusterer.compute_quality_metrics(sim_mat=s_sparse, dist_mat=d_sparse, labels=np.array([0, 0, 1]))
 
     def test_pipeline_automatic_choice(self):
         """'automatic' picks single linkage below n_sessions_switch and HDBSCAN at or above it."""
@@ -3709,6 +3799,55 @@ class Test_prepare_image_nonrigid:
             fn(None, (im_float * 255).astype(np.uint8))
 
 
+class Test_RoMa_forward_nonrigid:
+    """
+    ``RoMa._forward_nonrigid`` turns romatch's warp into a remapping index.
+    romatch's ``match`` is replaced by a stub returning a warp in romatch's
+    layout, and ``__init__`` is skipped, so no weights are loaded.
+    """
+
+    @staticmethod
+    def _warp_romatch(hw_warp, shift_x):
+        """
+        A warp in the layout romatch-roicat's ``match`` returns: (1, H, 2W, 4),
+        in [-1, 1] coordinates. The left half is (template coords, where they
+        land in the moving image), here shifted right by ``shift_x``. The right
+        half is (moving-to-template warp, moving coords), left as the identity
+        so that reading the wrong half gives no shift.
+        """
+        h, w = hw_warp
+        grid = torch.stack(torch.meshgrid(
+            torch.linspace(-1 + 1 / w, 1 - 1 / w, w),
+            torch.linspace(-1 + 1 / h, 1 - 1 / h, h),
+            indexing='xy',
+        ), dim=-1)  ## (H, W, 2), last dim (x, y)
+        warp_left = torch.cat([grid, grid + torch.as_tensor([shift_x, 0.0])], dim=-1)
+        warp_right = torch.cat([grid, grid], dim=-1)
+        return torch.cat([warp_left, warp_right], dim=1)[None]  ## (1, H, 2W, 4)
+
+    def _remap(self, hw_im, hw_warp, shift_x):
+        from roicat.tracking import alignment
+        roma = object.__new__(alignment.RoMa)
+        roma.device = 'cpu'
+        roma._match = lambda im1, im2, device=None: (
+            self._warp_romatch(hw_warp=hw_warp, shift_x=shift_x),
+            torch.ones(1, hw_warp[0], 2 * hw_warp[1]),
+        )
+        im = np.zeros(hw_im, dtype=np.float32)
+        return roma._forward_nonrigid(im_template=im, im_moving=im)
+
+    def test_shift_reaches_remapping_index(self):
+        """A shift in the warp moves every remapping index by that many pixels of the input image."""
+        ## The warp's grid differs from the image's, as RoMa's does (864 x 864).
+        hw_im, hw_warp, shift_px = (40, 50), (48, 64), 3.0
+        shift_x = shift_px * 2 / (hw_im[1] - 1)  ## pixels -> [-1, 1] units
+        ri_shifted = self._remap(hw_im=hw_im, hw_warp=hw_warp, shift_x=shift_x)
+        ri_identity = self._remap(hw_im=hw_im, hw_warp=hw_warp, shift_x=0.0)
+        assert ri_shifted.shape == (*hw_im, 2)
+        np.testing.assert_allclose(ri_shifted[..., 0] - ri_identity[..., 0], shift_px, atol=1e-4)
+        np.testing.assert_allclose(ri_shifted[..., 1] - ri_identity[..., 1], 0.0, atol=1e-4)
+
+
 class Test_fit_nonrigid_input_images:
     """
     The images that ``Aligner.fit_nonrigid`` hands to the optical flow call.
@@ -4095,49 +4234,50 @@ class Test_Preprocessor_ROI_images:
             preprocessor.transform_images(ROI_images=np.zeros((36, 36), dtype=np.float32))
 
 
-class Test_reason_fused_local_corr_unavailable:
-    """
-    The helper that decides whether RoMa is given its fused correlation kernel.
-
-    Every test clears the cache on both sides. The helper is ``lru_cache``d, so
-    without that the answer depends on which test ran first, and a cached answer
-    derived from a patched ``sys.modules`` would leak into the rest of the run.
-    """
-
-    @staticmethod
-    def _fn():
-        from roicat.tracking.alignment import _reason_fused_local_corr_unavailable
-        return _reason_fused_local_corr_unavailable
-
-    @pytest.fixture(autouse=True)
-    def _clear_cache(self):
-        self._fn().cache_clear()
-        yield
-        self._fn().cache_clear()
-
-    def test_returns_none_when_kernel_imports(self, monkeypatch):
-        import sys, types
-        monkeypatch.setitem(sys.modules, 'local_corr', types.ModuleType('local_corr'))
-        assert self._fn()() is None
-
-    def test_returns_reason_when_kernel_missing(self, monkeypatch):
-        import sys
-        ## A None entry in sys.modules makes `import local_corr` raise ImportError,
-        ## which is the same failure a machine without the package produces.
-        monkeypatch.setitem(sys.modules, 'local_corr', None)
-        reason = self._fn()()
-        assert isinstance(reason, str) and reason
-
-    def test_answer_is_cached(self, monkeypatch):
-        import sys, types
-        monkeypatch.setitem(sys.modules, 'local_corr', types.ModuleType('local_corr'))
-        assert self._fn()() is None
-        ## The installation cannot change mid-process, so the second call must
-        ## not re-probe even though the module is now unimportable.
-        monkeypatch.setitem(sys.modules, 'local_corr', None)
-        assert self._fn()() is None
-        self._fn().cache_clear()
-        assert isinstance(self._fn()(), str)
+## Switched off along with the kernel; see RoMa.__init__ in roicat/tracking/alignment.py.
+# class Test_reason_fused_local_corr_unavailable:
+#     """
+#     The helper that decides whether RoMa is given its fused correlation kernel.
+#
+#     Every test clears the cache on both sides. The helper is ``lru_cache``d, so
+#     without that the answer depends on which test ran first, and a cached answer
+#     derived from a patched ``sys.modules`` would leak into the rest of the run.
+#     """
+#
+#     @staticmethod
+#     def _fn():
+#         from roicat.tracking.alignment import _reason_fused_local_corr_unavailable
+#         return _reason_fused_local_corr_unavailable
+#
+#     @pytest.fixture(autouse=True)
+#     def _clear_cache(self):
+#         self._fn().cache_clear()
+#         yield
+#         self._fn().cache_clear()
+#
+#     def test_returns_none_when_kernel_imports(self, monkeypatch):
+#         import sys, types
+#         monkeypatch.setitem(sys.modules, 'local_corr', types.ModuleType('local_corr'))
+#         assert self._fn()() is None
+#
+#     def test_returns_reason_when_kernel_missing(self, monkeypatch):
+#         import sys
+#         ## A None entry in sys.modules makes `import local_corr` raise ImportError,
+#         ## which is the same failure a machine without the package produces.
+#         monkeypatch.setitem(sys.modules, 'local_corr', None)
+#         reason = self._fn()()
+#         assert isinstance(reason, str) and reason
+#
+#     def test_answer_is_cached(self, monkeypatch):
+#         import sys, types
+#         monkeypatch.setitem(sys.modules, 'local_corr', types.ModuleType('local_corr'))
+#         assert self._fn()() is None
+#         ## The installation cannot change mid-process, so the second call must
+#         ## not re-probe even though the module is now unimportable.
+#         monkeypatch.setitem(sys.modules, 'local_corr', None)
+#         assert self._fn()() is None
+#         self._fn().cache_clear()
+#         assert isinstance(self._fn()(), str)
 
 
 ######################################################################################################################################
@@ -5078,3 +5218,153 @@ class Test_make_label_variants:
         assert labels_bool.shape == (6, len(set(labels)))
         assert [m.shape[0] for m in labels_bool_bySession] == [3, 3]
         assert sum(len(v) for v in labels_dict.values()) == 6
+
+
+class Test_ROInet_embedder_download:
+    """``ROInet_embedder`` tries each URL in ``download_url`` until one works. No network access."""
+
+    class _StopAfterDownload(Exception):
+        pass
+
+    def _make(self, monkeypatch, tmp_path, results, **kwargs):
+        """Build an embedder whose download returns ``results[url]`` and stop before unzipping."""
+        from roicat import ROInet
+
+        calls = []
+        def fake_download_file(url, check_local_first, check_hash, **kwargs_download):
+            calls.append({'url': url, 'check_local_first': check_local_first, 'check_hash': check_hash})
+            return results[url]
+        def fake_extract_zip(**kwargs_extract):
+            raise self._StopAfterDownload()
+        monkeypatch.setattr(helpers, 'download_file', fake_download_file)
+        monkeypatch.setattr(helpers, 'extract_zip', fake_extract_zip)
+
+        embedder = ROInet.ROInet_embedder.__new__(ROInet.ROInet_embedder)
+        with pytest.raises(self._StopAfterDownload):
+            embedder.__init__(dir_networkFiles=str(tmp_path), verbose=False, **kwargs)
+        return embedder, calls
+
+    def test_falls_through_to_the_next_url(self, monkeypatch, tmp_path):
+        embedder, calls = self._make(
+            monkeypatch, tmp_path, results={'https://a': False, 'https://b': True},
+            download_url=['https://a', 'https://b'], download_hash='abc',
+        )
+        assert [c['url'] for c in calls] == ['https://a', 'https://b']
+        assert all(c['check_local_first'] and c['check_hash'] for c in calls)
+        assert embedder._download_url == 'https://b'
+
+    def test_stops_at_the_first_url_that_works(self, monkeypatch, tmp_path):
+        embedder, calls = self._make(
+            monkeypatch, tmp_path, results={'https://a': True, 'https://b': True},
+            download_url=['https://a', 'https://b'], download_hash='abc',
+        )
+        assert [c['url'] for c in calls] == ['https://a']
+        assert embedder._download_url == 'https://a'
+
+    def test_raises_when_every_url_fails(self, monkeypatch, tmp_path):
+        from roicat import ROInet
+
+        monkeypatch.setattr(helpers, 'download_file', lambda **kwargs: False)
+        with pytest.raises(RuntimeError, match='https://b'):
+            ROInet.ROInet_embedder(
+                dir_networkFiles=str(tmp_path), verbose=False,
+                download_url=['https://a', 'https://b'], download_hash='abc',
+            )
+
+    def test_single_url_string_still_works(self, monkeypatch, tmp_path):
+        embedder, calls = self._make(
+            monkeypatch, tmp_path, results={'https://a': True},
+            download_url='https://a', download_hash='abc',
+        )
+        assert [c['url'] for c in calls] == ['https://a']
+        assert embedder._download_url == 'https://a'
+
+    def test_without_hash_downloads_without_checking(self, monkeypatch, tmp_path):
+        """``download_file`` returns False after a good download when asked to compare against a missing hash."""
+        _, calls = self._make(
+            monkeypatch, tmp_path, results={'https://a': True},
+            download_url=['https://a'], download_hash=None,
+        )
+        assert calls == [{'url': 'https://a', 'check_local_first': False, 'check_hash': False}]
+
+    def test_force_local_does_not_download(self, monkeypatch, tmp_path):
+        (tmp_path / 'ROInet.zip').write_bytes(b'')
+        _, calls = self._make(
+            monkeypatch, tmp_path, results={None: True},
+            download_url=['https://a'], download_hash='abc', download_method='force_local',
+        )
+        assert [c['url'] for c in calls] == [None]
+
+    def test_default_urls_are_hugging_face_then_osf(self):
+        urls = util.get_default_parameters(pipeline='tracking')['ROInet']['network']['download_url']
+        assert urls[0].startswith('https://huggingface.co/richiehakim/ROInet/resolve/')
+        assert urls[1] == 'https://osf.io/x3fd2/download'
+
+
+class Test_histogram_counts:
+    """``clustering._histogram_counts`` counts past float32's 2**24 limit and otherwise matches ``torch.histogram``."""
+
+    def test_counts_past_the_float32_limit_on_one_thread(self):
+        """One thread, as under deterministic mode, is where ``torch.histogram`` stops at 2**24 (issue #725)."""
+        from roicat.tracking.clustering import _histogram_counts
+
+        n_inBin = 2**24 + 1000  ## even, so float32 holds it exactly
+        values = torch.cat([
+            torch.full((n_inBin,), 0.5, dtype=torch.float32),
+            torch.tensor([-0.01, 1.5, float('nan')], dtype=torch.float32),  ## dropped, as by torch.histogram
+        ])
+        edges = torch.linspace(0, 1, 201, dtype=torch.float32)
+
+        n_threads = torch.get_num_threads()
+        torch.set_num_threads(1)
+        try:
+            counts = _histogram_counts(values=values, edges=edges)
+        finally:
+            torch.set_num_threads(n_threads)
+
+        assert counts.dtype == torch.float32
+        assert int(counts[100]) == n_inBin
+        assert int(counts.sum()) == n_inBin
+
+    @staticmethod
+    def _cases_small():
+        """Small inputs with the binning corner cases, keyed by name: (values, edges)."""
+        rng = np.random.default_rng(0)
+        edges_lin = torch.linspace(0, 1, 201, dtype=torch.float32)
+        x_rand = torch.as_tensor(rng.random(10_000), dtype=torch.float32)
+        x_ties = torch.as_tensor(rng.integers(0, 20, size=10_000) / 20.0, dtype=torch.float32)
+        edges_q = np.quantile(x_ties.numpy().astype(np.float64), np.linspace(0, 1, 51))  ## repeated edges
+        edges_q_margin = edges_q.copy()
+        edges_q_margin[0], edges_q_margin[-1] = edges_q[0] - 1e-6, edges_q[-1] + 1e-6
+        specials = torch.tensor([float('nan'), float('inf'), -float('inf'), -0.01, 1.01, 0.0, 1.0], dtype=torch.float32)
+        return {
+            'random values': (x_rand, edges_lin),
+            'values on every edge': (torch.cat([edges_lin, edges_lin, x_rand[:100]]), edges_lin),
+            'NaN, inf and out of range': (torch.cat([x_rand[:100], specials]), edges_lin),
+            'ties on repeated quantile edges': (x_ties, torch.as_tensor(edges_q, dtype=torch.float32)),
+            'ties on repeated quantile edges with margin': (x_ties, torch.as_tensor(edges_q_margin, dtype=torch.float32)),
+            'repeated last edge': (torch.tensor([0.2, 0.5, 1.0, 1.0]), torch.tensor([0.0, 0.5, 1.0, 1.0])),
+            'empty': (torch.zeros(0, dtype=torch.float32), edges_lin),
+            'float64': (x_rand.double(), edges_lin.double()),
+        }
+
+    @pytest.mark.parametrize('name_case', [
+        'random values', 'values on every edge', 'NaN, inf and out of range', 'ties on repeated quantile edges',
+        'ties on repeated quantile edges with margin', 'repeated last edge', 'empty', 'float64',
+    ])
+    def test_matches_torch_histogram_below_the_limit(self, name_case):
+        """Below the limit the counts, bin rules and dtype are exactly ``torch.histogram``'s."""
+        from roicat.tracking.clustering import _histogram_counts
+
+        values, edges = self._cases_small()[name_case]
+        counts_expected, _ = torch.histogram(values, edges)
+        counts = _histogram_counts(values=values, edges=edges)
+        assert counts.dtype == counts_expected.dtype
+        assert torch.equal(counts, counts_expected)
+
+    def test_rejects_mismatched_dtypes(self):
+        """``torch.histogram`` refuses mismatched dtypes, and so does the helper."""
+        from roicat.tracking.clustering import _histogram_counts
+
+        with pytest.raises(TypeError, match='same dtype'):
+            _histogram_counts(values=torch.rand(10, dtype=torch.float32), edges=torch.linspace(0, 1, 5, dtype=torch.float64))

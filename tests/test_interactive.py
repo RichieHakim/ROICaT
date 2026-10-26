@@ -109,12 +109,9 @@ def deploy_bokeh(instance, tmp_path):
         color_points="b",
     )
 
-    ## Render plot
-    hv_layout = hv.render(layout)
-    hv_layout.name = "drawing_test"
-
-    ## Add to Bokeh document
-    instance.add_root(hv_layout)
+    ## Render plot into the Bokeh document. hv.render + add_root breaks the
+    ## selection callback with Bokeh >= 3.10 ("no running event loop").
+    hv.renderer("bokeh").server_doc(layout, doc=instance)
 
 
 def is_port_available(port, host='localhost'):
