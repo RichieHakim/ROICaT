@@ -5299,3 +5299,72 @@ class Test_ROInet_embedder_download:
         urls = util.get_default_parameters(pipeline='tracking')['ROInet']['network']['download_url']
         assert urls[0].startswith('https://huggingface.co/richiehakim/ROInet/resolve/')
         assert urls[1] == 'https://osf.io/x3fd2/download'
+
+
+class Test_histogram_counts:
+    """``clustering._histogram_counts`` counts past float32's 2**24 limit and otherwise matches ``torch.histogram``."""
+
+    def test_counts_past_the_float32_limit_on_one_thread(self):
+        """One thread, as under deterministic mode, is where ``torch.histogram`` stops at 2**24 (issue #725)."""
+        from roicat.tracking.clustering import _histogram_counts
+
+        n_inBin = 2**24 + 1000  ## even, so float32 holds it exactly
+        values = torch.cat([
+            torch.full((n_inBin,), 0.5, dtype=torch.float32),
+            torch.tensor([-0.01, 1.5, float('nan')], dtype=torch.float32),  ## dropped, as by torch.histogram
+        ])
+        edges = torch.linspace(0, 1, 201, dtype=torch.float32)
+
+        n_threads = torch.get_num_threads()
+        torch.set_num_threads(1)
+        try:
+            counts = _histogram_counts(values=values, edges=edges)
+        finally:
+            torch.set_num_threads(n_threads)
+
+        assert counts.dtype == torch.float32
+        assert int(counts[100]) == n_inBin
+        assert int(counts.sum()) == n_inBin
+
+    @staticmethod
+    def _cases_small():
+        """Small inputs with the binning corner cases, keyed by name: (values, edges)."""
+        rng = np.random.default_rng(0)
+        edges_lin = torch.linspace(0, 1, 201, dtype=torch.float32)
+        x_rand = torch.as_tensor(rng.random(10_000), dtype=torch.float32)
+        x_ties = torch.as_tensor(rng.integers(0, 20, size=10_000) / 20.0, dtype=torch.float32)
+        edges_q = np.quantile(x_ties.numpy().astype(np.float64), np.linspace(0, 1, 51))  ## repeated edges
+        edges_q_margin = edges_q.copy()
+        edges_q_margin[0], edges_q_margin[-1] = edges_q[0] - 1e-6, edges_q[-1] + 1e-6
+        specials = torch.tensor([float('nan'), float('inf'), -float('inf'), -0.01, 1.01, 0.0, 1.0], dtype=torch.float32)
+        return {
+            'random values': (x_rand, edges_lin),
+            'values on every edge': (torch.cat([edges_lin, edges_lin, x_rand[:100]]), edges_lin),
+            'NaN, inf and out of range': (torch.cat([x_rand[:100], specials]), edges_lin),
+            'ties on repeated quantile edges': (x_ties, torch.as_tensor(edges_q, dtype=torch.float32)),
+            'ties on repeated quantile edges with margin': (x_ties, torch.as_tensor(edges_q_margin, dtype=torch.float32)),
+            'repeated last edge': (torch.tensor([0.2, 0.5, 1.0, 1.0]), torch.tensor([0.0, 0.5, 1.0, 1.0])),
+            'empty': (torch.zeros(0, dtype=torch.float32), edges_lin),
+            'float64': (x_rand.double(), edges_lin.double()),
+        }
+
+    @pytest.mark.parametrize('name_case', [
+        'random values', 'values on every edge', 'NaN, inf and out of range', 'ties on repeated quantile edges',
+        'ties on repeated quantile edges with margin', 'repeated last edge', 'empty', 'float64',
+    ])
+    def test_matches_torch_histogram_below_the_limit(self, name_case):
+        """Below the limit the counts, bin rules and dtype are exactly ``torch.histogram``'s."""
+        from roicat.tracking.clustering import _histogram_counts
+
+        values, edges = self._cases_small()[name_case]
+        counts_expected, _ = torch.histogram(values, edges)
+        counts = _histogram_counts(values=values, edges=edges)
+        assert counts.dtype == counts_expected.dtype
+        assert torch.equal(counts, counts_expected)
+
+    def test_rejects_mismatched_dtypes(self):
+        """``torch.histogram`` refuses mismatched dtypes, and so does the helper."""
+        from roicat.tracking.clustering import _histogram_counts
+
+        with pytest.raises(TypeError, match='same dtype'):
+            _histogram_counts(values=torch.rand(10, dtype=torch.float32), edges=torch.linspace(0, 1, 5, dtype=torch.float64))
