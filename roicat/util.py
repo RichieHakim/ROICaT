@@ -194,7 +194,10 @@ def get_default_parameters(
             'ROInet': {
                 'network': {
                     'download_method': 'check_local_first',  ## Check to see if a model has already been downloaded to the location (will skip if hash matches)
-                    'download_url': 'https://osf.io/x3fd2/download',  ## URL of the model
+                    'download_url': [  ## URLs of the model, tried in order
+                        'https://huggingface.co/richiehakim/ROInet/resolve/9a09b3440a3b23d4857a691e771340fc19ce988b/ROInet_tracking_20220527.zip',
+                        'https://osf.io/x3fd2/download',
+                    ],
                     'download_hash': '7a5fb8ad94b110037785a46b9463ea94',  ## Hash of the model file
                     'forward_pass_version': 'latent',  ## How the data is passed through the network
                 },
@@ -336,7 +339,10 @@ def get_default_parameters(
         out = copy.deepcopy({key: defaults[key] for key in keys_pipeline[pipeline]})
         out['ROInet']['network'] = {
             'download_method': 'check_local_first',  ## Check to see if a model has already been downloaded to the location (will skip if hash matches)
-            'download_url': 'https://osf.io/x3fd2/download',  ## URL of the model
+            'download_url': [  ## URLs of the model, tried in order
+                'https://huggingface.co/richiehakim/ROInet/resolve/9a09b3440a3b23d4857a691e771340fc19ce988b/ROInet_tracking_20220527.zip',
+                'https://osf.io/x3fd2/download',
+            ],
             'download_hash': '7a5fb8ad94b110037785a46b9463ea94',  ## Hash of the model file
             'forward_pass_version': 'latent',  ## How the data is passed through the network
         }
@@ -344,7 +350,10 @@ def get_default_parameters(
         out = copy.deepcopy({key: defaults[key] for key in keys_pipeline[pipeline]})
         out['ROInet']['network'] = {
             'download_method': 'check_local_first',  ## Check to see if a model has already been downloaded to the location (will skip if hash matches)
-            'download_url': 'https://osf.io/c8m3b/download',  ## URL of the model
+            'download_url': [  ## URLs of the model, tried in order
+                'https://huggingface.co/richiehakim/ROInet/resolve/9a09b3440a3b23d4857a691e771340fc19ce988b/ROInet_classification_20220902.zip',
+                'https://osf.io/c8m3b/download',
+            ],
             'download_hash': '357a8d9b630ec79f3e015d0056a4c2d5',  ## Hash of the model file
             'forward_pass_version': 'head',  ## How the data is passed through the network
         }
@@ -352,7 +361,10 @@ def get_default_parameters(
         out = copy.deepcopy({key: defaults[key] for key in keys_pipeline[pipeline]})
         out['ROInet']['network'] = {
             'download_method': 'check_local_first',  ## Check to see if a model has already been downloaded to the location (will skip if hash matches)
-            'download_url': 'https://osf.io/c8m3b/download',  ## URL of the model
+            'download_url': [  ## URLs of the model, tried in order
+                'https://huggingface.co/richiehakim/ROInet/resolve/9a09b3440a3b23d4857a691e771340fc19ce988b/ROInet_classification_20220902.zip',
+                'https://osf.io/c8m3b/download',
+            ],
             'download_hash': '357a8d9b630ec79f3e015d0056a4c2d5',  ## Hash of the model file
             'forward_pass_version': 'head',  ## How the data is passed through the network
         }

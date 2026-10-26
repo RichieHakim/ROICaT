@@ -10,17 +10,20 @@
 ## - Ensure the clarity of argument descriptions through the use of clear sentence structure and punctuation.
 
 """
-OSF.io links to ROInet versions:
+Links to ROInet versions. Each is hosted on Hugging Face, with the original
+OSF.io copy as a fallback:
 
 * ROInet_tracking:
     * Info: This version does not include occlusions or large
       affine transformations.
-    * Link: https://osf.io/x3fd2/download
+    * Links: https://huggingface.co/richiehakim/ROInet/resolve/9a09b3440a3b23d4857a691e771340fc19ce988b/ROInet_tracking_20220527.zip
+      https://osf.io/x3fd2/download
     * Hash (MD5 hex): 7a5fb8ad94b110037785a46b9463ea94
 * ROInet_classification:
     * Info: This version includes occlusions and large affine
       transformations.
-    * Link: https://osf.io/c8m3b/download
+    * Links: https://huggingface.co/richiehakim/ROInet/resolve/9a09b3440a3b23d4857a691e771340fc19ce988b/ROInet_classification_20220902.zip
+      https://osf.io/c8m3b/download
     * Hash (MD5 hex): 357a8d9b630ec79f3e015d0056a4c2d5
 """
 
@@ -710,17 +713,20 @@ class ROInet_embedder(util.ROICaT_Module):
     Class for loading the ROInet model, preparing data for it, and running it.
     RH, JZ 2022
     
-    OSF.io links to ROInet versions:
+    Links to ROInet versions. Each is hosted on Hugging Face, with the
+    original OSF.io copy as a fallback:
 
     * ROInet_tracking:
         * Info: This version does not include occlusions or large affine
           transformations.
-        * Link: https://osf.io/x3fd2/download
+        * Links: https://huggingface.co/richiehakim/ROInet/resolve/9a09b3440a3b23d4857a691e771340fc19ce988b/ROInet_tracking_20220527.zip
+          https://osf.io/x3fd2/download
         * Hash (MD5 hex): 7a5fb8ad94b110037785a46b9463ea94
     * ROInet_classification:
         * Info: This version includes occlusions and large affine
           transformations.
-        * Link: https://osf.io/c8m3b/download
+        * Links: https://huggingface.co/richiehakim/ROInet/resolve/9a09b3440a3b23d4857a691e771340fc19ce988b/ROInet_classification_20220902.zip
+          https://osf.io/c8m3b/download
         * Hash (MD5 hex): 357a8d9b630ec79f3e015d0056a4c2d5
     
     Args:
@@ -739,9 +745,11 @@ class ROInet_embedder(util.ROICaT_Module):
               file, if they don't exist, raise an error. Hash checking is done
               and download_hash must be specified. \n
             (Default is ``'check_local_first'``)
-        download_url (str): 
-            URL to download the ROInet.zip file from.
-            (Default is https://osf.io/x3fd2/download)
+        download_url (Union[str, List[str]]): 
+            URL, or list of URLs, to download the ROInet.zip file from. A list
+            is tried in order until one gives a complete file whose hash
+            matches ``download_hash``. (Default is the tracking network on
+            Hugging Face, then on OSF)
         download_hash (dict): 
             MD5 hash of the ROInet.zip file. This can be obtained from
             ROICaT documentation. If you don't have one, use
@@ -764,13 +772,21 @@ class ROInet_embedder(util.ROICaT_Module):
             model). (Default is ``'latent'``)
         verbose (bool): 
             If True, print out extra information. (Default is ``True``)
+
+    Raises:
+        RuntimeError:
+            If no URL in ``download_url`` gives a complete file with a matching
+            hash.
     """
     def __init__(
         self,
         dir_networkFiles: str,
         device: str = 'cpu',
         download_method: str = 'check_local_first',
-        download_url: str = 'https://osf.io/x3fd2/download',
+        download_url: Union[str, List[str]] = [
+            'https://huggingface.co/richiehakim/ROInet/resolve/9a09b3440a3b23d4857a691e771340fc19ce988b/ROInet_tracking_20220527.zip',
+            'https://osf.io/x3fd2/download',
+        ],
         download_hash: dict = None,
         names_networkFiles: dict = None,
         forward_pass_version: str = 'latent',
@@ -797,7 +813,9 @@ class ROInet_embedder(util.ROICaT_Module):
         self._device = device
         self._verbose = verbose
         self._dir_networkFiles = dir_networkFiles
-        self._download_url = download_url
+        urls = [download_url] if (download_url is None or isinstance(download_url, str)) else list(download_url)
+        ## Replaced by the URL that worked if a download happens
+        self._download_url = urls[0]
 
         self._download_path_save = str(Path(self._dir_networkFiles).resolve() / 'ROInet.zip')
 
@@ -813,13 +831,17 @@ class ROInet_embedder(util.ROICaT_Module):
             chunk_size=1024,
         )
 
-        ## Find or download network files
-        if download_method == 'force_download':
-            fn_download(url=self._download_url, check_local_first=False, check_hash=False)
-
-        if download_method == 'check_local_first':
-            # assert download_hash is not None, "if using download_method='check_local_first' download_hash cannot be None. Either determine the hash of the zip file or use download_method='force_download'."
-            fn_download(url=self._download_url, check_local_first=True, check_hash=True)
+        ## Find or download network files. Each URL is tried in turn so that an
+        ## outage at one host falls through to the next. Without a hash a local
+        ## file cannot be verified, so 'check_local_first' downloads it again.
+        if download_method in ['force_download', 'check_local_first']:
+            check_hash = (download_method == 'check_local_first') and (download_hash is not None)
+            for url in urls:
+                if fn_download(url=url, check_local_first=check_hash, check_hash=check_hash):
+                    self._download_url = url
+                    break
+            else:
+                raise RuntimeError(f"Could not get a valid ROInet.zip from any of these URLs: {urls}")
 
         if download_method == 'force_local':
             # assert download_hash is not None, "if using download_method='force_local' download_hash cannot be None"
