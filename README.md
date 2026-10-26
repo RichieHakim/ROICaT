@@ -4,7 +4,6 @@
     <img src="docs/media/logo1.png" alt="ROICaT" width="200"  align="right"  style="margin-left: 20px"/>
 </div>
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/RichieHakim/ROICaT)
 [![build](https://github.com/RichieHakim/ROICaT/actions/workflows/.github/workflows/build.yml/badge.svg)](https://github.com/RichieHakim/ROICaT/actions/workflows/build.yml) 
 [![PyPI version](https://badge.fury.io/py/roicat.svg)](https://badge.fury.io/py/roicat)
 [![Downloads](https://pepy.tech/badge/roicat)](https://pepy.tech/project/roicat)
@@ -15,7 +14,6 @@
 See the [TODO](#todo) section
 
 - **Documentation: [https://roicat.readthedocs.io/en/latest/](https://roicat.readthedocs.io/en/latest/)**. 
-- Overview: [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/RichieHakim/ROICaT)
 - Discussion forum: [https://groups.google.com/g/roicat_support](https://groups.google.com/g/roicat_support)
 - Technical support: [Github Issues](https://github.com/RichieHakim/ROICaT/issues)
 
