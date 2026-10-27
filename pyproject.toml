@@ -22,7 +22,7 @@ core = [
     "scipy==1.17.1",
     "scikit-learn==1.9.1",
     "scikit-image==0.26.0",
-    "pandas==3.0.6",
+    "pandas==3.1.0",
     "sparse==0.19.2",
     "sparse_convolution==0.4.2",  ## Toeplitz convolution used by tracking/blurring.py.
     "numba==0.68.0",
