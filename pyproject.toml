@@ -19,7 +19,7 @@ dependencies = []
 core = [
     ## Numerics and data handling.
     "numpy==2.4.6",
-    "scipy==1.17.1",
+    "scipy==1.18.1",
     "scikit-learn==1.9.1",
     "scikit-image==0.26.0",
     "pandas==3.0.6",
