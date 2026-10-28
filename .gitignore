@@ -140,3 +140,4 @@ CLAUDE.md
 manuscript/
 .claude/
 wandb/
+agent_assets/
