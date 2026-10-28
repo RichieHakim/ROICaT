@@ -2412,6 +2412,7 @@ def rand_cmap(
     under: List[float] = [0,0,0],
     over: List[float] = [0.5,0.5,0.5],
     bad: List[float] = [0.9,0.9,0.9],
+    rng: Optional[np.random.Generator] = None,
 ) -> object:
     """
     Creates a random colormap to be used with matplotlib. Useful for segmentation tasks.
@@ -2435,6 +2436,9 @@ def rand_cmap(
         bad (List[float]):
             RGB values to use for 'bad' values in the colormap. 
             (Default is ``[0.9, 0.9, 0.9]``)
+        rng (Optional[np.random.Generator]):
+            Local random generator for repeatable colors. ``None`` uses the
+            existing global NumPy generator.
 
     Returns:
         (LinearSegmentedColormap):
@@ -2450,7 +2454,7 @@ def rand_cmap(
     if verbose:
         print('Number of labels: ' + str(nlabels))
 
-    randRGBcolors = np.random.rand(nlabels, 3)
+    randRGBcolors = np.random.rand(nlabels, 3) if rng is None else rng.random(size=(nlabels, 3))
     randRGBcolors = randRGBcolors / np.max(randRGBcolors, axis=1, keepdims=True)
 
     if first_color_black:

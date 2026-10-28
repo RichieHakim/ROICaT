@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 from torch.nn import Module
 import torchvision.transforms
@@ -79,10 +81,31 @@ class AddGaussianNoise(Module):
         self.level_bounds = level_bounds
         self.level_range = level_bounds[1] - level_bounds[0]
 
-    def forward(self, tensor):
-        if torch.rand(1) <= self.prob:
-            level = torch.rand(1, device=tensor.device) * self.level_range + self.level_bounds[0]
-            return (1-level)*tensor + level*(tensor + torch.randn(tensor.shape, device=tensor.device) * self.std + self.mean)
+    def forward(
+        self, tensor: torch.Tensor, generator: Optional[torch.Generator] = None
+    ) -> torch.Tensor:
+        """Add noise, optionally drawing from a local generator.
+
+        Args:
+            tensor (torch.Tensor):
+                Image tensor of any shape.
+            generator (Optional[torch.Generator]):
+                Random generator on the image device. ``None`` uses the global
+                generators, preserving the existing augmentation behavior.
+
+        Returns:
+            (torch.Tensor):
+                Image tensor with the same shape as the input.
+        """
+        device_probability = torch.device("cpu") if generator is None else tensor.device
+        if torch.rand(1, device=device_probability, generator=generator) <= self.prob:
+            level = (
+                torch.rand(1, device=tensor.device, generator=generator)
+                * self.level_range
+                + self.level_bounds[0]
+            )
+            noise = torch.randn(tensor.shape, device=tensor.device, generator=generator)
+            return (1 - level) * tensor + level * (tensor + noise * self.std + self.mean)
         else:
             return tensor
     def __repr__(self):
@@ -284,7 +307,55 @@ class WarpPoints(Module):
     def gaus2D(self, x, y, sigma):
         return torch.exp(-((torch.square(self.meshgrid_out[0] - x[None,None,:]) + torch.square(self.meshgrid_out[1] - y[None,None,:]))/(2*torch.square(sigma[None,None,:]))))        
 
-    def forward(self, tensor):
+    @torch.jit.export
+    def generate_sampling_grid(
+        self, device: torch.device, generator: Optional[torch.Generator] = None
+    ) -> torch.Tensor:
+        """Sample one deformation for an image or a stack of related images.
+
+        Args:
+            device (torch.device):
+                Device for the returned grid.
+            generator (Optional[torch.Generator]):
+                Random generator on ``device``. ``None`` uses global generators.
+
+        Returns:
+            (torch.Tensor):
+                Sampling coordinates in normalized ``(x, y)`` order. Shape:
+                ``(1, height_out, width_out, 2)``. Each output pixel samples the
+                input at its corresponding grid coordinate. Pass directly to
+                ``grid_sample`` with ``align_corners=True``.
+        """
+        ## Keep height and width in image order, including rectangular images.
+        coords_y = self.meshgrid_out[0, :, :, 0].to(device=device)
+        coords_x = self.meshgrid_out[1, :, :, 0].to(device=device)
+        grid_xy = torch.stack(tensors=(coords_x, coords_y), dim=-1)
+
+        ## Draw one set of Gaussian displacements, shared across all images.
+        device_probability = torch.device("cpu") if generator is None else device
+        if torch.rand(1, device=device_probability, generator=generator) <= self.prob:
+            random_parameters = torch.rand(
+                5, self.n_warps, device=device, generator=generator
+            )
+            centers_x = random_parameters[0] * self.cx_range + self.cx[0]
+            centers_y = random_parameters[1] * self.cy_range + self.cy[0]
+            deltas_x = random_parameters[2] * self.dx_range + self.dx[0]
+            deltas_y = random_parameters[3] * self.dy_range + self.dy[0]
+            radii = random_parameters[4] * self.r_range + self.r[0]
+            weights = torch.exp(
+                -(
+                    (coords_x[..., None] - centers_x).square()
+                    + (coords_y[..., None] - centers_y).square()
+                ) / (2 * radii.square())
+            )  ## (height, width, n_warps)
+            deltas_xy = torch.stack(tensors=(deltas_x, deltas_y), dim=-1)
+            grid_xy = grid_xy + weights @ deltas_xy  ## (height, width, 2)
+        return grid_xy[None, ...]
+
+    def forward(
+        self, tensor: torch.Tensor, generator: Optional[torch.Generator] = None
+    ) -> torch.Tensor:
+        """Warp images using one shared grid; accept (C,H,W) or (N,C,H,W)."""
         if tensor.ndim == 3:
             tensor = tensor[None, ...]
             flag_batched = False
@@ -293,37 +364,14 @@ class WarpPoints(Module):
         else:
             raise ValueError("Input tensor must be 3 or 4 dimensional.")
         
-        ## move meshgrid to the device of the input tensor
-        if self.meshgrid_in.device != tensor.device:
-            self.meshgrid_in = self.meshgrid_in.to(tensor.device)
-        if self.meshgrid_out.device != tensor.device:
-            self.meshgrid_out = self.meshgrid_out.to(tensor.device)
-
-        if torch.rand(1) <= self.prob:
-            rands = torch.rand(5, self.n_warps, device=tensor.device)  # shape: (5, n_warps)
-            cx = rands[0,:] * (self.cx_range) + self.cx[0]
-            cy = rands[1,:] * (self.cy_range) + self.cy[0]
-            dx = rands[2,:] * (self.dx_range) + self.dx[0]
-            dy = rands[3,:] * (self.dy_range) + self.dy[0]
-            r =  rands[4,:] * (self.r_range)  + self.r[0]
-            im_gaus = self.gaus2D(x=cx, y=cy, sigma=r) # shape: (img_size_x, img_size_y, n_warps)
-            im_disp = im_gaus[None,...] * torch.stack([dx, dy], dim=0).reshape(2, 1, 1, self.n_warps) # shape: (2(dx,dy), img_size_x, img_size_y, n_warps)
-            im_disp_composite = torch.sum(im_disp, dim=3, keepdim=True) # shape: (2(dx,dy), img_size_x, img_size_y)
-            im_newPos = self.meshgrid_out[...,0:1] + im_disp_composite
-        else:
-            im_newPos = self.meshgrid_out[...,0:1]
-        
-        im_newPos = torch.permute(im_newPos, [3,2,1,0]) # Requires 1/2 transpose because otherwise results are transposed from torchvision Resize
+        grid_xy = self.generate_sampling_grid(device=tensor.device, generator=generator)
         if flag_batched:
-            ## repmat for batch dimension
-            im_newPos = torch.tile(im_newPos, (tensor.shape[0], 1, 1, 1))
-        ret = torch.nn.functional.grid_sample( tensor,
-                                                im_newPos,
-                                                mode=self.mode,
-                                                padding_mode='zeros',
-                                                align_corners=True)
-        ret = ret[0] if not flag_batched else ret
-        return ret
+            grid_xy = grid_xy.expand(tensor.shape[0], -1, -1, -1)
+        tensor_warped = torch.nn.functional.grid_sample(
+            input=tensor, grid=grid_xy, mode=self.mode,
+            padding_mode="zeros", align_corners=True,
+        )
+        return tensor_warped if flag_batched else tensor_warped[0]
         
     def __repr__(self):
         return f"WarpPoints(r={self.r}, cx={self.cx}, cy={self.cy}, dx={self.dx}, dy={self.dy}, n_warps={self.n_warps}, prob={self.prob}, img_size_in={self.img_size_in}, img_size_out={self.img_size_out}, mode={self.mode!r})"
