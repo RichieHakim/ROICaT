@@ -139,7 +139,7 @@ latest = [
 ## Running the test suite, on top of each dependency family.
 dev = [
     "roicat[core]",
-    "pytest==9.1.1",
+    "pytest==9.2.0",
     "selenium==4.52.0",
     "xxhash==4.0.2",
 ]
