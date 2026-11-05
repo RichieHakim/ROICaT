@@ -45,7 +45,7 @@ core = [
     "opencv-contrib-python-headless<=5.0.0.93",
     "fast-hdbscan==0.3.2",
     "kymatio==0.3.0",
-    "kornia==0.8.3",
+    "kornia==0.9.0",
     ## RoMa's fused local-correlation kernel (romatch-roicat's 'fused-local-corr'
     ## extra) is switched off; see RoMa.__init__ in roicat/tracking/alignment.py.
     ## Each kernel release is built for one exact torch version, and none exists
