@@ -358,7 +358,7 @@ def _compare_payload_nodes(test, true, path, report, exact=False):
 
     if scipy.sparse.issparse(true):
         # Sparse payloads get extra structural checks before value comparison.
-        # We fail on shape/dtype/nnz first so the later numeric mismatch lines
+        # We fail on shape and dtype first so the later numeric mismatch lines
         # only talk about actual numeric differences.
         if not scipy.sparse.issparse(test):
             _record_structural_failure(
@@ -373,9 +373,18 @@ def _compare_payload_nodes(test, true, path, report, exact=False):
         if test.dtype != true.dtype:
             _record_structural_failure(report, path, f"dtype mismatch: test={test.dtype}, true={true.dtype}")
             return
-        if test.nnz != true.nnz:
-            _record_structural_failure(report, path, f"nnz mismatch: test={test.nnz}, true={true.nnz}")
-            return
+        # nnz is deliberately not a structural check. Which elements a sparse
+        # array happens to store is a representation detail, not structure.
+        # The warps that reach `transform_ROIs` differ by around 1e-5 of a
+        # pixel between CPU families, which is enough to move a source
+        # coordinate across a pixel boundary and store one extra element
+        # holding about 3e-8 where a real footprint pixel holds about 8e-3.
+        # `Equivalence_checker` compares sparse arrays over the union of both
+        # sparsity patterns, so such an element is checked against an implicit
+        # zero and passes or fails on its own magnitude, which is the question
+        # worth asking. Testing nnz instead reported a hard failure for a
+        # difference six orders of magnitude below anything that matters, and
+        # returned early, so the values underneath were never compared at all.
         _record_structural_pass(report, path)
         _compare_leaf_values(test, true, path, report, exact=exact)
         return
@@ -498,6 +507,78 @@ def _update_data_test_zip(path_new_golden):
 
     shutil.move(str(path_tmp), str(path_zip))
     print(f"Updated {path_zip} with new golden reference")
+
+
+######################################################################
+## Unit tests: the payload comparison itself
+######################################################################
+
+def test_sparse_comparison_ignores_a_negligible_stored_element():
+    """A stored element far below the tolerance must not fail as structure.
+
+    Different CPU families fit warps that differ by around 1e-5 of a pixel,
+    which is enough to store one extra element holding about 3e-8 in an
+    aligned-ROI array whose real pixels hold about 8e-3. That is a difference
+    of six orders of magnitude below anything the pipeline acts on, so it
+    belongs to the value comparison and its tolerance, not to a hard
+    structural check on nnz.
+    """
+    true = scipy.sparse.csr_array(np.array([[0.0, 8.2e-3, 0.0], [1.0e-2, 0.0, 0.0]]))
+    test = true.copy().tolil()
+    test[0, 2] = 3.4e-8  ## the sort of element a 1e-5 px warp difference adds
+    test = scipy.sparse.csr_array(test)
+    assert test.nnz == true.nnz + 1
+
+    report = compare_canonical_payloads(
+        {'aligner': {'ROIs_aligned': [test]}},
+        {'aligner': {'ROIs_aligned': [true]}},
+    )
+    assert report['structural_failures'] == []
+    assert report['value_failures'] == []
+
+
+def test_sparse_comparison_still_catches_a_real_stored_element():
+    """An element of a size the pipeline would act on must still fail."""
+    true = scipy.sparse.csr_array(np.array([[0.0, 8.2e-3, 0.0], [1.0e-2, 0.0, 0.0]]))
+    test = true.copy().tolil()
+    test[0, 2] = 5.0e-3  ## comparable to a real footprint pixel
+    test = scipy.sparse.csr_array(test)
+
+    report = compare_canonical_payloads(
+        {'aligner': {'ROIs_aligned': [test]}},
+        {'aligner': {'ROIs_aligned': [true]}},
+    )
+    assert report['structural_failures'] == []
+    assert len(report['value_failures']) == 1
+
+
+def test_sparse_comparison_is_exact_under_determinism_mode():
+    """The determinism gate compares the same machine against itself, so even
+    a 3e-8 element is a real difference there and must fail."""
+    true = scipy.sparse.csr_array(np.array([[0.0, 8.2e-3, 0.0], [1.0e-2, 0.0, 0.0]]))
+    test = true.copy().tolil()
+    test[0, 2] = 3.4e-8
+    test = scipy.sparse.csr_array(test)
+
+    report = compare_canonical_payloads(
+        {'aligner': {'ROIs_aligned': [test]}},
+        {'aligner': {'ROIs_aligned': [true]}},
+        exact=True,
+    )
+    assert report['structural_failures'] == []
+    assert len(report['value_failures']) == 1
+
+
+def test_sparse_comparison_still_fails_on_shape():
+    """Shape remains a structural contract."""
+    true = scipy.sparse.csr_array(np.zeros((2, 3)))
+    test = scipy.sparse.csr_array(np.zeros((2, 4)))
+    report = compare_canonical_payloads(
+        {'aligner': {'ROIs_aligned': [test]}},
+        {'aligner': {'ROIs_aligned': [true]}},
+    )
+    assert len(report['structural_failures']) == 1
+    assert 'shape mismatch' in report['structural_failures'][0][1]
 
 
 ######################################################################
