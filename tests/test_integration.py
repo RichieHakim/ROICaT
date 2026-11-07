@@ -569,6 +569,45 @@ def test_sparse_comparison_is_exact_under_determinism_mode():
     assert len(report['value_failures']) == 1
 
 
+def test_golden_report_warns_on_value_mismatches_only():
+    """Value mismatches are the platform floor, so they must not fail the run."""
+    report = {
+        'structural_passes': 1,
+        'structural_failures': [],
+        'value_passes': 0,
+        'value_failures': [('aligner.ROIs_aligned.0', 'sparse allclose failed')],
+        'stage_summary': {},
+    }
+    with pytest.warns(UserWarning, match="1 value mismatches"):
+        _report_golden_mismatches(report=report)
+
+
+def test_golden_report_raises_on_structural_mismatches():
+    """A shape, dtype, key or length change is not arithmetic noise, so it blocks."""
+    report = {
+        'structural_passes': 0,
+        'structural_failures': [('clusterer.labels', 'shape mismatch: test=(9,), true=(8,)')],
+        'value_passes': 0,
+        'value_failures': [],
+        'stage_summary': {},
+    }
+    with pytest.raises(AssertionError, match="1 structural"):
+        _report_golden_mismatches(report=report)
+
+
+def test_golden_report_is_silent_when_nothing_failed():
+    report = {
+        'structural_passes': 365,
+        'structural_failures': [],
+        'value_passes': 1886,
+        'value_failures': [],
+        'stage_summary': {},
+    }
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        _report_golden_mismatches(report=report)
+
+
 def test_sparse_comparison_still_fails_on_shape():
     """Shape remains a structural contract."""
     true = scipy.sparse.csr_array(np.zeros((2, 3)))
@@ -579,6 +618,63 @@ def test_sparse_comparison_still_fails_on_shape():
     )
     assert len(report['structural_failures']) == 1
     assert 'shape mismatch' in report['structural_failures'][0][1]
+
+
+def _report_golden_mismatches(report, n_lines_max=20):
+    """
+    Decide what the golden comparison does about its own failures.
+
+    Value mismatches warn. The alignment stages run torch kernels that are not
+    bitwise reproducible across CPU families, so the warps they fit differ by
+    about 1e-5 px between the machines CI runs on, and every platform carries a
+    floor of value mismatches that no regeneration removes: 21 to 33 on Linux
+    and 710 to 760 on Windows and macOS.
+
+    Structural mismatches raise. Since the stored-element count of a sparse
+    array stopped counting as structure, the structural half covers shapes,
+    dtypes, dict keys and sequence lengths, and none of those move under
+    arithmetic noise: it reported 0 failures on all 42 CI jobs. A structural
+    failure therefore means the payload itself changed, which is either a real
+    behavioral change or a reference that has gone stale, and both want a
+    decision rather than a warning that nobody reads.
+
+    Args:
+        report (dict):
+            A report from ``compare_canonical_payloads``.
+        n_lines_max (int):
+            How many failure lines to quote in the warning or the error.
+
+    Returns:
+        (None)
+
+    Raises:
+        AssertionError:
+            If the report holds any structural failure.
+    """
+    failures_value = report['value_failures']
+    failures_structural = report['structural_failures']
+
+    if len(failures_value) > 0:
+        lines = [f"  - {path}: {reason}" for path, reason in failures_value[:n_lines_max]]
+        warnings.warn(
+            f"Golden reference comparison: {len(failures_value)} value mismatches "
+            f"(non-blocking; every platform has a floor of these).\n"
+            + "\n".join(lines),
+            stacklevel=2,
+        )
+
+    if len(failures_structural) > 0:
+        lines = [f"  - {path}: {reason}" for path, reason in failures_structural[:n_lines_max]]
+        raise AssertionError(
+            f"Golden reference comparison: {len(failures_structural)} structural "
+            f"mismatches. The saved payload changed shape, dtype, keys or length, "
+            f"which arithmetic noise does not do.\n"
+            + "\n".join(lines)
+            + "\n\nIf this is an intended change, regenerate the reference with "
+            "`pytest tests/test_integration.py::test_pipeline_tracking_simple "
+            "--regenerate-golden` in an environment matching the `dev` extra, and "
+            "review the diff."
+        )
 
 
 ######################################################################
@@ -756,30 +852,11 @@ def test_pipeline_tracking_simple(dir_data_test, regenerate_golden):
         true_payload=run_data_true_payload,
         exact=False,
     )
-    n_struct_fails, n_value_fails = print_comparison_report(
+    print_comparison_report(
         golden_report,
         title="GOLDEN REFERENCE COMPARISON REPORT",
     )
-
-    # Golden reference mismatches are expected across platforms (e.g. macOS
-    # vs Linux CI) because alignment steps (DISK_LightGlue, DeepFlow) are
-    # not bitwise reproducible.  Emit warnings instead of failing so CI
-    # stays green.  The determinism test below is the hard gate.
-    if (n_struct_fails + n_value_fails) > 0:
-        failure_lines = [
-            f"STRUCT {path}: {reason}"
-            for path, reason in golden_report['structural_failures']
-        ] + [
-            f"VALUE {path}: {reason}"
-            for path, reason in golden_report['value_failures']
-        ]
-        import warnings
-        warnings.warn(
-            f"Golden reference comparison: {n_struct_fails} structural and "
-            f"{n_value_fails} value mismatches (non-blocking).\n"
-            + "\n".join(f"  - {line}" for line in failure_lines[:20]),
-            stacklevel=1,
-        )
+    _report_golden_mismatches(report=golden_report)
 
 
 ######################################################################
