@@ -78,7 +78,7 @@ core = [
     ## Imported at module scope by roicat/pipelines.py. `jupyter` happens to
     ## pull it in via ipykernel, but that is a coincidence of packaging, not
     ## something to depend on.
-    "ipython==9.18.0",
+    "ipython==9.18.1",
 
     ## Progress bars and system introspection.
     "tqdm==4.70.1",
