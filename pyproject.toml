@@ -43,7 +43,7 @@ core = [
     ## An upper bound rather than an exact pin, as it was before this
     ## reorganization.
     "opencv-contrib-python-headless<=5.0.0.93",
-    "fast-hdbscan==0.3.2",
+    "fast-hdbscan==0.3.4",
     "kymatio==0.3.0",
     "kornia==0.9.0",
     ## RoMa's fused local-correlation kernel (romatch-roicat's 'fused-local-corr'
