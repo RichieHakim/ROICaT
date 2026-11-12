@@ -141,7 +141,7 @@ dev = [
     "roicat[core]",
     "pytest==9.2.0",
     "selenium==4.52.0",
-    "xxhash==4.0.2",
+    "xxhash==4.1.0",
 ]
 dev_latest = [
     "roicat[latest]",
