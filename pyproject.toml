@@ -73,7 +73,7 @@ core = [
     "bokeh==3.10.1",
     "holoviews[recommended]==1.23.2",
     "jupyter-bokeh==4.1.0",
-    "umap-learn==0.5.12",
+    "umap-learn==0.6.0",
     "jupyter==1.1.1",
     ## Imported at module scope by roicat/pipelines.py. `jupyter` happens to
     ## pull it in via ipykernel, but that is a coincidence of packaging, not
