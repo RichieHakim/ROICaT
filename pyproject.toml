@@ -36,7 +36,7 @@ core = [
     "mat73==0.65",
     "PyYAML==6.0.3",
     "requests==2.34.2",  ## Downloading ROInet weights in roicat/helpers.py.
-    "roiextractors==0.10.0",
+    "roiextractors==0.11.0",
     "Pillow==13.0.0",
 
     ## Alignment and tracking.
