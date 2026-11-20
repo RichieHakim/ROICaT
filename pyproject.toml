@@ -42,7 +42,7 @@ core = [
     ## Alignment and tracking.
     ## An upper bound rather than an exact pin, as it was before this
     ## reorganization.
-    "opencv-contrib-python-headless<=5.0.0.93",
+    "opencv-contrib-python-headless<=5.1.0.95",
     "fast-hdbscan==0.3.4",
     "kymatio==0.3.0",
     "kornia==0.9.0",
