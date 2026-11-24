@@ -34,7 +34,7 @@ core = [
     "richfile==0.6.2",  ## 0.6.2 introduced the type-registry API roicat/util.py uses.
     "h5py==3.16.0",  ## Reading .h5/.mat-v7.3 ROI files in roicat/helpers.py.
     "mat73==0.65",
-    "PyYAML==6.0.3",
+    "PyYAML==6.0.4",
     "requests==2.34.2",  ## Downloading ROInet weights in roicat/helpers.py.
     "roiextractors==0.10.0",
     "Pillow==13.0.0",
